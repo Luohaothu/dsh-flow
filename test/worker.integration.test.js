@@ -25,6 +25,17 @@ test('real HTTP controller and two worker CLIs execute graph and persist state',
   const dir = await mkdtemp(join(process.env.TMPDIR || tmpdir(), 'dsh-flow-e2e-'));
   const db = join(dir, 'flow.sqlite');
   const store = new Store(db);
+  // Test-only scheduling barrier: fast echo jobs may otherwise all be taken
+  // by the first process before the second finishes starting. Require each
+  // real worker to receive one real lease before permitting repeat claims.
+  const claim = store.claim.bind(store);
+  const startedWorkers = new Set();
+  store.claim = request => {
+    if (startedWorkers.size < 2 && startedWorkers.has(request.workerId)) return { lease: null };
+    const result = claim(request);
+    if (result.lease) startedWorkers.add(request.workerId);
+    return result;
+  };
   const server = createServer({ store, token });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

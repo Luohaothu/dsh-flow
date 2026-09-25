@@ -16,6 +16,8 @@ The integration test launches a real HTTP controller and two real worker CLI chi
 
 ## DSH adapter and status
 
-Install `adapter/` as a DSH server plugin package only after setting `FLOW_URL` and `FLOW_TOKEN` in the server environment. Adapter exports follow the installed Cordis plugin API. Integration boot against DSH and actual model execution were not performed. The DSH plugin is NOT verified/ready, and the native UI is NOT ready. Agent work must be opted into only for a trusted DSH worker/profile; loop/scoped capability guarantees require real integration review.
+Install `adapter/` dependencies using `npm ci --prefix adapter`. Set `FLOW_URL` and `FLOW_TOKEN` in the server environment before loading it as a DSH server plugin. Real Cordis and DSH ToolRuntime integration has passed using `node test/native-plugin.mjs`. A separately opted-in Flash test has passed through the installed DSH provider adapter, HTTP controller and SQLite. The full Agent loop and native UI remain unverified; production workers are deterministic-only.
 
-No native UI package interaction, authenticated UI RPC bridge, live DSH isolated boot, or real model run has been verified. No live DSH services were restarted. Do not expose flowd/DSH to untrusted networks. `TEST-RESULTS.md` records actual test status and limitations.
+Live model testing is deliberately excluded from `npm test`: `FLOW_LIVE_TEST=1 DEEPSEEK_API_KEY=<provided securely> node test/live-deepseek.mjs`. It enforces a per-invocation request budget, limited output, thinking off and no retries. `DSH_INSTALL_PATH` overrides the installed DSH package root (default `/opt/dsh/app`). Never commit credentials.
+
+Native UI/RPC integration, full Web plugin lifecycle and managed Agent execution remain incomplete. Do not expose flowd/DSH to untrusted networks. `TEST-RESULTS.md` records commands, actual usage and limitations.
