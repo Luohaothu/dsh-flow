@@ -1,0 +1,2 @@
+{"name":"dsh-flow","private":true,"type":"module","engines":{"node":">=22.13.0"},"scripts":{"test":"npm run test:controller && npm run test:adapter && node --test test/*.test.js",
+"test:integration":"node --test test/*.test.js","test:controller":"npm test --prefix controller","test:adapter":"npm test --prefix adapter","start":"npm start --prefix controller"}}

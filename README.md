@@ -1,21 +1,21 @@
-# dsh-flow
+# dsh-flow P0 (partial)
 
-DeepSeek Harness 集群编排插件（开发中）。
+This repository implements a local flowd prototype and DSH server-side adapter. It is not production hardened. The native cluster UI and DSH plugin/native UI integration are NOT ready. A deterministic tool-only worker CLI and a local two-worker HTTP/SQLite integration test are implemented; these do not constitute a complete cluster.
 
-## 设计
+## Controller
 
-- `controller/`：独立持久化控制器 flowd，Workflow 校验、SQLite 状态台账、租约调度与恢复。
-- `adapter/`：DSH 插件与 worker，通过公共 Agent 生命周期执行受管理任务。
-- `ui/`：DSH 原生集群界面，展示工作流、节点、事件与控制动作。
+Requires Node.js >=22.13 (node:sqlite). Run `FLOW_TOKEN='use-a-long-random-secret' FLOW_DB=./flow.sqlite npm start --prefix controller`. flowd binds only 127.0.0.1:3090 by default; PORT overrides the port. Keep FLOW_TOKEN server-side; never expose it to browser code. `GET /health` is public; all other routes require `Authorization: Bearer <token>`. Workflow submit requires `Idempotency-Key`.
 
-控制器维护权威状态；worker 仅凭有效租约提交结果。控制器凭据只保留在服务端。
+`npm test` runs controller, adapter, and real subprocess integration suites. `npm run test:integration` runs the root integration test. Example: `examples/sample-workflow.json`. Controller supports deterministic `echo`, `sum`, `fail`; it never executes shell input. SQLite is single-writer local state. Lease/result idempotency and epoch fencing are supported; exactly-once external effects are not.
 
-## 当前状态
+## Worker CLI
 
-正在实现首版，尚未完成集成验收。不应视为生产可用，也不宣称完整实现动态多阶段规划或跨主机隔离。
+Run `FLOW_URL=http://127.0.0.1:3090 FLOW_TOKEN=... npm run worker --prefix adapter`. `WORKER_ID` is optional and defaults to a unique random ID. The CLI runs deterministic tool nodes only; it rejects agent nodes because no DSH harness is present, and it never accepts arbitrary commands. SIGINT/SIGTERM stop polling and abort active work.
 
-验收范围与测试要求见 [ACCEPTANCE.md](ACCEPTANCE.md)。测试结果、安装方法和已知限制会随实现提交更新。
+The integration test launches a real HTTP controller and two real worker CLI child processes on a free localhost port, checks claimed-worker identities, node outputs, events, and persistence after reopening SQLite.
 
-## 安全
+## DSH adapter and status
 
-不要提交 API keys、访问令牌、数据库或运行日志。不要将未保护的控制器或具有命令执行能力的 DSH 服务直接暴露到公网。
+Install `adapter/` as a DSH server plugin package only after setting `FLOW_URL` and `FLOW_TOKEN` in the server environment. Adapter exports follow the installed Cordis plugin API. Integration boot against DSH and actual model execution were not performed. The DSH plugin is NOT verified/ready, and the native UI is NOT ready. Agent work must be opted into only for a trusted DSH worker/profile; loop/scoped capability guarantees require real integration review.
+
+No native UI package interaction, authenticated UI RPC bridge, live DSH isolated boot, or real model run has been verified. No live DSH services were restarted. Do not expose flowd/DSH to untrusted networks. `TEST-RESULTS.md` records actual test status and limitations.

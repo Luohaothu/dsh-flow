@@ -1,0 +1,12 @@
+{
+  "apiVersion": "flow.dsh/v1alpha1",
+  "kind": "Workflow",
+  "metadata": { "id": "sample", "revision": 1 },
+  "spec": {
+    "limits": { "maxConcurrency": 2, "maxAttempts": 3 },
+    "nodes": [
+      { "id": "numbers", "kind": "tool", "needs": [], "tool": { "name": "sum", "args": { "values": [2, 3, 5] } } },
+      { "id": "show-total", "kind": "tool", "needs": ["numbers"], "inputs": { "total": { "$ref": "numbers.output" } }, "tool": { "name": "echo", "args": { "value": { "$ref": "numbers.output" } } } }
+    ]
+  }
+}

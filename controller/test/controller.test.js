@@ -1,0 +1,34 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {Store,compileWorkflow} from '../src/store.js';
+import {createServer} from '../src/server.js';
+const node=(id,needs=[])=>({id,kind:'tool',needs,tool:{name:'echo',args:{value:id}}});
+const wf=(nodes=[node('a')],limits={maxConcurrency:2,maxAttempts:3},id='w')=>({apiVersion:'flow.dsh/v1alpha1',kind:'Workflow',metadata:{id,revision:1},spec:{nodes,limits}});
+function setup(t){let now=1000;const dir=mkdtempSync(join(process.env.TMPDIR||'/home/ubuntu/.hermes/cache/scratch','flow-'));let store=new Store(join(dir,'db.sqlite'),{now:()=>now});t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true});});return {get store(){return store;},advance(ms){now+=ms;},reopen(){store.close();store=new Store(join(dir,'db.sqlite'),{now:()=>now});}};}
+const claim=s=>s.claim({workerId:'worker',ttlMs:1000}).lease;
+const result=(s,l,extra={})=>s.result(l.id,{workerId:l.workerId,epoch:l.epoch,status:'succeeded',output:{value:3},...extra});
+test('compiler validates graph, capabilities, strict shapes and limits',()=>{
+ assert.equal(compileWorkflow(wf()).apiVersion,'flow.ir/v1alpha1');
+ for(const w of [wf([node('a',['b'])]),wf([node('a',['b']),node('b',['a'])]),wf([{...node('a'),tool:{name:'shell',args:{}}}]),wf([node('a'),node('a')]),wf([node('../a')]),wf([node('a')],{maxConcurrency:999,maxAttempts:3}),{...wf(),extra:1},wf([{...node('a'),maxAttempts:4}])]) assert.throws(()=>compileWorkflow(w));
+ assert.throws(()=>compileWorkflow(wf([{...node('a'),inputs:{x:{$ref:'z.output'}}}])));
+});
+test('submission idempotency persists and rejects collisions',t=>{const h=setup(t),s=h.store;const a=s.submit(wf(),'key');assert.equal(s.submit(wf(),'key').id,a.id);assert.throws(()=>s.submit(wf([node('b')]),'key'));assert.throws(()=>s.submit(wf(),'other'));h.reopen();assert.equal(h.store.submit(wf(),'key').id,'w');assert.equal(h.store.list().length,1);});
+test('dependency scheduling, refs, artifacts, success and duplicate result',t=>{const {store:s}=setup(t);s.submit(wf([node('a'),{...node('b',['a']),inputs:{v:{$ref:'a.output.value'}},tool:{name:'echo',args:{value:{$ref:'a.output.value'}}}}]),'k');let a=claim(s);assert.equal(a.nodeId,'a');assert.equal(claim(s),null);const r=result(s,a);assert.deepEqual(result(s,a),r);assert.throws(()=>result(s,a,{output:99}));let b=claim(s);assert.equal(b.node.inputs.v,3);assert.equal(b.node.tool.args.value,3);result(s,b);const w=s.get('w');assert.equal(w.status,'succeeded');assert.equal(w.nodes[0].output.value,3);assert.ok(s.events('w').length>=5);});
+test('concurrency, retries, dependency skips and failed terminal state',t=>{const {store:s}=setup(t);s.submit(wf([{...node('a'),maxAttempts:2},node('b',['a']),node('c')],{maxConcurrency:1,maxAttempts:2}),'k');let l=claim(s);assert.equal(claim(s),null);result(s,l,{status:'failed',error:'bad'});l=claim(s);assert.equal(l.epoch,2);result(s,l,{status:'failed',error:'bad'});assert.equal(s.get('w').nodes.find(n=>n.id==='b').status,'skipped');result(s,claim(s));assert.equal(s.get('w').status,'failed');});
+test('expiry fences commits, requeues, survives reopen, bounded attempts',t=>{const h=setup(t);h.store.submit(wf([node('a')],{maxConcurrency:1,maxAttempts:2}),'k');const a=claim(h.store);h.advance(1001);assert.throws(()=>result(h.store,a));h.reopen();let b=claim(h.store);assert.equal(b.epoch,2);assert.throws(()=>h.store.heartbeat(a.id,{workerId:'worker',epoch:1,ttlMs:1000}));h.advance(1001);assert.equal(claim(h.store),null);assert.equal(h.store.get('w').status,'failed');});
+test('heartbeat ownership, pause/resume and cancellation fencing',t=>{const h=setup(t),s=h.store;s.submit(wf([node('a'),node('b')]),'k');const a=claim(s);assert.throws(()=>s.heartbeat(a.id,{workerId:'wrong',epoch:a.epoch,ttlMs:1000}));h.advance(500);assert.equal(s.heartbeat(a.id,{workerId:'worker',epoch:a.epoch,ttlMs:1000}).expiresAt,2500);s.control('w','pause');assert.equal(claim(s),null);result(s,a);s.control('w','resume');const b=claim(s);s.control('w','cancel');assert.throws(()=>result(s,b));assert.equal(s.get('w').status,'cancelled');});
+test('resume finalizes workflow when all nodes completed while paused',t=>{const {store:s}=setup(t);s.submit(wf([node('a')]),'k');const a=claim(s);s.control('w','pause');result(s,a);assert.equal(s.get('w').status,'paused');assert.equal(s.control('w','resume').status,'succeeded');});
+test('workflow concurrency fairness, node retry limit on expiry, expiry inside claim',t=>{const h=setup(t),s=h.store;s.submit(wf([node('a'),node('b')],{maxConcurrency:1,maxAttempts:2},'fair-a'),'a');s.submit(wf([node('c')],{maxConcurrency:1,maxAttempts:2},'fair-b'),'b');const a=claim(s);assert.equal(a.workflowId,'fair-a');assert.equal(claim(s).workflowId,'fair-b');
+const g=setup(t),x=g.store;x.submit(wf([{...node('limited'),maxAttempts:1}],{maxConcurrency:1,maxAttempts:3},'limited'),'l');const old=claim(x);g.advance(1001);assert.equal(claim(x),null);assert.equal(x.get('limited').nodes[0].attempt,1);assert.equal(x.get('limited').status,'failed');
+const z=setup(t),y=z.store;y.submit(wf([node('expire'),node('next')],{maxConcurrency:1,maxAttempts:2},'expiring'),'e');const first=claim(y);z.advance(1001);const next=claim(y);assert.equal(next.nodeId,'expire');assert.equal(next.epoch,2);assert.throws(()=>result(y,first));
+});
+test('HTTP auth, body limits, schema errors and concurrent claims',async t=>{const {store}=setup(t);assert.throws(()=>createServer({store,token:''}));const server=createServer({store,token:'secret',maxBodyBytes:4096});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));const base=`http://127.0.0.1:${server.address().port}`;const req=(path,body,headers={})=>fetch(base+path,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer secret','content-type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});
+ assert.equal((await fetch(base+'/health')).status,200);assert.equal((await fetch(base+'/v1/workflows')).status,401);
+ assert.equal((await req('/v1/workflows',wf(),{'Idempotency-Key':'http'})).status,201);
+ const responses=await Promise.all(Array.from({length:12},(_,i)=>req('/v1/leases/claim',{workerId:`w${i}`,ttlMs:1000})));const bodies=await Promise.all(responses.map(r=>r.json()));assert.equal(bodies.filter(x=>x.lease).length,1);
+ assert.equal((await req('/v1/leases/claim',{workerId:'x',ttlMs:0})).status,400);
+ assert.equal((await req('/v1/workflows',{large:'x'.repeat(5000)})).status,413);
+ assert.equal((await req('/v1/workflows/w')).status,200);assert.equal((await req('/v1/workflows/w/events')).status,200);
+});
