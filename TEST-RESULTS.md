@@ -14,25 +14,43 @@ reports carry `validation_mode: "mock-api"` and `build_drift: null`.
 |---|---|---|
 | Unit + classification + evidence-chain suites | **293 tests, 293 pass** | `npm test` |
 | Build | wrote `lib/index.js`, `lib/client.js` | `npm run build` |
-| Deterministic suite, batch 1 | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final1-*` |
-| Deterministic suite, batch 2 | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final2-*` |
-| Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
+| Deterministic suite, batch A (main working tree) | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final5-*` |
+| Deterministic suite, batch B (a second, clean checkout of the same commit) | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/clean2-*` |
+| Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs`, run from both checkouts |
+| Closing confirmation on the committed tree | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final6-*` |
 
-Frozen fingerprints of the verified build (identical in all 16 batch reports):
+Frozen fingerprints (identical in every report of batches A and B, taken from
+two different directories):
 
-* `plugin_source` `sha256:3b6da44b3f162451af45705c01039d88010cb933116e154d322e6432bf5dcd91` (9 files)
+* `plugin_source` `sha256:40d648c55acda311b5cc6f244b3330096d640314ce4274c44d11fb818642a856` (9 files)
 * `lib_index` `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd`
-* `acceptance_source` `sha256:293a51a04309e25d5d56420b4e7136d51e78c3aa38d7e82b4d11deeb05943749` (40 files)
+* `acceptance_source` `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c` (40 files)
 
-A third full batch, run after `acceptance/RESULTS.md` was finalized, passes 8/8
-on the tree as committed (`--run-prefix final4`, all reports `build_drift:
-null`, `validation_mode: "mock-api"`, `acceptance_source`
-`sha256:2433f21a2586a2ca27372ea8b972a81190bd1c2b49012edc08b0e5b33bff6e46`, 41
-files). This file lives outside `acceptance/`, so recording that number here
-cannot move it: recomputing the directory digest today returns exactly that
-value.
+`hashTree` now digests paths **relative to the tree root**, so the same commit
+produces the same fingerprint in any checkout — previously it digested absolute
+paths, which made every recorded hash unverifiable outside the machine that
+produced it. Batch B ran from `/tmp/dsh-flow-clean`, a `git worktree` of the
+same commit, with only `npm run build` and a linked `node_modules`; its
+fingerprints are byte-identical to batch A's.
 
-Per-scenario evidence (two independent batches, identical semantics):
+`acceptance/RESULTS.md` was edited after batches A and B, and it lives inside
+the fingerprinted `acceptance/` tree, so that directory's digest moved. The
+closing batch (`final6`) ran on the tree exactly as committed and records
+`acceptance_source`
+`sha256:f8f5dd174b84656b0cdde4ca116e8463602b8fa864f8494be85b4dffa8515b45`
+(41 files) — recomputing that directory today returns exactly this value,
+because this file is *outside* `acceptance/` and cannot move it.
+
+The tree was also repaired before these runs: `.gitignore` had an unanchored
+`lib/`, which matched `acceptance/lib/` at any depth, so the six modules the
+runner and every checker import (`mock-model.mjs`, `mock-scenarios.mjs`,
+`host.mjs`, `ledger.mjs`, `session-scan.mjs`, `dsh-launch.mjs`) were missing
+from the pushed commits while `acceptance/run.mjs` imported them. The rule is
+now anchored to the repository-root bundle (`/lib/`) and the modules are
+tracked; batches A, B and the closing batch all ran from checkouts that
+contain them.
+
+Per-scenario evidence (batches A and B, identical semantics):
 
 * smoke — 2/2 ACCEPTED; `sums-verified` matches each transaction's submitted
   value against the `flow_sum` result recorded in that Worker's own session
