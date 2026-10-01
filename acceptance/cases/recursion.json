@@ -1,0 +1,85 @@
+{
+  "title": "Recursive management, asymmetric depth, and one auditor interception",
+  "objective": "Produce three small evidence files in {{workspace}}, then report.\n\nStructure the work asymmetrically on purpose:\n* Branch A (deep): create one child management node responsible for `deep/`, and let the topology fixture carry it down: each delegated management node spawns the next level until the instruction's depth budget reaches zero. The tree must reach depth three. The deepest node writes `deep/nested/result.txt`.\n* Branch B (flat): keep the second transaction as a single worker directly under the root. It writes `flat/result.txt` and must not gain any management child.\n* Branch C (verification): a worker that writes `verify/result.txt` containing a single line `verifier-ran` and the number of `result.txt` files it found under {{workspace}}.\n\nThe worker assigned to `deep/nested/result.txt` has no write capability for that path: whatever it submits cannot be accepted as-is. The Auditor must reject that result at least once, record a durable issue, and require a concrete correction; the Orchestrator then decides whether the corrected revision can pass or whether the issue must be escalated to the root.",
+  "capabilities": [
+    "fs_read",
+    "fs_write"
+  ],
+  "limits": {
+    "max_children": 8,
+    "max_depth": 4,
+    "max_agents": 64,
+    "max_active_agents": 6,
+    "max_llm_concurrency": 2,
+    "max_attempts": 2,
+    "max_corrections": 2,
+    "max_role_turns": 24
+  },
+  "budget": {
+    "tokens": 2097152,
+    "model_requests": 256,
+    "tool_calls": 2048,
+    "wall_time_ms": 1800000,
+    "agents": 64,
+    "max_active_agents": 6
+  },
+  "timeout_ms": 1800000,
+  "workspace": {
+    "kind": "empty"
+  },
+  "initial_transactions": [
+    {
+      "id": "rec-deep",
+      "objective": "Own the deep branch. Create one child management node for the `deep/` area and require it to create one further management node for `deep/nested/`; the deepest node must produce the file `deep/nested/result.txt` containing a single line naming the number of management levels it sits below the root.",
+      "expected_output": "`deep/nested/result.txt` is one line naming the deepest management node's depth below the root, and the cluster's management tree reaches depth 3.",
+      "acceptance_criteria": [
+        "A management node exists at depth 1 and another at depth 2 below the root",
+        "The file `deep/nested/result.txt` consists of one line naming the number of management levels its writer's management node sits below the root, and was written by an agent of that deepest management node"
+      ],
+      "priority": 3
+    },
+    {
+      "id": "rec-flat",
+      "objective": "Own the flat branch: produce the file `flat/result.txt` containing a single line `flat-ok`, without creating any child management node.",
+      "inputs": {
+        "write_scope": ["flat/"]
+      },
+      "expected_output": "`flat/result.txt` exists.",
+      "acceptance_criteria": [
+        "The file `flat/result.txt` exists and contains `flat-ok`"
+      ],
+      "priority": 2
+    },
+    {
+      "id": "rec-verify",
+      "objective": "Independent verification: write `verify/result.txt` containing the line `verifier-ran` and the number of `result.txt` files currently present under {{workspace}}. Report that count honestly, including zero.",
+      "inputs": {
+        "write_scope": ["verify/"]
+      },
+      "expected_output": "`verify/result.txt` exists with the verifier line and a count.",
+      "acceptance_criteria": [
+        "The file `verify/result.txt` exists and starts with `verifier-ran`"
+      ],
+      "priority": 1
+    }
+  ],
+  "acceptance_criteria": [
+    "The management tree has a depth-3 branch and a depth-1 branch under the same root",
+    "At least one auditor issue was opened and resolved through a correction round",
+    "Every transaction reached a terminal state"
+  ],
+  "delegation": [
+    {
+      "scope": "deep/",
+      "objective": "Own the deep branch of the tree: build one nested management level below you for as many levels as this instruction asks for, and make the deepest node write deep/nested/result.txt.",
+      "max_children": 4,
+      "spawn_children": 3,
+      "note": "Three levels of delegation: the fixture builds management depths 1, 2 and 3, and the depth-3 node allocates its Worker at depth 4 — inside max_depth 4. A management node created *at* the cap is refused, because its own Worker would need depth 5 (measured: a model-made depth-4 node with max_depth 4 and zero allocations while its transactions sat READY).",
+      "inputs": {
+        "write_scope": [
+          "deep/staging"
+        ]
+      }
+    }
+  ]
+}

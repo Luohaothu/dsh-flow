@@ -1,0 +1,90 @@
+# dsh-flow acceptance overlay.
+#
+# Layers on top of a shipped profile template (web / headless). It pins:
+#   * every cluster model request to the local OpenAI-compatible Qwen service,
+#   * the file-effect boundary to workspace-write with approval never,
+#   * the cluster plugin itself.
+#
+# The host process must be spawned with cwd set to the case workspace so that
+# `workspaceRoot` below stays on the intended directory.
+- id: llm-pi-ai
+  config:
+    providers:
+      local-sglang:
+        displayName: Local Qwen (SGLang)
+        api: openai-completions
+        baseURL: http://127.0.0.1:8000/v1
+        headers:
+          Authorization: Bearer EMPTY
+        timeoutMs: 120000
+        streamIdleTimeoutMs: 60000
+        retryPolicy:
+          mode: normal
+          maxRetries: 0
+        compat:
+          thinkingFormat: qwen-chat-template
+          supportsStore: false
+          supportsDeveloperRole: false
+          supportsReasoningEffort: false
+          supportsStrictMode: false
+          supportsUsageInStreaming: true
+          maxTokensField: max_completion_tokens
+        models:
+          - id: Qwen3.8-27B-FP8
+            contextWindow: 131072
+            maxTokens: 4096
+            input: [text]
+            reasoningEfforts:
+              off:
+              high: high
+
+- id: agent-default-model
+  config:
+    provider: local-sglang
+    model: Qwen3.8-27B-FP8
+    reasoningEffort: off
+
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+
+# Cluster sessions run unattended: the shipped workspace-write preset keeps
+# approval `ask`, which no cluster agent can answer, so the deployment pins an
+# extra preset with the same sandbox and `never`, and names it as the default.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      workspace-write-unattended:
+        sandbox: workspace-write
+        approval: never
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+    defaultPreset: workspace-write-unattended
+
+# The shipped web bundle disables the host-plane compaction backend and mounts
+# it inside the agent preset. A cluster agent never mounts that preset, so the
+# cluster enables the host-plane backend for the sessions it drives; without it
+# a long management session can only grow until the provider rejects it.
+# A native role has an 8,192-token input ceiling. The backend default
+# reserves 65,536 output tokens for each genuine summary request, which
+# exhausts small-tier compaction grants before the role can continue. A
+# 2,048-token cap was too small: the native summarizer reported an incomplete
+# checkpoint and correctly refused to commit it. Reserve 4,096 instead; the
+# host still generates and verifies the complete checkpoint, and the plugin
+# still refuses any later step whose measured input exceeds 8,192.
+- id: compaction-basic
+  disabled: false
+  config:
+    maxTokens: 4096
+
+- insert:
+    - id: dsh-flow
+      name: dsh-flow

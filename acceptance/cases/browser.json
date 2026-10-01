@@ -1,0 +1,46 @@
+{
+  "title": "Browser capability smoke through a complete profile assembly",
+  "objective": "Use the browser tools to navigate to the host's authenticated page ({{webUrl}}), click the Cluster button in Global panels, and take a new snapshot showing the Hierarchical agent cluster heading. Submit a result naming the page title and panel heading you actually saw and the browser tools you called. The page is served by this same host, not the public internet.",
+  "capabilities": [
+    "fs_read",
+    "browser"
+  ],
+  "patches": [
+    "examples/cluster.patch.yml",
+    "examples/cluster.web.patch.yml"
+  ],
+  "limits": {
+    "max_children": 4,
+    "max_depth": 2,
+    "max_agents": 16,
+    "max_active_agents": 3,
+    "max_llm_concurrency": 1,
+    "max_attempts": 1,
+    "max_corrections": 1,
+    "max_role_turns": 6
+  },
+  "budget": {
+    "tokens": 1048576,
+    "model_requests": 64,
+    "tool_calls": 256,
+    "wall_time_ms": 600000,
+    "agents": 16,
+    "max_active_agents": 3
+  },
+  "timeout_ms": 600000,
+  "workspace": {
+    "kind": "empty"
+  },
+  "initial_transactions": [
+    {
+      "id": "browser-tx",
+      "objective": "Navigate to {{webUrl}}, click the Cluster button in Global panels, take a browser snapshot after the click, and submit the observed page title and Hierarchical agent cluster heading with evidence from the tool responses.",
+      "expected_output": "The actual page title and opened Cluster panel heading with browser navigation, click and post-click snapshot evidence.",
+      "acceptance_criteria": [
+        "The result names a page title that the post-click snapshot really contains",
+        "The native post-click snapshot contains the Hierarchical agent cluster heading",
+        "The recorded tool calls include browser_navigate, browser_click and browser_snapshot"
+      ]
+    }
+  ]
+}

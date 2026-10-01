@@ -1,0 +1,81 @@
+{
+  "title": "Restart recovery, message delivery and lease fencing",
+  "objective": "Complete four arithmetic transactions through the cluster, communicating as you go: publish the shared total key `{{runId}}/total` on the blackboard after the last transaction is accepted, and send one message across subtrees to the second worker. The runner will restart the host process in the middle of the run; the cluster must resume from durable state without redoing an already committed result or charging a request twice.",
+  "capabilities": [
+    "fs_read"
+  ],
+  "limits": {
+    "max_children": 8,
+    "max_depth": 4,
+    "max_agents": 64,
+    "max_active_agents": 4,
+    "max_llm_concurrency": 2,
+    "max_attempts": 2,
+    "max_corrections": 2,
+    "max_role_turns": 24
+  },
+  "budget": {
+    "tokens": 2097152,
+    "model_requests": 256,
+    "tool_calls": 2048,
+    "wall_time_ms": 1800000,
+    "agents": 64,
+    "max_active_agents": 4
+  },
+  "timeout_ms": 1800000,
+  "recovery": {
+    "kill_after_ms": 180000,
+    "restart_delay_ms": 2000,
+    "require_restart": true,
+    "kill_on_hold": "recovery-r4-validation",
+    "note": "The fault trigger is a *held model request*, not a wall-clock guess: the mock holds the Auditor's validation review of r4 open, and the runner kills the host while that identity is genuinely mid-turn. r4 is made dependent on r3 first, so the fixture message that crosses subtrees is already delivered and the receiving Worker has already submitted. This does not claim to hit the internal flush→ACK micro-window; that invariant is proven by the precise persistence-injection tests, and the native report says so."
+  },
+  "initial_transactions": [
+    {
+      "id": "{{runId}}-r1",
+      "objective": "Use the flow_sum tool on [4, 6] and submit the resulting number.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 10"
+      ],
+      "expected_output": "The number 10 with the tool call that produced it."
+    },
+    {
+      "id": "{{runId}}-r2",
+      "objective": "Use the flow_sum tool on [20, 30] and submit the resulting number.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 50"
+      ],
+      "expected_output": "The number 50 with the tool call that produced it."
+    },
+    {
+      "id": "{{runId}}-r3",
+      "objective": "Use the flow_sum tool on [10] and [50] \u2014 the two numbers submitted by the other transactions \u2014 and submit their sum. Send one flow_communicate message to the worker that owns transaction {{runId}}-r4 stating your result.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 60"
+      ],
+      "expected_output": "The number 60."
+    },
+    {
+      "id": "{{runId}}-r4",
+      "objective": "Use the flow_sum tool on [15, 40] and submit the resulting number.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 55"
+      ],
+      "expected_output": "The number 55."
+    }
+  ],
+  "acceptance_criteria": [
+    "No committed result is recomputed after the restart",
+    "No model request is charged twice",
+    "A message delivered across subtrees appears exactly once in the recipient session",
+    "Stale leases from the previous process epoch are fenced"
+  ],
+  "message_fixture": [
+    {
+      "from": "{{runId}}-r3",
+      "to": "{{runId}}-r4",
+      "content": "fixture: r3 finished; report your own result to the orchestrator.",
+      "message_id": "{{runId}}-msg-1"
+    }
+  ]
+}

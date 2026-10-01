@@ -1,0 +1,4 @@
+# dsh-flow profile bundle: mount the hierarchical agent cluster on the Host plane.
+- insert:
+    - id: dsh-flow
+      name: dsh-flow

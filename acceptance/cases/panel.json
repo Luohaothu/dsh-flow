@@ -1,0 +1,47 @@
+{
+  "title": "Native panel and authenticated host route",
+  "objective": "Produce one short result through this cluster: submit a result that states the cluster's objective verbatim. The panel checks drive pause, resume, cancel and the report download from the browser.",
+  "capabilities": [
+    "fs_read"
+  ],
+  "limits": {
+    "max_children": 4,
+    "max_depth": 2,
+    "max_agents": 16,
+    "max_active_agents": 3,
+    "max_llm_concurrency": 1,
+    "max_attempts": 1,
+    "max_corrections": 1,
+    "max_role_turns": 6
+  },
+  "budget": {
+    "tokens": 524288,
+    "model_requests": 64,
+    "tool_calls": 256,
+    "wall_time_ms": 600000,
+    "agents": 16,
+    "max_active_agents": 3
+  },
+  "timeout_ms": 600000,
+  "workspace": {
+    "kind": "empty"
+  },
+  "patches": [
+    "examples/cluster.patch.yml"
+  ],
+  "initial_transactions": [
+    {
+      "id": "panel-tx",
+      "objective": "Submit a result whose text repeats this transaction's objective, then stop.",
+      "expected_output": "A submitted result naming the objective.",
+      "acceptance_criteria": [
+        "The submitted result names the transaction objective"
+      ]
+    }
+  ],
+  "live_first": true,
+  "acceptance_criteria": [
+    "The panel can pause, resume and cancel this cluster",
+    "The report downloads from the panel"
+  ]
+}

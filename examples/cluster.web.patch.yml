@@ -1,0 +1,15 @@
+# dsh-flow acceptance overlay for browser-bearing cases (website).
+#
+# Applied *after* examples/cluster.patch.yml. It mounts the browser providers so
+# a cluster worker with the `browser` capability gets Playwright's upstream
+# tools in its own session scope. Chromium is pinned to the already installed
+# local build; a missing binary is reported, never silently replaced.
+- insert:
+    - id: browser-use
+      name: '@deepseek-ai/dsh-browser-use'
+    - id: browser-use-playwright-mcp
+      name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
+      config:
+        mode: launch
+        headless: true
+        executablePath: /home/leo/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome

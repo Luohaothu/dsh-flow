@@ -1,0 +1,50 @@
+{
+  "title": "Cluster smoke: real three-role loop over two arithmetic transactions",
+  "objective": "Produce two verified sums through the cluster. Transaction {{runId}}-a must use the flow_sum tool on [2,3] and submit the resulting value; transaction {{runId}}-b must use the flow_sum tool on [15,40] and submit the resulting value.",
+  "capabilities": [
+    "fs_read"
+  ],
+  "limits": {
+    "max_children": 8,
+    "max_depth": 3,
+    "max_agents": 64,
+    "max_active_agents": 4,
+    "max_llm_concurrency": 2,
+    "max_attempts": 2,
+    "max_corrections": 2,
+    "max_role_turns": 12
+  },
+  "budget": {
+    "tokens": 2097152,
+    "model_requests": 256,
+    "tool_calls": 2048,
+    "wall_time_ms": 900000,
+    "agents": 64,
+    "max_active_agents": 4
+  },
+  "timeout_ms": 900000,
+  "initial_transactions": [
+    {
+      "id": "{{runId}}-a",
+      "objective": "Use the flow_sum tool on the values [2, 3] and submit the resulting number as the transaction result.",
+      "expected_output": "A result object carrying the computed number 5.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 5",
+        "The number came from a real flow_sum tool call in this session"
+      ]
+    },
+    {
+      "id": "{{runId}}-b",
+      "objective": "Use the flow_sum tool on the values [15, 40] and submit the resulting number as the transaction result.",
+      "expected_output": "A result object carrying the computed number 55.",
+      "acceptance_criteria": [
+        "The submitted result contains the number 55",
+        "The number came from a real flow_sum tool call in this session"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    "Both transactions reach ACCEPTED through an independent auditor decision",
+    "Every cluster model request is accounted by exactly one usage receipt"
+  ]
+}

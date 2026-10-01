@@ -12,3 +12,6 @@ coverage/
 runtime/
 .secrets/
 artifacts/private/
+.design/
+.artifacts/
+lib/

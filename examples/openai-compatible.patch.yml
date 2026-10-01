@@ -1,0 +1,39 @@
+# DSH OpenAI-compatible provider configuration for the Coding Plan endpoint.
+# Only the DSH llm-pi-ai provider owns model integration; dsh-flow is unchanged.
+# FLOW_MODEL_API_KEY is an explicit credential reference, never a token value.
+# This DeepSeek model thinks by default, so its DSH compatibility settings
+# allow the existing reasoningEffort: off option to disable reasoning on wire.
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-compatible:
+        displayName: OpenAI-compatible (Coding Plan)
+        api: openai-completions
+        baseURL: https://ark.cn-beijing.volces.com/api/coding/v3
+        apiKeyEnv: FLOW_MODEL_API_KEY
+        timeoutMs: 120000
+        streamIdleTimeoutMs: 60000
+        retryPolicy:
+          mode: normal
+          maxRetries: 0
+        compat:
+          thinkingFormat: deepseek
+          supportsStore: false
+          supportsDeveloperRole: false
+          supportsReasoningEffort: false
+          supportsStrictMode: false
+          supportsUsageInStreaming: true
+        models:
+          - id: deepseek-v4.1-flash
+            contextWindow: 131072
+            maxTokens: 4096
+            input: [text]
+            reasoningEfforts:
+              off:
+              high: high
+
+- id: agent-default-model
+  config:
+    provider: openai-compatible
+    model: deepseek-v4.1-flash
+    reasoningEffort: off
