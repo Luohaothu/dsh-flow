@@ -14,4 +14,7 @@ runtime/
 artifacts/private/
 .design/
 .artifacts/
-lib/
+# The built bundle at the repository root only. An unanchored `lib/` also
+# matched `acceptance/lib/`, which is source: the runner and every checker
+# import it, and it was silently never committed.
+/lib/

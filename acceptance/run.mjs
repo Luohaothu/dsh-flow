@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync, readdirSync, existsSync, rmSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DshHost, buildHostEnv, CASE_ENV_KEYS, createRunLayout, ensureProfile, WEB_PROFILE_BUNDLES, PROJECT_ROOT } from './lib/host.mjs';
@@ -163,8 +163,15 @@ function hashFile(path) {
 /** One digest over every file of a source tree, plus its file count. */
 function hashTree(root) {
   if (!existsSync(root)) return { digest: null, files: 0 };
-  const files = walk(root).map(entry => ({ path: entry.path, digest: hashFile(entry.path) }))
-    .sort((a, b) => a.path.localeCompare(b.path));
+  // Paths are made relative to the tree, so the fingerprint describes the
+  // sources and their layout rather than the directory this checkout happens to
+  // live in: the same commit verified from a second checkout must produce the
+  // same digest, and an absolute path would make every recorded hash
+  // unverifiable anywhere else.
+  const files = walk(root).map(entry => ({
+    path: relative(root, entry.path).split(sep).join('/'),
+    digest: hashFile(entry.path),
+  })).sort((a, b) => a.path.localeCompare(b.path));
   const digest = hashText(files.map(entry => `${entry.path}:${entry.digest}`).join('\n'));
   return { digest, files: files.length };
 }
