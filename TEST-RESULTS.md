@@ -19,6 +19,8 @@ on the tree exactly as committed; the reports carry
 | Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t4-*` |
 | Follow-up batch (strict correction gate) | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t5-*` |
 | Closing batch, committed tree `77fd584` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close5-*` |
+| `npm run test:mock`, batch 1 (plan's entry point) | native 5/5; 8/8 scenarios PASSED, 0 failed assertions; 16 reports, `build_drift: null` | `.artifacts/*-20261001T152611Z-*` |
+| `npm run test:mock`, batch 2 (plan's entry point) | native 5/5; 8/8 scenarios PASSED, 0 failed assertions; 16 reports, `build_drift: null` | `.artifacts/*-20261001T152913Z-*` |
 | Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
 | Tier stability | 6/6 at N=16 and 6/6 at N=64 across the round's batches, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`t5`/`close5` scale rows |
 
