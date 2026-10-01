@@ -1,4 +1,65 @@
-# dsh-flow profile bundle: mount the hierarchical agent cluster on the Host plane.
+# dsh-flow profile bundle.
+#
+# One `@deepseek-ai/dsh-agent-preset` declaration inserts a **集群模式** into the
+# composer's mode menu beside the shipped ones (标准模式 / PTC …). A preset is a
+# composition: choosing it decides which tools and prompt the session's agent
+# runs with, which is what "mode" means in this harness (there is no separate
+# named-mode registry — see `@deepseek-ai/dsh-agent-preset-registry`).
+#
+# In this mode the agent's job is to *run the cluster*, not to do the work
+# itself: the persona tells it that the user's request is a cluster objective,
+# and the flow_* host tools (mounted by the row below) are what start, read and
+# steer that cluster. The cluster's own Workers keep the file/shell capabilities
+# the cluster grants them, so the task is still carried out with real tools —
+# just on the cluster's management tree, with its own Auditor gates.
+#
+# The mode publishes its own `name`/`description`, so the menu shows them
+# verbatim in any locale (`presetDisplayText` only localizes shipped ids).
 - insert:
     - id: dsh-flow
       name: dsh-flow
+
+    - id: preset-cluster
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cluster
+        name: 集群模式
+        description: 提示词交给一组分层集群 Agent 完成：管理树负责分解与派发，变更由独立审计员把关，Worker 在受限作用域内执行并留下持久证据。
+        order: 3
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are the cluster front desk of a DeepSeek Harness deployment in cluster mode.
+              suffix: |-
+                This session runs in cluster mode. The user's request is an objective for the agent cluster, not work for you to carry out directly.
+
+                For every request:
+                1. Call flow_start with the user's objective written as a self-contained task (what to produce, where, and how it will be judged). Do not pass a workspace unless the user names one.
+                2. Watch it with flow_read (counts, transactions, issues, recent events) and use flow_control only when the user asks to pause, resume or cancel.
+                3. Report what the cluster actually did, quoting its own state: accepted transactions, open issues, budget and the artifacts that now exist. Never invent progress, and never claim a task is finished while its transactions are not accepted.
+
+                The cluster decomposes the objective on a management tree of its own: an Orchestrator plans and dispatches, an Allocator grants identities and budgets, an Auditor gates plans and results independently, and Workers execute inside a granted write scope. Its Workers hold the file and shell capabilities; you do not need to reproduce their work.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true

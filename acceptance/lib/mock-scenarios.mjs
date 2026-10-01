@@ -17,6 +17,22 @@ import { existsSync } from 'node:fs';
 
 import { ROLE_LINE, WORKER_HEADER, COMPACTION_MARKER, DIGEST_LINE_MARKER } from './mock-model.mjs';
 
+/**
+ * The first string value under `field`, at any depth of a decoded tool result.
+ * A verdict's payload nests differently per action (`request_replan` reports the
+ * issue under `result`, a rejection reports it beside the audit id), so the id is
+ * looked up by name rather than by a shape the fixture would have to guess.
+ */
+export function firstStringField(value, field, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 6) return null;
+  if (typeof value[field] === 'string') return value[field];
+  for (const child of Array.isArray(value) ? value : Object.values(value)) {
+    const found = firstStringField(child, field, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 const ROLE_TOOL_NAME = { orchestrator: 'flow_transaction', allocator: 'flow_allocation', auditor: 'flow_audit' };
 const WORKER_TOOL_NAME = 'flow_transaction';
 
@@ -613,6 +629,15 @@ function recursionHooks({ fixtureIds, workspace }) {
     // Per transaction: how many submissions existed when its issue was raised. A
     // correction is verified only against work that came after.
     raisedFor: new Map(),
+    // The issue a verdict raised, per transaction. Its id only ever comes back
+    // in that verdict's own result, so it is remembered from there and verified
+    // explicitly before the replacement is approved.
+    issueIdByTx: new Map(),
+    verificationSent: new Set(),
+    // Why each open issue was or was not verified, in order: the decision this
+    // fixture makes must be visible in the report, not inferred from a missing
+    // receipt afterwards.
+    verificationLog: [],
   };
   const recordSubmission = (txId, entry) => {
     const list = state.submissions.get(txId) ?? [];
@@ -783,6 +808,18 @@ function recursionHooks({ fixtureIds, workspace }) {
           return null;
         }
       })();
+      const auditAnswer = (() => {
+        if (request.classified.lastToolName !== 'flow_audit') return null;
+        try { return JSON.parse(String(request.classified.lastToolResult ?? '')); } catch { return null; }
+      })();
+      // The issue an earlier verdict raised: its id comes back inside that
+      // verdict's own result, whose nesting differs per action (`request_replan`
+      // nests it under `result`), so the id is found wherever it sits.
+      const raisedIssue = auditAnswer ? firstStringField(auditAnswer, 'issue_id') : null;
+      const raisedTx = auditAnswer
+        ? firstStringField(auditAnswer, 'transaction_id') ?? request.classified.transactionId ?? null
+        : null;
+      if (raisedIssue && raisedTx) state.issueIdByTx.set(raisedTx, raisedIssue);
       // Any corrective action this Auditor takes starts the evidence window for
       // that transaction: from here, only work submitted later can answer it.
       if (item.transaction_id && ['request_correction', 'request_replan', 'request_revalidation'].includes(item.action)) {
@@ -805,6 +842,37 @@ function recursionHooks({ fixtureIds, workspace }) {
                 granted: latest?.granted ?? null,
                 deliverable: 'deep/nested/result.txt',
                 submission: latest?.at ?? null,
+              },
+            },
+          });
+        }
+        // An issue this Auditor raised is answered by the Auditor. Approving the
+        // replacement first would let acceptance close the issue on the way past
+        // (`reason: accepted-result-after-issue`), which is exactly the route the
+        // case must not certify: the correction has to be verified, by name,
+        // against the replacement work.
+        const openIssue = state.issueIdByTx.get(item.transaction_id) ?? null;
+        const required = state.raisedFor.get(item.transaction_id) ?? null;
+        const answered = required !== null
+          && submissions.length > required
+          && submissions.slice(required).some(entry => entry.completed === true);
+        state.verificationLog.push({
+          at: submissions.length,
+          transaction_id: item.transaction_id,
+          openIssue,
+          answered,
+          already_sent: Boolean(openIssue) && state.verificationSent.has(openIssue),
+        });
+        if (openIssue && answered && !state.verificationSent.has(openIssue)) {
+          state.verificationSent.add(openIssue);
+          return call('flow_audit', {
+            action: 'verify_correction',
+            params: {
+              issue_id: openIssue,
+              decision: 'verified',
+              evidence: {
+                checked: 'a replacement Worker submitted a complete result for this transaction after the issue was raised',
+                submissions_after_issue: submissions.length - required,
               },
             },
           });
@@ -858,6 +926,8 @@ function recursionHooks({ fixtureIds, workspace }) {
     reportEvidence: () => ({
       submissions: Object.fromEntries([...state.submissions].map(([tx, list]) => [String(tx).slice(-14), list])),
       raised_for: Object.fromEntries([...state.raisedFor].map(([tx, count]) => [String(tx).slice(-14), count])),
+      issues: [...state.issueIdByTx].map(([tx, issue]) => [String(tx).slice(-14), issue.slice(0, 8)]),
+      verification_log: state.verificationLog.map(entry => ({ ...entry, transaction_id: String(entry.transaction_id ?? '').slice(-14) })),
       owes_revision: state.needsRevision ? String(state.needsRevision).slice(-14) : null,
     }),
   };

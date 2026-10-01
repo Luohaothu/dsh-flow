@@ -10,6 +10,38 @@ import { join } from 'node:path';
 import { canonicalScopeEntry } from '../../adapter/src/scope.js';
 import { openLedger, usageSummary, pendingWork, workerActivation, concurrencyPeaks, writeScopeAnalysis } from '../lib/ledger.mjs';
 
+/**
+ * The file a tier transaction was created for, from the runner's frozen spec.
+ *
+ * Never from `transactions.inputs`: `adjust_transaction` may legally replace
+ * those during a run, so an oracle that read them could have its expectation
+ * moved by the very run it is grading. A transaction the spec does not name has
+ * no grant at all, and must not silently fall back to the live row.
+ */
+export function frozenGrantedFile(specEntries, transactionId) {
+  const entry = (specEntries ?? []).find(candidate => candidate?.id === transactionId) ?? null;
+  const inputs = entry?.inputs ?? {};
+  return inputs.file ?? inputs.path ?? null;
+}
+
+/**
+ * The corpus path a settled `read` receipt proved, or null.
+ *
+ * `dispatch_status: 'SETTLED'` means the *call* finished, not that the tool
+ * succeeded: an errored read also settles (measured: a malformed-argument call
+ * settles with `isError: true` and no content). A path is only evidence when the
+ * receipt carries a successful result and no transport error.
+ */
+export function successfulReadPath(receipt) {
+  if (!receipt || receipt.error) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(String(receipt.result_body ?? '')); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (parsed.isError !== false) return null;
+  const claimed = /<path>([^<]+)<\/path>/u.exec(String(parsed.text ?? ''))?.[1] ?? null;
+  return claimed ?? null;
+}
+
 const TERMINAL = new Set(['ACCEPTED', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']);
 
 export function scaleValidation(tier, planned, terminal, activated, requiredWorkers, failedChecks) {
@@ -200,15 +232,28 @@ export async function run({ caseDef, workspace, report, layout, events }) {
   const tierRows = tierIds.length
     ? ledger.all(`SELECT id,status,result,inputs FROM transactions WHERE cluster_id=? AND id IN (${placeholders})`, clusterId, ...tierIds)
     : [];
-  // The file a tier transaction was created for comes from the frozen spec the
-  // plugin stored, never from the result. Letting the submission choose its own
-  // expected file made the oracle circular: a Worker that read one file and
-  // answered for a different one was graded against the file it named.
-  const grantedFileByTx = new Map(tierRows.map(row => {
+  // The file a tier transaction was created for comes from the **frozen spec**
+  // the runner generated (`report.spec.initial_transactions`), never from the
+  // ledger's `transactions.inputs`: `adjust_transaction` may legally replace
+  // `inputs` mid-run, so grading against them let a rewritten assignment move
+  // the question instead of failing the answer.
+  const specEntries = report.spec?.initial_transactions ?? [];
+  const liveInputsByTx = new Map(tierRows.map(row => {
     let inputs = {};
     try { inputs = JSON.parse(row.inputs ?? '{}'); } catch { inputs = {}; }
     return [row.id, inputs.file ?? inputs.path ?? null];
   }));
+  const grantedFileByTx = new Map(tierIds.map(id => [id, frozenGrantedFile(specEntries, id)]));
+  const unspecified = tierIds.filter(id => !grantedFileByTx.get(id));
+  const rewritten = tierIds.filter(id => {
+    const frozen = grantedFileByTx.get(id);
+    return frozen && liveInputsByTx.get(id) !== null && liveInputsByTx.get(id) !== frozen;
+  });
+  push('transactions-keep-their-frozen-assignment',
+    mockScoped ? (tier > 0 && unspecified.length === 0 && rewritten.length === 0) : null,
+    mockScoped
+      ? `${tierIds.length} tier transaction(s): ${unspecified.length} absent from the frozen spec, ${rewritten.length} whose live inputs no longer name the granted file${rewritten.length ? `: ${JSON.stringify(rewritten.slice(0, 3))}` : ''}`
+      : 'not asserted outside a mock run');
   const exact = tierRows.map(row => {
     let parsed = null;
     try { parsed = JSON.parse(row.result ?? 'null'); } catch { parsed = null; }
@@ -251,22 +296,31 @@ export async function run({ caseDef, workspace, report, layout, events }) {
     .map(event => event.data.agent_id));
   // A read of *any* file is not the tier's claim: each transaction's Worker must
   // have read the file that transaction was granted. The evidence is the settled
-  // `read` receipt's own result — the path the native read tool reported — not a
-  // `tools_used` entry, which only says *some* file was opened.
+  // `read` receipt's own successful result — the path the native read tool
+  // reported, from a call that did not error.
   const readPathsByAgent = new Map();
+  const failedReads = [];
   for (const receipt of ledger.all(
-    "SELECT agent_id, result_body FROM tool_call_receipts WHERE cluster_id=? AND tool='read' AND dispatch_status='SETTLED'", clusterId,
+    "SELECT agent_id, result_body, error, dispatch_status FROM tool_call_receipts WHERE cluster_id=? AND tool='read'", clusterId,
   )) {
-    let text = String(receipt.result_body ?? '');
-    try { text = JSON.parse(text)?.text ?? text; } catch { /* a raw body is already the text */ }
-    const claimed = /<path>([^<]+)<\/path>/u.exec(text)?.[1] ?? null;
-    if (!claimed) continue;
+    if (receipt.dispatch_status !== 'SETTLED') continue;
+    const claimed = successfulReadPath(receipt);
+    if (claimed === null) {
+      failedReads.push({ agent: String(receipt.agent_id ?? '').slice(0, 8), error: receipt.error ?? null, body: String(receipt.result_body ?? '').slice(0, 80) });
+      continue;
+    }
     const canonical = canonicalScopeEntry(workspace, claimed);
     if (!canonical) continue;
     const list = readPathsByAgent.get(receipt.agent_id) ?? new Set();
     list.add(canonical);
     readPathsByAgent.set(receipt.agent_id, list);
   }
+  push('reads-succeeded',
+    mockScoped ? failedReads.length === 0 : null,
+    mockScoped
+      ? `${failedReads.length} settled read receipt(s) carried no successful result: ${JSON.stringify(failedReads.slice(0, 2))}`
+      : 'not asserted outside a mock run');
+
   const distinctAgents = new Set(tierAgents.filter(Boolean));
   const readTheGrantedFile = tierIds.filter((id, index) => {
     const agent = tierAgents[index];

@@ -792,3 +792,40 @@ test('a closed correction needs a completed replacement, not a blocked or unknow
   assert.deepEqual(completedReplacementSubmissions(wrong, issue), [],
     'another transaction, the issue revision itself, and an older revision are not replacements');
 });
+
+test('a correction closed by acceptance alone is not an Auditor verification', async () => {
+  const { auditorVerifiedIssue } = await import('../checks/recursion.mjs');
+  const issue = { id: 'i1', transaction_id: 'tx1', target_revision: 2 };
+  // The ledger stores one tool result as `{isError, text}`, and `text` is the
+  // tool's own JSON — the shape every receipt below uses, taken from a real run.
+  const receipt = (inner, extra = {}) => ({
+    result_body: JSON.stringify({ isError: false, text: JSON.stringify(inner) }),
+    error: null,
+    dispatch_status: 'SETTLED',
+    ...extra,
+  });
+  const verified = { ok: true, action: 'verify_correction', deduped: false, revision: 1, result: { revision: 1, issue_id: 'i1', status: 'CORRECTED' } };
+
+  // The route the plan forbids: acceptance closed the issue on its way past.
+  assert.deepEqual(
+    auditorVerifiedIssue({ issue, receipts: [], closedEvent: { issue_id: 'i1', reason: 'accepted-result-after-issue' } }),
+    { ok: false, closings: 0, reason: 'accepted-result-after-issue' },
+  );
+  // The Auditor's own verdict is what counts.
+  assert.deepEqual(
+    auditorVerifiedIssue({ issue, receipts: [receipt(verified)], closedEvent: { issue_id: 'i1' } }),
+    { ok: true, closings: 1, reason: null },
+  );
+  // A deduped answer is the plugin saying "already closed", not a verification.
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ...verified, deduped: true })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  // Another action's answer is not a correction verdict, even if it names the issue.
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'inspect_validation', result: { issue_id: 'i1', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  // A failed, unsettled, or unreadable call is not a verdict.
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt(verified, { error: 'X' })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt(verified, { dispatch_status: 'DISPATCHED' })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [{ result_body: 'not json', error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [{ result_body: JSON.stringify({ isError: true, text: JSON.stringify(verified) }), error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
+  // A verdict about another issue, or one that only charged a correction round.
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ...verified, result: { issue_id: 'other', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'verify_correction', result: { issue_id: 'i1', status: 'REJECTED', corrections: 1 } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+});

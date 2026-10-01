@@ -158,10 +158,16 @@ function resolveSettings(config) {
 function registerHostTools(ctx, runtime) {
   ctx.tools.register(defineTool({
     name: 'flow_start',
-    description: 'Start a hierarchical agent cluster on one objective. Returns the cluster id and initial state.',
+    description: [
+      'Start a hierarchical agent cluster on one objective and return its id and initial state.',
+      'The cluster decomposes the objective on a management tree (Orchestrator plans, Allocator grants',
+      'identities and budgets, Auditor gates plans and results independently, Workers do the work).',
+      'Use this when the user asks for a task to be carried out by the cluster; then report progress',
+      'with flow_read and steer it with flow_control.',
+    ].join(' '),
     parameters: {
-      objective: { type: 'string', required: true, description: 'The objective the cluster must achieve.' },
-      workspace: { type: 'string', required: true, description: 'Absolute path of the case workspace the cluster may write to.' },
+      objective: { type: 'string', required: true, description: 'The objective the cluster must achieve, in the user\'s own terms.' },
+      workspace: { type: 'string', description: 'Absolute path of the workspace the cluster may write to. Defaults to the deployment workspace.' },
       capabilities: { type: 'array', items: { type: 'string' }, description: 'Worker capabilities: fs_read, fs_write, shell, web_fetch, browser.' },
       limits: { type: 'json', description: 'Optional limit overrides (max_children, max_depth, max_agents, max_active_agents, max_llm_concurrency, max_attempts, max_corrections).' },
       budget: { type: 'json', description: 'Optional root budget: tokens, model_requests, tool_calls, wall_time_ms, agents, max_active_agents.' },
@@ -171,12 +177,18 @@ function registerHostTools(ctx, runtime) {
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     async execute(args, exec) {
       exec.signal.throwIfAborted();
+      // A session names the task, not the deployment's filesystem or the
+      // envelope shape. The interactive profile is merged *under* whatever the
+      // caller sent, so an omitted field still has a workable value: a model
+      // that passes `budget: {}` (measured: it did, then cancelled its own
+      // cluster as "blocked with zero token budget") does not get an unfunded
+      // cluster, and a caller that names `tokens` keeps its own number.
       const snapshot = runtime.start({
         objective: args.objective,
-        workspace: args.workspace,
-        capabilities: args.capabilities,
-        limits: args.limits,
-        budget: args.budget,
+        workspace: args.workspace ?? process.env.FLOW_WORKSPACE ?? process.cwd(),
+        capabilities: args.capabilities ?? ['fs_read', 'fs_write'],
+        limits: { ...INTERACTIVE_LIMITS, ...(args.limits ?? {}) },
+        budget: { ...INTERACTIVE_BUDGET, ...(args.budget ?? {}) },
         initial_transactions: args.initial_transactions,
         acceptance_criteria: args.acceptance_criteria,
       });
@@ -376,13 +388,59 @@ function actorFor(runtime, exec, args, { requireLease = true } = {}) {
 
 // ------------------------------------------------------------- host surface
 
+/**
+ * The envelope a cluster started from a page gets when the page names none.
+ *
+ * Sized for an interactive task rather than a tier: enough tokens and requests
+ * for a management tree to decompose, run its Workers and close out, with the
+ * Worker request allowance the scheduler needs (the default `0` would refuse a
+ * Worker's first request and a `tool_calls`-only task could never submit).
+ * Every value is overridable per start; the plan's own runs pass their own.
+ */
+export const INTERACTIVE_BUDGET = {
+  tokens: 2_097_152,
+  model_requests: 256,
+  tool_calls: 2048,
+  wall_time_ms: 900_000,
+  agents: 64,
+  max_active_agents: 4,
+};
+
+export const INTERACTIVE_LIMITS = {
+  max_children: 8,
+  max_depth: 4,
+  max_agents: 64,
+  max_active_agents: 4,
+  max_llm_concurrency: 2,
+  max_attempts: 2,
+  max_corrections: 2,
+  max_role_turns: 12,
+  worker_model_requests: 8,
+  worker_max_tokens: 4096,
+};
+
 export async function handleHostOp(runtime, message) {
   const { op, id, payload } = message ?? {};
   switch (op) {
     case 'ping':
       return { ok: true, pid: process.pid, data_dir: runtime.config.dataDir };
-    case 'start':
-      return runtime.start(payload ?? {});
+    case 'start': {
+      // A browser session knows the task, not the server's filesystem or the
+      // run's envelope. The deployment names its workspace (`FLOW_WORKSPACE`),
+      // and a page that omits the envelope gets the interactive profile below
+      // rather than an empty one: a cluster started with `budget: {}` and
+      // `worker_model_requests: 0` blocks on its very first request with
+      // "cannot fund … tokens with 0 remaining", which is not a usable answer to
+      // a prompt. Callers that pass their own values are untouched.
+      const startPayload = { ...(message?.payload ?? {}) };
+      if (startPayload.workspace === undefined || startPayload.workspace === null || startPayload.workspace === '') {
+        startPayload.workspace = process.env.FLOW_WORKSPACE ?? process.cwd();
+      }
+      if (!startPayload.capabilities) startPayload.capabilities = ['fs_read', 'fs_write'];
+      if (!startPayload.budget) startPayload.budget = INTERACTIVE_BUDGET;
+      if (!startPayload.limits) startPayload.limits = INTERACTIVE_LIMITS;
+      return runtime.start(startPayload);
+    }
     case 'list':
       return runtime.list(payload ?? {});
     case 'read':

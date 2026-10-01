@@ -87,6 +87,74 @@ file use the latter alongside the settled write receipt.
 
 ## Running it
 
+### Cluster mode (集群模式)
+
+The bundle inserts a **集群模式** entry into the composer's mode menu, beside the
+shipped ones (标准模式 / 最小模式 / …). A preset is a *composition* — choosing it
+decides which tools and prompt the session's agent runs with — which is what
+"mode" means in this harness: there is no separate named-mode registry.
+
+```yaml
+# cordis.patch.yml, this plugin's bundle patch
+- insert:
+    - id: preset-cluster
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cluster
+        name: 集群模式
+        order: 3
+        plugins: [persona, compaction, tool-ask-user, tool-todo]
+```
+
+In that mode the agent's job is to **run the cluster**, not to do the work itself.
+Its persona says the user's request is a cluster objective; the `flow_*` host tools
+start, read and steer that cluster (`flow_start`, `flow_read`, `flow_control`), and
+the cluster's own Workers keep the file/shell capabilities the cluster grants them —
+so the task is still executed with real tools, on the cluster's management tree,
+under its own Auditor gates.
+
+`flow_start` fills in what a session cannot know: workspace from `FLOW_WORKSPACE`,
+capabilities `fs_read,fs_write`, and — for any envelope field the caller omits — the
+interactive budget/limits (`INTERACTIVE_BUDGET`/`INTERACTIVE_LIMITS` in
+`adapter/src/index.js`). A cluster started with `budget: {}` and the default
+`worker_model_requests: 0` blocks on its first request; these defaults keep a
+prompt-shaped start usable while an explicit value always wins.
+
+### Installing it into a DSH instance
+
+Install the plugin as a profile **bundle** (its own `cordis.patch.yml` then supplies
+both the plugin row and the 集群模式 preset):
+
+```bash
+node scripts/build.mjs
+mkdir -p ~/.dsh/profiles/flow/node_modules
+ln -sfn "$PWD" ~/.dsh/profiles/flow/node_modules/dsh-flow
+cat > ~/.dsh/profiles/flow/package.json <<'JSON'
+{ "name": "dsh-profile-flow", "private": true,
+  "dependencies": { "dsh-flow": "link:." },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-flow"] } } }
+JSON
+
+DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli \
+FLOW_DATA_DIR=~/.dsh-flow-instance/data FLOW_WORKSPACE=~/.dsh-flow-instance/workspace \
+FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 \
+node acceptance/lib/dsh-launch.mjs --profile flow --patch examples/instance.patch.yml \
+  --host 127.0.0.1 --port 8791 --no-open
+# → prints the authenticated URL (dsh web: http://127.0.0.1:8791/?token=…)
+```
+
+`examples/instance.patch.yml` carries only the deployment policy (model route,
+sandbox, compaction); it must not insert `dsh-flow` again. `examples/cluster.patch.yml`
+is the *acceptance* overlay — its profile does not depend on the package, so there it
+inserts the row explicitly.
+
+The harness webserver refuses `--host 0.0.0.0` ("would expose remote code execution
+to the network") and its schema accepts loopback only, so reaching the instance from
+another machine is an explicit operator decision: bind loopback, add
+`--trusted-host <the address you reach it as>`, and put a forwarder of your own in
+front. The token in the URL is the whole authorization — anyone holding it drives the
+agent.
+
 ```bash
 # one-time: link this project to a DSH installation (dev + tests)
 DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli node scripts/link-dsh.mjs

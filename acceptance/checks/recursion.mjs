@@ -59,6 +59,41 @@ export function answeredByReplacementWork({ events, issue, closedSeq }) {
   return replacements.some(event => Number(event.seq) < Number(closedSeq));
 }
 
+/**
+ * Did the *Auditor* close this issue by verifying the correction?
+ *
+ * The approved plan is explicit: "显式调用 verify_correction 检验修复后状态，不能
+ * 只依赖 acceptTransaction 自动把 open issue 标为 CORRECTED". Acceptance closes
+ * every open issue of a transaction it accepts, and records why
+ * (`reason: accepted-result-after-issue`) — that route proves the result was
+ * accepted, not that the correction was verified. A generic `issue-corrected`
+ * event is therefore not enough: the verdict itself must exist as a successful
+ * `flow_audit` call naming this issue and closing it.
+ */
+export function auditorVerifiedIssue({ issue, receipts = [], closedEvent = null }) {
+  const closing = (receipts ?? []).filter(receipt => {
+    if (receipt?.error || receipt?.dispatch_status !== 'SETTLED') return false;
+    // The ledger stores a tool result as `{isError, text}`, where `text` is the
+    // tool's own JSON answer; the verdict lives one level below that.
+    let body = null;
+    try { body = JSON.parse(String(receipt?.result_body ?? 'null')); } catch { return false; }
+    if (!body || body.isError === true) return false;
+    let payload = body;
+    if (typeof body.text === 'string') {
+      try { payload = JSON.parse(body.text); } catch { return false; }
+    }
+    if (!payload || payload.action !== 'verify_correction' || payload.deduped === true) return false;
+    const verdict = payload.result ?? payload;
+    return verdict?.issue_id === issue.id && String(verdict?.status ?? '').toUpperCase() === 'CORRECTED';
+  });
+  const reason = closedEvent?.reason ?? null;
+  return {
+    ok: closing.length > 0 && reason !== 'accepted-result-after-issue',
+    closings: closing.length,
+    reason,
+  };
+}
+
 const TERMINAL = new Set(['ACCEPTED', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']);
 const LIMIT_CODES = ['BUDGET_EXHAUSTED', 'LIMIT_REACHED', 'DEADLINE_PASSED'];
 const MECHANISM_CHECKS = ['no-duplicate-accounting', 'cluster-database-present', 'cluster-id-resolved'];
@@ -137,6 +172,17 @@ export async function run({ workspace, report, layout, events }) {
   // closed correction into an all-issues assertion absent from the fixture.
   push('issue-reached-a-verdict', corrected.length >= 1,
     `${corrected.length}/${answered.length} durably answered issues CORRECTED; other statuses: ${JSON.stringify(answered.filter(issue => issue.status !== 'CORRECTED').map(issue => issue.status))}`);
+
+  const auditReceipts = ledger.all(
+    "SELECT result_body, error, dispatch_status, created FROM tool_call_receipts WHERE cluster_id=? AND tool='flow_audit'", clusterId,
+  );
+  const verifiedByAuditor = corrected.map(issue => {
+    const closedEvent = events.find(event => event.type === 'issue-corrected' && event.data.issue_id === issue.id) ?? null;
+    return { issue: issue.id, ...auditorVerifiedIssue({ issue, receipts: auditReceipts, closedEvent: closedEvent?.data ?? null }) };
+  });
+  push('correction-verified-by-the-auditor',
+    corrected.length ? verifiedByAuditor.every(entry => entry.ok) : null,
+    `every closed correction needs a successful flow_audit verdict naming it (an acceptance-driven closure, reason "accepted-result-after-issue", does not count): ${JSON.stringify(verifiedByAuditor)}`);
 
   const audits = ledger.all('SELECT kind,decision,COUNT(*) AS c FROM audits WHERE cluster_id=? GROUP BY kind,decision', clusterId);
   const rejected = audits.filter(row => row.decision === 'REJECTED').reduce((sum, row) => sum + Number(row.c), 0);
