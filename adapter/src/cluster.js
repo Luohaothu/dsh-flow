@@ -4058,6 +4058,19 @@ export class ClusterRuntime {
       // this deployment a request carries 10-70k input tokens, so the token
       // budget, not the request count, is the binding constraint.
       const workerGrant = { tokens: 65_536, model_requests: 8, tool_calls: 32 };
+      // A declared per-Worker request allowance is a ceiling on what this
+      // identity may send as *task* requests (see `countWorkerRequests`), so
+      // granting many more parks capacity the next Worker needs: measured at 64
+      // files, Workers were handed 8 requests each out of a node that holds 234,
+      // and the last 50 were born with an allocation of zero requests — they
+      // could not start. The grant is the allowance plus one working
+      // reservation: a request that is reserved and then released before
+      // dispatch still has to fit, and a compaction the summary pool cannot pay
+      // falls back here. The ordinary ceiling stays enforced per request.
+      const perWorkerAllowance = Number(this.store.getCluster(clusterId)?.limits?.worker_model_requests) || 0;
+      if (perWorkerAllowance > 0) {
+        workerGrant.model_requests = Math.min(workerGrant.model_requests, perWorkerAllowance + 1);
+      }
       for (const key of ['tokens', 'model_requests', 'tool_calls']) {
         limits[key] = Math.max(1, Math.min(workerGrant[key], dimensionAvailable(fresh, key)));
       }
@@ -4702,7 +4715,27 @@ export class ClusterRuntime {
             AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.cluster_id=t.cluster_id AND c.parent_transaction_id=t.id)
           ORDER BY t.priority DESC, t.created, t.id LIMIT 32`, id, node.id,
       ).filter(row => row.id !== owesChild);
-      if (unallocated.length) items.push({ action: 'allocate_agent', transactions: unallocated.map(row => row.id), count: unallocated.length });
+      // A hint the node cannot execute is not work. `allocate_agent` fails at the
+      // child ceiling, so offering it to a full node booked three no-progress
+      // Allocator turns and then blocked the node for stagnation — while the
+      // Workers that would have freed a slot were still waiting on the Auditor.
+      // The ceiling is the same one `createWorkerForTransaction` enforces.
+      const occupiedChildren = this.store.childrenOf(node.id).filter(child => child.status !== 'RELEASED').length;
+      const childCeiling = node.max_children ?? cluster.limits.max_children;
+      const freeSlots = Math.max(0, childCeiling - occupiedChildren);
+      if (unallocated.length && freeSlots > 0) {
+        items.push({
+          action: 'allocate_agent',
+          transactions: unallocated.slice(0, freeSlots).map(row => row.id),
+          count: Math.min(unallocated.length, freeSlots),
+          free_slots: freeSlots,
+          // What the window can fill *now* is not what the node still owes: a
+          // caller that can see only the executable slice cannot tell a node
+          // that is nearly done from one that is about to run out of the
+          // capacity its remaining work needs.
+          unallocated_total: unallocated.length,
+        });
+      }
       const releasable = this.store.allocationsForNode(node.id, { status: 'ACTIVE' }).filter(allocation => {
         const tx = allocation.transaction_id ? this.store.getTransaction(allocation.transaction_id) : null;
         return !tx || ['ACCEPTED', 'CANCELLED', 'SUPERSEDED', 'FAILED'].includes(tx.status)

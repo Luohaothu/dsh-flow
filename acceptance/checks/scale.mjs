@@ -96,7 +96,18 @@ export async function run({ caseDef, workspace, report, layout, events }) {
       : `${writeScope.escapes.length} escaped write(s) among ${writeScope.checked} checked settled write call(s); ${prevented} out-of-scope attempt(s) refused${writeScope.unmeasured ? `; ${writeScope.unmeasured}` : ''}`);
 
   const usage = usageSummary(ledger, clusterId);
-  push('usage-accounted', usage.requests > 0 && usage.unknown_requests === 0, JSON.stringify(usage));
+  // "Accounted" means every request reached a terminal receipt state with its
+  // outcome named — not that a provider always reported usage. A request that
+  // was aborted mid-flight genuinely has an unknown cost, and this ledger
+  // records it as UNKNOWN with its token hold retained and its reason attached;
+  // demanding `unknown_requests === 0` would force that request to be booked at
+  // zero instead.
+  const receiptStates = ledger.all('SELECT status, COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? GROUP BY status', clusterId);
+  const reservedAtRest = Number(receiptStates.find(row => row.status === 'RESERVED')?.c ?? 0);
+  const unexplained = Number(ledger.get("SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND status='UNKNOWN' AND (note IS NULL OR note='')", clusterId).c);
+  push('usage-accounted',
+    usage.requests > 0 && reservedAtRest === 0 && unexplained === 0,
+    `${JSON.stringify(usage)}; receipts ${JSON.stringify(receiptStates.map(row => `${row.status}:${row.c}`))}; ${unexplained} unknown without a reason`);
 
   const roles = ledger.all("SELECT role, COUNT(*) AS c, SUM(CASE WHEN turns>0 THEN 1 ELSE 0 END) AS activated FROM agents WHERE cluster_id=? GROUP BY role", clusterId);
   const management = roles.filter(row => row.role !== 'worker');

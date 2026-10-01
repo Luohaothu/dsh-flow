@@ -12,44 +12,39 @@ reports carry `validation_mode: "mock-api"` and `build_drift: null`.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Unit + classification + evidence-chain suites | **293 tests, 293 pass** | `npm test` |
+| Unit + classification + evidence-chain suites | **297 tests, 297 pass** | `npm test` |
 | Build | wrote `lib/index.js`, `lib/client.js` | `npm run build` |
-| Deterministic suite, batch A (main working tree) | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final5-*` |
-| Deterministic suite, batch B (a second, clean checkout of the same commit) | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/clean2-*` |
-| Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs`, run from both checkouts |
-| Closing confirmation on the committed tree | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/final6-*` |
+| Deterministic suite, batch A | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/t1-*` |
+| Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/t2-*` |
+| Closing batch on the committed tree | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/close1-*` |
+| Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
+| Tier stability (repeat runs) | 3/3 at N=16 and 3/3 at N=64, `VERIFIED` each time | `.artifacts/r1-*`, `r2-*`, `r3-*` |
 
-Frozen fingerprints (identical in every report of batches A and B, taken from
-two different directories):
+Frozen fingerprints (identical in every report of batches A and B):
 
-* `plugin_source` `sha256:40d648c55acda311b5cc6f244b3330096d640314ce4274c44d11fb818642a856` (9 files)
+* `plugin_source` `sha256:a751c2d0463dc9da9de8c1d76812d6c30ebef432201a4c66921a8e0c85823cb9` (9 files)
 * `lib_index` `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd`
-* `acceptance_source` `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c` (40 files)
+* `acceptance_source` (at batches A and B) `sha256:9ef9ff13…` (41 files)
 
-`hashTree` now digests paths **relative to the tree root**, so the same commit
-produces the same fingerprint in any checkout — previously it digested absolute
-paths, which made every recorded hash unverifiable outside the machine that
-produced it. Batch B ran from `/tmp/dsh-flow-clean`, a `git worktree` of the
-same commit, with only `npm run build` and a linked `node_modules`; its
-fingerprints are byte-identical to batch A's.
+`hashTree` digests paths **relative to the tree root**, so the same commit
+produces the same fingerprint in any checkout. `acceptance/RESULTS.md` lives
+inside the fingerprinted tree and was edited after batches A and B, so that
+directory's digest moved; the closing batch ran on the tree exactly as
+committed and records
 
-`acceptance/RESULTS.md` was edited after batches A and B, and it lives inside
-the fingerprinted `acceptance/` tree, so that directory's digest moved. The
-closing batch (`final7`) ran on the tree exactly as committed and records
-`acceptance_source`
-`sha256:77298cde50727a57f9032da44be3878325cd7118ec4aee2ac0e976ef12b58a91`
-(41 files, `plugin_source` `sha256:40d648c5…`) — recomputing that directory
-today returns exactly this value, because this file is *outside* `acceptance/`
-and cannot move it.
+* `acceptance_source` `sha256:760d4592f86db2c1920d2d8a23e5f5d329c841c990961c449757fe9ed547ddcc` (41 files)
+* `plugin_source` `sha256:a751c2d0463dc9da9de8c1d76812d6c30ebef432201a4c66921a8e0c85823cb9` (9 files)
 
-The tree was also repaired before these runs: `.gitignore` had an unanchored
+Recomputing `acceptance/` today returns exactly the `760d4592…` value, because
+this file is *outside* `acceptance/` and cannot move it.
+
+The tree was also repaired during this work: `.gitignore` had an unanchored
 `lib/`, which matched `acceptance/lib/` at any depth, so the six modules the
 runner and every checker import (`mock-model.mjs`, `mock-scenarios.mjs`,
 `host.mjs`, `ledger.mjs`, `session-scan.mjs`, `dsh-launch.mjs`) were missing
 from the pushed commits while `acceptance/run.mjs` imported them. The rule is
 now anchored to the repository-root bundle (`/lib/`) and the modules are
-tracked; batches A, B and the closing batch all ran from checkouts that
-contain them.
+tracked; every batch above ran from checkouts that contain them.
 
 Per-scenario evidence (batches A and B, identical semantics):
 
@@ -88,6 +83,9 @@ Source-level fixes with their failing-then-passing regressions:
 |---|---|
 | Node/transaction ownership derived from the tree; a reparent no longer rewrites descendant transaction owners; existing databases are normalised on open | `adapter/test/actions-correctness.test.js::reparent preserves local transaction ownership for reassignment`; `adapter/test/cluster.test.js::node ownership is derived from the tree and reported by the public query`; `::an existing database normalises node and transaction ownership on open, idempotently` |
 | `set_dependency` now gates the Worker frontier (`readyForWorker`), so a dependent cannot run before its dependency is accepted | `adapter/test/cluster.test.js::a dependent transaction is not offered to a Worker before its dependency is accepted` |
+| Request accounting defers settlement to the terminal `finish` chunk: an error/aborted stream whose usage object is the harness's zeroed one is settled as UNKNOWN with its token hold retained, while a failure that *did* report usage keeps those numbers | `adapter/test/cluster.test.js::a failed provider request keeps its token hold as UNKNOWN instead of settling at zero`; `::a failed provider request that did report usage settles with the numbers it reported` |
+| The allocation hint respects the node's child ceiling and publishes `unallocated_total`, so a full node is no longer told to allocate work it cannot host (three no-progress turns used to block the node) | `adapter/test/cluster.test.js::a full node is not offered an allocation it cannot perform` |
+| A Worker's request grant is bounded by the run's declared per-Worker allowance, so later Workers are not born with an allocation of zero requests | `adapter/test/cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance` |
 | Acceptance driver: the undefined `qwen` argument and the unused parameter were removed from `restartMidFlight` | proven by the native recovery scenario, which really kills and restarts the host |
 
 ## Environment

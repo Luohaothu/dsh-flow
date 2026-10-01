@@ -67,6 +67,8 @@ function ledgerOf(layout, clusterId) {
     transactions: () => ledger.all('SELECT id,status,result FROM transactions WHERE cluster_id=?', clusterId),
     allocations: () => ledger.all('SELECT id,status,transaction_id FROM allocations WHERE cluster_id=?', clusterId),
     usage: () => ledger.all('SELECT request_id,status,total_tokens FROM usage_receipts WHERE cluster_id=?', clusterId),
+    receipts: () => ledger.all('SELECT request_id,agent_id,role,kind,status,reservation_tokens,total_tokens,budget_scope_id,note FROM usage_receipts WHERE cluster_id=? ORDER BY created', clusterId),
+    budgets: () => ledger.all('SELECT id,scope_kind,scope_id,tokens_limit,tokens_spent,tokens_reserved FROM budgets WHERE cluster_id=?', clusterId),
     toolCalls: () => ledger.all('SELECT tool,dispatch_status,error FROM tool_call_receipts WHERE cluster_id=? ORDER BY rowid', clusterId),
     close: () => ledger.close(),
   };
@@ -330,18 +332,45 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
     try {
       const transactions = ledger.transactions();
       const events = ledger.events();
-      const usage = ledger.usage();
+      const receipts = ledger.receipts();
+      const budgets = ledger.budgets();
       assert.equal(transactions.filter(row => row.status === 'SUBMITTED' || row.status === 'ACCEPTED').length, 0,
         `${id}: a failed provider request must not produce a submitted result`);
       assert.equal(events.filter(event => event.type === 'result-submitted').length, 0,
         `${id}: no result may be published from a turn whose request failed`);
-      // A request that really reached the provider is not "not sent": its
-      // receipt exists and is never left RESERVED at rest.
-      assert.ok(usage.length >= 1, `${id}: the dispatched request is accounted`);
-      assert.equal(usage.filter(row => row.status === 'RESERVED').length, 0, `${id}: no receipt is left reserved`);
+      assert.ok(receipts.length >= 1, `${id}: the dispatched request is accounted`);
+      assert.equal(receipts.filter(row => row.status === 'RESERVED').length, 0, `${id}: no receipt is left reserved`);
+
+      // The Worker's own request is the one that failed. The harness reports a
+      // transport failure with a *zeroed* usage object, so a receipt that
+      // settles on it books a cost of zero and hands the token hold back as free
+      // capacity — the exact release `settleLlmRequest` refuses for an unknown
+      // outcome. The receipt must therefore be UNKNOWN, with its hold intact.
+      const workerReceipts = receipts.filter(row => row.kind === 'worker');
+      assert.ok(workerReceipts.length >= 1, `${id}: the Worker's request is recorded`);
+      for (const receipt of workerReceipts) {
+        assert.equal(receipt.status, 'UNKNOWN',
+          `${id}: an unaccounted failure is UNKNOWN, not settled at zero (${receipt.status}, total=${receipt.total_tokens})`);
+        assert.equal(receipt.total_tokens, null, `${id}: no zero total is booked for an unaccounted failure`);
+        assert.ok(Number(receipt.reservation_tokens) > 0, `${id}: the request reserved tokens`);
+        assert.ok(/failed after dispatch|unknown/.test(String(receipt.note ?? '')),
+          `${id}: the unknown outcome carries its reason: ${receipt.note}`);
+      }
+      // Reservation conservation: every retained hold is still held by the scope
+      // that paid for it, and the unknown request did not consume tokens.
+      const retained = workerReceipts
+        .filter(receipt => receipt.status === 'UNKNOWN')
+        .reduce((sum, receipt) => sum + Number(receipt.reservation_tokens), 0);
+      const held = budgets.reduce((sum, row) => sum + Number(row.tokens_reserved), 0);
+      assert.ok(held >= retained, `${id}: the retained holds stay reserved (held ${held} >= retained ${retained})`);
+      // The successful management turns are untouched: a real provider report is
+      // still a settled cost.
+      const roleReceipts = receipts.filter(row => row.kind !== 'worker' && row.status !== 'NOT_SENT');
+      assert.ok(roleReceipts.some(receipt => receipt.status === 'SETTLED' && Number(receipt.total_tokens) > 0),
+        `${id}: genuine usage still settles: ${JSON.stringify(roleReceipts.map(r => [r.status, r.total_tokens]))}`);
       const anomalies = events.filter(event => event.type === 'agent-anomaly');
       assert.ok(anomalies.length >= 1, `${id}: the failure is recorded as an anomaly`);
-      outcomes.push({ id, usage: usage.map(row => row.status), anomalies: anomalies.length });
+      outcomes.push({ id, worker_receipts: workerReceipts.map(row => [row.status, row.reservation_tokens, row.total_tokens]), retained, held, anomalies: anomalies.length });
     } finally {
       ledger.close();
     }

@@ -931,11 +931,30 @@ function installRequestAccounting(agentCtx, ctx, { agent, role, transactionId, b
     }
     return (async function* accounted() {
       let settled = false;
+      // The usage chunk is buffered, not settled on: the harness emits usage
+      // *before* the terminal `finish` chunk, and on a transport failure that
+      // usage is a zeroed object built from pi-ai's initialised message — not a
+      // provider report. Settling it would hand a dispatched request's token
+      // hold back as free capacity, which is exactly what `settleLlmRequest`
+      // refuses to do for a request whose cost is unknown.
+      let reported = null;
       try {
         for await (const chunk of inner) {
           if (chunk.type === 'usage') {
-            settleLlmRequest(store, { cluster_id: agent.cluster_id, reservation, usage: chunk.usage });
+            reported = chunk.usage;
+          } else if (chunk.type === 'finish' && !settled) {
             settled = true;
+            const failure = chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted' ? chunk.reason : null;
+            if (failure && !reportsTokens(reported)) {
+              // The request reached the provider and failed without accounting;
+              // the hold is retained (UNKNOWN), never released as free capacity.
+              releaseLlmRequest(store, {
+                cluster_id: agent.cluster_id, reservation, dispatched: true,
+                note: `request failed after dispatch (${failure.kind}${failure.failure?.code ? `: ${failure.failure.code}` : ''}) without provider usage; ${reservation.tokens} tokens retained`,
+              });
+            } else {
+              settleLlmRequest(store, { cluster_id: agent.cluster_id, reservation, usage: reported ?? undefined });
+            }
           }
           yield chunk;
         }
@@ -950,14 +969,33 @@ function installRequestAccounting(agentCtx, ctx, { agent, role, transactionId, b
         throw error;
       } finally {
         if (!settled) {
-          releaseLlmRequest(store, {
-            cluster_id: agent.cluster_id, reservation, dispatched: true,
-            note: 'stream ended without usage',
-          });
+          // A stream that ended without a terminal chunk: the buffered usage (if
+          // any) is the request's own report, otherwise the cost is unknown and
+          // the hold is retained. Both are settled here rather than left RESERVED.
+          if (reportsTokens(reported)) {
+            settleLlmRequest(store, { cluster_id: agent.cluster_id, reservation, usage: reported });
+          } else {
+            releaseLlmRequest(store, {
+              cluster_id: agent.cluster_id, reservation, dispatched: true,
+              note: reported ? 'stream ended without a finish reason' : 'stream ended without usage',
+            });
+          }
         }
       }
     })();
   });
+}
+
+/**
+ * Whether a usage object is a provider report rather than the zeroed object a
+ * failed stream carries. Any non-zero dimension counts: a response that
+ * genuinely cost nothing is indistinguishable from a missing report, and the
+ * safe reading of an unknown cost is to keep the hold.
+ */
+export function reportsTokens(usage) {
+  if (!usage || typeof usage !== 'object') return false;
+  return ['totalTokens', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']
+    .some(key => Number(usage[key] ?? 0) > 0);
 }
 
 /**

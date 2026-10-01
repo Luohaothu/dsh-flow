@@ -14,33 +14,31 @@
 
 | 项 | 值 |
 |---|---|
-| `plugin_source` | `sha256:40d648c55acda311b5cc6f244b3330096d640314ce4274c44d11fb818642a856`（9 个源文件） |
+| `plugin_source` | `sha256:a751c2d0…`（完整值见 `TEST-RESULTS.md`，9 个源文件） |
 | `lib_index` | `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd` |
-| `acceptance_source` | `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c`（41 个文件） |
+| `acceptance_source` | `sha256:9ef9ff13…`（41 个文件，完整值见 `TEST-RESULTS.md`） |
 | 单 run 内 drift | 16 份报告全部 `null` |
 
-`hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值（两批分别在 `/home/leo/projects/dsh-flow` 与一个 clean worktree 中运行，逐字节相同）。
+`hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值。完整指纹、两批的 run-id 以及本文件定稿后的确认批次都记在指纹范围之外的 `TEST-RESULTS.md`：**本文件位于被指纹覆盖的 `acceptance/` 目录内**，改动它就会改变该目录的摘要，所以「今天的值是多少」不写在里面，而是写在 `TEST-RESULTS.md`，可随时重算核对。每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都保存了运行当时的原始记录。
 
-**本文件位于被指纹覆盖的 `acceptance/` 目录内**：改动本文件就会改变该目录的摘要，所以「今天的 `acceptance_source` 是多少」不写在这里，而写在指纹范围之外的 `TEST-RESULTS.md`，可随时重算核对。每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都保存了运行当时的原始记录。
-
-更早的批次（`final1`–`final4`）跑在同一份插件源码上，但当时指纹函数按绝对路径取摘要，所以它们的值与本表不同；它们作为历史保留，不再作为本批的通过依据。
+更早的批次（`final1`–`final7`、`fix1`/`fix2`）跑在更早的源码上（指纹函数或急停语义不同），作为历史保留，不再作为本批的通过依据。
 
 ## 两批完整套件的结论
 
 `node acceptance/suite.mjs --mock`，各 8 个场景：
 
-| 场景 | 批次 A：`final5`（主工作树） | 批次 B：`clean2`（第二个 checkout） | scenario | mechanism | 断言项 | mock 请求 A/B |
+| 场景 | 批次 A：`t1` | 批次 B：`t2` | scenario | mechanism | 断言项 | mock 请求 A/B |
 |---|---|---|---|---|---|---|
-| smoke | `final5-20261001T115630Z-e3fc76` | `clean2-20261001T115920Z-059893` | PASSED | PASS | 16 | 16 / 16 |
-| recursion | `final5-…-aad53c` | `clean2-…-7a10b7` | PASSED | PASS | 19 | 105 / 104 |
-| recovery | `final5-…-b91348` | `clean2-…-241eab` | PASSED | PASS | 17 | 34 / 34 |
-| context | `final5-…-2ef55f` | `clean2-…-f1cf70` | PASSED | PASS | 18 | 36 / 36 |
-| browser | `final5-…-89c47a` | `clean2-…-d8ccd3` | PASSED | PASS | 11 | 21 / 21 |
-| panel | `final5-…-cff3f1` | `clean2-…-9ce752` | PASSED | PASS | 42 | 8 / 8 |
-| scale16 | `final5-…-83fb7b` | `clean2-…-590b82` | PASSED | PASS | 20 | 149 / 126 |
-| scale64 | `final5-…-61c1ed` | `clean2-…-138e57` | PASSED | PASS | 20 | 514 / 525 |
+| smoke | `t1-20261001T134053Z-b2c439` | `t2-20261001T134339Z-8f8cd0` | PASSED | PASS | 16 | 16 / 16 |
+| recursion | `t1-…-f0c110` | `t2-…-00c187` | PASSED | PASS | 19 | 104 / 104 |
+| recovery | `t1-…-3bf3fb` | `t2-…-81be20` | PASSED | PASS | 17 | 34 / 34 |
+| context | `t1-…-40bd4b` | `t2-…-ecca6c` | PASSED | PASS | 18 | 36 / 36 |
+| browser | `t1-…-224145` | `t2-…-84dbc6` | PASSED | PASS | 11 | 21 / 21 |
+| panel | `t1-…-a30dda` | `t2-…-d2ce67` | PASSED | PASS | 42 | 8 / 8 |
+| scale16 | `t1-…-d69c24` | `t2-…-2e4d57` | PASSED | PASS | 20 | 113 / 156 |
+| scale64 | `t1-…-360739` | `t2-…-6c5b99` | PASSED | PASS | 20 | 495 / 432 |
 
-两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹。请求计数与事件序列只要求落在约束内（并发上限、两次 Worker 请求、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
+两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹。请求计数与事件序列只要求落在约束内（并发上限、每个 Worker 的请求上限、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
 
 ## 按功能列出的结果
 
@@ -62,6 +60,9 @@
 | 归属（owner） | management 自有、Worker 属直接管理父节点、事务属其宿主节点；公开 query 读到同一事实 | 通过 | `cluster.test.js::node ownership is derived from the tree and reported by the public query`、`::an existing database normalises node and transaction ownership on open, idempotently` |
 | allocate_budget / rebalance_budget | 只迁移可用资金；域外目标 403；守恒 | 通过 | `actions-correctness.test.js::allocate_budget moves capacity…`、`cluster.test.js`（transfer/settle/reclaim）；scale 两档在真实调度中触发 rebalance 后仍全部 ACCEPTED |
 | 预算分维 | tokens / requests / tool_calls 各自独立；Worker 请求上限（scale 为 2）在 API 前拒绝越限 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-budget`（mock 只见到 2 次请求）；scale 场景的 `worker-request-allowance` |
+| Worker 授予 | 授予不得超过该次运行声明的每 Worker 请求上限（上限本身仍按请求数强制） | 通过 | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`；scale 两档无一个 Worker 以零请求额度出生 |
+| 请求记账 | 已派发请求必须进入终态并写明结果；**未知成本不得按 0 结算** | 通过 | `cluster.test.js::a failed provider request keeps its token hold as UNKNOWN instead of settling at zero`、`::a failed provider request that did report usage settles with the numbers it reported`；`acceptance/native/mock-runtime.test.mjs::F-transport` 断言 Worker 收据为 UNKNOWN、`total_tokens` 为 null、被扣作用域仍持有该预留 |
+| 分配提示 | 提示里的分配数量必须落在子槽与可用预算之内 | 通过 | `cluster.test.js::a full node is not offered an allocation it cannot perform`；scale 的 `per-file-results-exact` 16/16 与 64/64 |
 | 并发上限 | `max_llm_concurrency` 被真正占满且不被越过 | 通过 | scale 场景 `provider-ceiling-actually-reached`：持住 2 个在途请求 3000ms，期间第三请求为 0；两批均为真 |
 
 ### 3. 独立审计与纠正
@@ -106,7 +107,7 @@
 | Worker 越权隔离（真实 DSH） | 管理工具不可达；越界写被拒绝且无落盘 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-permission`（原生工具结果即为证据） |
 | submit 后结束 turn；结果只由真实调用产生 | 未提交的 turn 不产生伪造结果 | 通过 | `cluster.test.js::a worker submits on its second request, and the turn ends completed`；smoke 场景 `sums-verified`（逐事务比对提交值与本 Worker 自己 session 里的 `flow_sum` 结果） |
 | 参数分片与两种拼写 | 分片参数正确组装；params 对象与 JSON 字符串都能落库；非法参数明确报错 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-arguments`（含非法 transaction_id 的拒绝） |
-| 传输故障 | 500 / 提前断流不产生成功、不产生重复效果；已派发即记账 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-transport` |
+| 传输故障 | 500 / 提前断流不产生成功、不产生重复效果；**失败请求的收据为 UNKNOWN、总额为 null、token 预留仍被持有**；真正报告了用量的失败仍按报告值结算 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-transport`（逐个 Worker 收据 + 预留守恒 + 管理侧真实用量仍 SETTLED） |
 
 ### 8. 规模（真实调度，不是排队身份）
 
@@ -147,4 +148,13 @@
 |---|---|---|---|
 | 事务归属随 reparent 被整体改写到新父节点 | 同一节点在移动前后创建的事务 owner 不一致，合法的同域 `reassign_agent` 被 409 拒绝 | `store.insertNode` / `updateNode` 派生 owner；`reparent` 保持事务 owner = 宿主节点；打开库时一次性归一历史行 | `actions-correctness.test.js::reparent preserves local transaction ownership for reassignment`（先红后绿） |
 | `set_dependency` 只是建议 | 被依赖事务在依赖未 ACCEPTED 时仍被派给 Worker，只能读到尚不存在的产物 | `readyForWorker` 排除依赖未结算的事务 | `cluster.test.js::a dependent transaction is not offered to a Worker before its dependency is accepted` |
+| 传输失败被按 0 结算 | harness 在错误 finish 之前先发一个**置零**的 usage 块；插件一见 usage 就结算，于是把一次已派发、成本未知的请求当作零成本释放了 token 预留 | 记账推迟到 `finish`：错误/中止且没有真实用量时按 UNKNOWN 结算并保留预留；真实报告的失败仍按报告值结算 | `cluster.test.js::a failed provider request keeps its token hold as UNKNOWN instead of settling at zero`（先红后绿）、`::a failed provider request that did report usage settles with the numbers it reported` |
+| 分配提示不可执行 | 节点子槽已满时仍被提示 `allocate_agent`，三个无进展回合后整节点因停滞被 BLOCKED | 提示按子槽上限给出，并公布 `unallocated_total`（还欠多少） | `cluster.test.js::a full node is not offered an allocation it cannot perform`（先红后绿） |
+| Worker 授予超出其上限 | 每个 Worker 被授予 8 个请求额度，而该次运行只允许 2 个；64 档时节点额度被提前分光，最后 50 个 Worker 以 **0 请求**出生、根本发不出第一个请求 | 授予按声明的每 Worker 上限封顶（上限本身仍按请求数强制，另留一次会被释放的工作预留） | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`（先红后绿） |
 | 验收驱动残留 | `restartMidFlight` 传入未定义的 `qwen` | 删除该实参与未使用的形参，并由 N3 的真实 kill/restart 证明 | recovery 场景两批运行 |
+
+## 本轮修复过程中被测试暴露、并按契约改正的判据
+
+| 判据 | 原写法的问题 | 现在的判据 |
+|---|---|---|
+| scale 的 `usage-accounted` | 要求 `unknown_requests === 0`，等于强迫把「已派发但结果未知」的请求记成零成本 | 每个收据都离开 RESERVED 且 UNKNOWN 必须带原因（与 smoke 的 `usage-settled` 同一契约） |

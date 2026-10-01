@@ -1918,9 +1918,9 @@ test('a scale tier sets its budget from N, and a Worker cannot exceed its allowa
   assert.notEqual(runtime.modelFor(runtime.store.getAgent(allocator.agent_id)).maxTokens, 128, 'management keeps the configured budget');
 
   const chain = runtime.agentBudgetChain(cluster, worker, tx);
-  const reserve = kind => reserveLlmRequest(runtime.store, {
+  const reserve = (kind, budgetIds = chain) => reserveLlmRequest(runtime.store, {
     cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-    role: 'worker', kind, model: 'm', provider: 'p', budgetIds: chain,
+    role: 'worker', kind, model: 'm', provider: 'p', budgetIds,
     reservationTokens: 100, turn_seq: 1, maxRequests: runtime.workerRequestAllowance(worker),
   });
   reserve('worker');
@@ -1928,8 +1928,13 @@ test('a scale tier sets its budget from N, and a Worker cannot exceed its allowa
   assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2);
   assert.equal(runtime.store.countUsageReceipts(clusterId, worker.id), 2);
   assert.throws(() => reserve('worker'), /allowance for this task/, 'a third Worker request is refused');
-  // Compaction is accounted separately and does not consume the allowance.
-  reserve('compaction');
+  // Compaction is accounted separately, is paid by the summary pool the runtime
+  // selects for it, and does not consume the allowance. Routing it through the
+  // Worker's own grant would make the pool unreachable and hand a request to a
+  // scope that is capped at exactly its allowance.
+  const pool = runtime.compactionBudgetId(clusterId);
+  assert.ok(pool, 'the run has a funded summary pool');
+  assert.equal(reserve('compaction', [pool]).tokens > 0, true);
   assert.equal(runtime.store.countUsageReceipts(clusterId, worker.id), 3, 'the compaction request is recorded');
   assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2, 'the compaction request is not counted against the Worker allowance');
 
@@ -2745,7 +2750,7 @@ test('releasing an identity returns its slot and never shrinks the node capacity
  * for a third request that the allowance would refuse — which is what used to
  * happen, withholding every Worker result as `LIMIT_REACHED`.
  */
-async function driveWorkerOnce(t, { cancelledFirstRequest = false, result = { file: 'stub.txt', symbol: 'stub', line: 1 }, onAuditor = null, approvePlan = false } = {}) {
+async function driveWorkerOnce(t, { cancelledFirstRequest = false, firstRequestFails = null, result = { file: 'stub.txt', symbol: 'stub', line: 1 }, onAuditor = null, approvePlan = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-turn-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
@@ -2788,6 +2793,23 @@ async function driveWorkerOnce(t, { cancelledFirstRequest = false, result = { fi
     if (role !== 'worker') return;
     const usage = { totalTokens: 100, inputTokens: 80, outputTokens: 20 };
     if (cancelledFirstRequest) await turn.request({ purpose: 'worker', dispatchFails: true });
+    if (firstRequestFails) {
+      // The exact shape the harness produces for a transport failure: a usage
+      // chunk built from pi-ai's zeroed message, then an error finish. The
+      // `reported` variant is the provider that *did* report what it consumed
+      // before failing.
+      const failureUsage = firstRequestFails === 'reported'
+        ? { totalTokens: 120, inputTokens: 100, outputTokens: 20 }
+        : { totalTokens: 0, inputTokens: 0, outputTokens: 0 };
+      await turn.request({
+        purpose: 'worker',
+        chunks: [
+          { type: 'text', text: 'partial answer' },
+          { type: 'usage', usage: failureUsage },
+          { type: 'finish', reason: { kind: 'error', failure: { message: 'declared server failure', code: 'SERVER' } } },
+        ],
+      });
+    }
     await turn.request({ purpose: 'worker', usage });
     await turn.callTool('read', { file_path: 'stub.txt' });
     await turn.request({ purpose: 'worker', usage });
@@ -2896,6 +2918,37 @@ test('a cancelled first request costs no allowance, so the worker still has two 
   assert.equal(notSent.length, 1, 'the failed dispatch is recorded as never sent');
   assert.equal(runtime.store.getTransaction(tx.id).status, 'SUBMITTED', 'the worker still completes its task');
   assert.equal(eventsOf('result-withheld').length, 0);
+});
+
+test('a failed provider request keeps its token hold as UNKNOWN instead of settling at zero', async t => {
+  const { runtime, clusterId, workerAgent, workerTurn } = await driveWorkerOnce(t, { firstRequestFails: 'unaccounted' });
+  assert.ok(workerTurn, 'the worker turn ran');
+  const receipts = runtime.store.listUsageReceipts(clusterId, { agent_id: workerAgent.id });
+  const failed = receipts.find(receipt => receipt.status === 'UNKNOWN');
+  // The harness reports a transport failure with a zeroed usage object. Booking
+  // those zeros as a settled cost hands a dispatched request's hold back as free
+  // capacity, which is the one thing `settleLlmRequest` refuses to do.
+  assert.ok(failed, `the failed request must be UNKNOWN, not settled at zero: ${JSON.stringify(receipts.map(r => [r.status, r.total_tokens]))}`);
+  assert.match(String(failed.note), /failed after dispatch/);
+  assert.equal(failed.total_tokens, null, 'no zero total is booked for an unaccounted failure');
+  assert.ok(Number(failed.reservation_tokens) > 0);
+  const charged = runtime.store.getBudget(failed.budget_scope_id);
+  assert.ok(Number(charged.tokens_reserved) >= Number(failed.reservation_tokens),
+    `the hold stays reserved in the scope that paid: ${charged.tokens_reserved} >= ${failed.reservation_tokens}`);
+
+  // The attempt is still consumed: an unknown-cost request is not refunded.
+  assert.ok(receipts.some(receipt => receipt.kind === 'worker' && receipt.status !== 'NOT_SENT' && receipt !== failed),
+    'the identity made further real requests');
+});
+
+test('a failed provider request that did report usage settles with the numbers it reported', async t => {
+  const { runtime, clusterId, workerAgent } = await driveWorkerOnce(t, { firstRequestFails: 'reported' });
+  const receipts = runtime.store.listUsageReceipts(clusterId, { agent_id: workerAgent.id });
+  const settled = receipts.filter(receipt => receipt.status === 'SETTLED');
+  const reported = settled.find(receipt => Number(receipt.total_tokens) === 120);
+  assert.ok(reported, `the provider's own count is preserved on a failed request: ${JSON.stringify(settled.map(r => r.total_tokens))}`);
+  assert.equal(receipts.filter(receipt => receipt.status === 'UNKNOWN').length, 0,
+    'a genuine report is not relabelled as unknown');
 });
 
 test('a blocked Worker submission durably records the unsatisfied result for independent review', async t => {
@@ -3746,6 +3799,78 @@ test('a dependent transaction is not offered to a Worker before its dependency i
   // read an artifact that was never produced.
   runtime.store.tx(() => runtime.store.updateTransaction(first.id, { status: 'FAILED' }));
   assert.ok(!offered().includes(dependent), 'a failed dependency does not release the dependent');
+});
+
+test('a full node is not offered an allocation it cannot perform', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime);
+  const root = rootNode(runtime, clusterId);
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
+  // `startCluster` gives this node `max_children: 4`.
+  for (let index = 0; index < 6; index += 1) {
+    const id = command(runtime, orchestrator, 'create_transaction', {
+      objective: `ladder task ${index}`, acceptance_criteria: ['observable result'],
+    }).result.transaction_id;
+    command(runtime, orchestrator, 'dispatch', { transaction_id: id });
+  }
+  const pending = () => runtime.pendingFor('allocator', root, runtime.store.getCluster(clusterId), allocator);
+  assert.equal(pending().filter(item => item.action === 'allocate_agent')[0]?.free_slots, 4,
+    'the hint names the window it can actually fill');
+
+  const wave = command(runtime, allocator, 'scale_out', { count: 4 }).result;
+  assert.equal(wave.allocations.length, 4);
+  // Every slot is taken and nothing is releasable yet: an `allocate_agent` hint
+  // here could only fail at the ceiling, and three no-progress turns block the
+  // node for stagnation while the work it is waiting on is elsewhere.
+  assert.equal(pending().filter(item => item.action === 'allocate_agent').length, 0,
+    'a full node is not told to allocate work it cannot host');
+
+  const freed = runtime.store.activeAllocationForTransaction(wave.allocations[0].transaction_id);
+  runtime.store.tx(() => runtime.store.updateTransaction(wave.allocations[0].transaction_id, { status: 'ACCEPTED' }));
+  command(runtime, allocator, 'release_agent', { allocations: [freed.id] });
+  const after = pending().filter(item => item.action === 'allocate_agent');
+  assert.equal(after.length, 1, 'the hint comes back once a slot is free');
+  assert.equal(after[0].free_slots, 1);
+  assert.equal(after[0].transactions.length, 1, 'and it names only what fits');
+});
+
+test('a Worker grant never exceeds the run-wide per-Worker request allowance', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime, { limits: {
+    max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2,
+    max_corrections: 2, max_role_turns: 6, worker_model_requests: 2,
+  } });
+  const root = rootNode(runtime, clusterId);
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
+  const tx = runtime.store.listTransactions({ cluster_id: clusterId })[0];
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  const allocated = command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
+  const agentId = allocated.result.allocations[0].agent_id;
+  const grant = runtime.store.budgetForScope(clusterId, 'agent', agentId);
+  // The node can afford more than the allowance; handing a Worker eight requests
+  // when the run declared two parks capacity the next Worker needs. Measured at
+  // 64 files, the last 50 Workers were born with an allocation of zero requests
+  // and could not send even their first one. The grant is the allowance plus the
+  // one separately-accounted compaction request; the ordinary ceiling is enforced
+  // per request, not by the size of the grant.
+  assert.equal(runtime.workerRequestAllowance(runtime.store.getAgent(agentId)), 2);
+  assert.ok(Number(grant.requests_limit) <= 3,
+    `the grant is bounded by the declared allowance, not by the node's ${grant.requests_limit}`);
+  assert.ok(Number(grant.tool_calls_limit) > 0, 'and still funds the work itself');
+
+  // Without a declared allowance the deployment's own working grant applies.
+  const open = makeRuntime(t);
+  const openCluster = startCluster(open);
+  const openRoot = rootNode(open, openCluster);
+  const openOrchestrator = actorFor(open, openCluster, 'orchestrator', openRoot.id);
+  const openAllocator = actorFor(open, openCluster, 'allocator', openRoot.id);
+  const openTx = open.store.listTransactions({ cluster_id: openCluster })[0];
+  command(open, openOrchestrator, 'dispatch', { transaction_id: openTx.id });
+  const openAllocated = command(open, openAllocator, 'allocate_agent', { transaction_id: openTx.id });
+  const openGrant = open.store.budgetForScope(openCluster, 'agent', openAllocated.result.allocations[0].agent_id);
+  assert.ok(Number(openGrant.requests_limit) >= 2, `an undeclared allowance keeps the deployment grant: ${openGrant.requests_limit}`);
 });
 
 test('an unsafe reparent is refused without touching the turn or the ledger', t => {

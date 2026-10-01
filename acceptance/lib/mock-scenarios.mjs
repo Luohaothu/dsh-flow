@@ -222,8 +222,12 @@ function allocatorReply(request, ctx) {
     const rows = budgetRows(request.classified.lastToolResult);
     const richest = rows
       .filter(row => row.scope_kind === 'agent' && row.scope_id !== request.classified.agentId)
-      .sort((a, b) => (b.available.tool_calls + b.available.model_requests) - (a.available.tool_calls + a.available.model_requests))[0] ?? null;
-    if (!richest || richest.available.tool_calls <= 0) return null;
+      // Requests weigh more than tool calls here: a Worker with a full tool-call
+      // grant and no requests cannot start at all, and the ladder binds on
+      // whichever dimension runs out first.
+      .sort((a, b) => (b.available.model_requests * 2 + b.available.tool_calls)
+        - (a.available.model_requests * 2 + a.available.tool_calls))[0] ?? null;
+    if (!richest || (richest.available.tool_calls <= 0 && richest.available.model_requests <= 0)) return null;
     const frontier = Number(request.classified.digest?.transactions?.by_status?.READY ?? 0);
     return call('flow_allocation', {
       action: 'rebalance_budget',
@@ -231,11 +235,11 @@ function allocatorReply(request, ctx) {
         from: { kind: 'agent', id: richest.scope_id },
         to: { kind: 'node', id: request.classified.nodeId },
         amounts: {
-          // One Worker grant per frontier transaction is the need; taking at
+          // One Worker grant per remaining transaction is the need; taking at
           // most half of the source leaves the spending role with a working
           // allowance of its own. Draining it whole moved the starvation.
-          tool_calls: Math.min(32 * frontier, Math.max(64, Math.floor(richest.available.tool_calls / 2))),
-          model_requests: Math.min(2 * frontier, Math.max(8, Math.floor(richest.available.model_requests / 2))),
+          tool_calls: Math.min(32 * frontier, Math.max(32, Math.floor(richest.available.tool_calls / 2))),
+          model_requests: Math.min(Math.max(2 * frontier, 32), Math.max(16, Math.floor(richest.available.model_requests / 2))),
         },
       },
     });
@@ -254,19 +258,10 @@ function allocatorReply(request, ctx) {
   const digest = request.classified.digest ?? {};
   const actions = Array.isArray(digest.pending_actions) ? digest.pending_actions : [];
   const nodeToolCalls = Number(digest.budget_available?.tool_calls ?? Number.POSITIVE_INFINITY);
+  const nodeRequests = Number(digest.budget_available?.model_requests ?? Number.POSITIVE_INFINITY);
   const frontier = Array.isArray(item.transactions) ? item.transactions.length : 0;
   const isRoot = (digest.ancestors ?? []).length === 0;
   const topUps = ctx.rebalanced.get(request.classified.nodeId) ?? 0;
-  // Only a cluster's own root *ladder* is topped up: a delegated node is funded
-// down its ancestor chain, and a small frontier (a handful of transactions)
-// cannot be short of capacity in a way a rebalance would fix. The threshold is
-// the plugin's own Worker grant (32 tool calls), so a top-up happens only when
-// the node could not fund even one full grant for a wide frontier.
-  if (isRoot && item.action === 'allocate_agent' && frontier >= 8 && topUps < 2
-    && nodeToolCalls < 32 * frontier) {
-    ctx.rebalanced.set(request.classified.nodeId, topUps + 1);
-    return call('flow_query', { what: 'budgets', params: { limit: 50 } });
-  }
 
   // A node can only host as many Workers as it has free child slots. Allocating
   // the whole ready frontier at once therefore fails partway with
@@ -277,6 +272,38 @@ function allocatorReply(request, ctx) {
   const liveChildren = children.filter(child => child.status !== 'RELEASED');
   const childLimit = Number(digest.node?.max_children ?? children.length) || children.length;
   const freeSlots = Math.max(0, childLimit - liveChildren.length);
+
+  // Only a cluster's own root *ladder* is topped up: a delegated node is funded
+  // down its ancestor chain. The question is not what the current window needs
+  // but what the node still owes — every remaining Worker needs a couple of
+  // requests and its designed tool-call allowance — so a node that can fill the
+  // window but not the work behind it is topped up before its Workers are born
+  // with an allowance of zero. At 64 files this is the dimension that binds: the
+  // node spent its whole request share while its tool calls were untouched.
+  const owed = Number(actions.find(entry => entry.action === 'allocate_agent')?.unallocated_total ?? frontier);
+  // A Worker is funded from the node for its whole allowance, so the node must
+  // be able to pay for every Worker in the batch. Allocating more than it can
+  // fund leaves the last Workers of the wave with an allowance of zero — they
+  // cannot send even their first request, their turns fail, and the transaction
+  // ends FAILED. The batch is therefore sized by what the node can actually
+  // cover, and a node that can cover nothing is topped up first; a turn that
+  // allocated work it could not fund used to burn the whole tier.
+  const perWorkerRequests = Number(ctx.limits?.worker_model_requests) || 8;
+  // Only requests bound the batch: a Worker's tool-call grant is generous and
+  // its unspent part returns to the node on release, while a Worker with no
+  // requests cannot start at all. Sizing by tool calls split the ladder into
+  // waves of two and spent the tier's own request budget on allocation turns.
+  const affordable = Number.isFinite(nodeRequests)
+    ? Math.floor(nodeRequests / perWorkerRequests)
+    : Infinity;
+  const needsRequests = 2 * owed + 16;
+  const needsToolCalls = 32 * Math.min(owed, Math.max(1, freeSlots)) + 32;
+  if (isRoot && item.action === 'allocate_agent' && owed >= 8 && topUps < 3 && affordable <= 0
+    && (nodeRequests < needsRequests || nodeToolCalls < needsToolCalls)) {
+    ctx.rebalanced.set(request.classified.nodeId, topUps + 1);
+    return call('flow_query', { what: 'budgets', params: { limit: 50 } });
+  }
+
   const releaseFirst = () => {
     const release = actions.find(entry => entry.action === 'release_agent');
     if (release) {
@@ -290,11 +317,18 @@ function allocatorReply(request, ctx) {
   switch (item.action) {
     case 'allocate_agent': {
       if (freeSlots === 0) return releaseFirst();
+      // A new Worker's grant is drawn from the node. When the node cannot fund
+      // even one full grant, the finished Workers' unspent grants are the
+      // capacity the next wave needs — releasing them first is what keeps the
+      // last Workers of a ladder from being born with a one-call allowance.
+      if (nodeToolCalls < 32 && actions.some(entry => entry.action === 'release_agent')) return releaseFirst();
       // The plugin computed *these* transactions as READY and unallocated.
       // A blind node-wide batch can pick rows that already have an allocation,
       // dedupe them and change nothing — a turn that looks like work and is
-      // booked as stagnation.
-      const batch = (item.transactions ?? []).slice(0, freeSlots);
+      // booked as stagnation. The batch is also bounded by what the node can
+      // fund for each of them.
+      const room = Number.isFinite(affordable) ? Math.max(1, Math.min(freeSlots, affordable)) : freeSlots;
+      const batch = (item.transactions ?? []).slice(0, room);
       if (!batch.length) return say(`Nothing unallocated on node ${request.classified.nodeId}. ${STATUS_LINE}`);
       return call('flow_allocation', {
         action: 'allocate_agent',
@@ -954,6 +988,7 @@ export function buildScenario({
     caseId,
     layout,
     workspace,
+    limits,
     hooks: resolvedHooks,
     // The last pending item each identity was answered with, so a step that
     // continues after a mid-turn compaction does not re-issue it.

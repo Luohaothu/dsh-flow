@@ -465,6 +465,8 @@ async function runOnce({ args, caseDef, mode, runId }) {
         node_id: entry.node_id, agent_id: entry.agent_id, transaction_id: entry.transaction_id,
         tools: entry.tools, authorized: entry.authorized, request_shape: entry.request_shape,
         digest_source: entry.classified?.digest_source ?? null,
+        digest_budget: entry.classified?.digest?.budget_available ?? null,
+        digest_children: Array.isArray(entry.classified?.digest?.children_of_node) ? entry.classified.digest.children_of_node.length : null,
         barrier: entry.barrier, held: entry.held, response: entry.response ?? null,
         opened_at: entry.opened_at ?? null, closed_at: entry.closed_at ?? null,
         prompt_preview: String(entry.classified?.userText ?? '').slice(0, 1200),
