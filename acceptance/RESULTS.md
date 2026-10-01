@@ -27,20 +27,34 @@
 
 `node acceptance/suite.mjs --mock`，各 8 个场景：
 
-| 场景 | 批次 A：`t3` | 批次 B：`t4` | scenario | mechanism | 断言项 | mock 请求 A/B |
-|---|---|---|---|---|---|---|
-| smoke | `t3-20261001T145409Z-7a88fe` | `t4-20261001T145725Z-2bfc30` | PASSED | PASS | 16 | 16 / 16 |
-| recursion | `t3-…-6409ab` | `t4-…-6cca4c` | PASSED | PASS | 21 | 92 / 90 |
-| recovery | `t3-…-a235ba` | `t4-…-a146a5` | PASSED | PASS | 17 | 34 / 34 |
-| context | `t3-…-50cc17` | `t4-…-710719` | PASSED | PASS | 18 | 36 / 36 |
-| browser | `t3-…-edd0ad` | `t4-…-bc01e2` | PASSED | PASS | 11 | 21 / 21 |
-| panel | `t3-…-ff891b` | `t4-…-98fa54` | PASSED | PASS | 42 | 8 / 8 |
-| scale16 | `t3-…-bc5123` | `t4-…-759d49` | PASSED | PASS | 22 | 109 / 110 |
-| scale64 | `t3-…-ca96a5` | `t4-…-ba66c1` | PASSED | PASS | 22 | 414 / 416 |
+| 场景 | 批次 A：`t3` | 批次 B：`t4` | 收尾批次：`close2`（提交树） | scenario | mechanism | 断言项 | mock 请求 A/B/close |
+|---|---|---|---|---|---|---|---|
+| smoke | `t3-20261001T145409Z-7a88fe` | `t4-20261001T145725Z-2bfc30` | `close2-20261001T150053Z-548174` | PASSED | PASS | 16 | 16 / 16 / 16 |
+| recursion | `t3-…-6409ab` | `t4-…-6cca4c` | `close2-…-b312db` | PASSED | PASS | 21 | 92 / 90 / 100 |
+| recovery | `t3-…-a235ba` | `t4-…-a146a5` | `close2-…-7a42e9` | PASSED | PASS | 17 | 34 / 34 / 34 |
+| context | `t3-…-50cc17` | `t4-…-710719` | `close2-…-c4b47e` | PASSED | PASS | 18 | 36 / 36 / 36 |
+| browser | `t3-…-edd0ad` | `t4-…-bc01e2` | `close2-…-c3bf87` | PASSED | PASS | 11 | 21 / 21 / 21 |
+| panel | `t3-…-ff891b` | `t4-…-98fa54` | `close2-…-59f950` | PASSED | PASS | 42 | 8 / 8 / 8 |
+| scale16 | `t3-…-bc5123` | `t4-…-759d49` | `close2-…-ef06cf` | PASSED | PASS | 22 | 109 / 110 / 109 |
+| scale64 | `t3-…-ca96a5` | `t4-…-ba66c1` | `close2-…-e907f3` | PASSED | PASS | 22 | 414 / 416 / 423 |
 
-两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹（两次 8 个报告里 `plugin_source` = `sha256:d2d4d915…`、`lib_index` = `sha256:3b387d68…`、`acceptance_source` = `sha256:a2d49480…`，`build_drift` 全为 `null`）。请求计数与事件序列只要求落在约束内（并发上限、每个 Worker 的请求上限、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
+三批的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹（每批 8 个报告里 `plugin_source` = `sha256:d2d4d915…`、`lib_index` = `sha256:3b387d68…`，`build_drift` 全为 `null`）。请求计数与事件序列只要求落在约束内（并发上限、每个 Worker 的请求上限、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
 
-断言项比上一轮多出的 2 条在 recursion 与 scale：`correction-answered-by-later-work`、`correction-written-by-a-replacement-worker`（N2）与 `results-name-the-granted-file`、`control-plane-calls-clean`（N7/N8）。
+三批同时构成两个梯度的重复证据：N=16 与 N=64 各跑满 3 次，每次都是 planned = terminal = ACCEPTED = N。
+
+断言项比上一轮多出的 4 条在 recursion 与 scale：`correction-answered-by-later-work`、`correction-written-by-a-replacement-worker`（N2）与 `results-name-the-granted-file`、`control-plane-calls-clean`（N7/N8）。
+
+### 指纹（最终提交树）
+
+`hashTree` 以**相对树根**的路径摘要，因此同一提交在任何 checkout 里都得到同一指纹。`acceptance/RESULTS.md` 位于被摘要的树内，而它自身在本轮被编辑过，所以批次 A/B 与收尾批次的 `acceptance_source` 不同：
+
+* 批次 A/B（`t3`/`t4`，树 = 本轮改动但未含本文件最后编辑）`acceptance_source` `sha256:a2d49480…`（42 个文件）
+* 收尾批次 `close2` 跑在提交 `547855a` 的树上：`acceptance_source` `sha256:7ebcac23a83499f7f4ed4f6f004cd69ed787927686fe5a40c1759c5b78326c9d`（42 个文件）
+* `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6`（9 个文件，三批相同）
+* `lib_index` `sha256:3b387d683e479ee73cb2292d7ce9f3f169ffe507dd4949c07fc7af20ea6e9e7e`
+* `lib_client` `sha256:957d03a6a80d97cfc160511b4754a6a8c3fd7192bfa147443c892dd6e8013cf3`
+
+本文件随后又被编辑并提交，因此上表不是最终提交的指纹。**最终提交的权威 `acceptance_source` 记录在 `TEST-RESULTS.md`**（该文件在被摘要的树之外，改动它不会移动任何指纹），其值由最终提交树上的收尾批次给出。
 
 ## 按功能列出的结果
 
