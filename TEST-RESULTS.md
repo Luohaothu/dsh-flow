@@ -24,6 +24,14 @@ Frozen fingerprints of the verified build (identical in all 16 batch reports):
 * `lib_index` `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd`
 * `acceptance_source` `sha256:293a51a04309e25d5d56420b4e7136d51e78c3aa38d7e82b4d11deeb05943749` (40 files)
 
+A third full batch, run after `acceptance/RESULTS.md` was finalized, passes 8/8
+on the tree as committed (`--run-prefix final4`, all reports `build_drift:
+null`, `validation_mode: "mock-api"`, `acceptance_source`
+`sha256:2433f21a2586a2ca27372ea8b972a81190bd1c2b49012edc08b0e5b33bff6e46`, 41
+files). This file lives outside `acceptance/`, so recording that number here
+cannot move it: recomputing the directory digest today returns exactly that
+value.
+
 Per-scenario evidence (two independent batches, identical semantics):
 
 * smoke — 2/2 ACCEPTED; `sums-verified` matches each transaction's submitted

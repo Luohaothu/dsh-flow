@@ -19,6 +19,8 @@
 | `acceptance_source` | `sha256:293a51a04309e25d5d56420b4e7136d51e78c3aa38d7e82b4d11deeb05943749`（40 个文件） |
 | 单 run 内 drift | 两批 16 份报告全部 `null` |
 
+`acceptance_source` 是两批运行时 `acceptance/` 目录的实际内容。本文件（`RESULTS.md`）在两批之后加入，属于文档，不被任何用例执行，因此今天重新计算目录摘要会得到一个不同的值（多一个文件）。把本文件排除后重新计算仍得到上面的值；每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都各自保留了运行当时的原始记录。`TEST-RESULTS.md` 记录了在这份文档定稿之后、于当前树上再跑一次的确认批次及其目录摘要。
+
 ## 两批完整套件的结论
 
 `node acceptance/suite.mjs --mock`，各 8 个场景：
