@@ -5,27 +5,28 @@
 判定只采信 `.artifacts/<run-id>/` 里的报告与持久证据。设计已声明但当前未实现的动作列在最后，不计入通过。
 
 - 契约矩阵：`acceptance/COVERAGE.md`
-- 回归套件：`npm test`（293/293）、`npm run test:mock`
+- 回归套件：`npm test`（303/303）、`npm run test:mock`
 - 本批全部报告：`validation_mode: "mock-api"`，`build_drift: null`
 
 ## 冻结的构建与源码指纹
 
-验收在这一份源码上跑了两批，其中一批在**第二个 checkout**（同一 commit 的 clean worktree）里跑，两批指纹完全相同：
+验收在本轮源码上跑了两批完整套件（`t3`、`t4`），又在提交树上跑了一次收尾批次，每一批内部 8 份报告的指纹完全一致：
 
 | 项 | 值 |
 |---|---|
-| `plugin_source` | `sha256:a751c2d0…`（完整值见 `TEST-RESULTS.md`，9 个源文件） |
-| `lib_index` | `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd` |
-| `acceptance_source` | `sha256:9ef9ff13…`（41 个文件，完整值见 `TEST-RESULTS.md`） |
-| 单 run 内 drift | 16 份报告全部 `null` |
+| `plugin_source` | `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6`（9 个源文件，三批相同） |
+| `lib_index` | `sha256:3b387d683e479ee73cb2292d7ce9f3f169ffe507dd4949c07fc7af20ea6e9e7e` |
+| `lib_client` | `sha256:957d03a6a80d97cfc160511b4754a6a8c3fd7192bfa147443c892dd6e8013cf3` |
+| `acceptance_source`（`t3`/`t4`） | `sha256:a2d49480…`（42 个文件） |
+| 单 run 内 drift | 每批 8 份报告全部 `null` |
 
-`hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值。完整指纹、两批的 run-id 以及本文件定稿后的确认批次都记在指纹范围之外的 `TEST-RESULTS.md`：**本文件位于被指纹覆盖的 `acceptance/` 目录内**，改动它就会改变该目录的摘要，所以「今天的值是多少」不写在里面，而是写在 `TEST-RESULTS.md`，可随时重算核对。每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都保存了运行当时的原始记录。
+`hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值。完整指纹、三批的 run-id 以及本文件定稿后**最终提交树上**的确认批次都记在指纹范围之外的 `TEST-RESULTS.md`：**本文件位于被指纹覆盖的 `acceptance/` 目录内**，改动它就会改变该目录的摘要，所以「最终提交的 `acceptance_source` 是多少」不写在这里，而是写在 `TEST-RESULTS.md`，可随时重算核对。每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都保存了运行当时的原始记录。
 
 更早的批次（`final1`–`final7`、`fix1`/`fix2`）跑在更早的源码上（指纹函数或急停语义不同），作为历史保留，不再作为本批的通过依据。
 
-## 两批完整套件的结论
+## 完整套件的结论（三批）
 
-`node acceptance/suite.mjs --mock`，各 8 个场景：
+`node acceptance/suite.mjs --mock`，各 8 个场景（`close2` 为本文件定稿之前的收尾批次；最终提交树上的确认批次见 `TEST-RESULTS.md`）：
 
 | 场景 | 批次 A：`t3` | 批次 B：`t4` | 收尾批次：`close2`（提交树） | scenario | mechanism | 断言项 | mock 请求 A/B/close |
 |---|---|---|---|---|---|---|---|
@@ -44,17 +45,7 @@
 
 断言项比上一轮多出的 4 条在 recursion 与 scale：`correction-answered-by-later-work`、`correction-written-by-a-replacement-worker`（N2）与 `results-name-the-granted-file`、`control-plane-calls-clean`（N7/N8）。
 
-### 指纹（最终提交树）
-
-`hashTree` 以**相对树根**的路径摘要，因此同一提交在任何 checkout 里都得到同一指纹。`acceptance/RESULTS.md` 位于被摘要的树内，而它自身在本轮被编辑过，所以批次 A/B 与收尾批次的 `acceptance_source` 不同：
-
-* 批次 A/B（`t3`/`t4`，树 = 本轮改动但未含本文件最后编辑）`acceptance_source` `sha256:a2d49480…`（42 个文件）
-* 收尾批次 `close2` 跑在提交 `547855a` 的树上：`acceptance_source` `sha256:7ebcac23a83499f7f4ed4f6f004cd69ed787927686fe5a40c1759c5b78326c9d`（42 个文件）
-* `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6`（9 个文件，三批相同）
-* `lib_index` `sha256:3b387d683e479ee73cb2292d7ce9f3f169ffe507dd4949c07fc7af20ea6e9e7e`
-* `lib_client` `sha256:957d03a6a80d97cfc160511b4754a6a8c3fd7192bfa147443c892dd6e8013cf3`
-
-本文件随后又被编辑并提交，因此上表不是最终提交的指纹。**最终提交的权威 `acceptance_source` 记录在 `TEST-RESULTS.md`**（该文件在被摘要的树之外，改动它不会移动任何指纹），其值由最终提交树上的收尾批次给出。
+三批的 `acceptance_source` 分别对应三份源码状态：`t3`/`t4` 为 `sha256:a2d49480…`（42 个文件），收尾批次 `close2` 为 `sha256:7ebcac23…`（跑在提交 `547855a`），最终提交树上的确认批次值见 `TEST-RESULTS.md`——本文件在被摘要的树内，改它就动指纹，故不在此处固化最终值。
 
 ## 按功能列出的结果
 

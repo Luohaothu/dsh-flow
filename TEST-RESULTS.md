@@ -4,39 +4,75 @@ Only results observed in this session are recorded here. Every number is
 reproducible from the artifacts named next to it. Historical DeepSeek-provider
 smokes from earlier work are not part of this record.
 
-## 2026-10-01 — deterministic (mock-api) acceptance, source-level fixes
+## 2026-10-01 — deterministic (mock-api) acceptance, advisory closure
 
 Full write-up: `acceptance/RESULTS.md`（按功能列出的结论）, contract matrix:
-`acceptance/COVERAGE.md`. Everything below was run on this working tree; the
-reports carry `validation_mode: "mock-api"` and `build_drift: null`.
+`acceptance/COVERAGE.md`. Everything below was run on this working tree and then
+on the tree exactly as committed; the reports carry
+`validation_mode: "mock-api"` and `build_drift: null`.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Unit + classification + evidence-chain suites | **297 tests, 297 pass** | `npm test` |
+| Unit + classification + evidence-chain + oracle suites | **303 tests, 303 pass** | `npm test` |
 | Build | wrote `lib/index.js`, `lib/client.js` | `npm run build` |
-| Deterministic suite, batch A | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/t1-*` |
-| Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/t2-*` |
-| Closing batch on the committed tree | 8/8 scenarios PASSED, mechanism PASS | `.artifacts/close1-*` |
+| Deterministic suite, batch A | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t3-*` |
+| Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t4-*` |
+| Closing batch, committed tree `e733467` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close3-*` |
 | Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
-| Tier stability (repeat runs) | 3/3 at N=16 and 3/3 at N=64, `VERIFIED` each time | `.artifacts/r1-*`, `r2-*`, `r3-*` |
+| Tier stability | 3/3 at N=16 and 3/3 at N=64, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`close3` scale rows |
 
-Frozen fingerprints (identical in every report of batches A and B):
+Frozen fingerprints (identical in every report of every batch):
 
-* `plugin_source` `sha256:a751c2d0463dc9da9de8c1d76812d6c30ebef432201a4c66921a8e0c85823cb9` (9 files)
-* `lib_index` `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd`
-* `acceptance_source` (at batches A and B) `sha256:9ef9ff13…` (41 files)
+* `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6` (9 files)
+* `lib_index` `sha256:3b387d683e479ee73cb2292d7ce9f3f169ffe507dd4949c07fc7af20ea6e9e7e`
+* `lib_client` `sha256:957d03a6a80d97cfc160511b4754a6a8c3fd7192bfa147443c892dd6e8013cf3`
+* `acceptance_source` (at batches `t3`/`t4`) `sha256:a2d49480…` (42 files)
 
 `hashTree` digests paths **relative to the tree root**, so the same commit
 produces the same fingerprint in any checkout. `acceptance/RESULTS.md` lives
 inside the fingerprinted tree and was edited after batches A and B, so that
-directory's digest moved; the closing batch ran on the tree exactly as
-committed and records
+directory's digest moved. The closing batch ran on the tree exactly as committed
+(`git rev-parse HEAD` = `e733467`) and records
 
-* `acceptance_source` `sha256:760d4592f86db2c1920d2d8a23e5f5d329c841c990961c449757fe9ed547ddcc` (41 files)
-* `plugin_source` `sha256:a751c2d0463dc9da9de8c1d76812d6c30ebef432201a4c66921a8e0c85823cb9` (9 files)
+* `acceptance_source` `sha256:8a4f1f5db585f1539d2568712087d4197276e1bb03d31fafa7e90774e9c255b5` (42 files)
+* `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6` (9 files)
+* closing runs (batch `close3`, all eight report the digest above):
+  smoke `close3-20261001T150411Z-430539`、recursion `close3-…-2353f7`、recovery `close3-…-e0b154`、context `close3-…-773075`、browser `close3-…-a1e76d`、panel `close3-…-231c09`、scale16 `close3-…-ce9f7c`、scale64 `close3-…-e6fec5`
 
-Recomputing `acceptance/` today returns exactly the `760d4592…` value, because
-this file is *outside* `acceptance/` and cannot move it.
+This file is *outside* the fingerprinted trees, so editing it cannot move either
+digest.
+
+### What this session changed
+
+Five open advisories were closed, plus one defect found while doing so. Each fix
+has a regression test that was red before it and green after:
+
+1. **Issue closure.** `acceptTransaction` marked every open issue of the
+   transaction `CORRECTED` with no evidence check and no event. It now applies
+   the rule `verify_correction` uses, leaves the issue open for the Auditor when
+   the replacement work is missing, and records `issue-corrected` with its
+   reason. `cluster.test.js::acceptance closes an issue only when new Worker
+   evidence answered it`.
+2. **Audit references.** The mock Auditor's verdicts dropped the offered
+   `audit_id`/`target_revision`, so verdicts resolved against the transaction's
+   current revision and missed (`no plan audit … at revision N`). The fixture now
+   forwards the reference, `flow_communicate`-style lookups stay clean, and
+   `control-plane-calls-clean` asserts it (0 refusals over 73 and 265
+   control-plane calls in the two scale tiers).
+3. **Scale oracle.** The expected file came from the submission itself. It now
+   comes from the transaction's frozen `inputs.file`, the result must name that
+   file (`results-name-the-granted-file`: 16/16 and 64/64), and the Worker's
+   settled `read` receipt must report that path. Pure helpers are covered by
+   `acceptance/test/scale-oracle.test.mjs`.
+4. **Malformed argument stream.** `F-arguments` gained a decoder negative: a
+   sharded argument stream that never assembles is refused with `INVALID_ARGS`,
+   bound to that call id, with no effect and no result.
+5. **Coverage matrix.** `spawn_agent` and `flow_communicate query` rows now cite
+   real tests; both were added.
+6. **Withdrawn claim.** "50 Workers born with zero request allowance that could
+   not send" is retracted: at-rest budget rows read zero because releasing
+   reclaims capacity, and `s64n-2` shows all 64 Workers dispatching exactly two
+   requests. The proven defect is the over-grant (8 against a declared 2).
 
 The tree was also repaired during this work: `.gitignore` had an unanchored
 `lib/`, which matched `acceptance/lib/` at any depth, so the six modules the
