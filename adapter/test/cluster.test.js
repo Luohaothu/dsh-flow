@@ -18,6 +18,7 @@ import { ClusterRuntime, scheduleAdmission } from '../src/cluster.js';
 import { apply } from '../src/index.js';
 import { createFakeHost } from './fake-host.mjs';
 import { ClusterStore } from '../src/store.js';
+import { communicate } from '../src/communication.js';
 import { checkWriteAccess } from '../src/scope.js';
 import { releaseLlmRequest, reserveLlmRequest, runTurn, settleLlmRequest } from '../src/runtime.js';
 import { budgetView, settleChain, createBudget, dimensionAvailable, transferBudget, DIMENSIONS } from '../src/budget.js';
@@ -3871,6 +3872,52 @@ test('a Worker grant never exceeds the run-wide per-Worker request allowance', t
   const openAllocated = command(open, openAllocator, 'allocate_agent', { transaction_id: openTx.id });
   const openGrant = open.store.budgetForScope(openCluster, 'agent', openAllocated.result.allocations[0].agent_id);
   assert.ok(Number(openGrant.requests_limit) >= 2, `an undeclared allowance keeps the deployment grant: ${openGrant.requests_limit}`);
+});
+
+test('a Worker at its request allowance can still be funded for its final tool call', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime, { limits: {
+    max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2,
+    max_corrections: 2, max_role_turns: 6, worker_model_requests: 2,
+  } });
+  const root = rootNode(runtime, clusterId);
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
+  const tx = runtime.store.listTransactions({ cluster_id: clusterId })[0];
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  const allocated = command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id }).result.allocations[0];
+  const worker = runtime.store.getAgent(allocated.agent_id);
+  const cluster = runtime.store.getCluster(clusterId);
+  const chain = runtime.agentBudgetChain(cluster, worker, tx);
+  const agentBudget = runtime.store.budgetForScope(clusterId, 'agent', worker.id);
+  const nodeBudget = runtime.fundingBudget(cluster, worker);
+  assert.ok(agentBudget && nodeBudget, 'the identity and its funder exist');
+
+  // Spend the Worker's whole request allowance, then empty its tool-call grant —
+  // the state the ladder reaches when a Worker must still submit its result.
+  for (let index = 0; index < 2; index += 1) {
+    reserveLlmRequest(runtime.store, {
+      cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
+      role: 'worker', kind: 'worker', model: 'm', provider: 'p', budgetIds: chain,
+      reservationTokens: 100, turn_seq: 1, maxRequests: runtime.workerRequestAllowance(worker),
+    });
+  }
+  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2, 'the allowance is spent');
+  const row = runtime.store.getBudget(agentBudget.id);
+  transferBudget(runtime.store, agentBudget.id, nodeBudget.id, { tool_calls: row.tool_calls_limit - row.tool_calls_spent });
+  assert.equal(dimensionAvailable(runtime.store.getBudget(agentBudget.id), 'tool_calls'), 0, 'the tool-call grant is empty');
+
+  // The final submission is a tool call, not a request: it is funded.
+  const granted = runtime.topUpBudgetForAgent(worker, { tool_calls: 1 });
+  assert.ok(granted, 'a tool-only refill is not blocked by the request allowance');
+  assert.ok(dimensionAvailable(runtime.store.getBudget(agentBudget.id), 'tool_calls') >= 1,
+    'the refill funds the call the Worker still owes');
+
+  // The request ceiling itself is still final.
+  assert.equal(runtime.topUpBudgetForAgent(worker, { model_requests: 1 }), null,
+    'a third request is still refused at the allowance');
+  assert.equal(runtime.topUpBudgetForAgent(worker, { tokens: 1000, model_requests: 1 }), null,
+    'and a mixed refill does not smuggle one in');
 });
 
 test('an unsafe reparent is refused without touching the turn or the ledger', t => {
@@ -11183,4 +11230,120 @@ test('a parent Allocator sees a blocked child whose positive balance is below it
   assert.ok(hint, `a positive balance smaller than the refused request is still starvation: ${JSON.stringify(actions)}`);
   assert.equal(hint.required?.tokens, 16_000, 'the funder sees the actual envelope rather than a zero-balance guess');
   assert.ok(hint.from_options.some(option => option.tokens >= 16_000));
+});
+
+test('acceptance closes an issue only when new Worker evidence answered it', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime);
+  const root = rootNode(runtime, clusterId);
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const first = runtime.store.rootTransactions(clusterId)[0];
+  const second = { id: command(runtime, orchestrator, 'create_transaction', {
+    objective: 'a second deliverable that is repaired after its issue',
+    acceptance_criteria: ['the deliverable exists'],
+  }).result.transaction_id };
+  const correctedEvents = () => runtime.store.all(
+    "SELECT json_extract(data,'$.issue_id') AS issue_id, json_extract(data,'$.reason') AS reason FROM events WHERE cluster_id=? AND type='issue-corrected'",
+    clusterId,
+  );
+
+  for (const tx of [first, second]) {
+    command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+    command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
+    runtime.store.tx(() => {
+      runtime.store.appendEvent(clusterId, 'result-submitted', { transaction_id: tx.id, result_completed: 0, revision: 2 });
+      runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { completed: false }, __bump_revision: false });
+    });
+  }
+  const answered = runtime.store.insertIssue({
+    id: 'issue-answered-by-acceptance', cluster_id: clusterId, node_id: root.id,
+    transaction_id: second.id, target_revision: 2, required_change: 'produce the deliverable',
+  });
+  const unanswered = runtime.store.insertIssue({
+    id: 'issue-awaiting-replacement', cluster_id: clusterId, node_id: root.id,
+    transaction_id: first.id, target_revision: 2, required_change: 'produce the deliverable',
+  });
+  runtime.store.tx(() => {
+    for (const issue of [answered, unanswered]) {
+      runtime.store.appendEvent(clusterId, 'issue-opened', {
+        issue_id: issue.id, transaction_id: issue.transaction_id, severity: issue.severity,
+      });
+    }
+  });
+
+  // The second transaction really does produce replacement work after its issue.
+  runtime.store.tx(() => runtime.store.appendEvent(clusterId, 'result-submitted', {
+    transaction_id: second.id, result_completed: 1, revision: 3,
+  }));
+
+  for (const tx of [first, second]) {
+    command(runtime, orchestrator, 'validate', {
+      transaction_id: tx.id, accepted: true,
+      checks: [{ criterion: 'the deliverable exists', passed: true, evidence: 'recorded result checked' }],
+    });
+    command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
+    assert.equal(runtime.store.getTransaction(tx.id).status, 'ACCEPTED');
+  }
+
+  assert.equal(runtime.store.getIssue(answered.id).status, 'CORRECTED',
+    'an accepted result submitted after the issue is the correction');
+  assert.equal(runtime.store.getIssue(unanswered.id).status, 'OPEN',
+    'acceptance alone must not correct an issue raised against an incomplete Worker result');
+  const closures = correctedEvents();
+  assert.deepEqual(closures.map(row => row.issue_id), [answered.id],
+    `only the issue with replacement evidence closes: ${JSON.stringify(closures)}`);
+  assert.equal(closures[0].reason, 'accepted-result-after-issue',
+    'the closure records why it happened, rather than flipping the status silently');
+});
+
+test('a communication query returns the prefix view with the cursor of its read cut', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime);
+  const root = rootNode(runtime, clusterId);
+  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const cluster = runtime.store.getCluster(clusterId);
+  const publish = (key, value) => runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'publish', { key, value }));
+  publish('plan/alpha', { step: 1 });
+  publish('result/beta', { ok: true });
+  const before = runtime.store.latestEventSeq(clusterId);
+
+  const byPrefix = runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { prefix: 'plan/' }));
+  assert.deepEqual(byPrefix.entries.map(entry => entry.key), ['plan/alpha'],
+    'a prefix query returns that prefix and nothing else');
+  assert.deepEqual(byPrefix.entries[0].value, { step: 1 });
+  assert.ok(byPrefix.cursor >= before, 'the cursor is the read cut the snapshot came from');
+
+  const byKey = runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { key: 'result/beta' }));
+  assert.deepEqual(byKey.entries.map(entry => entry.key), ['result/beta']);
+  assert.deepEqual(byKey.entries[0].value, { ok: true });
+
+  const missing = runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { key: 'plan/absent' }));
+  assert.deepEqual(missing.entries, [], 'an absent key is an empty view, not an error');
+});
+
+test('an authorized Allocator spawns a Worker through spawn_agent', t => {
+  const runtime = makeRuntime(t);
+  const clusterId = startCluster(runtime);
+  const root = rootNode(runtime, clusterId);
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
+  const tx = runtime.store.rootTransactions(clusterId)[0];
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
+
+  const spawned = command(runtime, allocator, 'spawn_agent', { transaction_id: tx.id }).result;
+  assert.equal(spawned.count, 1);
+  assert.equal(spawned.allocations[0].transaction_id, tx.id);
+  const worker = runtime.store.getAgent(spawned.allocations[0].agent_id);
+  assert.equal(worker.role, 'worker', 'spawn_agent grants a Worker, not another management role');
+  const workerNode = runtime.store.getNode(worker.node_id);
+  assert.equal(workerNode.parent_id, root.id, 'the Worker node hangs off the domain that granted it');
+  assert.equal(workerNode.scope.transaction_id, tx.id, 'and carries the transaction it was granted for');
+  assert.equal(workerNode.owner_management_id, root.id);
+  assert.equal(runtime.store.getTransaction(tx.id).status, 'READY');
+
+  assert.throws(() => command(runtime, allocator, 'spawn_agent', {}),
+    error => /transaction_id/.test(error.message), 'a grant without a transaction names nothing to execute');
 });

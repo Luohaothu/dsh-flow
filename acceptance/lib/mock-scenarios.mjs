@@ -404,13 +404,27 @@ function auditorReply(request, ctx) {
     case 'inspect_plan':
       return call('flow_audit', {
         action: 'inspect_plan',
-        params: { transaction_id: item.transaction_id, decision: 'approve', notes: 'the plan states a checkable objective' },
+        // The reference the item was offered with, not the transaction's
+        // current revision: by the time the verdict is sent the plan may have
+        // been revised, and a `target_revision`-less call resolves to whatever
+        // audit now sits at the newest revision — a lookup that either misses
+        // ("no plan audit ... at revision N") or judges a plan that was never
+        // offered for this decision.
+        params: {
+          transaction_id: item.transaction_id,
+          ...(item.audit_id ? { audit_id: item.audit_id } : {}),
+          ...(item.target_revision === undefined ? {} : { target_revision: item.target_revision }),
+          decision: 'approve',
+          notes: 'the plan states a checkable objective',
+        },
       });
     case 'inspect_validation':
       return call('flow_audit', {
         action: 'inspect_validation',
         params: {
           transaction_id: item.transaction_id,
+          ...(item.audit_id ? { audit_id: item.audit_id } : {}),
+          ...(item.target_revision === undefined ? {} : { target_revision: item.target_revision }),
           decision: ctx.validationDecision(request, item),
           notes: 'decision recorded against the exact result revision',
         },
@@ -590,7 +604,21 @@ function recursionHooks({ fixtureIds, workspace }) {
   const deepTx = fixtureIds['rec-deep'] ?? 'rec-deep';
   const flatTx = fixtureIds['rec-flat'] ?? 'rec-flat';
   const verifyTx = fixtureIds['rec-verify'] ?? 'rec-verify';
-  const state = { dependencySet: false, needsRevision: null, deepRejected: false, deepVerified: false };
+  const state = {
+    dependencySet: false,
+    needsRevision: null,
+    // Per transaction: every result the fixture's Workers actually submitted,
+    // in order, with what they reported. Auditor verdicts are bound to this.
+    submissions: new Map(),
+    // Per transaction: how many submissions existed when its issue was raised. A
+    // correction is verified only against work that came after.
+    raisedFor: new Map(),
+  };
+  const recordSubmission = (txId, entry) => {
+    const list = state.submissions.get(txId) ?? [];
+    list.push(entry);
+    state.submissions.set(txId, list);
+  };
   const target = join(workspace, 'deep/nested/result.txt');
   const refused = text => /outside|refus|denied|not allowed|is not permitted|cannot write|scope/i.test(String(text ?? ''));
 
@@ -653,9 +681,20 @@ function recursionHooks({ fixtureIds, workspace }) {
 
       if (objective.includes('deep/nested/result.txt')) {
         if (lastTool === 'write') {
-          if (refused(lastResult) || !existsSync(target)) {
+          const writeOk = !refused(lastResult) && existsSync(target);
+          // The submission is what the Auditor judges, so it is recorded as the
+          // fixture's own evidence — including whether the result is complete.
+          const entry = {
+            at: (state.submissions.get(c.transactionId) ?? []).length + 1,
+            completed: writeOk,
+            granted: scopeLine || null,
+            wrote: writeOk,
+          };
+          recordSubmission(c.transactionId, entry);
+          if (!writeOk) {
             // The real refusal happened: no file was written. Report the
-            // limitation as the durable failure the Auditor must judge.
+            // limitation as the durable failure the Auditor must judge, and keep
+            // this transaction as the one that owes a correction.
             state.needsRevision = c.transactionId;
             return call(WORKER_TOOL_NAME, {
               action: 'submit_result',
@@ -671,6 +710,9 @@ function recursionHooks({ fixtureIds, workspace }) {
               },
             });
           }
+          // The deliverable exists and this Worker wrote it: the transaction no
+          // longer owes a correction.
+          state.needsRevision = null;
           return call(WORKER_TOOL_NAME, {
             action: 'submit_result',
             params: {
@@ -725,12 +767,33 @@ function recursionHooks({ fixtureIds, workspace }) {
       ? { transaction_id: item.transaction_id, inputs: { write_scope: ['deep/'] } }
       : null),
     auditor(request, item, ctx) {
-      const c = request.classified;
+      // Every decision here is bound to evidence the fixture itself observed:
+      // a Worker that submitted a result it marked incomplete, and a *later*
+      // submission for the same transaction. Deciding from the objective text or
+      // from "the plan changed" is what produced a rejected good result and an
+      // issue verified before any replacement work existed.
+      const submissions = state.submissions.get(item.transaction_id) ?? [];
+      // A `flow_query what:"transaction"` answer, when this step just made one:
+      // the plugin's own published view of the transaction a verdict is about.
+      const queriedTransaction = (() => {
+        if (request.classified.lastToolName !== 'flow_query') return null;
+        try {
+          return JSON.parse(String(request.classified.lastToolResult ?? ''))?.transaction ?? null;
+        } catch {
+          return null;
+        }
+      })();
+      // Any corrective action this Auditor takes starts the evidence window for
+      // that transaction: from here, only work submitted later can answer it.
+      if (item.transaction_id && ['request_correction', 'request_replan', 'request_revalidation'].includes(item.action)) {
+        state.raisedFor.set(item.transaction_id, submissions.length);
+      }
       if (item.action === 'inspect_validation') {
-        const deepObjective = /deep\/nested\/result\.txt/u.test(String(item.objective ?? ''));
-        if (deepObjective && !state.deepRejected) {
-          state.deepRejected = true;
-          state.needsRevision = item.transaction_id;
+        const outstanding = state.needsRevision === item.transaction_id;
+        if (outstanding) {
+          const latest = submissions[submissions.length - 1] ?? null;
+          // From here on, only work submitted *after* this point can answer it.
+          state.raisedFor.set(item.transaction_id, submissions.length);
           return call('flow_audit', {
             action: 'inspect_validation',
             params: {
@@ -739,36 +802,64 @@ function recursionHooks({ fixtureIds, workspace }) {
               required_change: 'grant the deepest branch a write scope that covers deep/nested/result.txt and produce the file there',
               evidence: {
                 reason: 'the Worker reported the write was refused outside its granted paths',
-                granted: 'deep/staging',
+                granted: latest?.granted ?? null,
                 deliverable: 'deep/nested/result.txt',
+                submission: latest?.at ?? null,
               },
             },
           });
         }
-        if (deepObjective && state.deepRejected && !state.deepVerified) {
-          state.deepVerified = true;
-          return call('flow_audit', {
-            action: 'inspect_validation',
-            params: {
-              transaction_id: item.transaction_id,
-              decision: 'approve',
-              evidence: { reason: 'the corrected allocation produced the deliverable', path: 'deep/nested/result.txt' },
-            },
-          });
-        }
-      }
-      if (item.action === 'verify_correction' && item.issue_id) {
         return call('flow_audit', {
-          action: 'verify_correction',
+          action: 'inspect_validation',
           params: {
-            issue_id: item.issue_id,
-            decision: 'verified',
-            evidence: { checked: 'the later revision wrote deep/nested/result.txt under a corrected allocation' },
+            transaction_id: item.transaction_id,
+            decision: 'approve',
+            evidence: { reason: 'the recorded result revision satisfies the acceptance criteria for this transaction' },
           },
         });
       }
-return null;
+      if (item.action === 'verify_correction' || item.action === 'review_issue') {
+        const issueId = item.issue_id;
+        const required = state.raisedFor.get(item.transaction_id) ?? null;
+        // A verdict needs the replacement work itself: a submission for this
+        // issue's transaction, observed by the fixture *after* the issue was
+        // raised, that did not report itself incomplete. The fixture issuing a
+        // submit tool call is not yet a durable result, so the plugin's own
+        // published state is read before judging — the same `flow_query` a real
+        // Auditor is told to use, which does not end the turn.
+        const newEvidence = required !== null
+          && submissions.length > required
+          && submissions.slice(required).some(entry => entry.completed === true);
+        if (!newEvidence) {
+          return say(`Issue ${issueId} has no replacement Worker result yet; leaving it open for the Orchestrator. ${STATUS_LINE}`);
+        }
+        if (!queriedTransaction) {
+          return call('flow_query', { what: 'transaction', params: { id: item.transaction_id } });
+        }
+        const published = ['SUBMITTED', 'VALIDATING', 'ACCEPTED'].includes(String(queriedTransaction.status ?? ''))
+          && Number(queriedTransaction.result_revision ?? queriedTransaction.revision ?? 0) > Number(item.target_revision ?? 0);
+        if (!published) {
+          return say(`Issue ${issueId}: transaction ${item.transaction_id} is ${queriedTransaction.status} with no later published result; leaving it open. ${STATUS_LINE}`);
+        }
+        return call('flow_audit', {
+          action: 'verify_correction',
+          params: {
+            issue_id: issueId,
+            decision: 'verified',
+            evidence: {
+              checked: 'a replacement Worker submitted a result for this transaction after the issue was raised',
+              submissions_after_issue: submissions.length - required,
+            },
+          },
+        });
+      }
+      return null;
     },
+    reportEvidence: () => ({
+      submissions: Object.fromEntries([...state.submissions].map(([tx, list]) => [String(tx).slice(-14), list])),
+      raised_for: Object.fromEntries([...state.raisedFor].map(([tx, count]) => [String(tx).slice(-14), count])),
+      owes_revision: state.needsRevision ? String(state.needsRevision).slice(-14) : null,
+    }),
   };
 }
 
@@ -1054,6 +1145,7 @@ export function buildScenario({
         digest_missing: seen.digest_missing,
         checks: [],
         problems: issues,
+        ...(ctx.hooks.reportEvidence ? { fixture_evidence: ctx.hooks.reportEvidence() } : {}),
       };
     },
   };

@@ -44,7 +44,7 @@
 | 动作 | 证明测试 | 断言的核心事实 |
 |---|---|---|
 | `allocate_agent` | cluster.test.js::a released worker frees its child slot…；::a transaction without an explicit capability set still yields working workers | 创建 Worker 身份与写作用域；能力继承；子槽上限 |
-| `spawn_agent` | core.test.js::role authorization denies cross-role writes and unknown roles；cluster.test.js::role permissions reject cross-role actions and domain escapes | 与 `allocate_agent` 同路径且要求 transaction_id；跨域被拒绝 |
+| `spawn_agent` | cluster.test.js::an authorized Allocator spawns a Worker through spawn_agent；::role permissions reject cross-role actions and domain escapes | 授权角色（Allocator）真的产出 Worker 节点并绑定 transaction；无 `transaction_id` 报错；越权（Orchestrator）拒绝 |
 | `spawn_management_node` | cluster.test.js::a delegation fixture builds a decreasing management chain；::a management node hosts worker and management children… | 委派链递减；深度/子数上限；委派事务原子建立 |
 | `release_agent` | cluster.test.js::budget transfers move only unused unreserved capacity and releasing reclaims it；::a released worker frees its child slot | 释放回收未用额度；槽位可复用；不存在双重释放 |
 | `allocate_budget` | actions-correctness.test.js::allocate_budget moves capacity from the node scope to an identity, and refuses a foreign target | 精确转移；域外目标 403；源与目标总额守恒 |
@@ -114,7 +114,7 @@
 | `send` / `multicast` | cluster.test.js::communication validates every multicast target before delivering anything；::communication crosses subtrees without touching the management tree | 全部目标先校验；一个坏目标不产生部分投递 |
 | `group` | cluster.test.js::groups accept cross-subtree members and blackboard publishes are revision fenced | 跨子树成员、组生命周期 |
 | `publish` | 同上 | revision fence、冲突拒绝 |
-| `query` / `subscribe` | cluster.test.js::subscribe returns a snapshot and cursor from one read cut | 快照与游标同一次读取 |
+| `query` / `subscribe` | cluster.test.js::a communication query returns the prefix view with the cursor of its read cut；core.test.js::subscribe returns a snapshot and cursor from one read cut | 前缀/按 key 查询只返回该视图且带读切游标；订阅快照与游标同一次读取 |
 | 投递可靠性 | cluster.test.js::resending a message id repairs deliveries without duplicating the message；::a retry after a mid-turn flush does not inject the message twice；::a delivery is only acked once the session is flushed；::receipt is proven by an incoming delivery marker | 去重、flush 后 ACK、标记即凭据 |
 | 原生投递证据 | acceptance: recovery 场景 `message-appears-exactly-once-in-the-recipient-session`（读原生 Session 日志） | 接收方 Session 里该消息恰好一次 |
 
@@ -135,12 +135,13 @@
 |---|---|---|
 | N0 单 Worker | `acceptance/native/mock-runtime.test.mjs::N0` | 原生 Session 中 callId 匹配的 call→result→后置回答；事务 SUBMITTED 且结果为工具返回值 |
 | N1 smoke | 2/2 ACCEPTED；`sums-verified`（逐事务比对工具返回值与提交值）；`worker-sessions-distinct`（真实 session_id） | 每个 Worker 自己 session 里的 `flow_sum` call/result |
-| N2 recursion | 管理树 depth 3、depth-1 的 Worker 分支、真实越界写被拒、Auditor 开 issue→修订→重新授权→真写→核销；deep 文件内容 `3` | 最深子树 worker 的 SETTLED write 效果、write-refused 事件、issue CORRECTED |
+| N2 recursion | 管理树 depth 3、depth-1 的 Worker 分支、真实越界写被拒、Auditor 开 issue→修订→重新授权→真写→核销；deep 文件内容 `3`；`correction-answered-by-later-work`（核销之前必须存在**已发布的、完成态的、更高 revision 的替代提交**）、`correction-written-by-a-replacement-worker`（写下交付物的身份不是被拒的那一个） | 最深子树 worker 的 SETTLED write 效果、write-refused 事件、issue CORRECTED、fixture 自记的逐事务提交序列（`mock_fixture.fixture_evidence`） |
 | N3 recovery | 护栏触发的受控重启；4/4 ACCEPTED；租约 fence；UNKNOWN 收据与在途集合一一对应；黑板键已发布 | SIGKILL 快照、原生 Session 投递标记计数 |
 | N4 context | 真实压缩发生、计费独立、压缩后仍正确提交、身份 cap 不被越过 | 每身份预算与原生上下文步骤事件 |
 | N5 browser | 真实 Playwright MCP 导航/解析 ref 点击/点击后快照；结果与快照标题一致 | 持久 effect 收据 |
 | N6 panel | 42 项 DOM/分页/鉴权检查；暂停/恢复/取消由真实页面驱动，取消前持住 closeout 请求 | Chromium DOM 与截图 |
-| N7 scale16 / N8 scale64 | planned=terminal=ACCEPTED=N；逐文件符号与行号精确匹配；每文件一个独立 Worker 且真的 read；并发上限被实际占满（两个在途请求 + 第三请求不出现） | 生成语料的哈希、mock 自己的请求区间 |
+| N7 scale16 / N8 scale64 | planned=terminal=ACCEPTED=N；逐文件符号与行号精确匹配；**结果必须回答本事务被授予的那个文件**（`results-name-the-granted-file`，期望值取自冻结 spec 的 `inputs.file`，不是结果自己声明的文件）；每文件一个独立 Worker，且该 Worker 的 **read 收据返回的路径**就是本事务的文件；并发上限被实际占满（两个在途请求 + 第三请求不出现）；`control-plane-calls-clean`（没有一次控制面调用因缺少/错配 audit 引用被拒） | 生成语料的哈希、冻结的 `inputs.file`、`tool_call_receipts` 里 read 的真结果、mock 自己的请求区间 |
+| F 参数（原生） | `F-arguments`：分片参数可组装；两种 `params` 写法都持久化；越权/不存在的事务被具名拒绝；**参数流无法组装成对象时**由 host 以 `INVALID_ARGS` 拒绝，且错误**按 callId 归属**、无效果、无结果 | 原生 Session 的 `tool/call` 与同名 `tool/result`；`effects` 为空 |
 
 ## 6. 设计已声明但**当前未实现**的动作（不计入通过）
 

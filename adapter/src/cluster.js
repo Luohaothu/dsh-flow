@@ -4272,7 +4272,14 @@ export class ClusterRuntime {
     const wanted = Object.fromEntries(Object.entries(amounts).filter(([, value]) => Number.isFinite(value) && value > 0));
     if (!Object.keys(wanted).length) return null;
     const allowance = this.workerRequestAllowance(agent);
-    if (allowance !== null && this.store.countWorkerRequests(cluster.id, agent.id) >= allowance) return null;
+    // A per-identity *request* allowance is final: a top-up must not extend it.
+    // It says nothing about tool calls, though. A Worker that has sent both of
+    // its requests still has to run the tool call that submits the result, and
+    // refusing that refill here made the last step of an otherwise finished
+    // Worker fail (measured: a Worker holding 32 tool calls, two requests sent,
+    // and a refused final submit that ended its transaction FAILED).
+    const wantsRequests = Number(wanted.model_requests ?? 0) > 0;
+    if (allowance !== null && wantsRequests && this.store.countWorkerRequests(cluster.id, agent.id) >= allowance) return null;
     const row = this.store.getBudget(agentBudget.id);
     const gap = {};
     for (const [key, need] of Object.entries(wanted)) {

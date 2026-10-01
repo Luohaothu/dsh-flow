@@ -27,18 +27,20 @@
 
 `node acceptance/suite.mjs --mock`，各 8 个场景：
 
-| 场景 | 批次 A：`t1` | 批次 B：`t2` | scenario | mechanism | 断言项 | mock 请求 A/B |
+| 场景 | 批次 A：`t3` | 批次 B：`t4` | scenario | mechanism | 断言项 | mock 请求 A/B |
 |---|---|---|---|---|---|---|
-| smoke | `t1-20261001T134053Z-b2c439` | `t2-20261001T134339Z-8f8cd0` | PASSED | PASS | 16 | 16 / 16 |
-| recursion | `t1-…-f0c110` | `t2-…-00c187` | PASSED | PASS | 19 | 104 / 104 |
-| recovery | `t1-…-3bf3fb` | `t2-…-81be20` | PASSED | PASS | 17 | 34 / 34 |
-| context | `t1-…-40bd4b` | `t2-…-ecca6c` | PASSED | PASS | 18 | 36 / 36 |
-| browser | `t1-…-224145` | `t2-…-84dbc6` | PASSED | PASS | 11 | 21 / 21 |
-| panel | `t1-…-a30dda` | `t2-…-d2ce67` | PASSED | PASS | 42 | 8 / 8 |
-| scale16 | `t1-…-d69c24` | `t2-…-2e4d57` | PASSED | PASS | 20 | 113 / 156 |
-| scale64 | `t1-…-360739` | `t2-…-6c5b99` | PASSED | PASS | 20 | 495 / 432 |
+| smoke | `t3-20261001T145409Z-7a88fe` | `t4-20261001T145725Z-2bfc30` | PASSED | PASS | 16 | 16 / 16 |
+| recursion | `t3-…-6409ab` | `t4-…-6cca4c` | PASSED | PASS | 21 | 92 / 90 |
+| recovery | `t3-…-a235ba` | `t4-…-a146a5` | PASSED | PASS | 17 | 34 / 34 |
+| context | `t3-…-50cc17` | `t4-…-710719` | PASSED | PASS | 18 | 36 / 36 |
+| browser | `t3-…-edd0ad` | `t4-…-bc01e2` | PASSED | PASS | 11 | 21 / 21 |
+| panel | `t3-…-ff891b` | `t4-…-98fa54` | PASSED | PASS | 42 | 8 / 8 |
+| scale16 | `t3-…-bc5123` | `t4-…-759d49` | PASSED | PASS | 22 | 109 / 110 |
+| scale64 | `t3-…-ca96a5` | `t4-…-ba66c1` | PASSED | PASS | 22 | 414 / 416 |
 
-两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹。请求计数与事件序列只要求落在约束内（并发上限、每个 Worker 的请求上限、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
+两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹（两次 8 个报告里 `plugin_source` = `sha256:d2d4d915…`、`lib_index` = `sha256:3b387d68…`、`acceptance_source` = `sha256:a2d49480…`，`build_drift` 全为 `null`）。请求计数与事件序列只要求落在约束内（并发上限、每个 Worker 的请求上限、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
+
+断言项比上一轮多出的 2 条在 recursion 与 scale：`correction-answered-by-later-work`、`correction-written-by-a-replacement-worker`（N2）与 `results-name-the-granted-file`、`control-plane-calls-clean`（N7/N8）。
 
 ## 按功能列出的结果
 
@@ -60,7 +62,7 @@
 | 归属（owner） | management 自有、Worker 属直接管理父节点、事务属其宿主节点；公开 query 读到同一事实 | 通过 | `cluster.test.js::node ownership is derived from the tree and reported by the public query`、`::an existing database normalises node and transaction ownership on open, idempotently` |
 | allocate_budget / rebalance_budget | 只迁移可用资金；域外目标 403；守恒 | 通过 | `actions-correctness.test.js::allocate_budget moves capacity…`、`cluster.test.js`（transfer/settle/reclaim）；scale 两档在真实调度中触发 rebalance 后仍全部 ACCEPTED |
 | 预算分维 | tokens / requests / tool_calls 各自独立；Worker 请求上限（scale 为 2）在 API 前拒绝越限 | 通过 | `acceptance/native/mock-runtime.test.mjs::F-budget`（mock 只见到 2 次请求）；scale 场景的 `worker-request-allowance` |
-| Worker 授予 | 授予不得超过该次运行声明的每 Worker 请求上限（上限本身仍按请求数强制） | 通过 | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`；scale 两档无一个 Worker 以零请求额度出生 |
+| Worker 授予 | 授予不得超过该次运行声明的每 Worker 请求上限（上限本身仍按请求数强制） | 通过 | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`（先红后绿）；smoke 的 `worker-request-allowance` 在真实运行里断言没有 Worker 超过上限 |
 | 请求记账 | 已派发请求必须进入终态并写明结果；**未知成本不得按 0 结算** | 通过 | `cluster.test.js::a failed provider request keeps its token hold as UNKNOWN instead of settling at zero`、`::a failed provider request that did report usage settles with the numbers it reported`；`acceptance/native/mock-runtime.test.mjs::F-transport` 断言 Worker 收据为 UNKNOWN、`total_tokens` 为 null、被扣作用域仍持有该预留 |
 | 分配提示 | 提示里的分配数量必须落在子槽与可用预算之内 | 通过 | `cluster.test.js::a full node is not offered an allocation it cannot perform`；scale 的 `per-file-results-exact` 16/16 与 64/64 |
 | 并发上限 | `max_llm_concurrency` 被真正占满且不被越过 | 通过 | scale 场景 `provider-ceiling-actually-reached`：持住 2 个在途请求 3000ms，期间第三请求为 0；两批均为真 |
@@ -150,11 +152,16 @@
 | `set_dependency` 只是建议 | 被依赖事务在依赖未 ACCEPTED 时仍被派给 Worker，只能读到尚不存在的产物 | `readyForWorker` 排除依赖未结算的事务 | `cluster.test.js::a dependent transaction is not offered to a Worker before its dependency is accepted` |
 | 传输失败被按 0 结算 | harness 在错误 finish 之前先发一个**置零**的 usage 块；插件一见 usage 就结算，于是把一次已派发、成本未知的请求当作零成本释放了 token 预留 | 记账推迟到 `finish`：错误/中止且没有真实用量时按 UNKNOWN 结算并保留预留；真实报告的失败仍按报告值结算 | `cluster.test.js::a failed provider request keeps its token hold as UNKNOWN instead of settling at zero`（先红后绿）、`::a failed provider request that did report usage settles with the numbers it reported` |
 | 分配提示不可执行 | 节点子槽已满时仍被提示 `allocate_agent`，三个无进展回合后整节点因停滞被 BLOCKED | 提示按子槽上限给出，并公布 `unallocated_total`（还欠多少） | `cluster.test.js::a full node is not offered an allocation it cannot perform`（先红后绿） |
-| Worker 授予超出其上限 | 每个 Worker 被授予 8 个请求额度，而该次运行只允许 2 个；64 档时节点额度被提前分光，最后 50 个 Worker 以 **0 请求**出生、根本发不出第一个请求 | 授予按声明的每 Worker 上限封顶（上限本身仍按请求数强制，另留一次会被释放的工作预留） | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`（先红后绿） |
+| Worker 授予超出其上限 | 每个 Worker 被授予 **8** 个请求额度，而该次运行只声明允许 2 个：授予形状与运行声明不一致，64 档时父节点的请求额度在发放授予时被提前抽干 | 授予按声明的每 Worker 上限封顶（上限本身仍按请求数强制，另留一次会被释放的工作预留） | `cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance`（先红后绿） |
+| ~~“64 档最后 50 个 Worker 以 0 请求出生、根本发不出第一个请求”~~（**撤回**） | 该结论不成立：`budgets` 里 Worker 行显示 `requests_limit=0, requests_spent=0` 是**释放时回收未用额度**的结果，属于“静止态”读数，不能证明授予当时额度为 0，更不能证明 Worker 起不来。`s64n-2` 的 64 个 Worker **每个都发出了恰好 2 次** provider 请求（`usage_receipts.kind='worker'` 共 128 条，按 agent 分组每人为 2） | 结论改写为可验证部分：缺陷是**授予超过声明上限**（8 vs 2）；本档没有任何 Worker 因额度而无法启动 | `s64n-2` 的 `usage_receipts` 逐 Worker 计数（64 × 2）；`cluster.test.js::a Worker grant never exceeds the run-wide per-Worker request allowance` |
 | 验收驱动残留 | `restartMidFlight` 传入未定义的 `qwen` | 删除该实参与未使用的形参，并由 N3 的真实 kill/restart 证明 | recovery 场景两批运行 |
+| issue 被“验收”静默核销 | `acceptTransaction` 把该事务下所有 OPEN/VERIFYING 的 issue 直接改成 `CORRECTED`：既不判断是否真的存在替代证据，也不写 `issue-corrected` 事件，于是账本里出现「已纠正」却没有任何理由，且**故障仍在被接受的成果里**时也会被核销（N2 复现：issue 在替代 Worker 提交之前就被判为已纠正） | 验收不再是“纠正”：沿用 `verify_correction` 的同一判据（issue 之前是不完整 Worker 结果时，必须有该 issue 之后的新 Worker 证据），不满足就**保持 OPEN** 交给 Auditor；核销一律写 `issue-corrected` 事件并带 `reason: accepted-result-after-issue` 与结果 revision | `cluster.test.js::acceptance closes an issue only when new Worker evidence answered it`（先红后绿） |
 
 ## 本轮修复过程中被测试暴露、并按契约改正的判据
 
 | 判据 | 原写法的问题 | 现在的判据 |
 |---|---|---|
 | scale 的 `usage-accounted` | 要求 `unknown_requests === 0`，等于强迫把「已派发但结果未知」的请求记成零成本 | 每个收据都离开 RESERVED 且 UNKNOWN 必须带原因（与 smoke 的 `usage-settled` 同一契约） |
+| scale 的 `per-file-results-exact` / `one-distinct-worker-per-file` | 期望文件取自**结果自己声明的 `file`**：Worker 读了 A、回答 B 的内容也能过；`tools_used` 含 `read` 只说明“读过某个文件” | 期望文件与符号取自该事务**冻结的 `inputs.file`**；结果必须点名该文件（`results-name-the-granted-file`）；该 Worker 的 read **收据返回的路径**必须就是那个文件（`readTheGrantedFile`）；纯函数 `resultMatchesGrant` / `distinctWorkersCoverFiles` 有单测（`acceptance/test/scale-oracle.test.mjs`，含串文件与重复 identity 反例） |
+| N2 的核销判据 | 只看「事务在 issue 之后变过」（`transaction-adjusted` 或 `validation-proposed`）就算核销：计划一改就满足，于是**替代成果出现之前**就能核销 | `correction-answered-by-later-work`：核销之前必须存在**已发布**（事务状态 SUBMITTED/VALIDATING/ACCEPTED）、**完成态**（`result_completed !== 0`）、revision 高于 issue 目标 revision 的提交；`correction-written-by-a-replacement-worker`：写下交付物的身份不是被拒的那一个 |
+| mock 审计员回执 | `inspect_plan`/`inspect_validation` 回执**丢掉了 pendingFor 提供的 `audit_id`/`target_revision`**，于是按事务**当前** revision 去解析审计：计划一改就变成 `no plan audit for transaction … at revision N`，同一回合内的控制面调用预算被这些必然失败的查找吃掉 | 回执转交被提供的 `audit_id`（并保留 `target_revision` 兜底）；新增 `control-plane-calls-clean` 在真实运行里断言 0 次此类查找失败 |

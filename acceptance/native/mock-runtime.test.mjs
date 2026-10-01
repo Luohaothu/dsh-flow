@@ -298,6 +298,66 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
     badLedger.close();
   }
   assert.equal(mock.errors.length, 0);
+
+  // A malformed argument *stream* is a different negative from the authorization
+  // one above: the shards never assemble into the documented object, so nothing
+  // can execute. Two properties have to hold together — the refusal is
+  // attributed to the call that produced it, and nothing ran from it.
+  //
+  // The stream is deliberately unparseable rather than merely truncated: the
+  // host's own decoder repairs truncated JSON (`{ "values": [2,` arrives as
+  // `{"values":[2]}` and really runs), so a truncated stream is not a negative
+  // at all. Recorded here so the next reader does not "tighten" this case into a
+  // form the host silently accepts.
+  const malformedRaw = 'totally not json';
+  const malformed = await harness(t, {
+    name: 'f-arguments-malformed',
+    hooks: {
+      worker(request) {
+        const c = request.classified;
+        if (c.lastToolName) return say('done');
+        return { toolCalls: [{ name: 'flow_sum', arguments: malformedRaw }], chunkBoundaries: [1, 4, 9] };
+      },
+    },
+  });
+  const malformedSingle = await malformed.host.request('single', undefined, {
+    objective: 'Call the sum tool with an argument stream that never assembles.',
+    workspace: malformed.layout.workspace,
+    capabilities: ['fs_read'],
+    budget: singleBudget,
+    acceptance_criteria: ['nothing is submitted'],
+  }, 300_000);
+  const malformedLedger = ledgerOf(malformed.layout, malformedSingle.cluster_id);
+  try {
+    const sessions = sessionsOf(malformed.layout, malformedSingle.cluster_id);
+    const calls = sessions.flatMap(session => session.events.filter(event => event.type === 'tool/call'));
+    const results = sessions.flatMap(session => session.events.filter(event => event.type === 'tool/result'));
+    assert.equal(calls.length, 1, `exactly the malformed call was issued: ${JSON.stringify(calls)}`);
+    const [attempt] = calls;
+    assert.equal(attempt.data.name, 'flow_sum');
+    // What the call was recorded with is not the stream that was sent: the host
+    // could not decode it and normalised the arguments to an empty object.
+    assert.equal(String(attempt.data.arguments), '{}',
+      `the undecodable stream is not the recorded argument text: ${JSON.stringify(attempt.data.arguments)}`);
+    const refusal = results.find(event => event.data.message?.toolCallId === attempt.data.callId);
+    assert.ok(refusal, `the malformed call has a result of its own: ${JSON.stringify(results)}`);
+    assert.equal(refusal.data.message?.isError, true);
+    assert.equal(refusal.data.error?.code, 'INVALID_ARGS', JSON.stringify(refusal.data.error));
+    assert.ok(toolResults({ events: [refusal] }).some(text => /invalid arguments/i.test(text)),
+      'the refusal names invalid arguments rather than a domain reason');
+
+    assert.deepEqual(malformedLedger.effects(), [], 'no effect came from the malformed call');
+    for (const row of malformedLedger.transactions()) {
+      const parsed = row.result ? JSON.parse(row.result) : null;
+      assert.equal(parsed?.sum, undefined, `the malformed call became no result: ${JSON.stringify(row.result)}`);
+    }
+    // The plugin still saw the call: it is the host that refused to decode it,
+    // and the plugin records the attempt rather than a phantom success.
+    assert.equal(malformedLedger.toolCalls().filter(row => row.tool === 'flow_sum').length, 1);
+  } finally {
+    malformedLedger.close();
+  }
+  assert.equal(malformed.mock.errors.length, 0, `fixture errors: ${malformed.mock.errors.join('; ')}`);
 });
 
 test('F-transport: a 500 and an aborted stream produce no success and no duplicate effect', async t => {

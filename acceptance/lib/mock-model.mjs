@@ -472,7 +472,15 @@ stream = openStream(res, { model: body.model ?? modelId, seq: sequence, now });
       if (held.length) problems.push(`requests still held at teardown: ${held.join(', ')}`);
       if (finish?.problems?.length) problems.push(...finish.problems);
       if (problems.length) throw new Error(`mock fixture incomplete:\n  ${problems.join('\n  ')}`);
-      return { requests: requests.length, scenario: current?.name ?? null, checks: finish?.checks ?? [] };
+      return {
+        requests: requests.length,
+        scenario: current?.name ?? null,
+        checks: finish?.checks ?? [],
+        // A scenario's own record of what it observed, when it keeps one: the
+        // subjects of its verdicts, carried out of the fixture so a reader can
+        // check a closure against the submissions it was decided from.
+        ...(finish?.fixture_evidence ? { fixture_evidence: finish.fixture_evidence } : {}),
+      };
     },
     async close() {
       if (closed) return;

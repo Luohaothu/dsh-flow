@@ -263,6 +263,45 @@ export async function run({ workspace, report, layout, events }) {
   push('flat-artifact-written', existsSync(flat) && /flat-ok/.test(readFileSync(flat, 'utf8')), `${flat} ${existsSync(flat) ? 'present' : 'missing'}`);
   push('verifier-artifact-written', existsSync(verify) && /verifier-ran/.test(readFileSync(verify, 'utf8')), `${verify} ${existsSync(verify) ? 'present' : 'missing'}`);
 
+  // A closed issue only certifies a correction if the work that answered it
+  // really came after it. A verdict recorded before the replacement submission,
+  // or recorded against a result the Worker itself reported as incomplete,
+  // closes an issue that nothing corrected — and a write that was *refused* is
+  // not the write that produced the deliverable. Order is read from the durable
+  // event stream and the settled effect, never from a fixture flag.
+  const replacementWriters = settledWrites.filter(row => {
+    let body = {};
+    try { body = JSON.parse(row.body ?? '{}'); } catch { body = {}; }
+    if (body?.isError === true || row.error) return false;
+    let args = {};
+    try { args = JSON.parse(row.args ?? '{}'); } catch { args = {}; }
+    const claimed = args.file_path ?? args.path ?? args.file ?? null;
+    return claimed && canonicalScopeEntry(workspace, String(claimed)) === targetCanonical;
+  });
+  const refusedAgents = new Set(ledger.all(
+    "SELECT json_extract(data,'$.agent_id') AS agent_id FROM events WHERE cluster_id=? AND type='write-refused'",
+    clusterId,
+  ).map(row => row.agent_id));
+  const correctionEvidence = corrected.map(issue => {
+    const closed = events.find(event => event.type === 'issue-corrected' && event.data.issue_id === issue.id)?.seq ?? null;
+    const replacements = events.filter(event => event.type === 'result-submitted'
+      && event.data.transaction_id === issue.transaction_id
+      && Number(event.data.revision ?? 0) > Number(issue.target_revision ?? 0)
+      && event.data.result_completed !== 0);
+    return {
+      issue: issue.id,
+      target_revision: issue.target_revision,
+      closed,
+      replacements: replacements.map(event => ({ seq: event.seq, revision: event.data.revision })),
+      ordered: replacements.length > 0 && closed !== null && replacements[0].seq < closed,
+    };
+  });
+  push('correction-answered-by-later-work', corrected.length ? correctionEvidence.every(entry => entry.ordered) : null,
+    `each closed issue needs a complete replacement result at a later revision, submitted before its verdict: ${JSON.stringify(correctionEvidence)}`);
+  push('correction-written-by-a-replacement-worker',
+    corrected.length ? replacementWriters.some(row => !refusedAgents.has(row.agent_id)) : null,
+    `the deliverable's successful writer must not be the identity whose write was refused: writers ${JSON.stringify([...new Set(replacementWriters.map(row => String(row.agent_id).slice(0, 8)))])}, refused ${JSON.stringify([...refusedAgents].map(id => String(id).slice(0, 8)))}`);
+
   const concurrency = events.filter(event => event.type === 'turn-start').length;
   push('turns-observed', concurrency > 6, `${concurrency} turns across the run`);
   const beaconCodes = ledger.all(

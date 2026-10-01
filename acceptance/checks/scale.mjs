@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { canonicalScopeEntry } from '../../adapter/src/scope.js';
 import { openLedger, usageSummary, pendingWork, workerActivation, concurrencyPeaks, writeScopeAnalysis } from '../lib/ledger.mjs';
 
 const TERMINAL = new Set(['ACCEPTED', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']);
@@ -15,6 +16,32 @@ export function scaleValidation(tier, planned, terminal, activated, requiredWork
   return planned === tier && terminal === planned && activated >= requiredWorkers && failedChecks === 0
     ? 'VERIFIED' : 'INCOMPLETE';
 }
+
+/**
+ * Does a submitted result answer the question its own transaction asked?
+ *
+ * The granted file is the transaction's frozen input; the expected symbol and
+ * line come from that file. A result that names another file — or a symbol that
+ * does not occur in the granted one — is wrong even when it is an accurate
+ * description of some *other* file in the corpus, which is exactly the
+ * confusion the earlier oracle could not see.
+ */
+export function resultMatchesGrant({ file, symbol, line, grantedFile, expected }) {
+  if (!grantedFile || !expected) return false;
+  if (String(file ?? '') !== String(grantedFile)) return false;
+  return String(symbol ?? '') === String(expected.symbol) && Number(line) === Number(expected.line);
+}
+
+/**
+ * One *distinct* Worker per tier file. An agent that was granted two files is
+ * one identity answering twice, which is not the tier's claim even when both
+ * answers are correct.
+ */
+export function distinctWorkersCoverFiles(tierIds, tierAgents) {
+  const agents = tierIds.map((_, index) => tierAgents[index] ?? null);
+  return agents.length > 0 && agents.every(Boolean) && new Set(agents).size === agents.length;
+}
+
 
 export async function run({ caseDef, workspace, report, layout, events }) {
   const checks = [];
@@ -113,6 +140,29 @@ export async function run({ caseDef, workspace, report, layout, events }) {
   const management = roles.filter(row => row.role !== 'worker');
   push('management-roles-ran', management.length === 3 && management.every(row => row.activated > 0), JSON.stringify(roles));
 
+  // A control-plane tool call that was refused at *lookup* time ("no plan audit
+  // for transaction … at revision …") is not a domain refusal: it means the
+  // caller asked about a revision nothing was offered for, or under a reference
+  // the item did not carry. The fixture used to send verdicts without the
+  // offered `audit_id`, so every verdict on a revised plan resolved to the
+  // transaction's *current* revision and missed. Nothing in a healthy run should
+  // be refused for a reason the caller was already told.
+  const controlCalls = ledger.all(
+    "SELECT tool, result_body, error FROM tool_call_receipts WHERE cluster_id=? AND tool IN ('flow_audit','flow_transaction','flow_allocation','flow_query')",
+    clusterId,
+  );
+  const lookupRefusals = controlCalls.filter(row => {
+    if (row.error) return true;
+    let text = String(row.result_body ?? '');
+    try { const parsed = JSON.parse(text); if (parsed?.isError === false) return false; text = parsed?.text ?? text; } catch { /* raw text */ }
+    return /no plan audit|no validation audit|is a \w+ audit, not|audit requires audit_id|no .* audit for transaction/i.test(text);
+  });
+  push('control-plane-calls-clean',
+    mockScoped ? controlCalls.length > 0 && lookupRefusals.length === 0 : null,
+    mockScoped
+      ? `${controlCalls.length} control-plane call(s), ${lookupRefusals.length} refused for a missing or mismatched audit reference: ${JSON.stringify(lookupRefusals.slice(0, 2))}`
+      : 'not asserted outside a mock run');
+
   // The corpus must exist with the recorded hashes, and every worker that
   // claims to have read a file must have really called the read tool.
   const datasetPath = join(workspace, caseDef.dataset?.file ?? 'dataset.json');
@@ -148,21 +198,37 @@ export async function run({ caseDef, workspace, report, layout, events }) {
     return { symbol: /^\s*export\s+function\s+(\w+)/u.exec(lines[index])[1], line: index + 1 };
   };
   const tierRows = tierIds.length
-    ? ledger.all(`SELECT id,status,result FROM transactions WHERE cluster_id=? AND id IN (${placeholders})`, clusterId, ...tierIds)
+    ? ledger.all(`SELECT id,status,result,inputs FROM transactions WHERE cluster_id=? AND id IN (${placeholders})`, clusterId, ...tierIds)
     : [];
+  // The file a tier transaction was created for comes from the frozen spec the
+  // plugin stored, never from the result. Letting the submission choose its own
+  // expected file made the oracle circular: a Worker that read one file and
+  // answered for a different one was graded against the file it named.
+  const grantedFileByTx = new Map(tierRows.map(row => {
+    let inputs = {};
+    try { inputs = JSON.parse(row.inputs ?? '{}'); } catch { inputs = {}; }
+    return [row.id, inputs.file ?? inputs.path ?? null];
+  }));
   const exact = tierRows.map(row => {
     let parsed = null;
     try { parsed = JSON.parse(row.result ?? 'null'); } catch { parsed = null; }
     const relative = parsed ? String(parsed.file ?? parsed.path ?? '') : '';
-    const expected = relative ? expectedFor(relative) : null;
+    const granted = grantedFileByTx.get(row.id) ?? null;
+    const expected = granted ? expectedFor(granted) : null;
     return {
-      id: row.id, status: row.status,
+      id: row.id, status: row.status, granted_file: granted,
       submitted: parsed ? { file: relative, symbol: parsed.symbol ?? null, line: parsed.line ?? null } : null,
       expected,
-      ok: row.status === 'ACCEPTED' && expected !== null
-        && parsed?.symbol === expected.symbol && Number(parsed?.line) === expected.line,
+      ok: row.status === 'ACCEPTED' && resultMatchesGrant({
+        file: relative, symbol: parsed?.symbol, line: parsed?.line, grantedFile: granted, expected,
+      }),
     };
   });
+  const wrongFile = exact.filter(entry => entry.submitted && entry.submitted.file !== entry.granted_file);
+  push('results-name-the-granted-file', mockScoped ? (tier > 0 && wrongFile.length === 0) : null,
+    mockScoped
+      ? `${exact.length - wrongFile.length}/${exact.length} results answered for the file their transaction was granted; answers for another file: ${JSON.stringify(wrongFile.slice(0, 3))}`
+      : 'not asserted outside a mock run');
   const exactMatches = exact.filter(entry => entry.ok);
   push('per-file-results-exact', mockScoped ? (tier > 0 && exactMatches.length === tier) : null,
     mockScoped
@@ -183,13 +249,39 @@ export async function run({ caseDef, workspace, report, layout, events }) {
   const readAgents = new Set(events
     .filter(event => event.type === 'turn-end' && (event.data.tools_used ?? []).includes('read'))
     .map(event => event.data.agent_id));
+  // A read of *any* file is not the tier's claim: each transaction's Worker must
+  // have read the file that transaction was granted. The evidence is the settled
+  // `read` receipt's own result — the path the native read tool reported — not a
+  // `tools_used` entry, which only says *some* file was opened.
+  const readPathsByAgent = new Map();
+  for (const receipt of ledger.all(
+    "SELECT agent_id, result_body FROM tool_call_receipts WHERE cluster_id=? AND tool='read' AND dispatch_status='SETTLED'", clusterId,
+  )) {
+    let text = String(receipt.result_body ?? '');
+    try { text = JSON.parse(text)?.text ?? text; } catch { /* a raw body is already the text */ }
+    const claimed = /<path>([^<]+)<\/path>/u.exec(text)?.[1] ?? null;
+    if (!claimed) continue;
+    const canonical = canonicalScopeEntry(workspace, claimed);
+    if (!canonical) continue;
+    const list = readPathsByAgent.get(receipt.agent_id) ?? new Set();
+    list.add(canonical);
+    readPathsByAgent.set(receipt.agent_id, list);
+  }
   const distinctAgents = new Set(tierAgents.filter(Boolean));
+  const readTheGrantedFile = tierIds.filter((id, index) => {
+    const agent = tierAgents[index];
+    const granted = grantedFileByTx.get(id);
+    if (!agent || !granted) return false;
+    const canonical = canonicalScopeEntry(workspace, join(workspace, granted));
+    return Boolean(canonical) && readPathsByAgent.get(agent)?.has(canonical);
+  });
   push('one-distinct-worker-per-file',
     mockScoped
-      ? (tier > 0 && tierAgents.every(Boolean) && distinctAgents.size === tier && tierAgents.every(agent => readAgents.has(agent)))
+      ? (distinctWorkersCoverFiles(tierIds, tierAgents)
+        && readTheGrantedFile.length === tier && tierAgents.every(agent => readAgents.has(agent)))
       : null,
     mockScoped
-      ? `${distinctAgents.size} distinct Worker(s) for ${tier} tier file(s); ${tierAgents.filter(agent => agent && readAgents.has(agent)).length} of them recorded a real read call`
+      ? `${distinctAgents.size} distinct Worker(s) for ${tier} tier file(s); ${readTheGrantedFile.length} of them opened the file their transaction was granted; ${tierAgents.filter(agent => agent && readAgents.has(agent)).length} recorded a read call`
       : 'not asserted outside a mock run');
 
   // The ceiling was not merely respected, it was *reached* and then held: the

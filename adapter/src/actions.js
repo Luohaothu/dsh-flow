@@ -2026,7 +2026,20 @@ function acceptTransaction(rt, cluster, tx) {
   writeNodeSummary(rt, cluster, tx.node_id);
   rt.deliverFixtureMessages(cluster, tx);
   for (const issue of rt.store.openIssues(cluster.id, { transaction_id: tx.id, status: ['OPEN', 'VERIFYING'] })) {
+    // Acceptance is not by itself a correction. The same rule `verify_correction`
+    // applies decides it here: an issue that followed an incomplete Worker result
+    // is closed only when the transaction produced new Worker evidence after it.
+    // Otherwise the issue stays open for the Auditor. Either way the closure is
+    // recorded — a silent status flip left the ledger with a CORRECTED issue and
+    // no reason, and let an issue read as corrected while the fault it named was
+    // still in the accepted result.
+    if (rt.store.issueHasIncompleteWorkerResult(cluster.id, issue)
+      && !rt.store.issueHasNewWorkerEvidence(cluster.id, issue)) continue;
     rt.store.updateIssue(issue.id, { status: 'CORRECTED' });
+    rt.store.appendEvent(cluster.id, 'issue-corrected', {
+      issue_id: issue.id, transaction_id: issue.transaction_id, reason: 'accepted-result-after-issue',
+      result_revision: tx.result_revision,
+    });
   }
   const node = rt.store.getNode(tx.node_id);
   if (node?.parent_id) rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, node.parent_id, 'orchestrator')?.id, { subject: 'child-accepted', payload: { transaction_id: tx.id } });
