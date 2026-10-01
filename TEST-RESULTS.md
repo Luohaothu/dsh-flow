@@ -35,11 +35,12 @@ fingerprints are byte-identical to batch A's.
 
 `acceptance/RESULTS.md` was edited after batches A and B, and it lives inside
 the fingerprinted `acceptance/` tree, so that directory's digest moved. The
-closing batch (`final6`) ran on the tree exactly as committed and records
+closing batch (`final7`) ran on the tree exactly as committed and records
 `acceptance_source`
-`sha256:f8f5dd174b84656b0cdde4ca116e8463602b8fa864f8494be85b4dffa8515b45`
-(41 files) — recomputing that directory today returns exactly this value,
-because this file is *outside* `acceptance/` and cannot move it.
+`sha256:77298cde50727a57f9032da44be3878325cd7118ec4aee2ac0e976ef12b58a91`
+(41 files, `plugin_source` `sha256:40d648c5…`) — recomputing that directory
+today returns exactly this value, because this file is *outside* `acceptance/`
+and cannot move it.
 
 The tree was also repaired before these runs: `.gitignore` had an unanchored
 `lib/`, which matched `acceptance/lib/` at any depth, so the six modules the
