@@ -10,33 +10,37 @@
 
 ## 冻结的构建与源码指纹
 
-两批验收运行跑在同一份源码上，两次的 `acceptance_source` 指纹相同：
+验收在这一份源码上跑了两批，其中一批在**第二个 checkout**（同一 commit 的 clean worktree）里跑，两批指纹完全相同：
 
 | 项 | 值 |
 |---|---|
-| `plugin_source` | `sha256:3b6da44b3f162451af45705c01039d88010cb933116e154d322e6432bf5dcd91`（9 个源文件） |
+| `plugin_source` | `sha256:40d648c55acda311b5cc6f244b3330096d640314ce4274c44d11fb818642a856`（9 个源文件） |
 | `lib_index` | `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd` |
-| `acceptance_source` | `sha256:293a51a04309e25d5d56420b4e7136d51e78c3aa38d7e82b4d11deeb05943749`（40 个文件） |
-| 单 run 内 drift | 两批 16 份报告全部 `null` |
+| `acceptance_source` | `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c`（40 个文件） |
+| 单 run 内 drift | 16 份报告全部 `null` |
 
-`acceptance_source` 是两批运行时 `acceptance/` 目录的实际内容。本文件（`RESULTS.md`）在两批之后加入，属于文档，不被任何用例执行，因此今天重新计算目录摘要会得到一个不同的值（多一个文件）。把本文件排除后重新计算仍得到上面的值；每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都各自保留了运行当时的原始记录。`TEST-RESULTS.md` 记录了在这份文档定稿之后、于当前树上再跑一次的确认批次及其目录摘要。
+`hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值（两批分别在 `/home/leo/projects/dsh-flow` 与一个 clean worktree 中运行，逐字节相同）。
+
+**本文件位于被指纹覆盖的 `acceptance/` 目录内**：改动本文件就会改变该目录的摘要，所以「今天的 `acceptance_source` 是多少」不写在这里，而写在指纹范围之外的 `TEST-RESULTS.md`，可随时重算核对。每个 `.artifacts/<run-id>/report.json` 与 `mock-requests.json` 都保存了运行当时的原始记录。
+
+更早的批次（`final1`–`final4`）跑在同一份插件源码上，但当时指纹函数按绝对路径取摘要，所以它们的值与本表不同；它们作为历史保留，不再作为本批的通过依据。
 
 ## 两批完整套件的结论
 
 `node acceptance/suite.mjs --mock`，各 8 个场景：
 
-| 场景 | final1（run-id） | final2（run-id） | scenario | mechanism | 断言项 | mock 请求 |
+| 场景 | 批次 A：`final5`（主工作树） | 批次 B：`clean2`（第二个 checkout） | scenario | mechanism | 断言项 | mock 请求 A/B |
 |---|---|---|---|---|---|---|
-| smoke | `final1-20261001T112853Z-8264c7` | `final2-20261001T113146Z-85c892` | PASSED | PASS | 16 | 16 |
-| recursion | `final1-…-72c145` | `final2-…-b5328c` | PASSED | PASS | 19 | 106 |
-| recovery | `final1-…-71715d` | `final2-…-2b30bc` | PASSED | PASS | 17 | 34 |
-| context | `final1-…-6bcaba` | `final2-…-554f24` | PASSED | PASS | 18 | 36 |
-| browser | `final1-…-602a1c` | `final2-…-611d0d` | PASSED | PASS | 11 | 21 |
-| panel | `final1-…-986873` | `final2-…-237785` | PASSED | PASS | 42 | 8 |
-| scale16 | `final1-…-d96d24` | `final2-…-d8f146` | PASSED | PASS | 20 | 166 / 127 |
-| scale64 | `final1-…-b060d6` | `final2-…-43aa60` | PASSED | PASS | 20 | 454 / 458 |
+| smoke | `final5-20261001T115630Z-e3fc76` | `clean2-20261001T115920Z-059893` | PASSED | PASS | 16 | 16 / 16 |
+| recursion | `final5-…-aad53c` | `clean2-…-7a10b7` | PASSED | PASS | 19 | 105 / 104 |
+| recovery | `final5-…-b91348` | `clean2-…-241eab` | PASSED | PASS | 17 | 34 / 34 |
+| context | `final5-…-2ef55f` | `clean2-…-f1cf70` | PASSED | PASS | 18 | 36 / 36 |
+| browser | `final5-…-89c47a` | `clean2-…-d8ccd3` | PASSED | PASS | 11 | 21 / 21 |
+| panel | `final5-…-cff3f1` | `clean2-…-9ce752` | PASSED | PASS | 42 | 8 / 8 |
+| scale16 | `final5-…-83fb7b` | `clean2-…-590b82` | PASSED | PASS | 20 | 149 / 126 |
+| scale64 | `final5-…-61c1ed` | `clean2-…-138e57` | PASSED | PASS | 20 | 514 / 525 |
 
-两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言。请求计数与事件序列只要求落在约束内（并发上限、两次 Worker 请求、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
+两次运行的语义结果一致：相同的场景状态、相同的不变量、相同数量的断言、相同的源指纹。请求计数与事件序列只要求落在约束内（并发上限、两次 Worker 请求、账本守恒），不要求逐字节相同——随机 id、时间戳和并发到达顺序本就不该相同。
 
 ## 按功能列出的结果
 
