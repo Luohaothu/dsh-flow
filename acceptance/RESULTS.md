@@ -16,7 +16,7 @@
 |---|---|
 | `plugin_source` | `sha256:40d648c55acda311b5cc6f244b3330096d640314ce4274c44d11fb818642a856`（9 个源文件） |
 | `lib_index` | `sha256:9a88b2585380be43394c02700c09a09a30c538dc88c2894cc82136195abd3afd` |
-| `acceptance_source` | `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c`（40 个文件） |
+| `acceptance_source` | `sha256:d520631b22918c28ae7a2ff6038d8ea774cb2e87c899e2fd37059f7e32e7f32c`（41 个文件） |
 | 单 run 内 drift | 16 份报告全部 `null` |
 
 `hashTree` 按**相对树根**的路径取摘要，因此同一 commit 在任何目录下都得到同一个值（两批分别在 `/home/leo/projects/dsh-flow` 与一个 clean worktree 中运行，逐字节相同）。
