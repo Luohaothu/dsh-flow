@@ -17,9 +17,9 @@ on the tree exactly as committed; the reports carry
 | Build | wrote `lib/index.js`, `lib/client.js` | `npm run build` |
 | Deterministic suite, batch A | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t3-*` |
 | Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t4-*` |
-| Closing batch, committed tree `e733467` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close3-*` |
+| Closing batch, committed tree `2fe3a27` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close4-*` |
 | Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
-| Tier stability | 3/3 at N=16 and 3/3 at N=64, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`close3` scale rows |
+| Tier stability | 3/3 at N=16 and 3/3 at N=64, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`close4` scale rows |
 
 Frozen fingerprints (identical in every report of every batch):
 
@@ -31,13 +31,12 @@ Frozen fingerprints (identical in every report of every batch):
 `hashTree` digests paths **relative to the tree root**, so the same commit
 produces the same fingerprint in any checkout. `acceptance/RESULTS.md` lives
 inside the fingerprinted tree and was edited after batches A and B, so that
-directory's digest moved. The closing batch ran on the tree exactly as committed
-(`git rev-parse HEAD` = `e733467`) and records
+directory's digest moved (`close2` and `close3` are the earlier closing batches on their own commits). The final closing batch ran on the tree exactly as committed
+(`git rev-parse HEAD` = `2fe3a27`) and records
 
-* `acceptance_source` `sha256:8a4f1f5db585f1539d2568712087d4197276e1bb03d31fafa7e90774e9c255b5` (42 files)
+* `acceptance_source` `sha256:298003b6f4fb93d8bc7c52c358bd0992008d0b2abd0a008d7455d3cc1a2a5a27` (42 files)
 * `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6` (9 files)
-* closing runs (batch `close3`, all eight report the digest above):
-  smoke `close3-20261001T150411Z-430539`、recursion `close3-…-2353f7`、recovery `close3-…-e0b154`、context `close3-…-773075`、browser `close3-…-a1e76d`、panel `close3-…-231c09`、scale16 `close3-…-ce9f7c`、scale64 `close3-…-e6fec5`
+* closing runs (batch `close4`, all eight report the digest above): smoke `close4-20261001T151051Z-865fbc`、recursion `close4-…-44fddb`、recovery `close4-…-f71724`、context `close4-…-d920be`、browser `close4-…-fa6dd0`、panel `close4-…-4ff0c3`、scale16 `close4-…-5a991b`、scale64 `close4-…-0b9f59`
 
 This file is *outside* the fingerprinted trees, so editing it cannot move either
 digest.
