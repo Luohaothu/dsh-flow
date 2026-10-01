@@ -13,13 +13,14 @@ on the tree exactly as committed; the reports carry
 
 | Check | Result | Evidence |
 |---|---|---|
-| Unit + classification + evidence-chain + oracle suites | **303 tests, 303 pass** | `npm test` |
+| Unit + classification + evidence-chain + oracle suites | **304 tests, 304 pass** | `npm test` |
 | Build | wrote `lib/index.js`, `lib/client.js` | `npm run build` |
 | Deterministic suite, batch A | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t3-*` |
 | Deterministic suite, batch B | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t4-*` |
-| Closing batch, committed tree `2fe3a27` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close4-*` |
+| Follow-up batch (strict correction gate) | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/t5-*` |
+| Closing batch, committed tree `77fd584` | 8/8 scenarios PASSED, mechanism PASS, 0 failed assertions | `.artifacts/close5-*` |
 | Native host contracts | 5/5 pass (N0 + F-permission + F-arguments + F-transport + F-budget) | `acceptance/native/mock-runtime.test.mjs` |
-| Tier stability | 3/3 at N=16 and 3/3 at N=64, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`close4` scale rows |
+| Tier stability | 6/6 at N=16 and 6/6 at N=64 across the round's batches, planned = terminal = ACCEPTED = N each time | `t3`/`t4`/`t5`/`close5` scale rows |
 
 Frozen fingerprints (identical in every report of every batch):
 
@@ -31,12 +32,13 @@ Frozen fingerprints (identical in every report of every batch):
 `hashTree` digests paths **relative to the tree root**, so the same commit
 produces the same fingerprint in any checkout. `acceptance/RESULTS.md` lives
 inside the fingerprinted tree and was edited after batches A and B, so that
-directory's digest moved (`close2` and `close3` are the earlier closing batches on their own commits). The final closing batch ran on the tree exactly as committed
-(`git rev-parse HEAD` = `2fe3a27`) and records
+directory's digest moved (`close2`–`close4` are the earlier closing batches on their own commits). The final closing batch ran on the tree exactly as committed
+(`git rev-parse HEAD` = `77fd584`) and records
 
-* `acceptance_source` `sha256:298003b6f4fb93d8bc7c52c358bd0992008d0b2abd0a008d7455d3cc1a2a5a27` (42 files)
+* `acceptance_source` `sha256:c0ea58638d3f63414b23553588eccc9768c14deb42aa2cfaa796beb93eeb3937` (42 files)
 * `plugin_source` `sha256:d2d4d9155015dfed4407d9147b21f3958880d5a75839742cbbdb21d853f6baa6` (9 files)
-* closing runs (batch `close4`, all eight report the digest above): smoke `close4-20261001T151051Z-865fbc`、recursion `close4-…-44fddb`、recovery `close4-…-f71724`、context `close4-…-d920be`、browser `close4-…-fa6dd0`、panel `close4-…-4ff0c3`、scale16 `close4-…-5a991b`、scale64 `close4-…-0b9f59`
+* closing runs (batch `close5`, all eight report the digest above): smoke `close5-20261001T152154Z-7769d9`、recursion `close5-…-f754d8`、recovery `close5-…-e58813`、context `close5-…-298671`、browser `close5-…-0bb8cd`、panel `close5-…-b48b5d`、scale16 `close5-…-7b9351`、scale64 `close5-…-0f065c`
+* follow-up batch `t5` on the same source: `t5-20261001T151857Z-{6f2183 smoke, 3f384d recursion, 674999 recovery, 04af40 context, 7b5edd browser, 93bac1 panel, bead1b scale16, c20e28 scale64}`, `acceptance_source` `sha256:c0ea5863…` identical to `close5`
 
 This file is *outside* the fingerprinted trees, so editing it cannot move either
 digest.
@@ -68,7 +70,12 @@ has a regression test that was red before it and green after:
    bound to that call id, with no effect and no result.
 5. **Coverage matrix.** `spawn_agent` and `flow_communicate query` rows now cite
    real tests; both were added.
-6. **Withdrawn claim.** "50 Workers born with zero request allowance that could
+6. **Correction gate.** `correction-answered-by-later-work` compared
+   `result_completed !== 0` against a field the ledger writes as a JSON boolean,
+   so a blocked (`false`) or unstated (`null`) replacement satisfied it. Strict
+   `=== true` now, extracted into pure functions and pinned by negatives in
+   `acceptance/test/evidence-chain.test.mjs` (red under the old predicate).
+7. **Withdrawn claim.** "50 Workers born with zero request allowance that could
    not send" is retracted: at-rest budget rows read zero because releasing
    reclaims capacity, and `s64n-2` shows all 64 Workers dispatching exactly two
    requests. The proven defect is the over-grant (8 against a declared 2).
