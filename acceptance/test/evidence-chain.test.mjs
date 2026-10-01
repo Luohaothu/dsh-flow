@@ -757,3 +757,38 @@ test('event-triggered recovery discovers a flush after the first 500 events', as
   assert.equal(fallback.observed, 0);
   assert.match(fallback.note, /killed on the clock instead/);
 });
+
+test('a closed correction needs a completed replacement, not a blocked or unknown one', async () => {
+  const { answeredByReplacementWork, completedReplacementSubmissions } = await import('../checks/recursion.mjs');
+  const issue = { id: 'i1', transaction_id: 'tx1', target_revision: 2 };
+  // The ledger writes `result_completed` as a JSON boolean: `false` for a
+  // blocked Worker result and `null` when the result carried no verdict. A
+  // predicate of the form `!== 0` accepted both, so an issue could read as
+  // answered by a replacement that reported itself blocked in the same breath.
+  const events = [
+    { seq: 10, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 2, result_completed: false } },
+    { seq: 20, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 3, result_completed: false } },
+    { seq: 21, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 3, result_completed: null } },
+  ];
+  assert.deepEqual(completedReplacementSubmissions(events, issue), [],
+    'neither a blocked nor an unstated result is a completed replacement');
+  assert.equal(answeredByReplacementWork({ events, issue, closedSeq: 30 }), false,
+    'a closure standing on a blocked replacement proves no correction round');
+
+  // A completed later revision, published before the verdict, is the answer.
+  const answered = [...events, { seq: 25, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 4, result_completed: true } }];
+  assert.equal(answeredByReplacementWork({ events: answered, issue, closedSeq: 30 }), true);
+  assert.equal(answeredByReplacementWork({ events: answered, issue, closedSeq: 24 }), false,
+    'a verdict recorded before the replacement was published certifies nothing');
+  assert.equal(answeredByReplacementWork({ events: answered, issue, closedSeq: null }), false,
+    'an issue with no closing event has no correction to claim');
+
+  // Wrong transaction, and a revision no later than the issue's own.
+  const wrong = [
+    { seq: 5, type: 'result-submitted', data: { transaction_id: 'tx2', revision: 9, result_completed: true } },
+    { seq: 6, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 2, result_completed: true } },
+    { seq: 7, type: 'result-submitted', data: { transaction_id: 'tx1', revision: 1, result_completed: true } },
+  ];
+  assert.deepEqual(completedReplacementSubmissions(wrong, issue), [],
+    'another transaction, the issue revision itself, and an older revision are not replacements');
+});

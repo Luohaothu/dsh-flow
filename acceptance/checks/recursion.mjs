@@ -30,6 +30,35 @@ export function correctionWitness(issues, adjustments, revalidations = []) {
   });
 }
 
+/**
+ * The submissions that can answer an issue: results for the same transaction,
+ * submitted at a revision later than the one the issue was raised against, and
+ * that the Worker really **completed**.
+ *
+ * The ledger stores `result_completed` as a JSON boolean (`false` for a blocked
+ * result, `true` for a completed one, `null` when the result carried no verdict
+ * at all). A predicate of the form `!== 0` accepts both `false` and `null`, so
+ * it certified issues as answered by a replacement that had itself reported
+ * itself blocked. Only `=== true` is a completion.
+ */
+export function completedReplacementSubmissions(events, issue) {
+  return (events ?? []).filter(event => event.type === 'result-submitted'
+    && event.data?.transaction_id === issue.transaction_id
+    && Number(event.data?.revision ?? 0) > Number(issue.target_revision ?? 0)
+    && event.data?.result_completed === true);
+}
+
+/**
+ * Did a completed replacement result exist *before* the issue was closed? The
+ * verdict has to follow the work it certifies: a closure recorded first, or one
+ * standing on an incomplete or unknown submission, proves no correction round.
+ */
+export function answeredByReplacementWork({ events, issue, closedSeq }) {
+  if (closedSeq === null || closedSeq === undefined) return false;
+  const replacements = completedReplacementSubmissions(events, issue);
+  return replacements.some(event => Number(event.seq) < Number(closedSeq));
+}
+
 const TERMINAL = new Set(['ACCEPTED', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']);
 const LIMIT_CODES = ['BUDGET_EXHAUSTED', 'LIMIT_REACHED', 'DEADLINE_PASSED'];
 const MECHANISM_CHECKS = ['no-duplicate-accounting', 'cluster-database-present', 'cluster-id-resolved'];
@@ -284,16 +313,19 @@ export async function run({ workspace, report, layout, events }) {
   ).map(row => row.agent_id));
   const correctionEvidence = corrected.map(issue => {
     const closed = events.find(event => event.type === 'issue-corrected' && event.data.issue_id === issue.id)?.seq ?? null;
-    const replacements = events.filter(event => event.type === 'result-submitted'
-      && event.data.transaction_id === issue.transaction_id
-      && Number(event.data.revision ?? 0) > Number(issue.target_revision ?? 0)
-      && event.data.result_completed !== 0);
+    // Every submission this transaction produced, with what it reported, so the
+    // evidence string shows both what was counted and what was not.
+    const observed = events
+      .filter(event => event.type === 'result-submitted' && event.data?.transaction_id === issue.transaction_id)
+      .map(event => ({ seq: event.seq, revision: event.data?.revision ?? null, completed: event.data?.result_completed ?? null }));
+    const replacements = completedReplacementSubmissions(events, issue);
     return {
       issue: issue.id,
       target_revision: issue.target_revision,
       closed,
-      replacements: replacements.map(event => ({ seq: event.seq, revision: event.data.revision })),
-      ordered: replacements.length > 0 && closed !== null && replacements[0].seq < closed,
+      submissions: observed,
+      completed_later: replacements.map(event => ({ seq: event.seq, revision: event.data.revision })),
+      ordered: answeredByReplacementWork({ events, issue, closedSeq: closed }),
     };
   });
   push('correction-answered-by-later-work', corrected.length ? correctionEvidence.every(entry => entry.ordered) : null,
