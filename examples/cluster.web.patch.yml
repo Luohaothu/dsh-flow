@@ -2,8 +2,8 @@
 #
 # Applied *after* examples/cluster.patch.yml. It mounts the browser providers so
 # a cluster worker with the `browser` capability gets Playwright's upstream
-# tools in its own session scope. Chromium is pinned to the already installed
-# local build; a missing binary is reported, never silently replaced.
+# tools in its own session scope. Set FLOW_CHROMIUM_PATH to use an installed
+# Chromium; otherwise Playwright uses its managed browser installation.
 - insert:
     - id: browser-use
       name: '@deepseek-ai/dsh-browser-use'
@@ -12,4 +12,4 @@
       config:
         mode: launch
         headless: true
-        executablePath: /home/leo/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome
+        executablePath: !!js process.env.FLOW_CHROMIUM_PATH

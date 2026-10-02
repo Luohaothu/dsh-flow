@@ -12,14 +12,19 @@
  * Environment: DSH_INSTALL_PATH points at the harness apps/cli directory.
  */
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const installPath = resolve(process.env.DSH_INSTALL_PATH ?? '/home/leo/projects/deepseek-harness/apps/cli');
+const require = createRequire(import.meta.url);
+const installPath = process.env.DSH_INSTALL_PATH
+  ? resolve(process.env.DSH_INSTALL_PATH)
+  : dirname(require.resolve('@deepseek-ai/dsh/package.json'));
 const bin = join(installPath, 'lib/bin.js');
 if (!existsSync(bin)) {
   console.error(`dsh-launch: no built DSH launcher at ${bin}`);
   process.exit(1);
 }
 
-const { runCli } = await import(bin);
+const { runCli } = await import(pathToFileURL(bin).href);
 await runCli();

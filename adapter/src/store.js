@@ -7,6 +7,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
+import { isAsyncFunction, isPromise } from 'node:util/types';
 
 export const SCHEMA_VERSION = 2;
 
@@ -312,22 +313,38 @@ export class ClusterStore {
     return this.#stmt(sql).get(...this.#bind(args));
   }
 
+  #callSync(fn) {
+    // Refuse declared async callbacks before they can start IO or schedule a
+    // continuation. A promise-returning synchronous callback is also invalid;
+    // its synchronous writes are rolled back by the owning transaction.
+    if (isAsyncFunction(fn)) fail('Store callbacks must be synchronous');
+    const value = fn();
+    if (value && typeof value.then === 'function') {
+      if (isPromise(value)) value.catch(() => {});
+      fail('Store callbacks must be synchronous');
+    }
+    return value;
+  }
+
   /**
-   * Run `fn` inside the current write transaction, opening one only when this
-   * is the outermost call. Handlers compose (a command handler calling a
-   * helper that also needs atomicity), and SQLite has no nested BEGIN.
+   * Run synchronous work atomically. Nested callers own a savepoint, so a
+   * caught inner failure cannot leave half of that operation in the outer
+   * commit. A successful inner operation still rolls back with its caller.
    */
   tx(fn) {
-    if (this.#txDepth > 0) return fn();
-    this.db.exec('BEGIN IMMEDIATE');
+    const savepoint = this.#txDepth > 0 ? `cluster_store_tx_${this.#txDepth}` : null;
+    this.db.exec(savepoint ? `SAVEPOINT ${savepoint}` : 'BEGIN IMMEDIATE');
     this.#txDepth += 1;
     try {
-      const value = fn();
-      this.db.exec('COMMIT');
+      const value = this.#callSync(fn);
+      this.db.exec(savepoint ? `RELEASE SAVEPOINT ${savepoint}` : 'COMMIT');
       return value;
     } catch (error) {
       try {
-        this.db.exec('ROLLBACK');
+        if (savepoint) {
+          this.db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          this.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        } else this.db.exec('ROLLBACK');
       } catch {
         /* connection already unwound */
       }
@@ -504,7 +521,7 @@ export class ClusterStore {
 
   findCommand(commandId) {
     const row = this.get('SELECT * FROM commands WHERE command_id=?', commandId);
-    return row ? { command_id: row.command_id, action: row.action, hash: row.hash, revision: row.revision, result: p(row.result), at: row.at } : null;
+    return row ? { command_id: row.command_id, cluster_id: row.cluster_id, actor: p(row.actor), action: row.action, hash: row.hash, revision: row.revision, result: p(row.result), at: row.at } : null;
   }
 
   /**
@@ -513,18 +530,27 @@ export class ClusterStore {
    */
   runCommand({ cluster_id, command_id, actor, action, expected_revision, params }, apply) {
     textField(command_id, 'command_id', 256);
-    const hash = canonical({ action, params: params ?? null });
-    const existing = this.findCommand(command_id);
-    if (existing) {
-      if (existing.hash !== hash) fail('command_id reused with different payload', 409);
-      return { result: existing.result, revision: existing.revision, deduped: true };
-    }
-    const result = apply();
-    this.run(
-      'INSERT INTO commands(command_id,cluster_id,actor,action,hash,revision,result,at) VALUES(?,?,?,?,?,?,?,?)',
-      command_id, cluster_id, j(actor), action, hash, result?.revision ?? null, j(result), this.now(),
-    );
-    return { result, revision: result?.revision ?? null, deduped: false };
+    return this.tx(() => {
+      const hash = canonical({ action, params: params ?? null });
+      const existing = this.findCommand(command_id);
+      if (existing) {
+        // A command identity belongs to one cluster and authenticated actor.
+        // The lease epoch is transient, so a retried turn can recover its own
+        // receipt without letting another actor replay it across domains.
+        const identity = value => canonical(pickDefined(value ?? {}, ['role', 'agent_id', 'node_id']));
+        if (existing.cluster_id !== cluster_id || identity(existing.actor) !== identity(actor)) {
+          fail('command_id belongs to another cluster or actor', 409);
+        }
+        if (existing.hash !== hash) fail('command_id reused with different payload', 409);
+        return { result: existing.result, revision: existing.revision, deduped: true };
+      }
+      const result = this.#callSync(apply);
+      this.run(
+        'INSERT INTO commands(command_id,cluster_id,actor,action,hash,revision,result,at) VALUES(?,?,?,?,?,?,?,?)',
+        command_id, cluster_id, j(actor), action, hash, result?.revision ?? null, j(result), this.now(),
+      );
+      return { result, revision: result?.revision ?? null, deduped: false };
+    });
   }
 
   // ------------------------------------------------------------------- nodes
@@ -1602,7 +1628,8 @@ export class ClusterStore {
   }
 
   blackboardList(clusterId, prefix) {
-    if (prefix) return this.all('SELECT * FROM blackboard WHERE cluster_id=? AND key LIKE ? ORDER BY key', clusterId, `${escapeLike(prefix)}%`);
+    // Match the same literal, case-sensitive prefix used for notifications.
+    if (prefix) return this.all('SELECT * FROM blackboard WHERE cluster_id=? AND instr(key,?)=1 ORDER BY key', clusterId, prefix);
     return this.all('SELECT * FROM blackboard WHERE cluster_id=? ORDER BY key', clusterId);
   }
 
@@ -2013,10 +2040,6 @@ function p(value) {
   } catch {
     return value;
   }
-}
-
-function escapeLike(value) {
-  return String(value).replace(/[\\%_]/g, m => `\\${m}`);
 }
 
 function canonical(value) {

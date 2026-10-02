@@ -592,6 +592,7 @@ export async function runTurn(ctx, {
   transactionId = null, budgetIds, modelAccounting = true, turnSeq, flow, contextLimits = {}, forceCompact = false,
   onAgentReady, onAdmitted, onFlushed,
 }) {
+  signal?.throwIfAborted();
   const collected = { events: [], assistant: [], usage: [], toolCalls: [] };
   const missingReport = [];
   let context = null;
@@ -644,16 +645,17 @@ export async function runTurn(ctx, {
     if (modelAccounting) installRequestAccounting(agentCtx, ctx, { agent, role, transactionId, budgetIds, model, flow, contextLimits, turnState });
   };
 
-  // The authoritative answer is the session store; `turns > 0` is only the
-  // fallback for a host without persistence.
-  let resumeSession = resume;
-  if (typeof flow?.sessionExists === 'function') {
-    const exists = await flow.sessionExists(agent.session_id);
-    if (exists !== null) resumeSession = exists;
-  }
-
   let handle;
   try {
+    // The authoritative answer is the session store; `turns > 0` is only the
+    // fallback for a host without persistence. Keep the probe inside cleanup:
+    // cancellation or a probe failure must release the session listener too.
+    let resumeSession = resume;
+    if (typeof flow?.sessionExists === 'function') {
+      const exists = await flow.sessionExists(agent.session_id);
+      if (exists !== null) resumeSession = exists;
+    }
+    signal?.throwIfAborted();
     handle = resumeSession
       ? await ctx.agents.resume({ resumeSessionId: agent.session_id, agentOptions, setup })
       : await ctx.agents.create({ sessionId: agent.session_id, meta: cwd ? { cwd } : undefined, agentOptions, setup });
@@ -663,8 +665,6 @@ export async function runTurn(ctx, {
   }
 
   const live = handle.agent;
-  // Bind this turn's identity to the live instance before any tool can run.
-  onAgentReady?.(live);
   const cancel = () => {
     try {
       live.cancel({ kind: 'hook', reason: 'flow cancelled' });
@@ -675,7 +675,9 @@ export async function runTurn(ctx, {
   if (signal) signal.addEventListener('abort', cancel, { once: true });
 
   try {
-    if (signal?.aborted) cancel();
+    signal?.throwIfAborted();
+    // Bind this turn's identity to the live instance before any tool can run.
+    onAgentReady?.(live);
     // Compact *before* driving the turn: a session that already overflowed the
     // provider's window must be reduced before the next request is sent.
     context = await measureAndCompact(ctx, live, model, role, signal, logger, contextLimits, { force: forceCompact, agent });
@@ -683,6 +685,9 @@ export async function runTurn(ctx, {
       turnState.compacted = true;
       if (typeof context.totalTokens === 'number') turnState.compactedAt = context.totalTokens;
     }
+    // Native cancel() only aborts existing activity. A subsequent followup()
+    // wakes a fresh turn, so cancellation during preparation must stop here.
+    signal?.throwIfAborted();
     live.followup(createUserMessage({ content: [{ type: 'text', text: prompt }], source: FLOW_SOURCE }));
     admitted = true;
     onAdmitted?.();

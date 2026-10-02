@@ -7,14 +7,12 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { browserExecutablePath, importPlaywright } from '../lib/browser.mjs';
 
 import { openLedger } from '../lib/ledger.mjs';
 import { ClusterStore } from '../../adapter/src/store.js';
 
-const CHROMIUM = [
-  process.env.FLOW_CHROMIUM_PATH,
-  '/home/leo/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome',
-].filter(Boolean);
+
 
 export async function live({ report, layout, host, mock = null }) {
   const checks = [];
@@ -41,7 +39,7 @@ export async function live({ report, layout, host, mock = null }) {
     push('browser-available', false, 'playwright not resolvable');
     return { checks, blocked: ['browser-available'] };
   }
-  const executablePath = CHROMIUM.find(candidate => existsSync(candidate));
+  const executablePath = browserExecutablePath();
   const browser = await playwright.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -529,17 +527,4 @@ async function screenshot(page, dir, name) {
   } catch {
     /* evidence only */
   }
-}
-
-async function importPlaywright() {
-  for (const candidate of ['playwright', 'playwright-core', '/home/leo/projects/deepseek-harness/node_modules/.pnpm/playwright@1.61.1/node_modules/playwright/index.js']) {
-    try {
-      const loaded = await import(candidate);
-      const api = loaded.chromium ? loaded : loaded.default;
-      if (api?.chromium?.launch) return api;
-    } catch {
-      /* next */
-    }
-  }
-  return null;
 }

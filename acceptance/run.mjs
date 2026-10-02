@@ -152,6 +152,30 @@ export function modelRouteFromEnv(env = process.env) {
   };
 }
 
+/**
+ * A fatal live-check error cannot be repaired by waiting for the cluster to
+ * settle: the panel fixture may be holding a request until that check clicks
+ * Cancel. Preserve the evidence and propagate to runOnce's existing cleanup
+ * and failed-report path. Ordinary failed assertions still run to completion.
+ */
+export async function runLiveChecks(check, context) {
+  const { report } = context;
+  try {
+    report.live_checks = await check(context);
+  } catch (error) {
+    report.live_checks = { checks: [], error: String(error?.message ?? error) };
+    report.notes.push(`live checks failed: ${error?.message ?? error}`);
+    throw error;
+  }
+  if (report.live_checks?.error || report.live_checks?.blocked?.length) {
+    const error = new Error(report.live_checks.error
+      ?? `live checks blocked: ${report.live_checks.blocked.join(', ')}`);
+    report.notes.push(`live checks failed: ${error.message}`);
+    throw error;
+  }
+  return report.live_checks;
+}
+
 function hashText(text) {
   return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }
@@ -405,12 +429,7 @@ async function runOnce({ args, caseDef, mode, runId }) {
         mock.release('scale-concurrency');
       }
       if (caseDef.live_first && checksModule?.live) {
-        try {
-          report.live_checks = await checksModule.live({ caseDef, mode, layout, workspace, report, host, env, args, mock });
-        } catch (error) {
-          report.live_checks = { checks: [], error: String(error?.message ?? error) };
-          report.notes.push(`live checks failed: ${error?.message ?? error}`);
-        }
+        await runLiveChecks(checksModule.live, { caseDef, mode, layout, workspace, report, host, env, args, mock });
       }
       if (caseDef.recovery?.require_restart) {
         const outcome = await restartMidFlight({
@@ -430,12 +449,7 @@ async function runOnce({ args, caseDef, mode, runId }) {
     // Checks that need the live host (the panel, the authenticated route) run
     // before shutdown; everything else runs afterwards from durable state.
     if (!caseDef.live_first && checksModule?.live) {
-      try {
-        report.live_checks = await checksModule.live({ caseDef, mode, layout, workspace, report, host, env, args, snapshot, events, mock });
-      } catch (error) {
-        report.live_checks = { checks: [], error: String(error?.message ?? error) };
-        report.notes.push(`live checks failed: ${error?.message ?? error}`);
-      }
+      await runLiveChecks(checksModule.live, { caseDef, mode, layout, workspace, report, host, env, args, snapshot, events, mock });
     }
   } catch (error) {
     failure = { message: String(error?.message ?? error), stack: String(error?.stack ?? '') };

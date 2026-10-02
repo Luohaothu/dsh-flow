@@ -13,7 +13,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 
 import { ClusterRuntime } from './cluster.js';
 import { DEFAULT_CONTEXT_LIMITS } from './protocol.js';
-import { communicate, COMMUNICATION_ACTIONS } from './communication.js';
+import { COMMUNICATION_ACTIONS } from './communication.js';
 import { createToolExecutionHook } from './runtime.js';
 import { commandIdFor, fail, ROLE_TOOL } from './protocol.js';
 
@@ -84,34 +84,15 @@ export function apply(ctx, config = {}) {
     }), 'dsh-flow: /api/flow');
   });
 
-  // Recovery reopens unproven injections and *withholds scheduling* until the
+  // Recovery preserves unproven injections and *withholds scheduling* until the
   // proof has been read from the durable Sessions: re-injecting while the proof
   // is still being collected would be a duplicate.
   // Scheduling stays off until the host is ready and the injections have been
   // reconciled; a turn started against a half-mounted profile would be an
   // infrastructure rejection charged to a Worker's attempts.
-  const recovery = runtime.recover({ deferScheduling: true });
-  if (recovery.length) ctx.logger?.info?.(`dsh-flow: recovered ${recovery.length} unfinished cluster(s)`);
-  void (async () => {
-    let afterId = '';
-    for (;;) {
-      const page = runtime.store.listOpenClusters({ afterId, limit: 200 });
-      if (!page.length) break;
-      for (const cluster of page) {
-        try {
-          // Proofs first: which deliveries were really admitted, and whether
-          // every identity's session still exists. Neither may be guessed.
-          await runtime.proveSessions(cluster.id);
-          await runtime.reconcileDeliveries(cluster.id);
-          afterId = cluster.id;
-        } catch (error) {
-          ctx.logger?.warn?.(error);
-        }
-      }
-      if (page.length < 200) break;
-      afterId = page[page.length - 1].id;
-    }
-  })().finally(() => runtime.resumeScheduling());
+  void runtime.recoverAndReconcile().then(({ recovered }) => {
+    if (recovered.length) ctx.logger?.info?.(`dsh-flow: recovered ${recovered.length} unfinished cluster(s)`);
+  }).catch(error => ctx.logger?.warn?.(error));
 
   installIpcBridge(runtime);
   return runtime;
@@ -295,9 +276,7 @@ function registerRoleTools(ctx, runtime) {
       const mutating = args.action !== 'query';
       const actor = actorFor(runtime, exec, args, { requireLease: mutating });
       if (mutating) runtime.assertActorFence(actor, { mutating: true });
-      const result = runtime.store.tx(() => communicate(runtime.store, runtime.store.getCluster(actor.cluster_id), actor, args.action, coerceParams(args.params), {
-        notify: (recipient, payload) => runtime.notifyInternal(actor.cluster_id, recipient, { subject: payload.kind, payload }),
-      }));
+      const result = runtime.communicateFrom(actor, args.action, coerceParams(args.params));
       runtime.wake();
       // A management send hands work to another role. Let the scheduler run
       // that recipient before this session polls the same unchanged allocation:
@@ -465,23 +444,8 @@ export async function handleHostOp(runtime, message) {
       return runtime.read(id ?? payload?.id, { include_events: false });
     case 'single':
       return runtime.runSingleAgent(payload ?? {});
-    case 'recover': {
-      const recovered = runtime.recover({ deferScheduling: true });
-      const reconciled = [];
-      let afterId = '';
-      for (;;) {
-        const page = runtime.store.listOpenClusters({ afterId, limit: 200 });
-        if (!page.length) break;
-        for (const cluster of page) {
-          const sessions = await runtime.proveSessions(cluster.id);
-          reconciled.push({ cluster_id: cluster.id, sessions, ...(await runtime.reconcileDeliveries(cluster.id)) });
-        }
-        afterId = page[page.length - 1].id;
-        if (page.length < 200) break;
-      }
-      runtime.resumeScheduling();
-      return { recovered, reconciled };
-    }
+    case 'recover':
+      return runtime.recoverAndReconcile();
     case 'dispose':
       // Disposal drains the live turns before it closes the store: the caller
       // waits for it, or it would answer "disposed" over a runtime still

@@ -4,6 +4,7 @@
  * across subtrees; the management tree and permissions are untouched by this.
  */
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { fail } from './store.js';
 import { AGENT_TERMINAL } from './protocol.js';
 
@@ -52,33 +53,42 @@ function normalizeContent(content) {
   fail('Invalid message content');
 }
 
-export function communicate(store, cluster, actor, action, params = {}, { notify } = {}) {
+// Atomicity is part of this module's interface, not a caller ordering rule.
+// notify persists wake-up evidence in the same store transaction.
+export function communicate(store, cluster, actor, action, params = {}, options = {}) {
+  return store.tx(() => applyCommunication(store, cluster, actor, action, params, options));
+}
+
+function applyCommunication(store, cluster, actor, action, params, { notify } = {}) {
   const clusterId = cluster.id;
   switch (action) {
     case 'send':
     case 'multicast': {
       const { recipients, content } = deliverable(store, clusterId, actor, params);
       const id = params.message_id ?? randomUUID();
+      if (typeof id !== 'string' || !id || id.length > 256) fail('Invalid message_id');
+      const kind = action === 'multicast' ? 'multicast' : 'direct';
       const existing = store.getMessage(id);
-      if (existing) {
-        // Idempotent resend: repair only the deliveries that never landed.
-        const added = [];
-        for (const recipient of recipients) {
-          if (!store.deliveryFor(id, recipient)) {
-            const seq = store.insertRecipient(id, recipient);
-            added.push({ recipient, delivery_seq: seq });
-          }
-        }
-        return { message_id: id, deduped: true, recipients: added };
+      if (existing && (existing.cluster_id !== clusterId
+        || existing.from_agent !== (actor.agent_id ?? null)
+        || existing.from_node !== (actor.node_id ?? null)
+        || existing.kind !== kind
+        || !isDeepStrictEqual(JSON.parse(existing.content), content))) {
+        fail('message_id conflicts with an existing message', 409);
       }
-      store.insertMessage({
-        id, cluster_id: clusterId, from_agent: actor.agent_id, from_node: actor.node_id,
-        kind: action === 'multicast' ? 'multicast' : 'direct', content,
+      if (!existing) store.insertMessage({
+        id, cluster_id: clusterId, from_agent: actor.agent_id, from_node: actor.node_id, kind, content,
       });
-      const delivered = recipients.map(recipient => ({ recipient, delivery_seq: store.insertRecipient(id, recipient) }));
-      store.appendEvent(clusterId, 'message', { message_id: id, from: actor.agent_id, recipients, kind: action });
-      if (notify) for (const recipient of recipients) notify(recipient, { kind: 'message', message_id: id, from: actor.agent_id });
-      return { message_id: id, deduped: false, recipients: delivered };
+      // A retry may repair missing recipients, but cannot change the immutable
+      // envelope. New and repaired deliveries share notification persistence.
+      const delivered = [];
+      for (const recipient of recipients) {
+        if (store.deliveryFor(id, recipient)) continue;
+        delivered.push({ recipient, delivery_seq: store.insertRecipient(id, recipient) });
+        notify?.(recipient, { kind: 'message', message_id: id, from: actor.agent_id });
+      }
+      if (!existing) store.appendEvent(clusterId, 'message', { message_id: id, from: actor.agent_id, recipients, kind: action });
+      return { message_id: id, deduped: !!existing, recipients: delivered };
     }
 
     case 'group': {
@@ -142,11 +152,15 @@ export function communicate(store, cluster, actor, action, params = {}, { notify
       }
       const pattern = params.prefix ?? params.key ?? '';
       // Snapshot and cursor come from one read cut so no notification is lost.
-      const snapshotRows = pattern ? store.blackboardList(clusterId, pattern) : store.blackboardList(clusterId, null);
+      const mode = params.prefix !== undefined ? 'prefix' : 'exact';
+      if (typeof pattern !== 'string') fail('Invalid subscription pattern');
+      const snapshotRows = mode === 'prefix'
+        ? store.blackboardList(clusterId, pattern)
+        : [store.blackboardEntry(clusterId, pattern)].filter(Boolean);
       const cursor = store.latestEventSeq(clusterId);
       const subscription = store.insertSubscription({
         id: randomUUID(), cluster_id: clusterId, agent_id: actor.agent_id, pattern,
-        mode: params.prefix !== undefined ? 'prefix' : 'exact', cursor: String(cursor),
+        mode, cursor: String(cursor),
       });
       return {
         subscription: { id: subscription.id, pattern, cursor },

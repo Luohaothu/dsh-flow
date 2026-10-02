@@ -228,6 +228,9 @@ export class ClusterRuntime {
   #correctionStops;
   #timer;
   #disposed;
+  #disposePromise = null;
+  #recoveryPromise = null;
+  #schedulingGeneration = 0;
   #ticking = false;
   #wakeups = [];
   #wakePromise = null;
@@ -470,20 +473,25 @@ export class ClusterRuntime {
         fail(`command from a fenced turn: agent ${actor.agent_id} does not hold epoch ${actor.epoch}`, 409);
       }
     }
-    if (expected_revision !== undefined && expected_revision !== null && expected_revision !== cluster.revision) {
-      fail(`revision conflict: expected ${expected_revision}, current ${cluster.revision}`, 409);
-    }
-    const outcome = this.store.tx(() => this.store.runCommand(
+    const outcome = this.store.runCommand(
       { cluster_id: clusterId, command_id, actor, action, expected_revision, params },
-      () => this.#applyCommand(cluster, actor, action, params ?? {}),
-    ));
+      () => {
+        // The precondition guards new work. A completed command already has
+        // its answer, even if that work advanced the cluster revision itself.
+        const current = this.store.getCluster(clusterId);
+        if (expected_revision !== undefined && expected_revision !== null && expected_revision !== current.revision) {
+          fail(`revision conflict: expected ${expected_revision}, current ${current.revision}`, 409);
+        }
+        return this.#applyCommand(current, actor, action, params ?? {});
+      },
+    );
     this.wake();
     return outcome;
   }
 
   /**
-   * Run one communication action on behalf of an actor. Must be called inside
-   * the caller's transaction; the delivery notification is created with it.
+   * Run one communication action on behalf of an actor. The communication
+   * module commits its delivery notifications with the action atomically.
    */
   communicateFrom(actor, action, params) {
     const cluster = this.store.getCluster(actor.cluster_id);
@@ -523,34 +531,14 @@ export class ClusterRuntime {
   }
 
   /**
-   * A delivery marked injected but never acked is only *proven* delivered when
-   * the recipient's durable Session really carries it. Without that proof the
-   * delivery is reopened, so the message is sent again rather than silently
-   * lost; duplicates are visible to the model, loss is not recoverable.
-   */
-  reopenUnprovenInjections(clusterId) {
-    const rows = this.store.all(
-      `SELECT r.message_id, r.recipient FROM recipients r JOIN messages m ON m.id=r.message_id
-       WHERE m.cluster_id=? AND r.status='DELIVERED'`, clusterId);
-    if (!rows.length) return 0;
-    this.store.tx(() => {
-      for (const row of rows) {
-        this.store.run("UPDATE recipients SET status='PENDING', acked=NULL WHERE message_id=? AND recipient=? AND status='DELIVERED'", row.message_id, row.recipient);
-      }
-      this.store.appendEvent(clusterId, 'messages-reopened', { count: rows.length, reason: 'injection was not provably admitted before the restart' });
-    });
-    return rows.length;
-  }
-
-  /**
    * Prove injections against the recipient's own durable Session: a message id
    * that is present there was admitted, so only its ack is missing. Everything
    * else stays queued for a real delivery.
    */
   /**
    * The session persistence service, when the profile mounts one. Without it a
-   * crash window between injection and ack cannot be proven and the delivery is
-   * reopened (at-least-once) rather than silently acked (at-most-once).
+   * crash window between injection and ack cannot be proven and the attempted
+   * delivery stays withheld until its durable session can be read.
    */
   attachPersistence(service) {
     this.#persistence = service ?? null;
@@ -604,9 +592,10 @@ export class ClusterRuntime {
     const rows = this.store.all(
       `SELECT r.message_id, r.recipient, r.status FROM recipients r JOIN messages m ON m.id=r.message_id
        WHERE m.cluster_id=? AND r.status IN ('DELIVERED','PENDING')`, clusterId);
-    if (!rows.length) return { acknowledged: 0, requeued: 0, persistence: Boolean(persistence) };
+    if (!rows.length) return { acknowledged: 0, requeued: 0, unknown: 0, persistence: Boolean(persistence) };
     let acknowledged = 0;
     let requeued = 0;
+    let unknown = 0;
     for (const row of rows) {
       const agent = this.store.getAgent(row.recipient);
       const sessionId = sessionIdFor(agent);
@@ -625,17 +614,16 @@ export class ClusterRuntime {
         state: proof.state, found: admitted, reason: proof.reason ?? null, events_scanned: proof.scanned ?? null,
       }));
       if (proof.state === 'UNKNOWN') {
-        // An unprovable state stays queued and is named. It blocks its owner
+        // An unprovable state is preserved and named. It blocks its owner
         // only when the delivery *had been injected*: that is the case where a
         // dispatch could duplicate it. A delivery that was still queued has not
         // been handed over at all, so there is nothing ambiguous to resolve and
         // blocking the cluster for it stops work for no reason.
         const owner = row.status === 'DELIVERED' ? this.store.getAgent(row.recipient) : null;
         this.store.tx(() => {
-          this.store.run(
-            "UPDATE recipients SET status='PENDING', acked=NULL WHERE message_id=? AND recipient=? AND status<>'ACKED'",
-            row.message_id, row.recipient,
-          );
+          // Keep DELIVERED: changing it to PENDING would erase the only durable
+          // distinction between a fresh message and one that may already be in
+          // the session, allowing a later restart to re-inject it without proof.
           this.store.appendEvent(clusterId, 'delivery-unknown', {
             message_id: row.message_id, recipient: row.recipient, session_id: sessionId ?? null,
             was_injected: row.status === 'DELIVERED', reason: proof.reason ?? null,
@@ -646,7 +634,7 @@ export class ClusterRuntime {
               `DELIVERY_UNKNOWN: delivery ${row.message_id} to ${owner.id} cannot be proven either way`, 'DELIVERY_UNKNOWN');
           }
         });
-        requeued += 1;
+        unknown += 1;
         continue;
       }
       if (admitted) {
@@ -656,10 +644,14 @@ export class ClusterRuntime {
         });
         acknowledged += 1;
       } else {
+        this.store.tx(() => this.store.run(
+          "UPDATE recipients SET status='PENDING', acked=NULL WHERE message_id=? AND recipient=? AND status='DELIVERED'",
+          row.message_id, row.recipient,
+        ));
         requeued += 1;
       }
     }
-    return { acknowledged, requeued, persistence: Boolean(persistence) };
+    return { acknowledged, requeued, unknown, persistence: Boolean(persistence) };
   }
 
   /** Reclaim leases whose TTL passed. Exposed for tests and for the boot sweep. */
@@ -1102,8 +1094,16 @@ export class ClusterRuntime {
     };
   }
 
-  async dispose() {
+  dispose() {
+    // Plugin teardown, IPC shutdown and disconnect can overlap. Every caller
+    // waits for the same drain; none may close the store beneath another.
+    this.#disposePromise ??= this.#dispose();
+    return this.#disposePromise;
+  }
+
+  async #dispose() {
     this.#disposed = true;
+    this.wake();
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = null;
     const live = [...this.#activeTurns.values()];
@@ -1126,13 +1126,19 @@ export class ClusterRuntime {
     } catch (error) {
       this.logger?.warn?.(error);
     }
-    for (const cluster of this.store.listClusters({ limit: 50 })) {
-      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(cluster.status)) continue;
-      try {
-        this.terminateClusterJobs(cluster.id, 'cluster runtime disposed');
-      } catch (error) {
-        this.logger?.warn?.(error);
+    let afterId = '';
+    for (;;) {
+      const page = this.store.listOpenClusters({ afterId, limit: 200 });
+      if (!page.length) break;
+      for (const cluster of page) {
+        try {
+          this.terminateClusterJobs(cluster.id, 'cluster runtime disposed');
+        } catch (error) {
+          this.logger?.warn?.(error);
+        }
       }
+      afterId = page[page.length - 1].id;
+      if (page.length < 200) break;
     }
     this.#activeTurns.clear();
     this.store.close();
@@ -1146,30 +1152,25 @@ export class ClusterRuntime {
    */
   #drainLiveTurns(live, { unresponsive = true } = {}) {
     const leases = live.map(entry => entry.lease).filter(Boolean);
-    const agents = live.map(entry => entry.agent_id).filter(Boolean);
-    for (const agentId of agents) {
-      const held = this.store.all("SELECT request_id, reservation_tokens FROM usage_receipts WHERE agent_id=? AND status='RESERVED'", agentId);
-      for (const receipt of held) {
-        // Through the accounting transition, not a status edit: the *attempt* is
-        // consumed (`model_requests` moves from reserved to spent) and the tokens
-        // stay held, because a send the provider never reported is not free
-        // capacity.
-        try {
-          settleLlmRequest(this.store, {
-            cluster_id: this.#clusterIdOfAgent(agentId),
-            // eslint-disable-next-line camelcase
-            reservation: { request_id: receipt.request_id, tokens: receipt.reservation_tokens ?? 0 },
-            usage: null,
-            status: 'UNKNOWN',
-            note: `the runtime stopped while this request was in flight; ${receipt.reservation_tokens ?? 0} tokens stay held`,
-          });
-        } catch (error) {
-          this.logger?.warn?.(error);
-          this.store.tx(() => this.store.settleUsageReceipt(receipt.request_id, {
-            status: 'UNKNOWN',
-            note: `the runtime stopped while this request was in flight; ${receipt.reservation_tokens ?? 0} tokens stay held`,
-          }));
-        }
+    // The receipt owns its accounting even if its turn is already gone. Visit
+    // every remaining reservation through the same transition; a status-only
+    // update would strand requests_reserved instead of consuming the attempt.
+    const held = this.store.all("SELECT request_id, cluster_id, reservation_tokens FROM usage_receipts WHERE status='RESERVED'");
+    for (const receipt of held) {
+      try {
+        settleLlmRequest(this.store, {
+          cluster_id: receipt.cluster_id,
+          reservation: { request_id: receipt.request_id, tokens: receipt.reservation_tokens ?? 0 },
+          usage: null,
+          status: 'UNKNOWN',
+          note: `the runtime stopped while this request was in flight; ${receipt.reservation_tokens ?? 0} tokens stay held`,
+        });
+      } catch (error) {
+        this.logger?.warn?.(error);
+        this.store.tx(() => this.store.settleUsageReceipt(receipt.request_id, {
+          status: 'UNKNOWN',
+          note: `the runtime stopped while this request was in flight; ${receipt.reservation_tokens ?? 0} tokens stay held`,
+        }));
       }
     }
     this.store.tx(() => {
@@ -1203,20 +1204,7 @@ export class ClusterRuntime {
         const agent = this.store.getAgent(lease.agent_id);
         if (agent && !AGENT_TERMINAL.has(agent.status)) this.store.updateAgent(lease.agent_id, { status: 'READY' });
       }
-      // Anything a *settled* finisher already handled is left alone: only
-      // reservations with no live turn are reconciled here.
-      for (const receipt of this.store.all("SELECT request_id, reservation_tokens, agent_id FROM usage_receipts WHERE status='RESERVED'")) {
-        if (this.#activeTurns.has(receipt.agent_id)) continue;
-        this.store.settleUsageReceipt(receipt.request_id, {
-          status: 'UNKNOWN',
-          note: `the runtime stopped while this request was in flight; ${receipt.reservation_tokens ?? 0} tokens stay held`,
-        });
-      }
     });
-  }
-
-  #clusterIdOfAgent(agentId) {
-    return this.store.getAgent(agentId)?.cluster_id ?? null;
   }
 
   // --------------------------------------------------------- wake/schedule
@@ -3608,6 +3596,14 @@ export class ClusterRuntime {
    * clusters. Sessions are never re-created under an existing identity.
    */
   recover({ deferScheduling = false } = {}) {
+    if (this.#activeTurns.size || this.#scheduling.size || this.#ticking) {
+      fail('Cannot recover while turns or a scheduling pass are active; pause the clusters, let active turns drain, then retry recover', 409);
+    }
+    // Recovery may be requested again over an already-ready runtime. Close
+    // admission before fencing leases; deferral is a barrier, not merely a
+    // request to skip opening an initially closed gate at the end.
+    this.#schedulingEnabled = false;
+    this.#schedulingGeneration += 1;
     const report = [];
     // Every non-terminal cluster, in keyset pages: recovery is the one pass that
     // must never leave a cluster behind.
@@ -3715,13 +3711,53 @@ export class ClusterRuntime {
           if (outcome === 'uncertain') facts.tool_receipts_uncertain = (facts.tool_receipts_uncertain ?? 0) + 1;
           else facts.tool_receipts_reconciled = (facts.tool_receipts_reconciled ?? 0) + 1;
         }
-        facts.injections_reopened = this.reopenUnprovenInjections(cluster.id);
+        // Preserve attempted injections until the asynchronous session proof:
+        // FOUND is acked, ABSENT is requeued, and UNKNOWN remains withheld.
+        // Reopening here made reconciliation mistake an uncertain prior send
+        // for a fresh queued message and skip its owner fence.
+        facts.injections_reopened = 0;
+        facts.injections_pending_proof = Number(this.store.get(
+          `SELECT COUNT(*) AS count FROM recipients r JOIN messages m ON m.id=r.message_id
+           WHERE m.cluster_id=? AND r.status='DELIVERED'`, cluster.id).count);
         this.store.appendEvent(cluster.id, 'recovered', facts);
       });
       report.push(facts);
     }
     if (report.some(facts => facts.status === 'RUNNING') && !deferScheduling) this.enableScheduling();
     return report;
+  }
+
+  /**
+   * The complete restart lifecycle, shared by startup and IPC. Concurrent
+   * callers join the same proof pass, and only its own successful completion
+   * may reopen scheduling. Failed proof leaves admission closed for a retry.
+   */
+  recoverAndReconcile() {
+    if (!this.#recoveryPromise) {
+      this.#recoveryPromise = this.#recoverAndReconcile().finally(() => {
+        this.#recoveryPromise = null;
+      });
+    }
+    return this.#recoveryPromise;
+  }
+
+  async #recoverAndReconcile() {
+    const recovered = this.recover({ deferScheduling: true });
+    const generation = this.#schedulingGeneration;
+    const reconciled = [];
+    let afterId = '';
+    for (;;) {
+      const page = this.store.listOpenClusters({ afterId, limit: 200 });
+      if (!page.length) break;
+      for (const cluster of page) {
+        const sessions = await this.proveSessions(cluster.id);
+        reconciled.push({ cluster_id: cluster.id, sessions, ...(await this.reconcileDeliveries(cluster.id)) });
+      }
+      afterId = page[page.length - 1].id;
+      if (page.length < 200) break;
+    }
+    this.#resumeScheduling(generation);
+    return { recovered, reconciled };
   }
 
   /**
@@ -3806,10 +3842,15 @@ export class ClusterRuntime {
   }
 
   resumeScheduling() {
-    if (this.#disposed) return;
+    this.#resumeScheduling(this.#schedulingGeneration);
+  }
+
+  #resumeScheduling(generation) {
+    if (this.#disposed || generation !== this.#schedulingGeneration) return;
+    // A pending host-readiness callback belongs to this recovery only. A later
+    // recovery invalidates it before reopening the session-proof barrier.
     if (this.hostReady()) {
-      this.#ensureTicking();
-      this.wake();
+      this.enableScheduling();
       return;
     }
     // The launcher commits its own readiness after boot and host setup; wait
@@ -3821,9 +3862,9 @@ export class ClusterRuntime {
       ready = undefined;
     }
     const enable = () => {
-      if (this.#disposed) return;
+      if (this.#disposed || generation !== this.#schedulingGeneration) return;
       const wait = () => {
-        if (this.#disposed) return;
+        if (this.#disposed || generation !== this.#schedulingGeneration) return;
         if (this.hostReady()) {
           this.enableScheduling();
           return;
@@ -5649,10 +5690,12 @@ export class ClusterRuntime {
     }
     for (const agent of this.store.agentsInSubtree(clusterId, nodeId)) {
       if (!nodeIds.has(agent.node_id)) continue;
-      if (AGENT_TERMINAL.has(agent.status)) continue;
-      this.store.updateAgent(agent.id, { status: 'TERMINATED' });
+      // Allocation release above may already have marked a Worker terminal.
+      // Its native turn must still be aborted before skipping persisted state.
       const turn = this.#activeTurns.get(agent.id);
       if (turn) turn.ac.abort(new Error('subtree cancelled'));
+      if (AGENT_TERMINAL.has(agent.status)) continue;
+      this.store.updateAgent(agent.id, { status: 'TERMINATED' });
     }
     for (const id of nodeIds) this.store.updateNode(id, { status: 'CANCELLED' });
     this.store.appendEvent(clusterId, 'subtree-cancelled', { nodes: [...nodeIds], at });

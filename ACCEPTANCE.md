@@ -19,8 +19,8 @@ design actions that are **not** implemented.
 ## Deterministic mock suite
 
 ```bash
-cd /home/leo/projects/dsh-flow
-DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli npm run test:mock
+# From the repository root, after the preparation below:
+FLOW_CHROMIUM_PATH=/usr/bin/chromium npm run test:mock
 ```
 
 That runs, in order: the native host contracts
@@ -46,16 +46,34 @@ as a plugin outcome.
 
 ## Preparation
 
+Use Node 22.19+ or 24+ and install the published DSH packages from the repository
+root. Browser scenarios also need the published browser providers and Playwright:
+
 ```bash
-cd /home/leo/projects/dsh-flow
-DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli node scripts/link-dsh.mjs
-node scripts/build.mjs
-node --test adapter/test/*.test.js
+npm install --ignore-scripts --no-package-lock
+npm install --no-save --ignore-scripts --no-package-lock \
+  @deepseek-ai/dsh-browser-use@0.1.7-rc.2 \
+  @deepseek-ai/dsh-experimental-browser-use-runtime@0.1.7-rc.2 \
+  @deepseek-ai/dsh-experimental-browser-use-playwright-mcp@0.1.7-rc.2 \
+  playwright@1.61.1
+npm run build
+npm test
 ```
 
-`link-dsh.mjs` resolves the DSH installation (a project convention — DSH itself
-anchors resolution on the running launcher), links the harness packages and the
-capability tool packages this plugin mounts, and is idempotent.
+The acceptance launcher automatically resolves `@deepseek-ai/dsh` from the
+project's npm installation. Set `DSH_INSTALL_PATH` explicitly to select another
+published package directory or a built harness checkout's `apps/cli` directory.
+For a monorepo-based setup, `scripts/link-dsh.mjs` remains an idempotent alternative
+that links the harness and capability packages into this project.
+
+Set `FLOW_CHROMIUM_PATH` to the absolute path of an installed Chromium executable
+(for example `/usr/bin/chromium`). It is forwarded through the isolated host's
+allowlist to the browser provider and used by the panel and website checks. An
+invalid explicit path fails rather than silently selecting another browser. If
+unset, each Playwright installation uses its own managed browser; those binaries
+must already be installed, since the commands above skip installation scripts.
+Provider resolution supports both published npm packages and monorepo source
+directories; no author-specific home directory is required for the mock suite.
 
 ## Live-model runs (historical compatibility evidence)
 
@@ -205,6 +223,6 @@ reported as themselves.
   the worker is expected to read the final official URL explicitly.
 * The workspace sandbox is `workspace-write` with approval `never`. It bounds
   file effects, not hostile code: reads outside the workspace remain possible.
-* Browser checks pin the locally installed Chromium
-  (`~/.cache/ms-playwright/chromium-1234/...`) rather than installing a second
-  copy into the project.
+* Chromium needs permission to create local sockets. A shell sandbox that denies
+  those sockets can block browser scenarios even when the binary and packages
+  are present; use an approved execution environment that supports Chromium.

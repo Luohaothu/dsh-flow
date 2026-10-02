@@ -84,134 +84,139 @@ function applyDeltas(store, budgetId, deltas) {
     if (!delta) continue;
     const next = (row[column] ?? 0) + delta;
     if (next < 0) fail(`Budget ${budgetId} would go negative on ${column}`, 409);
+    if (!Number.isSafeInteger(next)) fail(`Budget ${budgetId} exceeds safe integer range on ${column}`, 409);
     patch[column] = next;
     changed = true;
   }
   return changed ? store.updateBudget(budgetId, patch) : row;
 }
 
-/** Reserve on a whole ancestor chain atomically; nothing is written if any scope is short. */
-export function reserveChain(store, budgetIds, amounts, { label = 'model request' } = {}) {
-  const wanted = {};
-  for (const dim of DIMENSIONS) {
-    const amount = amounts[dim.key] ?? 0;
-    if (amount < 0) fail(`Negative reservation for ${dim.key}`);
-    if (amount > 0) wanted[dim.key] = amount;
+/** Validate once at the ledger seam, before any scope is changed. */
+function budgetAmounts(amounts, label) {
+  if (!amounts || typeof amounts !== 'object' || Array.isArray(amounts)) fail(`Invalid ${label}`);
+  const result = {};
+  for (const [key, value] of Object.entries(amounts)) {
+    if (!DIMENSION_BY_KEY.has(key)) fail(`Unknown budget dimension: ${key}`);
+    const amount = value ?? 0;
+    integer(amount, 0, Number.MAX_SAFE_INTEGER, `${label}.${key}`);
+    if (amount > 0) result[key] = amount;
   }
-  const rows = budgetIds.map(id => {
+  return result;
+}
+
+function chainRows(store, budgetIds) {
+  if (!Array.isArray(budgetIds)) fail('Budget scopes must be an array');
+  const seen = new Set();
+  return budgetIds.map(id => {
+    if (seen.has(id)) fail(`Duplicate budget scope: ${id}`, 409);
+    seen.add(id);
     const row = store.getBudget(id);
     if (!row) fail(`Budget not found: ${id}`, 404);
     return row;
   });
-  for (const row of rows) {
-    for (const [key, amount] of Object.entries(wanted)) {
-      const available = dimensionAvailable(row, key);
-      if (available < amount) {
-        const error = new BudgetError(
-          `${row.scope_kind} ${row.scope_id} budget exhausted for ${key}: requested ${amount}, available ${available} (${label})`,
-          409, 'LIMIT_REACHED',
-        );
-        // Structured facts ride the error: a refusal the ledger can classify
-        // without parsing prose.
+}
+
+/** Reserve on a whole ancestor chain atomically; nothing is written if any scope is short. */
+export function reserveChain(store, budgetIds, amounts, { label = 'model request' } = {}) {
+  const wanted = budgetAmounts(amounts, 'reservation');
+  return store.tx(() => {
+    const rows = chainRows(store, budgetIds);
+    for (const row of rows) {
+      for (const [key, amount] of Object.entries(wanted)) {
+        const available = dimensionAvailable(row, key);
+        if (available < amount) {
+          const error = new BudgetError(
+            `${row.scope_kind} ${row.scope_id} budget exhausted for ${key}: requested ${amount}, available ${available} (${label})`,
+            409, 'LIMIT_REACHED',
+          );
+          // Structured facts ride the error: a refusal the ledger can classify
+          // without parsing prose.
+          error.scope = row.scope_id;
+          error.scope_kind = row.scope_kind;
+          error.dimension = key;
+          error.requested = amount;
+          error.available = available;
+          error.label = label;
+          throw error;
+        }
+      }
+      const deadline = effectiveDeadline(store, row);
+      if (deadline !== null && deadline <= store.now()) {
+        const error = new BudgetError(`${row.scope_kind} ${row.scope_id} wall-time deadline passed (${label})`, 409, 'LIMIT_REACHED');
         error.scope = row.scope_id;
         error.scope_kind = row.scope_kind;
-        error.dimension = key;
-        error.requested = amount;
-        error.available = available;
+        error.dimension = 'wall_time_ms';
+        error.requested = null;
+        error.available = 0;
         error.label = label;
         throw error;
       }
     }
-    const deadline = effectiveDeadline(store, row);
-    if (deadline !== null && deadline <= store.now()) {
-      const error = new BudgetError(`${row.scope_kind} ${row.scope_id} wall-time deadline passed (${label})`, 409, 'LIMIT_REACHED');
-      error.scope = row.scope_id;
-      error.scope_kind = row.scope_kind;
-      error.dimension = 'wall_time_ms';
-      error.requested = null;
-      error.available = 0;
-      error.label = label;
-      throw error;
+    for (const row of rows) {
+      const deltas = {};
+      for (const [key, amount] of Object.entries(wanted)) {
+        deltas[DIMENSION_BY_KEY.get(key).reserved] = amount;
+      }
+      applyDeltas(store, row.id, deltas);
     }
-  }
-  for (const row of rows) {
-    const deltas = {};
-    for (const [key, amount] of Object.entries(wanted)) {
-      deltas[DIMENSION_BY_KEY.get(key).reserved] = amount;
-    }
-    applyDeltas(store, row.id, deltas);
-  }
-  return rows.map(r => r.id);
+    return rows.map(r => r.id);
+  });
 }
 
 /** Settle a reservation: move `reserved` into `spent` by the actually consumed amount. */
 export function settleChain(store, budgetIds, { reservedAmounts = {}, consumed = {} } = {}) {
-  for (const id of budgetIds) {
-    const row = store.getBudget(id);
-    if (!row) continue;
-    const deltas = {};
-    for (const dim of DIMENSIONS) {
-      const held = reservedAmounts[dim.key] ?? 0;
-      if (held) deltas[dim.reserved] = -held;
-      const used = consumed[dim.key] ?? 0;
-      if (used && dim.spent) deltas[dim.spent] = used;
+  const reserved = budgetAmounts(reservedAmounts, 'settlement reservation');
+  const used = budgetAmounts(consumed, 'consumption');
+  return store.tx(() => {
+    for (const row of chainRows(store, budgetIds)) {
+      const deltas = {};
+      for (const dim of DIMENSIONS) {
+        if (reserved[dim.key]) deltas[dim.reserved] = -reserved[dim.key];
+        if (used[dim.key] && dim.spent) deltas[dim.spent] = used[dim.key];
+      }
+      applyDeltas(store, row.id, deltas);
     }
-    applyDeltas(store, id, deltas);
-  }
+  });
 }
 
 /** Release a reservation without consumption (abort before send, failed admission). */
 export function releaseChain(store, budgetIds, amounts = {}) {
-  for (const id of budgetIds) {
-    const deltas = {};
-    for (const dim of DIMENSIONS) {
-      const amount = amounts[dim.key] ?? 0;
-      if (amount) deltas[dim.reserved] = -amount;
-    }
-    if (Object.keys(deltas).length) applyDeltas(store, id, deltas);
-  }
+  return settleChain(store, budgetIds, { reservedAmounts: amounts });
 }
 
 export function spendChain(store, budgetIds, consumed = {}) {
-  for (const id of budgetIds) {
-    const deltas = {};
-    for (const dim of DIMENSIONS) {
-      const amount = consumed[dim.key] ?? 0;
-      if (amount && dim.spent) deltas[dim.spent] = amount;
-    }
-    if (Object.keys(deltas).length) applyDeltas(store, id, deltas);
-  }
+  return settleChain(store, budgetIds, { consumed });
 }
 
-/** Transfer unused + unreserved budget from one sibling scope to another. */
+/** Transfer unused + unreserved budget between scopes in one cluster. */
 export function transferBudget(store, fromId, toId, amounts = {}) {
-  const from = store.getBudget(fromId);
-  const to = store.getBudget(toId);
-  if (!from || !to) fail('Budget not found', 404);
-  const give = {};
-  for (const dim of DIMENSIONS) {
-    const amount = amounts[dim.key] ?? 0;
-    if (amount === 0) continue;
-    integer(amount, 1, 2 ** 40, `rebalance.${dim.key}`);
-    const available = dimensionAvailable(from, dim.key);
-    if (available < amount) {
-      const error = new BudgetError(`cannot move ${amount} ${dim.key} from ${from.scope_id}: only ${available} unused-unreserved remains`, 409, 'LIMIT_REACHED');
-      error.scope = from.scope_id;
-      error.scope_kind = from.scope_kind;
-      error.dimension = dim.key;
-      error.requested = amount;
-      error.available = available;
-      error.label = 'transfer';
-      throw error;
+  const give = budgetAmounts(amounts, 'rebalance');
+  return store.tx(() => {
+    const from = store.getBudget(fromId);
+    const to = store.getBudget(toId);
+    if (!from || !to) fail('Budget not found', 404);
+    if (from.cluster_id !== to.cluster_id) fail('Cannot transfer budget between clusters', 403);
+    for (const [key, amount] of Object.entries(give)) {
+      const available = dimensionAvailable(from, key);
+      if (available < amount) {
+        const error = new BudgetError(`cannot move ${amount} ${key} from ${from.scope_id}: only ${available} unused-unreserved remains`, 409, 'LIMIT_REACHED');
+        error.scope = from.scope_id;
+        error.scope_kind = from.scope_kind;
+        error.dimension = key;
+        error.requested = amount;
+        error.available = available;
+        error.label = 'transfer';
+        throw error;
+      }
     }
-    give[dim.key] = amount;
-  }
-  for (const [key, amount] of Object.entries(give)) {
-    const dim = DIMENSION_BY_KEY.get(key);
-    applyDeltas(store, fromId, { [dim.limit]: -amount });
-    applyDeltas(store, toId, { [dim.limit]: amount });
-  }
-  return { from: store.getBudget(fromId), to: store.getBudget(toId) };
+    if (fromId === toId) return { from, to };
+    for (const [key, amount] of Object.entries(give)) {
+      const dim = DIMENSION_BY_KEY.get(key);
+      applyDeltas(store, fromId, { [dim.limit]: -amount });
+      applyDeltas(store, toId, { [dim.limit]: amount });
+    }
+    return { from: store.getBudget(fromId), to: store.getBudget(toId) };
+  });
 }
 
 /** Reclaim capacity (agents / max_active) when an identity is released or replaced. */

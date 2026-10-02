@@ -6,13 +6,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { browserExecutablePath, importPlaywright } from '../lib/browser.mjs';
 
 const REFERENCE_CLOCK = '2026-09-26T12:00:00Z';
-const CHROMIUM_CANDIDATES = [
-  process.env.FLOW_CHROMIUM_PATH,
-  '/home/leo/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome',
-  '/home/leo/.cache/ms-playwright/chromium_headless_shell-1234/chrome-linux/headless_shell',
-].filter(Boolean);
+
 
 export async function run({ workspace, report, snapshot, events, layout }) {
   const checks = [];
@@ -46,7 +43,7 @@ export async function run({ workspace, report, snapshot, events, layout }) {
       push('browser-automation-available', false, 'playwright is not resolvable from the project');
       return { checks, scenario_status: 'BLOCKED', failure_class: 'ENVIRONMENT' };
     }
-    const executablePath = CHROMIUM_CANDIDATES.find(candidate => existsSync(candidate));
+    const executablePath = browserExecutablePath();
     const browser = await playwright.chromium.launch({
       headless: true,
       ...(executablePath ? { executablePath } : {}),
@@ -159,19 +156,7 @@ export async function run({ workspace, report, snapshot, events, layout }) {
   };
 }
 
-async function importPlaywright() {
-  for (const candidate of ['playwright', 'playwright-core', '/home/leo/projects/deepseek-harness/node_modules/.pnpm/playwright@1.61.1/node_modules/playwright/index.js']) {
-    try {
-      const loaded = await import(candidate);
-      // CJS interop: the API hangs off `default` when the module is not ESM.
-      const api = loaded.chromium ? loaded : loaded.default;
-      if (api?.chromium?.launch) return api;
-    } catch {
-      /* try the next candidate */
-    }
-  }
-  return null;
-}
+
 
 function waitForUrl(read, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

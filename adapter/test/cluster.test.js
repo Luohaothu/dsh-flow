@@ -2367,12 +2367,12 @@ test('a message is never lost across the crash window, and never duplicated when
   assert.equal(collected.ids.length, 1);
   assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'DELIVERED');
 
-  // Crash before the prompt was ever admitted: recovery must reopen the
-  // delivery so the message is sent again rather than silently dropped.
+  // Crash before the prompt was ever admitted: recovery preserves the attempt
+  // until the session proves it absent, then requeues it without losing it.
   const recovered = runtime.recover();
-  assert.equal(recovered[0].injections_reopened, 1);
-  assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'PENDING');
-  assert.equal(runtime.store.pendingDeliveries(auditor.id).length, 1, 'the message is queued again, never lost');
+  assert.equal(recovered[0].injections_pending_proof, 1);
+  assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'DELIVERED');
+  assert.equal(runtime.store.pendingDeliveries(auditor.id).length, 0, 'an attempted delivery waits for proof');
 
   const reconciled = await runtime.reconcileDeliveries(clusterId);
   assert.equal(reconciled.persistence, true);
@@ -2385,7 +2385,7 @@ test('a message is never lost across the crash window, and never duplicated when
   const second = await runtime.collectDeliveries(auditor);
   sessions.set(auditor.session_id, [{ type: 'user/message', data: { text: `- from x [[flow-delivery ${second.ids[0]} seq 1]]: status?` } }]);
   runtime.recover();
-  assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'PENDING', 'the safe default reopens until proof is checked');
+  assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'DELIVERED', 'the safe default preserves the attempt until proof is checked');
   const proven = await runtime.reconcileDeliveries(clusterId);
   assert.equal(proven.acknowledged, 1, 'a Session that carries the id proves admission');
   assert.equal(runtime.store.deliveryFor('msg-crash-1', auditor.id).status, 'ACKED');
@@ -3405,10 +3405,16 @@ test('compaction in a turn really lowers the next request it charges', async t =
   }
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
 
+  let beforeCompactionRequestId = null;
   host.setScript(async turn => {
     if (!(turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker')) return;
     await turn.preStep({ step: 1 });
     await turn.request({ purpose: 'worker' });
+    // Capture the identity before the second request exists. Millisecond creation
+    // times can tie, and the store's UUID tie-breaker is not request order.
+    const worker = runtime.store.getAgentBySession(turn.session.id);
+    beforeCompactionRequestId = runtime.store.usageReceiptsAll(clusterId, { agent_id: worker.id })
+      .find(receipt => receipt.kind === 'worker')?.request_id;
     // The tool results accumulated during the turn grow the session, and the
     // second step is measured again: it sees the pressure and compacts.
     host.setSessionTokens(20_000);
@@ -3435,10 +3441,13 @@ test('compaction in a turn really lowers the next request it charges', async t =
   assert.equal(workerCompactions.length, 1, `exactly one step compaction: ${JSON.stringify(compactions)}`);
   assert.equal(workerCompactions[0].session, worker.session_id, 'and it was the Worker that asked for it');
   assert.equal(receipts.length, 2, 'two provider requests were charged');
-  assert.ok(receipts[0].reservation_tokens > 9_000, `the pre-compaction request reserved the whole prompt: ${receipts[0].reservation_tokens}`);
-  assert.ok(receipts[1].reservation_tokens < receipts[0].reservation_tokens,
-    `the post-compaction request costs less: ${receipts[0].reservation_tokens} → ${receipts[1].reservation_tokens}`);
-  assert.ok(receipts[1].reservation_tokens < 4_000, 'and it is charged against the compacted surface, not against the old one');
+  const beforeCompaction = receipts.find(receipt => receipt.request_id === beforeCompactionRequestId);
+  const afterCompaction = receipts.find(receipt => receipt.request_id !== beforeCompactionRequestId);
+  assert.ok(beforeCompaction, 'the first request has a durable receipt before compaction');
+  assert.ok(beforeCompaction.reservation_tokens > 9_000, `the pre-compaction request reserved the whole prompt: ${beforeCompaction.reservation_tokens}`);
+  assert.ok(afterCompaction.reservation_tokens < beforeCompaction.reservation_tokens,
+    `the post-compaction request costs less: ${beforeCompaction.reservation_tokens} → ${afterCompaction.reservation_tokens}`);
+  assert.ok(afterCompaction.reservation_tokens < 4_000, 'and it is charged against the compacted surface, not against the old one');
 
   const steps = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'context-step');
   assert.ok(steps.length >= 2, `${steps.length} context-step events`);
@@ -3651,7 +3660,7 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
   assert.equal(runtime.store.getTransaction(tx.id).status !== 'SUBMITTED', true, 'nothing was published from an unflushed turn');
 });
 
-test('an unreadable session is UNKNOWN: the delivery stays queued instead of being re-injected', async t => {
+test('an unreadable session is UNKNOWN: the attempted delivery stays withheld instead of being re-injected', async t => {
   const runtime = makeRuntime(t, {}, {
     sessionPersistence: {
       // The session exists (the identity has a durable session) but its log
@@ -3673,7 +3682,7 @@ test('an unreadable session is UNKNOWN: the delivery stays queued instead of bei
   });
   const reconciled = await runtime.reconcileDeliveries(clusterId);
   const events = type => runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === type);
-  assert.equal(runtime.store.deliveryFor('unknown-msg', agent.id).status, 'PENDING', 'an unprovable delivery is never acked');
+  assert.equal(runtime.store.deliveryFor('unknown-msg', agent.id).status, 'DELIVERED', 'an unprovable delivery is neither acked nor requeued');
   assert.equal(events('messages-ack-reconciled').length, 0);
   assert.equal(runtime.store.getAgent(agent.id).status, 'BLOCKED', 'and its owner does not dispatch until the ambiguity is resolved');
   const unknown = events('delivery-unknown');
@@ -6285,11 +6294,14 @@ test('a resumed Auditor receives parseable action evidence without a repeated fu
   const json = prompt.split('Current domain state (read anything else with flow_query; every list answers with items/total/next_offset):\n')[1]
     ?.split('\n\nPerform the pending actions')[0];
   const digest = JSON.parse(json);
-  assert.deepEqual(digest.pending_actions.filter(action => action.action === 'inspect_plan')
-    .map(action => action.transaction_id).sort(), transactions.map(tx => tx.id).sort(),
+  const planActions = digest.pending_actions.filter(action => action.action === 'inspect_plan');
+  assert.deepEqual(planActions.map(action => action.transaction_id).sort(), transactions.map(tx => tx.id).sort(),
   'all three review decisions and their transaction references remain actionable');
-  assert.deepEqual(digest.pending_actions[0].acceptance_criteria, transactions[0].acceptance_criteria,
-    'the first Auditor decision still carries the criteria it must judge');
+  for (const action of planActions) {
+    const transaction = transactions.find(tx => tx.id === action.transaction_id);
+    assert.deepEqual(action.acceptance_criteria, transaction.acceptance_criteria,
+      `the Auditor decision for ${transaction.id} still carries the criteria it must judge`);
+  }
   assert.ok(prompt.length < 4_000, `a resumed session has room for this prompt inside its 8192-token context: ${prompt.length}`);
 });
 
@@ -6921,10 +6933,15 @@ test('a crash between taking a message and admitting it reopens it on recovery',
 
   // Recovery is what the restart runs: it fences the dead turn's lease and hands
   // back the messages that turn owned and never answered.
-  runtime.recover({ deferScheduling: true });
-  const after = runtime.store.all("SELECT id, status FROM inbox WHERE id=?", taken[0].id);
+  // A restarted process has a fresh runtime, not the old live agent handles.
+  const restarted = new ClusterRuntime(host.ctx, {
+    ...runtime.config, path: join(dir, 'cluster.sqlite'), autoTick: false,
+  });
+  t.after(async () => { await restarted.dispose(); });
+  restarted.recover({ deferScheduling: true });
+  const after = restarted.store.all("SELECT id, status FROM inbox WHERE id=?", taken[0].id);
   assert.equal(after[0].status, 'PENDING', 'recovery hands the unproven message back');
-  const reopened = runtime.store.readEvents(clusterId, { limit: 200 }).filter(event => event.type === 'inbox-reopened');
+  const reopened = restarted.store.readEvents(clusterId, { limit: 200 }).filter(event => event.type === 'inbox-reopened');
   assert.ok(reopened.some(event => event.data.count >= 1 && /restarted before the turn proved/.test(String(event.data.reason))),
     `the reopen is recorded with its cause: ${JSON.stringify(reopened.map(event => event.data))}`);
   if (release) release();
@@ -9054,6 +9071,12 @@ test('runUntilSettled waits for an in-flight request to release the capacity it 
     runtime.store.updateBudget(pool.id, { tokens_limit: 20_000, tokens_reserved: 8_352, tokens_spent: 0, requests_limit: 5, requests_spent: 0, requests_reserved: 1 });
     runtime.store.updateBudget(nodeBudget.id, { tokens_limit: 1_000, tokens_spent: 1_000, requests_limit: 0, requests_spent: 0 });
     runtime.store.updateBudget(runtime.store.budgetForScope(clusterId, 'agent', role.id).id, { tokens_limit: 0, tokens_spent: 0, requests_limit: 0, requests_spent: 0 });
+    // Only the settlement can repair this stop. Otherwise an idle sibling grant
+    // legitimately reopens it before the in-flight reservation is released.
+    for (const sibling of runtime.store.listAgents(clusterId, { node_id: root.id, limit: 3 })) {
+      const budget = runtime.store.budgetForScope(clusterId, 'agent', sibling.id);
+      runtime.store.updateBudget(budget.id, { tokens_limit: 0, requests_limit: 0 });
+    }
   });
   runtime.recordBudgetRefusal(role, 'model request refused: tokens', {
     scope: pool.scope_id, dimension: 'tokens', requested: envelope.tokens, available: 0,

@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { createWriteStream, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,7 @@ const LAUNCHER = join(PROJECT_ROOT, 'acceptance/lib/dsh-launch.mjs');
  * proxy variable — is dropped rather than blacklisted, so a new credential name
  * cannot silently leak into an isolated run.
  */
-export const HOST_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'USER', 'PNPM_HOME', 'DSH_INSTALL_PATH'];
+export const HOST_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'USER', 'PNPM_HOME', 'DSH_INSTALL_PATH', 'FLOW_CHROMIUM_PATH'];
 
 /** Runner-owned keys a case may never override. */
 export const RUNNER_ENV_KEYS = [
@@ -250,7 +251,10 @@ export const PROFILE_PROVIDER_PACKAGES = [
   ['@deepseek-ai/dsh-experimental-browser-use-playwright-mcp', 'packages/experimental/browser-use-playwright-mcp'],
 ];
 
-export function ensureProfile(home, profile, { bundles, packagePath = PROJECT_ROOT, providers = PROFILE_PROVIDER_PACKAGES } = {}) {
+export function ensureProfile(home, profile, {
+  bundles, packagePath = PROJECT_ROOT, providers = PROFILE_PROVIDER_PACKAGES,
+  installPath = process.env.DSH_INSTALL_PATH,
+} = {}) {
   const dir = join(home, 'profiles', profile);
   const manifestPath = join(dir, 'package.json');
   mkdirSync(dir, { recursive: true });
@@ -268,11 +272,27 @@ export function ensureProfile(home, profile, { bundles, packagePath = PROJECT_RO
   rmSync(link, { recursive: true, force: true });
   symlinkSync(packagePath, link, 'dir');
 
-  const harnessRoot = dirname(dirname(resolve(process.env.DSH_INSTALL_PATH ?? '/home/leo/projects/deepseek-harness/apps/cli')));
+  const harnessRoot = installPath ? dirname(dirname(resolve(installPath))) : null;
+  const resolvers = [packagePath, ...(installPath ? [installPath] : [])]
+    .map(root => createRequire(join(resolve(root), 'package.json')));
   const linked = [];
   for (const [name, relative] of providers ?? []) {
-    const target = join(harnessRoot, relative);
-    if (!existsSync(join(target, 'package.json'))) continue;
+    // A source checkout and a published npm installation have different
+    // layouts. Preserve an explicitly selected monorepo's packages, then use
+    // normal Node resolution from the plugin and the chosen DSH installation.
+    let target = harnessRoot ? join(harnessRoot, relative) : null;
+    if (!target || !existsSync(join(target, 'package.json'))) {
+      target = null;
+      for (const require of resolvers) {
+        try {
+          target = dirname(require.resolve(`${name}/package.json`));
+          break;
+        } catch (error) {
+          if (!['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(error.code)) throw error;
+        }
+      }
+    }
+    if (!target) continue;
     const destination = join(nodeModules, ...name.split('/'));
     mkdirSync(dirname(destination), { recursive: true });
     rmSync(destination, { recursive: true, force: true });

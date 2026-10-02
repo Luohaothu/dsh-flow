@@ -322,6 +322,15 @@ does not cancel a cluster, and the event view resumes from its durable cursor.
 The authenticated browser route refuses internal host operations such as
 `dispose` and `recover`; those remain IPC-only.
 
+IPC recovery requires an idle runtime. It returns a 409 conflict without
+changing state while a turn or scheduling pass is active; it does not abort
+live work. Pause the clusters, let their active turns drain, then retry
+`recover`. Admission stays closed until session proofs have been checked and
+the host is ready. Recovery leaves paused clusters paused; explicitly resume
+them afterward when work should continue. Startup and overlapping IPC recovery
+requests share one proof pass. Unexpected proof failures leave admission closed
+until a successful recovery retry.
+
 Management-node delegation fixes its output and acceptance contract when the
 parent spawns the node. Its Orchestrator may widen a faulty execution
 `inputs.write_scope` and add stricter checks, but `adjust_transaction` cannot

@@ -372,6 +372,14 @@ function detectCycle(rt, clusterId, txId, dependencyId) {
   }
 }
 
+/** Every dependency-writing action uses the same existence, cluster and cycle checks. */
+function addTransactionDependency(rt, cluster, transactionId, dependencyId) {
+  const dependency = txOf(rt, dependencyId);
+  if (dependency.cluster_id !== cluster.id) fail('Dependency belongs to another cluster', 403);
+  detectCycle(rt, cluster.id, transactionId, dependencyId);
+  rt.store.addDependency(transactionId, dependencyId);
+}
+
 function pauseDependents(rt, cluster, tx) {
   for (const dependentId of rt.store.dependentsOf(tx.id)) {
     const dependent = rt.store.getTransaction(dependentId);
@@ -389,6 +397,10 @@ export const HANDLERS = {
   create_transaction(rt, cluster, actor, params) {
     if (typeof params.objective !== 'string' || !params.objective.trim()) fail('params.objective is required');
     const node = assertDomain(rt, cluster, actor, actor.node_id ?? params.node_id);
+    if (params.parent_transaction_id !== undefined && params.parent_transaction_id !== null) {
+      const parent = assertTransactionDomain(rt, cluster, actor, params.parent_transaction_id);
+      if (['ACCEPTED', 'CANCELLED', 'SUPERSEDED'].includes(parent.status)) fail(`cannot add children to a ${parent.status} transaction`, 409);
+    }
     const tx = rt.createTransactionInternal(cluster.id, node, {
       objective: params.objective,
       inputs: params.inputs,
@@ -431,8 +443,7 @@ export const HANDLERS = {
         deps.push(created[index2].id);
       }
       for (const dep of deps) {
-        detectCycle(rt, cluster.id, created[index].id, dep);
-        rt.store.addDependency(created[index].id, dep);
+        addTransactionDependency(rt, cluster, created[index].id, dep);
       }
     }
     rt.store.appendEvent(cluster.id, 'decomposed', { parent: parent.id, children: created.map(tx => tx.id) });
@@ -448,10 +459,7 @@ export const HANDLERS = {
     for (const dep of remove) rt.store.removeDependency(tx.id, dep);
     for (const dep of add) {
       if (dep === undefined || dep === null || dep === '') continue;
-      const other = txOf(rt, dep);
-      if (other.cluster_id !== cluster.id) fail('Dependency belongs to another cluster', 403);
-      detectCycle(rt, cluster.id, tx.id, dep);
-      rt.store.addDependency(tx.id, dep);
+      addTransactionDependency(rt, cluster, tx.id, dep);
     }
     rt.store.appendEvent(cluster.id, 'dependency-set', { transaction_id: tx.id, add, remove });
     notifyTransactionModified(rt, cluster, actor, tx, 'dependency-set');
