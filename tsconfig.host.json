@@ -1,0 +1,32 @@
+{
+  // Host aggregate: one of the two check units (see tsconfig.json). It owns the
+  // development and acceptance chain — the DSH host driver, the acceptance
+  // runner, the unit suite and the type-level fixtures — and it references the
+  // plugin's Host leaf so `tsc -b` builds declarations before checking callers.
+  //
+  // DOM is present because the browser-driven acceptance checks evaluate code
+  // inside a real page and need `document`/`HTMLElement`; the aggregate must not
+  // import any Client Cordis Context declaration, which is why the browser
+  // checks live here and not in tsconfig.client.json.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rewriteRelativeImportExtensions": false,
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "ESNext.Disposable"],
+    "types": ["node"]
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "src/host/**/*.ts",
+    "tests/types/*.host.ts",
+    "tests/unit/**/*.ts",
+    "tests/acceptance/**/*.ts"
+  ],
+  "exclude": [
+    "tests/acceptance/seeds/website"
+  ],
+  "references": [
+    { "path": "./packages/typert-protocol/tsconfig.host.json" },
+    { "path": "./packages/dsh-flow/tsconfig.host.json" }
+  ]
+}

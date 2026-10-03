@@ -1,0 +1,33 @@
+{
+  // Host leaf: the plugin's Node half. It emits both declarations (published as
+  // the `types` of each export) and JavaScript into `lib/types`, which the
+  // build then bundles into the runtime entry points. `src/client.ts` is
+  // deliberately absent: the Client program is a separate face.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo",
+    "types": ["node"]
+  },
+  "files": [
+    "src/index.ts",
+    "src/config.ts",
+    "src/errors.ts",
+    "src/service.ts",
+    "src/tools.ts",
+    "src/types.ts",
+    "src/validation.ts",
+    "src/web.ts",
+    "src/core/actions.ts",
+    "src/core/budget.ts",
+    "src/core/cluster.ts",
+    "src/core/communication.ts",
+    "src/core/model.ts",
+    "src/core/protocol.ts",
+    "src/core/role-tools.ts",
+    "src/core/runtime.ts",
+    "src/core/scope.ts",
+    "src/core/store.ts"
+  ]
+}

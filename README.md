@@ -6,21 +6,40 @@ independent audit gate, restart recovery, layered budgets, and a native panel.
 
 Everything runs through the host's own machinery — `ctx.agents` for every turn,
 `ctx.sessions` for durability, the host tool pipeline for tool calls, and the
-authenticated `/api/flow` route for the panel. There is no second agent loop.
+standard Remote face (`ctx.remote.flow`) for the panel. There is no second agent
+loop and no plugin-owned HTTP route.
+
+The whole repository is native TypeScript. `packages/dsh-flow` is the one
+published package; its Host half (`src/index.ts`, `src/tools.ts`, `src/web.ts`,
+`src/core/**`) and its Client half (`src/client.ts`, `src/client/**`) are
+separate `tsc` programs, and the browser bundle is built from the Client program
+with the generated Remote contribution inlined.
 
 ## What is in the box
 
 | Module | Responsibility |
 |---|---|
-| `src/adapter/store.js` | SQLite state: one writer, `state + command receipt + events` in one transaction, injected clock, schema-versioned |
-| `src/adapter/protocol.js` | Roles, actions, statuses, capability → host-tool mapping, input validation |
-| `src/adapter/budget.js` | `limit / reserved / spent` ledger per scope, transfers of unused unreserved capacity, absolute wall deadlines |
-| `src/adapter/communication.js` | Messages, multicast, groups, blackboard with revision fencing, subscriptions with a snapshot+cursor cut |
-| `src/adapter/runtime.js` | One scheduled turn of a real DSH agent: tool policy, durable effect receipts, request accounting |
-| `src/adapter/cluster.js` | Control loop, scheduler, leases, checkpoints, recovery, queries and the report |
-| `src/adapter/actions.js` | The role action handlers (`flow_transaction`, `flow_allocation`, `flow_audit`) |
-| `src/adapter/index.js` | Cordis plugin: `flow` service, host tools, tool-execution seam, `/api/flow`, IPC bridge |
-| `src/ui/client.jsx` | The panel (`sidebar.panellist` + a `main` key), built to `lib/client.js` |
+| `packages/dsh-flow/src/index.ts` | Cordis plugin: configuration, the single teardown effect, recovery before `ctx.provide('flow', …)` |
+| `packages/dsh-flow/src/config.ts` | `Config` schema, deployment resolution, and `resolveStartRequest` — the only copy of the interactive envelope |
+| `packages/dsh-flow/src/service.ts` | The public `ctx.flow` contract: seven operations, nothing else |
+| `packages/dsh-flow/src/tools.ts` | The three user tools (`flow_start` / `flow_read` / `flow_control`), mounted by the cluster preset |
+| `packages/dsh-flow/src/web.ts` | The standard Remote face: seven `@Remote` methods over `ctx.flow` |
+| `packages/dsh-flow/src/types.ts` | The wire vocabulary shared by Host, Remote and browser |
+| `packages/dsh-flow/src/validation.ts` | Shared input validators; the Client bundle imports these too |
+| `packages/dsh-flow/src/errors.ts` | One failure vocabulary: `fail()` throws `RemoteError('flow/rejected', …)` with the business status in `details.status` |
+| `packages/dsh-flow/src/client.ts` | Client assembly: mounts the generated contribution, then the panel |
+| `packages/dsh-flow/src/client/operations.ts` | Panel data operations over `ctx.remote.flow`, with tagged-query narrowing |
+| `packages/dsh-flow/src/client/panel.tsx` | The panel (`sidebar.panellist` + a `main` key) |
+| `packages/dsh-flow/src/core/store.ts` | SQLite state: one writer, `state + command receipt + events` in one transaction, injected clock, schema-versioned |
+| `packages/dsh-flow/src/core/protocol.ts` | Roles, actions, statuses, capability → host-tool mapping |
+| `packages/dsh-flow/src/core/budget.ts` | `limit / reserved / spent` ledger per scope, transfers of unused unreserved capacity, absolute wall deadlines |
+| `packages/dsh-flow/src/core/communication.ts` | Messages, multicast, groups, blackboard with revision fencing, subscriptions with a snapshot+cursor cut |
+| `packages/dsh-flow/src/core/runtime.ts` | One scheduled turn of a real DSH agent: capability tools, tool policy, durable effect receipts, request accounting |
+| `packages/dsh-flow/src/core/role-tools.ts` | The role command surface, registered in the agent's own scope |
+| `packages/dsh-flow/src/core/cluster.ts` | Control loop, scheduler, leases, checkpoints, recovery, the tagged query surface and the report |
+| `packages/dsh-flow/src/core/actions.ts` | The role action handlers (`flow_transaction`, `flow_allocation`, `flow_audit`) |
+| `src/host/**` | Development and acceptance only: the DSH host driver, the mock model, the ledger readers and the IPC bridge |
+| `packages/typert-protocol` | The workspace's own face of `@deepseek-ai/dsh-typert-protocol`, registered so the Typert generator can recognize `@Remote` from an out-of-tree repository |
 
 ## Management model
 
@@ -103,8 +122,13 @@ decides which tools and prompt the session's agent runs with — which is what
         id: cluster
         name: 集群模式
         order: 3
-        plugins: [persona, compaction, tool-ask-user, tool-todo]
+        plugins: [tool-flow, persona, compaction, tool-ask-user, tool-todo]
 ```
+
+`tool-flow` (`dsh-flow/tools`) is mounted **inside the preset**, not at the root: a
+normal Session in the same profile must not see a cluster command surface it cannot
+use. A deployment that wants the tools in its root layer adds the same Consumer
+itself.
 
 In that mode the agent's job is to **run the cluster**, not to do the work itself.
 Its persona says the user's request is a cluster objective; the `flow_*` host tools
@@ -113,40 +137,53 @@ the cluster's own Workers keep the file/shell capabilities the cluster grants th
 so the task is still executed with real tools, on the cluster's management tree,
 under its own Auditor gates.
 
-`flow_start` fills in what a session cannot know: workspace from `FLOW_WORKSPACE`,
-capabilities `fs_read,fs_write`, and — for any envelope field the caller omits — the
-interactive budget/limits (`INTERACTIVE_BUDGET`/`INTERACTIVE_LIMITS` in
-`src/adapter/index.js`). A cluster started with `budget: {}` and the default
-`worker_model_requests: 0` blocks on its first request; these defaults keep a
-prompt-shaped start usable while an explicit value always wins.
+The tools hold no defaults of their own. `flow_start` forwards the request to
+`ctx.flow.start`, which merges it per field: `schema default < deployment
+configuration < this request`. An omitted `workspace`, `capabilities`, `budget` or
+`limits` comes from the resolved configuration (`defaultBudget`/`defaultLimits` in
+`packages/dsh-flow/src/config.ts`, the one copy of the interactive envelope); an
+explicitly empty `capabilities` list stays empty, and an explicitly illegal value is
+refused rather than replaced. A cluster started with `budget: {}` therefore still
+gets the other five dimensions, while `budget: { tokens: 100_000 }` keeps 100000 —
+identically for a local caller, a model tool call and a Remote caller.
 
 ### Installing it into a DSH instance
 
-Install the plugin as a profile **bundle** (its own `cordis.patch.yml` then supplies
-both the plugin row and the 集群模式 preset):
+The standard path is the CLI; the bundle's own `cordis.patch.yml` then supplies the
+control plane, the Remote face and the 集群模式 preset:
 
 ```bash
-node scripts/build.mjs
+npm run build
+npm pack --workspace packages/dsh-flow --pack-destination /tmp
+dsh plugin --profile flow add /tmp/dsh-flow-0.1.0.tgz
+dsh --profile flow --dump-config
+```
+
+For development against a local checkout, mount the package directory instead:
+
+```bash
 mkdir -p ~/.dsh/profiles/flow/node_modules
-ln -sfn "$PWD" ~/.dsh/profiles/flow/node_modules/dsh-flow
+ln -sfn "$PWD/packages/dsh-flow" ~/.dsh/profiles/flow/node_modules/dsh-flow
 cat > ~/.dsh/profiles/flow/package.json <<'JSON'
 { "name": "dsh-profile-flow", "private": true,
   "dependencies": { "dsh-flow": "link:." },
   "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-flow"] } } }
 JSON
 
-DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli \
-FLOW_DATA_DIR=~/.dsh-flow-instance/data FLOW_WORKSPACE=~/.dsh-flow-instance/workspace \
-FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 \
-node src/host/dsh-launch.mjs --profile flow --patch examples/instance.patch.yml \
+node src/host/dsh-launch.ts --profile flow --patch examples/instance.patch.yml \
   --host 127.0.0.1 --port 8791 --no-open
 # → prints the authenticated URL (dsh web: http://127.0.0.1:8791/?token=…)
 ```
 
-`examples/instance.patch.yml` carries only the deployment policy (model route,
-sandbox, compaction); it must not insert `dsh-flow` again. `examples/cluster.patch.yml`
-is the *acceptance* overlay — its profile does not depend on the package, so there it
-inserts the row explicitly.
+`examples/instance.patch.yml` carries the deployment policy (model route, sandbox,
+compaction) plus an explicit `dsh-flow` configuration override; it must not insert
+`dsh-flow` a second time. `examples/cluster.patch.yml` is the *acceptance* overlay —
+its profile does not depend on the package, so there it inserts the control plane,
+the Remote face and the preset explicitly, and it is the only place the runner's
+`FLOW_*` variables are turned into configuration.
+
+The launcher resolves `@deepseek-ai/dsh` from the installed dependencies. Point it at
+another installation with `DSH_INSTALL_PATH` if needed.
 
 The harness webserver refuses `--host 0.0.0.0` ("would expose remote code execution
 to the network") and its schema accepts loopback only, so reaching the instance from
@@ -156,36 +193,49 @@ front. The token in the URL is the whole authorization — anyone holding it dri
 agent.
 
 ```bash
-# one-time: link this project to a DSH installation (dev + tests)
-DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli node scripts/link-dsh.mjs
-node scripts/build.mjs
+# install the workspace, then type-check and build it
+npm install
+npm run typecheck     # Host build + Remote generation + Client + seed checks; skips Client bundle
 
 # unit tests (mechanism, no model)
-node --test tests/unit/*.test.js
+npm test
 
 # the functional verdict: native host contracts + every scenario, deterministic model
-DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli npm run test:mock
+npm run test:mock
 
 # one deterministic scenario, for diagnosis
 npm run accept:mock -- --case recovery --run-id rec-diag-01
 npm run accept:mock -- --case scale --run-id scale-diag-01 --dataset-limit 16
 
 # local Qwen protocol + tool round trip
-FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 node tests/acceptance/qwen-smoke.mjs
+FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 npm run test:qwen
 
 # one acceptance case through a real, isolated DSH profile
-node tests/acceptance/run.mjs --case smoke --run-id smoke-01
-node tests/acceptance/run.mjs --case panel --run-id panel-01
-node tests/acceptance/run.mjs --case website --run-id site-01 --mode all
-node tests/acceptance/run.mjs --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
+npm run accept -- --case smoke --run-id smoke-01
+npm run accept -- --case panel --run-id panel-01
+npm run accept -- --case website --run-id site-01 --mode all
+npm run accept -- --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
+```
 
+The suite passes a case only when its runner exits successfully, the scenario
+reports `PASSED`, and any reported mechanism verdict is `PASS`. A failed
+mechanism, nonzero exit, or signal termination cannot be overridden by a passing
+scenario; `npm run test:mock` then exits nonzero.
+
+`npm run build` produces `lib/index.js`, `lib/tools.js`, `lib/web.js`,
+`lib/client.js`, the emitted declarations under `lib/types`, and the two generated
+Typert artifacts (`lib/typert.host.*`, `lib/typert.remote-client.*`). Host and Client
+are separate `tsc` programs; the browser bundle is built last, from the Client
+program, with the generated Remote contribution and its zod codec inlined.
+
+```bash
 # The same case through DSH's existing OpenAI-compatible provider configuration.
 # In a shell loaded from ~/.bashrc, transfer only the key, not ANTHROPIC_* routing:
 FLOW_MODEL_PROVIDER=openai-compatible \
 FLOW_MODEL_ID=deepseek-v4.1-flash \
 FLOW_MODEL_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3 \
 FLOW_MODEL_API_KEY="$ANTHROPIC_AUTH_TOKEN" \
-  node tests/acceptance/run.mjs --case smoke --run-id smoke-openai-01 \
+  npm run accept -- --case smoke --run-id smoke-openai-01 \
   --profile-patch examples/openai-compatible.patch.yml
 ```
 
@@ -213,12 +263,12 @@ mechanism to repair, not evidence that the result needs only a larger budget.
 
 ### Deterministic runs (`--mock`)
 
-`src/host/mock-model.mjs` is a local OpenAI-compatible endpoint bound to
+`src/host/mock-model.ts` is a local OpenAI-compatible endpoint bound to
 `127.0.0.1:0`; it replaces only the model's generation. Every run still boots a
 real DSH profile, drives the real agent loop, executes real tools and writes a
 real Session and SQLite ledger. The run's own `llm-pi-ai` overlay is written
 into the run directory, so the case patches stay untouched and no ambient
-credential is read. `src/host/mock-scenarios.mjs` answers each request
+credential is read. `src/host/mock-scenarios.ts` answers each request
 from the identity and state the request itself carries — the role line, the
 domain digest, the newest tool result — so concurrent Workers interleave freely
 and each still gets the answer its own transaction owes.
@@ -237,23 +287,26 @@ These were observed on the target machine and are load-bearing:
 
 * **Node v24.0.1 does not implement `import.meta.main`.** The shipped
   `apps/cli/lib/bin.js` guards its entry point with it, so invoking the built
-  bin directly exits silently with status 0. `src/host/dsh-launch.mjs`
+  bin directly exits silently with status 0. `src/host/dsh-launch.ts`
   therefore imports the exported `runCli` and calls it.
-* **`DSH_INSTALL_PATH` is a convention of this project, not a DSH variable.**
-  DSH anchors module resolution on the running launcher's own `package.json`.
-  The variable is used by `scripts/link-dsh.mjs` and the acceptance runner to
-  find the installation to link against.
-* **Plugin resolution goes through the profile.** `src/host/host.mjs`
-  creates `$DSH_HOME/profiles/<name>/node_modules/dsh-flow` as a symlink to this
-  project, exactly how a profile-installed bundle is resolved.
+* **`DSH_INSTALL_PATH` is optional.** The launcher resolves
+  `@deepseek-ai/dsh` from the installed dependencies; the variable exists only to
+  point the *acceptance* run at a different installation. DSH anchors module
+  resolution on the running launcher's own `package.json`.
+* **Plugin resolution goes through the profile.** `src/host/host.ts`
+  creates `$DSH_HOME/profiles/<name>/node_modules/dsh-flow` as a symlink to
+  `packages/dsh-flow`, exactly how a profile-installed bundle is resolved.
 * **Capability tool packages must be resolvable by this package.**
   `@deepseek-ai/dsh-tool-fs`, `-fs-search`, `-bash`, `-jobs` and `-web` are
-  declared dependencies and are linked into `node_modules/` by
-  `scripts/link-dsh.mjs`. They are mounted into each agent's own scope; a
-  package that cannot be mounted is reported, never silently skipped.
+  declared dependencies of `packages/dsh-flow` and are therefore installed with
+  it. They are mounted into each agent's own scope; a package that cannot be
+  mounted is reported as a missing capability before the prompt is submitted,
+  never silently skipped.
 * **`llm/stream` is bound to the LLM runtime, not to an agent scope.** The
-  request-accounting listener therefore filters by `options.sessionId`, or
-  concurrent agents would settle the same response more than once.
+  request-accounting listener therefore filters by `options.sessionId` and by
+  nothing else — a request that happens to share the configured provider/model
+  is another session's request, not this cluster's, or concurrent agents would
+  settle the same response more than once.
 * **The web bundle disables host-plane compaction.** It mounts the compaction
   backend inside the agent preset, which a cluster agent never mounts, so
   `examples/cluster.patch.yml` re-enables the host-plane backend for the
@@ -283,24 +336,41 @@ These were observed on the target machine and are load-bearing:
 
 ## Configuration
 
-The plugin reads its configuration from the environment of the host process:
+The plugin reads its configuration from the profile patch, never from the
+environment of the host process. Every default is declared in the schemastery
+schema in `packages/dsh-flow/src/config.ts`, so a row that writes nothing still
+gets a workable cluster, and a deployment parameter a launcher must vary is
+written into that launcher's overlay with `!!js`.
 
-| Variable | Default | Meaning |
+| Field | Default | Meaning |
 |---|---|---|
-| `FLOW_DATA_DIR` | `<cwd>/.dsh-flow` | directory holding `cluster.sqlite` |
-| `FLOW_MODEL_PROVIDER` | `local-sglang` | provider route every cluster agent uses |
-| `FLOW_QWEN_MODEL` | `Qwen3.8-27B-FP8` | plugin model id; the acceptance runner also accepts `FLOW_MODEL_ID` and forwards it under this key |
-| `FLOW_QWEN_BASE_URL` | `http://127.0.0.1:8000/v1` | plugin route URL; the acceptance runner also accepts `FLOW_MODEL_BASE_URL` and forwards it under this key |
-| `FLOW_MODEL_API_KEY` | unset | optional explicit key passed only to the isolated DSH host, referenced by the OpenAI profile patch |
-| `--profile-patch` | unset | acceptance CLI option: append a DSH profile patch for this run |
-| `FLOW_REASONING_EFFORT` | `off` | reasoning effort passed in every agent's options |
-| `FLOW_MAX_TOKENS` | `4096` | per-request output cap |
-| `FLOW_CONTEXT_ROLE` | `8192` | declared context budget of a management role (the compaction window) |
-| `FLOW_CONTEXT_WORKER` | `16384` | declared context budget of a Worker |
-| `FLOW_CONTEXT_MODEL` | `131072` | the served model's declared window (the outer sending ceiling) |
-| `FLOW_CONTEXT_SERVER_INPUT` | `142074` | the deployment's own input cap (`max_req_input_len`) |
-| `FLOW_STALE_MS` | `120000` | how long unhandled work may sit unchanged before it is reported stale; a parent waiting on unfinished delegated children is progressing, not stale |
-| `FLOW_IPC` | unset | `1` enables the host IPC bridge used by the acceptance runner |
+| `dataDir` | `.dsh-flow` | directory holding `cluster.sqlite`; resolved against `process.cwd()` once |
+| `workspace` | `.` | default workspace a cluster may write to; resolved once |
+| `provider` | *required* | provider route every cluster agent uses |
+| `model` | *required* | model every cluster agent requests |
+| `reasoningEffort` | unset | reasoning effort put in each agent's options; an omitted value is not written at all |
+| `maxTokens` | `4096` | per-request output cap |
+| `context.role` | `8192` | declared context budget of a management role (the compaction window) |
+| `context.worker` | `16384` | declared context budget of a Worker |
+| `context.model` | `131072` | the served model's declared window (the outer sending ceiling) |
+| `context.compaction_threshold` | `0.8` | fraction of the identity budget at which to compact |
+| `context.server_input` | `142074` | the deployment's own input cap (`max_req_input_len`) |
+| `tickMs` | `250` | scheduler tick |
+| `staleMs` | `120000` | how long unhandled work may sit unchanged before it is reported stale; a parent waiting on unfinished delegated children is progressing, not stale |
+| `maxTurnMs` | `900000` | deadline for one turn before the cluster aborts it |
+| `heartbeatMs` | `20000` | lease heartbeat interval; must be shorter than `leaseTtlMs` |
+| `leaseTtlMs` | `60000` | lease time to live |
+| `disposeTimeoutMs` | `5000` | bounded teardown deadline: drains the live turns, then closes the store |
+| `defaultCapabilities` | `['fs_read','fs_write']` | capabilities a start request that names none receives |
+| `defaultBudget` | the interactive envelope | root budget a start request that names none receives |
+| `defaultLimits` | the management-tree limits | limits a start request that names none receives |
+
+The bundle's own row derives `provider`/`model`/`reasoningEffort` from the host's
+default-model provider (`!!js ctx.agentDefaultModel.currentSelection().…`), so the
+plugin routes wherever the deployment routes. `examples/cluster.patch.yml` is the
+acceptance overlay and the **only** file in this repository that reads the runner's
+`FLOW_*` variables — it maps them into the configuration above. `FLOW_IPC=1` enables
+the development IPC bridge, which the acceptance overlay mounts as its own row.
 
 An Allocator may override the context budget of one identity with
 `flow_allocation set_context_budget`; the override lives in `agents.meta.context`
@@ -308,9 +378,12 @@ and is what that identity's turns measure against. The provider's own window and
 the deployment's input cap are the hard sending ceiling and are never raised by
 an override.
 
-There is deliberately no second cluster control port and no separate token: the
-panel talks to the host over the authenticated `/api/flow` route, and the
-model-facing tools call `ctx.flow` in-process.
+There is deliberately no second cluster control port and no separate token, and no
+plugin-owned HTTP route. The panel talks to the host through the standard Remote
+face — `ctx.remote.flow`, carried by the host's Connection/Gateway over
+`POST /api/flow/<method>` with the generated `{args:{…}}` envelope — and the
+model-facing tools call `ctx.flow` in-process. The two entry points are the same
+seven operations, resolved through the same defaults.
 
 The panel queries each management level on expansion. Child and root pages
 carry `total`/`next_offset`, so a node with more than 50 children can be
@@ -319,8 +392,11 @@ detail shows the saved result, validation checks and evidence, and both
 pending and decided plan/validation audits; an independent audit may still be
 pending if the user cancels the cluster. Closing or reopening the browser
 does not cancel a cluster, and the event view resumes from its durable cursor.
-The authenticated browser route refuses internal host operations such as
-`dispose` and `recover`; those remain IPC-only.
+The Remote face exposes exactly seven methods (`start`, `list`, `read`, `events`,
+`control`, `query`, `report`). Internal host operations such as `dispose`,
+`recover`, `settle`, `tick` and `single` are not declared on it at all: an
+authenticated browser cannot close the database or abort every turn, and those
+operations remain reachable only through the development IPC bridge.
 
 IPC recovery requires an idle runtime. It returns a 409 conflict without
 changing state while a turn or scheduling pass is active; it does not abort
@@ -403,3 +479,50 @@ allocation or cross-subtree transfer.
 | §5 Allocator actions | 17 of 18 | `route_capability` is not implemented; capability matching already happens in `allocate_agent`. `set_context_budget` is. |
 | §16 lifecycle | `CREATED` and `WAITING` never assigned; `COMPLETED` is | An identity is created READY (there is no queue state before its first turn), and a management node reaches `COMPLETED` through the closing sequence introduced here. `WAITING` would be a natural state for "queued for a model slot"; it is not used yet. |
 | §6 Auditor role | Supervisor, not a gate | A plan audit is recorded and routed, but it does not block dispatch: the Orchestrator makes its own revision dispatchable, and the Auditor keeps its after-the-fact corrective authority (rejection pulls the transaction back to DRAFT). A silent Auditor must not be able to freeze a subtree. |
+
+## Migration notes: the standard-plugin, native-TypeScript cutover
+
+This is one clean cutover, not a compatibility layer. Callers outside this
+repository must follow it too.
+
+| Before | Now |
+|---|---|
+| `src/adapter/*.js`, `src/ui/client.jsx`, `src/host/*.mjs`, `scripts/*.mjs`, `tests/**/*.mjs` | Native TypeScript: `packages/dsh-flow/src/**` for the plugin, root `src/host/**` and `tests/**` for the development chain, all run by `tsx` and checked by `tsc -b` |
+| One root package with `main`/`exports` | A private workspace root plus one published package at `packages/dsh-flow` with seven export subpaths |
+| `apply(ctx)` read `FLOW_DATA_DIR`, `FLOW_MODEL_PROVIDER`, `FLOW_QWEN_MODEL`, `FLOW_CONTEXT_*`, … | `Config` (schemastery) is the only source; `FLOW_*` is evaluated only in `examples/cluster.patch.yml`, which turns those variables into configuration |
+| `flow_start` and the HTTP route each merged their own copy of `INTERACTIVE_BUDGET`/`INTERACTIVE_LIMITS` | One `resolveStartRequest`, one envelope in `src/config.ts`, used by every entry point |
+| `POST /api/flow` with an `{op,id,payload}` body | Standard Remote methods: `ctx.remote.flow.<method>`, carried as `POST /api/flow/<method>` with `{args:{…}}`. Only `start`, `list`, `read`, `events`, `control`, `query`, `report` exist |
+| `StoreError` with an `error.status` field | `RemoteError('flow/rejected', message, {status})`; the business status travels in `details.status` |
+| Role tools and `flow_sum` registered in the root tool registry | Registered in the cluster agent's own scope during its turn setup; `flow_sum` is a role tool, not a public user tool |
+| `ctx.inject(['sessionPersistence'], …)` plus `appReady`/`hostReady` polling | `inject = ['tools','agents','agentLoop','sessions','sessionPersistence']`, so a missing dependency is Cordis PENDING and the instance unloads; recovery finishes before `ctx.provide('flow', …)` |
+| `process.on('message'/'disconnect')` inside the production plugin, with `FLOW_IPC` | `src/host/ipc-bridge.ts`, mounted only by an acceptance overlay |
+| `scripts/link-dsh.mjs` and `npm run link:dsh` | Removed. Dependencies come from `npm install`; the launcher resolves `@deepseek-ai/dsh` itself |
+| `node tests/acceptance/run.mjs` | `npm run accept`, or `node --import tsx tests/acceptance/run.ts` |
+
+Schema 2 is unchanged. Transaction inputs remain arbitrary JSON on read,
+including arrays, scalars and stored JSON `null`; object metadata such as
+`write_scope` is narrowed only where it is consumed. Query decoders also retain
+the persisted `DISMISSED` issue and `EFFECT_UNCERTAIN` effect states.
+
+Startup recovery observes plugin disposal and required-service loss before
+Cordis's deferred async cleanup. Persistence reads receive an `AbortSignal`;
+non-cancellable late proofs cannot publish or write, and late handles are closed
+without reading. Recovery and live turns share the one bounded disposal deadline.
+
+Two consequences worth stating explicitly:
+
+* **`packages/typert-protocol` exists.** The Typert generator only recognises
+  `@Remote` when the decorator's own declaration belongs to a project registered
+  under the repository's `packages/` directory, and it needs the same for the
+  cross-package type reference it records for every Remote signature. That
+  package is this workspace's own face of the published
+  `@deepseek-ai/dsh-typert-protocol` — the published declarations plus a two-line
+  re-export shim — registered in the host aggregate and resolved through one
+  `paths` entry. It is private, is never published, and holds no logic; the
+  runtime still resolves the real published package.
+* **`FlowJsonValue` is declared in `src/types.ts`, not imported.** A recursive
+  type in a Remote codec has to be owned by the face that encodes it, so a
+  borrowed recursive alias cannot be represented. The shape is the same JSON
+  contract as `@deepseek-ai/dsh-util-values`'s `JsonValue`, and the lossless-JSON
+  *check* is still reused from that package through the `isFlowJsonValue`
+  predicate — no value is copied and no rule is re-implemented.
