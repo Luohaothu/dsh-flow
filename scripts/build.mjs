@@ -26,7 +26,7 @@ const shared = {
 
 const host = await esbuild.build({
   ...shared,
-  entryPoints: [resolve(projectRoot, 'adapter/src/index.js')],
+  entryPoints: [resolve(projectRoot, 'src/adapter/index.js')],
   outfile: resolve(outDir, 'index.js'),
   format: 'esm',
   platform: 'node',
@@ -36,7 +36,7 @@ const host = await esbuild.build({
 
 const client = await esbuild.build({
   ...shared,
-  entryPoints: [resolve(projectRoot, 'ui/src/client.jsx')],
+  entryPoints: [resolve(projectRoot, 'src/ui/client.jsx')],
   outfile: resolve(outDir, 'client.js'),
   format: 'cjs',
   platform: 'browser',

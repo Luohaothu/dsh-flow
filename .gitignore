@@ -12,9 +12,9 @@ coverage/
 runtime/
 .secrets/
 artifacts/private/
-.design/
 .artifacts/
-# The built bundle at the repository root only. An unanchored `lib/` also
-# matched `acceptance/lib/`, which is source: the runner and every checker
-# import it, and it was silently never committed.
+# The built bundle at the repository root only. An unanchored `lib/` would also
+# match any source directory named `lib/` at any depth (the host modules the
+# runner imports now live in `src/host/`), and they would be silently never
+# committed.
 /lib/

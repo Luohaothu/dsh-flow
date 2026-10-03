@@ -36,11 +36,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "link:dsh": "node scripts/link-dsh.mjs",
-    "test": "node --test adapter/test/*.test.js acceptance/test/*.test.mjs",
-    "test:qwen": "node acceptance/qwen-smoke.mjs",
-    "accept": "node acceptance/run.mjs",
-    "accept:mock": "node acceptance/run.mjs --mock",
-    "test:mock": "node --test --test-concurrency=1 acceptance/native/*.test.mjs && node acceptance/suite.mjs --mock"
+    "test": "node --test tests/unit/*.test.js tests/acceptance/test/*.test.mjs",
+    "test:qwen": "node tests/acceptance/qwen-smoke.mjs",
+    "accept": "node tests/acceptance/run.mjs",
+    "accept:mock": "node tests/acceptance/run.mjs --mock",
+    "test:mock": "node --test --test-concurrency=1 tests/acceptance/native/*.test.mjs && node tests/acceptance/suite.mjs --mock"
   },
   "dependencies": {
     "@deepseek-ai/dsh-tool-bash": "0.1.7-rc.2",

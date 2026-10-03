@@ -12,15 +12,15 @@ authenticated `/api/flow` route for the panel. There is no second agent loop.
 
 | Module | Responsibility |
 |---|---|
-| `adapter/src/store.js` | SQLite state: one writer, `state + command receipt + events` in one transaction, injected clock, schema-versioned |
-| `adapter/src/protocol.js` | Roles, actions, statuses, capability → host-tool mapping, input validation |
-| `adapter/src/budget.js` | `limit / reserved / spent` ledger per scope, transfers of unused unreserved capacity, absolute wall deadlines |
-| `adapter/src/communication.js` | Messages, multicast, groups, blackboard with revision fencing, subscriptions with a snapshot+cursor cut |
-| `adapter/src/runtime.js` | One scheduled turn of a real DSH agent: tool policy, durable effect receipts, request accounting |
-| `adapter/src/cluster.js` | Control loop, scheduler, leases, checkpoints, recovery, queries and the report |
-| `adapter/src/actions.js` | The role action handlers (`flow_transaction`, `flow_allocation`, `flow_audit`) |
-| `adapter/src/index.js` | Cordis plugin: `flow` service, host tools, tool-execution seam, `/api/flow`, IPC bridge |
-| `ui/src/client.jsx` | The panel (`sidebar.panellist` + a `main` key), built to `lib/client.js` |
+| `src/adapter/store.js` | SQLite state: one writer, `state + command receipt + events` in one transaction, injected clock, schema-versioned |
+| `src/adapter/protocol.js` | Roles, actions, statuses, capability → host-tool mapping, input validation |
+| `src/adapter/budget.js` | `limit / reserved / spent` ledger per scope, transfers of unused unreserved capacity, absolute wall deadlines |
+| `src/adapter/communication.js` | Messages, multicast, groups, blackboard with revision fencing, subscriptions with a snapshot+cursor cut |
+| `src/adapter/runtime.js` | One scheduled turn of a real DSH agent: tool policy, durable effect receipts, request accounting |
+| `src/adapter/cluster.js` | Control loop, scheduler, leases, checkpoints, recovery, queries and the report |
+| `src/adapter/actions.js` | The role action handlers (`flow_transaction`, `flow_allocation`, `flow_audit`) |
+| `src/adapter/index.js` | Cordis plugin: `flow` service, host tools, tool-execution seam, `/api/flow`, IPC bridge |
+| `src/ui/client.jsx` | The panel (`sidebar.panellist` + a `main` key), built to `lib/client.js` |
 
 ## Management model
 
@@ -116,7 +116,7 @@ under its own Auditor gates.
 `flow_start` fills in what a session cannot know: workspace from `FLOW_WORKSPACE`,
 capabilities `fs_read,fs_write`, and — for any envelope field the caller omits — the
 interactive budget/limits (`INTERACTIVE_BUDGET`/`INTERACTIVE_LIMITS` in
-`adapter/src/index.js`). A cluster started with `budget: {}` and the default
+`src/adapter/index.js`). A cluster started with `budget: {}` and the default
 `worker_model_requests: 0` blocks on its first request; these defaults keep a
 prompt-shaped start usable while an explicit value always wins.
 
@@ -138,7 +138,7 @@ JSON
 DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli \
 FLOW_DATA_DIR=~/.dsh-flow-instance/data FLOW_WORKSPACE=~/.dsh-flow-instance/workspace \
 FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 \
-node acceptance/lib/dsh-launch.mjs --profile flow --patch examples/instance.patch.yml \
+node src/host/dsh-launch.mjs --profile flow --patch examples/instance.patch.yml \
   --host 127.0.0.1 --port 8791 --no-open
 # → prints the authenticated URL (dsh web: http://127.0.0.1:8791/?token=…)
 ```
@@ -161,7 +161,7 @@ DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli node scripts/link-
 node scripts/build.mjs
 
 # unit tests (mechanism, no model)
-node --test adapter/test/*.test.js
+node --test tests/unit/*.test.js
 
 # the functional verdict: native host contracts + every scenario, deterministic model
 DSH_INSTALL_PATH=/home/leo/projects/deepseek-harness/apps/cli npm run test:mock
@@ -171,13 +171,13 @@ npm run accept:mock -- --case recovery --run-id rec-diag-01
 npm run accept:mock -- --case scale --run-id scale-diag-01 --dataset-limit 16
 
 # local Qwen protocol + tool round trip
-FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 node acceptance/qwen-smoke.mjs
+FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 node tests/acceptance/qwen-smoke.mjs
 
 # one acceptance case through a real, isolated DSH profile
-node acceptance/run.mjs --case smoke --run-id smoke-01
-node acceptance/run.mjs --case panel --run-id panel-01
-node acceptance/run.mjs --case website --run-id site-01 --mode all
-node acceptance/run.mjs --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
+node tests/acceptance/run.mjs --case smoke --run-id smoke-01
+node tests/acceptance/run.mjs --case panel --run-id panel-01
+node tests/acceptance/run.mjs --case website --run-id site-01 --mode all
+node tests/acceptance/run.mjs --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
 
 # The same case through DSH's existing OpenAI-compatible provider configuration.
 # In a shell loaded from ~/.bashrc, transfer only the key, not ANTHROPIC_* routing:
@@ -185,7 +185,7 @@ FLOW_MODEL_PROVIDER=openai-compatible \
 FLOW_MODEL_ID=deepseek-v4.1-flash \
 FLOW_MODEL_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3 \
 FLOW_MODEL_API_KEY="$ANTHROPIC_AUTH_TOKEN" \
-  node acceptance/run.mjs --case smoke --run-id smoke-openai-01 \
+  node tests/acceptance/run.mjs --case smoke --run-id smoke-openai-01 \
   --profile-patch examples/openai-compatible.patch.yml
 ```
 
@@ -213,12 +213,12 @@ mechanism to repair, not evidence that the result needs only a larger budget.
 
 ### Deterministic runs (`--mock`)
 
-`acceptance/lib/mock-model.mjs` is a local OpenAI-compatible endpoint bound to
+`src/host/mock-model.mjs` is a local OpenAI-compatible endpoint bound to
 `127.0.0.1:0`; it replaces only the model's generation. Every run still boots a
 real DSH profile, drives the real agent loop, executes real tools and writes a
 real Session and SQLite ledger. The run's own `llm-pi-ai` overlay is written
 into the run directory, so the case patches stay untouched and no ambient
-credential is read. `acceptance/lib/mock-scenarios.mjs` answers each request
+credential is read. `src/host/mock-scenarios.mjs` answers each request
 from the identity and state the request itself carries — the role line, the
 domain digest, the newest tool result — so concurrent Workers interleave freely
 and each still gets the answer its own transaction owes.
@@ -229,7 +229,7 @@ something other than the scenario. A request the script cannot classify, or a
 barrier that never releases, fails the run with `failure_class: "FIXTURE"` —
 it is never reported as a plugin outcome. Reports carry
 `validation_mode: "mock-api"`, the scenario name, and `mock-requests.json`;
-`acceptance/COVERAGE.md` maps every declared action and query to its test.
+`tests/acceptance/COVERAGE.md` maps every declared action and query to its test.
 
 ## Environment facts this build depends on
 
@@ -237,13 +237,13 @@ These were observed on the target machine and are load-bearing:
 
 * **Node v24.0.1 does not implement `import.meta.main`.** The shipped
   `apps/cli/lib/bin.js` guards its entry point with it, so invoking the built
-  bin directly exits silently with status 0. `acceptance/lib/dsh-launch.mjs`
+  bin directly exits silently with status 0. `src/host/dsh-launch.mjs`
   therefore imports the exported `runCli` and calls it.
 * **`DSH_INSTALL_PATH` is a convention of this project, not a DSH variable.**
   DSH anchors module resolution on the running launcher's own `package.json`.
   The variable is used by `scripts/link-dsh.mjs` and the acceptance runner to
   find the installation to link against.
-* **Plugin resolution goes through the profile.** `acceptance/lib/host.mjs`
+* **Plugin resolution goes through the profile.** `src/host/host.mjs`
   creates `$DSH_HOME/profiles/<name>/node_modules/dsh-flow` as a symlink to this
   project, exactly how a profile-installed bundle is resolved.
 * **Capability tool packages must be resolvable by this package.**
@@ -397,7 +397,7 @@ allocation or cross-subtree transfer.
 | §15 budget dimensions | CPU/GPU and Memory are **not implemented** | A single local inference deployment exposes no trustworthy per-scope sensor for them; a ledger column fed by a guess would read as a measurement. Nothing in this build consumes them. |
 | §15 API Cost | Derivable field, **not a ledger dimension** | `usageSummary` returns `api_cost: {amount: 0, currency: 'USD', pricing: 'local-unpriced'}`. This deployment is locally served, so there is no price to multiply tokens by. Promoting it to a real dimension needs a priced deployment and a rate table, not a column. |
 | §18 health | `health` table + `query {what:'health'}` + `evaluate_health` are the surface; the eight metrics are derived from the ledger on demand | A materialized health *history* would be a second source of truth for numbers the ledger already holds, and the two would drift. The §18 signals are reported per node in `report()` and per cluster in `query`. |
-| §16 scale ladder | The 16- and 64-transaction tiers are recorded as `scale_validation: "INCOMPLETE"` with their measured bottleneck | Both tiers spend their approved budget on management traffic before the worker frontier moves (16: 976,048 of 1,048,576 tokens for 8 workers; 64: 3,136,768 of 4,194,304 for 9). The tiers are reported as incomplete rather than passed by lowering N, and the runs stay in `TEST-RESULTS.md` with their refusals. |
+| §16 scale ladder | The 16- and 64-transaction tiers are recorded as `scale_validation: "INCOMPLETE"` with their measured bottleneck | Both tiers spend their approved budget on management traffic before the worker frontier moves (16: 976,048 of 1,048,576 tokens for 8 workers; 64: 3,136,768 of 4,194,304 for 9). The tiers are reported as incomplete rather than passed by lowering N, and the runs stay in `docs/reports/test-results.md` with their refusals. |
 | §6 Auditor actions | 7 of 19 implemented (`inspect_plan`, `inspect_validation`, `request_correction`, `request_replan`, `request_revalidation`, `verify_correction`, `escalate`), plus `notify`, `recommend`, `evaluate_health` | The five `inspect_*` and five `detect_*` actions are finer-grained aliases of `inspect_plan`/`inspect_validation`; they change no mechanism this build relies on. The three implemented additions are the ones §18 needs. |
 | §3 Orchestrator actions | 14 of 17 | `merge_transaction`, `set_requirements` and `request_review` are not implemented; `pause_transaction`, `resume_transaction` and `cancel_transaction` (scoped to one subtree) are. |
 | §5 Allocator actions | 17 of 18 | `route_capability` is not implemented; capability matching already happens in `allocate_agent`. `set_context_budget` is. |

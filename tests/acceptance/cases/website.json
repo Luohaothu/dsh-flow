@@ -1,0 +1,56 @@
+{
+  "title": "Bilingual event registration site (React + Vite)",
+  "objective": "Implement a bilingual (Chinese/English) event registration website in the Vite + React project at {{workspace}}: the event list can be filtered by category and by date; an event detail page allows registration; the form validates name, email and remaining capacity; after registering, the entry appears under 'My registrations' and can be cancelled; registrations survive a page reload; the layout works on mobile.\n\nOrganize the work with two child management nodes: one owns information architecture and the interface (components, styles, i18n, routing), the other owns interaction and data (filtering logic, registration store, persistence). Add one direct verification worker that checks the built site against the acceptance criteria and reports problems back over the cluster's communication graph. Share the interface contract (component names, state shape, storage keys) on the blackboard before either side writes code. One integration worker owns the shared entry points (`package.json`, `vite.config.js`, `index.html`, `src/main.jsx`) and runs last.",
+  "capabilities": [
+    "fs_read",
+    "fs_write",
+    "shell"
+  ],
+  "limits": {
+    "max_children": 8,
+    "max_depth": 6,
+    "max_agents": 128,
+    "max_active_agents": 8,
+    "max_llm_concurrency": 2,
+    "max_attempts": 2,
+    "max_corrections": 2,
+    "max_role_turns": 32
+  },
+  "budget": {
+    "tokens": 2097152,
+    "model_requests": 256,
+    "tool_calls": 2048,
+    "wall_time_ms": 3600000,
+    "agents": 256,
+    "max_active_agents": 8
+  },
+  "timeout_ms": 3600000,
+  "workspace": {
+    "kind": "seed",
+    "seed": "tests/acceptance/seeds/website",
+    "prepare": "npm-ci"
+  },
+  "referenceClock": "2026-09-26T12:00:00Z",
+  "initial_transactions": [
+    {
+      "id": "site-root",
+      "objective": "Own the final integration and acceptance of the bilingual event registration site in {{workspace}}.",
+      "expected_output": "A building, running site that satisfies every acceptance criterion, produced by the child management nodes and the verification worker.",
+      "acceptance_criteria": [
+        "`npm run build` succeeds in the workspace",
+        "Category and date filters change the visible event list",
+        "Past events cannot be registered for",
+        "An invalid email shows an error and writes no registration",
+        "A valid registration appears under 'My registrations' and survives a reload",
+        "A registration can be cancelled and then disappears",
+        "A full event refuses registration",
+        "The language can be switched between Chinese and English",
+        "No page-level horizontal overflow at 390px and 1440px viewport widths"
+      ]
+    }
+  ],
+  "patches": [
+    "examples/cluster.patch.yml",
+    "examples/cluster.web.patch.yml"
+  ]
+}
