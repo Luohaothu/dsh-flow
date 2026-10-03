@@ -84,3 +84,30 @@
   disabled: false
   config:
     maxTokens: 4096
+
+# The bundle's own row reads its route from `ctx.agentDefaultModel` and takes
+# every other value from the schema. This deployment pins the same route
+# explicitly and states the context budgets it measured, so the values it runs
+# with are visible in one file. A host patch replaces a row's whole `config`
+# rather than deep-merging it, so this block restates `provider`, `model` and
+# `reasoningEffort` instead of relying on the bundle's `!!js` expressions.
+- id: dsh-flow
+  config:
+    dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
+    workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+    provider: local-sglang
+    model: Qwen3.8-27B-FP8
+    reasoningEffort: off
+    maxTokens: 4096
+    context:
+      role: 8192
+      worker: 16384
+      model: 131072
+      compaction_threshold: 0.8
+      server_input: 142074
+    tickMs: 250
+    staleMs: 120000
+    maxTurnMs: 900000
+    heartbeatMs: 20000
+    leaseTtlMs: 60000
+    disposeTimeoutMs: 5000

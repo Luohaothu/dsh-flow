@@ -1,0 +1,21 @@
+{
+  // Client leaf: the plugin's browser half. It consumes the Host DTOs through
+  // `./types` and the generated Remote declarations through `./remote`, and it
+  // never imports the Host entry, so the two Context merges stay apart.
+  // `rewriteRelativeImportExtensions` is on so the emitted module graph keeps
+  // its explicit `.js` specifiers for the CJS factory bundle.
+  "extends": "../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.client.tsbuildinfo"
+  },
+  "files": [
+    "src/client.ts",
+    "src/client/operations.ts",
+    "src/client/panel.tsx",
+    "src/errors.ts",
+    "src/types.ts",
+    "src/validation.ts"
+  ]
+}

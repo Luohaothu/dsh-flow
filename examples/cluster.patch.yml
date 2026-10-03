@@ -3,7 +3,19 @@
 # Layers on top of a shipped profile template (web / headless). It pins:
 #   * every cluster model request to the local OpenAI-compatible Qwen service,
 #   * the file-effect boundary to workspace-write with approval never,
-#   * the cluster plugin itself.
+#   * the cluster composition itself: the control plane, its Remote face and the
+#     集群模式 preset — including the three user tools inside that preset.
+#
+# The acceptance profile does not depend on the `dsh-flow` bundle, so the rows
+# below insert it explicitly. That is deliberate: a deterministic acceptance run
+# must pin which rows exist, not discover them.
+#
+# **Environment variables are evaluated here and nowhere else.** The plugin core
+# reads no environment at all; `!!js` in this overlay is what turns the runner's
+# `FLOW_*` variables into ordinary configuration. Because a host patch replaces a
+# row's whole `config` rather than deep-merging it, every key this file wants to
+# control is restated here instead of being left to a default that an earlier
+# layer may have changed.
 #
 # The host process must be spawned with cwd set to the case workspace so that
 # `workspaceRoot` below stays on the intended directory.
@@ -13,7 +25,7 @@
       local-sglang:
         displayName: Local Qwen (SGLang)
         api: openai-completions
-        baseURL: http://127.0.0.1:8000/v1
+        baseURL: !!js process.env.FLOW_QWEN_BASE_URL ?? 'http://127.0.0.1:8000/v1'
         headers:
           Authorization: Bearer EMPTY
         timeoutMs: 120000
@@ -30,9 +42,9 @@
           supportsUsageInStreaming: true
           maxTokensField: max_completion_tokens
         models:
-          - id: Qwen3.8-27B-FP8
-            contextWindow: 131072
-            maxTokens: 4096
+          - id: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
+            contextWindow: !!js Number(process.env.FLOW_CONTEXT_MODEL ?? 131072)
+            maxTokens: !!js Number(process.env.FLOW_MAX_TOKENS ?? 4096)
             input: [text]
             reasoningEfforts:
               off:
@@ -40,9 +52,9 @@
 
 - id: agent-default-model
   config:
-    provider: local-sglang
-    model: Qwen3.8-27B-FP8
-    reasoningEffort: off
+    provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
+    model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
+    reasoningEffort: !!js process.env.FLOW_REASONING_EFFORT ?? 'off'
 
 - id: sandbox-policy
   config:
@@ -88,3 +100,71 @@
 - insert:
     - id: dsh-flow
       name: dsh-flow
+      config:
+        dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
+        workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+        provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
+        model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
+        reasoningEffort: !!js process.env.FLOW_REASONING_EFFORT ?? 'off'
+        maxTokens: !!js Number(process.env.FLOW_MAX_TOKENS ?? 4096)
+        context:
+          role: !!js Number(process.env.FLOW_CONTEXT_ROLE ?? 8192)
+          worker: !!js Number(process.env.FLOW_CONTEXT_WORKER ?? 16384)
+          model: !!js Number(process.env.FLOW_CONTEXT_MODEL ?? 131072)
+          compaction_threshold: !!js Number(process.env.FLOW_CONTEXT_TRIGGER ?? 0.8)
+          server_input: !!js Number(process.env.FLOW_CONTEXT_SERVER_INPUT ?? 142074)
+        tickMs: !!js Number(process.env.FLOW_TICK_MS ?? 250)
+        staleMs: !!js Number(process.env.FLOW_STALE_MS ?? 120000)
+        maxTurnMs: !!js Number(process.env.FLOW_MAX_TURN_MS ?? 900000)
+        heartbeatMs: !!js Number(process.env.FLOW_HEARTBEAT_MS ?? 20000)
+        leaseTtlMs: !!js Number(process.env.FLOW_LEASE_TTL_MS ?? 60000)
+
+    - id: dsh-flow-web
+      name: dsh-flow/web
+
+    - id: preset-cluster
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cluster
+        name: 集群模式
+        description: 提示词交给一组分层集群 Agent 完成：管理树负责分解与派发，变更由独立审计员把关，Worker 在受限作用域内执行并留下持久证据。
+        order: 3
+        plugins:
+          - id: tool-flow
+            name: dsh-flow/tools
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are the cluster front desk of a DeepSeek Harness deployment in cluster mode.
+              suffix: |-
+                This session runs in cluster mode. The user's request is an objective for the agent cluster, not work for you to carry out directly.
+
+                For every request:
+                1. Call flow_start with the user's objective written as a self-contained task (what to produce, where, and how it will be judged). Do not pass a workspace unless the user names one.
+                2. Watch it with flow_read (counts, transactions, issues, recent events) and use flow_control only when the user asks to pause, resume or cancel.
+                3. Report what the cluster actually did, quoting its own state: accepted transactions, open issues, budget and the artifacts that now exist. Never invent progress, and never claim a task is finished while its transactions are not accepted.
+
+                The cluster decomposes the objective on a management tree of its own: an Orchestrator plans and dispatches, an Allocator grants identities and budgets, an Auditor gates plans and results independently, and Workers execute inside a granted write scope. Its Workers hold the file and shell capabilities; you do not need to reproduce their work.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true

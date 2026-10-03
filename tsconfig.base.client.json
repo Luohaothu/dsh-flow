@@ -1,0 +1,11 @@
+{
+  // Client-side compiler shape shared by tsconfig.client.json and the plugin's
+  // Client leaf: browser library API, React JSX, and no ambient Node types so a
+  // browser module cannot reach for `process`, `Buffer` or `node:*` by accident.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "ESNext.Disposable"],
+    "types": ["react"]
+  }
+}

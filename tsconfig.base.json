@@ -1,0 +1,44 @@
+{
+  // Shared compiler shape for every program in this repository. It deliberately
+  // carries no `files`/`include` (each leaf owns its roots) and no `paths`: the
+  // host packages this plugin builds against are consumed as ordinary installed
+  // dependencies, not as a sibling source checkout.
+  "compilerOptions": {
+    "target": "es2024",
+    // The one deliberate alias in this repository. The Typert generator only
+    // recognizes `@Remote`/`bindTypertRemote` when their declaration belongs to
+    // a project registered under `packages/`, and the same holds for the
+    // cross-package type reference it records for every Remote signature. The
+    // published protocol is consumed as an installed dependency everywhere else
+    // (and at runtime the DSH profile resolves it), so the alias points at the
+    // workspace's own face of it and nothing else is rewritten.
+    "paths": {
+      "@deepseek-ai/dsh-typert-protocol": ["./packages/typert-protocol/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-typert-protocol/types": ["./packages/typert-protocol/lib/types/types.d.ts"]
+    },
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "sourceMap": true,
+    "declarationMap": true,
+    "composite": true,
+    "incremental": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmitOnError": true,
+    "allowJs": false,
+    "checkJs": false,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  }
+}

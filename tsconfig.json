@@ -1,0 +1,12 @@
+{
+  // Solution file: the whole-repo graph for `tsc -b tsconfig.json`.
+  // `files: []` keeps it program-less so the host and client Cordis Context
+  // merges never meet in one program. NEVER add include/files here, and NEVER
+  // flatten this into a single ts.Program: the dev scripts seed
+  // tsconfig.host.json or tsconfig.client.json.
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.host.json" },
+    { "path": "./tsconfig.client.json" }
+  ]
+}
