@@ -184,18 +184,27 @@ function hashFile(path) {
   return existsSync(path) ? hashText(readFileSync(path)) : null;
 }
 
-/** One digest over every file of a source tree, plus its file count. */
-function hashTree(root) {
-  if (!existsSync(root)) return { digest: null, files: 0 };
-  // Paths are made relative to the tree, so the fingerprint describes the
-  // sources and their layout rather than the directory this checkout happens to
-  // live in: the same commit verified from a second checkout must produce the
-  // same digest, and an absolute path would make every recorded hash
-  // unverifiable anywhere else.
-  const files = walk(root).map(entry => ({
-    path: relative(root, entry.path).split(sep).join('/'),
-    digest: hashFile(entry.path),
-  })).sort((a, b) => a.path.localeCompare(b.path));
+/**
+ * One digest over every file of one or more source trees, plus the file count.
+ *
+ * Paths are made relative to the tree, so the fingerprint describes the sources
+ * and their layout rather than the directory this checkout happens to live in:
+ * the same commit verified from a second checkout must produce the same digest,
+ * and an absolute path would make every recorded hash unverifiable anywhere
+ * else. An `extra` tree is folded into the same digest under its own prefix, so
+ * sources that live in a second directory are still covered — and a name in one
+ * tree never aliases a name in the other.
+ */
+export function hashTree(root, extra = []) {
+  const files = [];
+  for (const tree of [{ prefix: '', root }, ...extra]) {
+    if (!existsSync(tree.root)) return { digest: null, files: 0 };
+    for (const entry of walk(tree.root)) {
+      const path = relative(tree.root, entry.path).split(sep).join('/');
+      files.push({ path: tree.prefix ? `${tree.prefix}/${path}` : path, digest: hashFile(entry.path) });
+    }
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
   const digest = hashText(files.map(entry => `${entry.path}:${entry.digest}`).join('\n'));
   return { digest, files: files.length };
 }
@@ -229,7 +238,13 @@ export function computeBuildHashes(caseDef, patches) {
     lib_client: hashFile(join(PROJECT_ROOT, 'lib/client.js')),
     // The acceptance code is part of the experiment: a checker or a scenario
     // that changed mid-run would make the report describe two different tests.
-    acceptance_source: hashTree(join(PROJECT_ROOT, 'tests/acceptance')),
+    // The host driver, the mock model, the scenarios and the ledger decide most
+    // of what a run proves, so they are covered here too — under the `lib/`
+    // prefix they used to live at, which keeps "the acceptance facility" one
+    // namespace even though the sources now sit in `src/host/`.
+    acceptance_source: hashTree(join(PROJECT_ROOT, 'tests/acceptance'), [
+      { prefix: 'lib', root: join(PROJECT_ROOT, 'src/host') },
+    ]),
     case_file: caseDef.id ? hashFile(join(CASES_DIR, `${caseDef.id}.json`)) : null,
     patches: (patches ?? []).map(path => ({ path, digest: hashFile(path) })),
   };

@@ -10,12 +10,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createRunLayout, buildHostEnv, inheritEnv, HOST_ENV_ALLOWLIST, RUNNER_ENV_KEYS } from '../../../src/host/host.mjs';
-import { namespaceFixtures, assertTierBudget, validateCaseEnv, modelRouteFromEnv, computeBuildHashes, buildDrift, CASE_ENV_KEYS, readStoneLedger, mechanismVerdict } from '../run.mjs';
+import { namespaceFixtures, assertTierBudget, validateCaseEnv, modelRouteFromEnv, computeBuildHashes, buildDrift, hashTree, CASE_ENV_KEYS, readStoneLedger, mechanismVerdict } from '../run.mjs';
 
 test('context gate judges the request after compaction, including its pending prompt', async () => {
   const { requestBudgetOverruns } = await import('../checks/context.mjs');
@@ -104,6 +104,11 @@ function scratch(t) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-evidence-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+function countFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true })
+    .reduce((n, entry) => n + (entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1), 0);
 }
 
 test('a run directory is exclusive, and an invalid run id never reaches the filesystem', t => {
@@ -313,6 +318,40 @@ test('the tier denominator has exactly one source, and a mismatched budget is re
   assert.equal(assertTierBudget({ initial_transactions: planned, budget: { tokens: 1 } }), undefined);
 });
 
+test('the acceptance fingerprint covers the host modules under their own prefix', t => {
+  const dir = scratch(t);
+  const acceptance = join(dir, 'acceptance');
+  const host = join(dir, 'host');
+  mkdirSync(acceptance);
+  mkdirSync(host);
+  writeFileSync(join(acceptance, 'run.mjs'), 'export const runner = 1;\n');
+  writeFileSync(join(acceptance, 'mock-scenarios.mjs'), 'export const scenario = 1;\n');
+  writeFileSync(join(host, 'mock-scenarios.mjs'), 'export const scenario = 1;\n');
+  const extra = [{ prefix: 'lib', root: host }];
+
+  const before = hashTree(acceptance, extra);
+  assert.match(before.digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(before.files, 3, 'every file of both trees is counted');
+  assert.notEqual(before.digest, hashTree(acceptance).digest,
+    'the host tree is inside the digest, not merely alongside it');
+  assert.notEqual(before.digest, hashTree(host).digest);
+
+  // A mock scenario or a ledger rule changed under a live run is the same
+  // defect as a changed checker: the report would describe two experiments.
+  writeFileSync(join(host, 'mock-scenarios.mjs'), 'export const scenario = 2;\n');
+  const afterHost = hashTree(acceptance, extra);
+  assert.notEqual(afterHost.digest, before.digest, 'a host-module change moves the fingerprint');
+
+  // An acceptance file still moves it, and the two trees stay one namespace
+  // under their prefixes (`lib/mock-scenarios.mjs` is its own entry).
+  writeFileSync(join(acceptance, 'run.mjs'), 'export const runner = 2;\n');
+  assert.notEqual(hashTree(acceptance, extra).digest, afterHost.digest, 'an acceptance change moves the fingerprint');
+
+  // A tree that is not there is unknown, never an empty-but-valid digest.
+  assert.deepEqual(hashTree(join(dir, 'missing')), { digest: null, files: 0 });
+  assert.deepEqual(hashTree(acceptance, [{ prefix: 'lib', root: join(dir, 'missing') }]), { digest: null, files: 0 });
+});
+
 test('a report notices when the build moved under it', t => {
   const dir = scratch(t);
   const source = join(dir, 'plugin.js');
@@ -324,6 +363,15 @@ test('a report notices when the build moved under it', t => {
 
   // Same call, same digest: the fingerprint is content, not a timestamp.
   assert.equal(computeBuildHashes({ id: 'smoke' }, []).plugin_source.digest, computeBuildHashes({ id: 'smoke' }, []).plugin_source.digest);
+
+  // The runner's own fingerprint covers the host modules it drives, not only
+  // the tree the runner itself lives in: a mock scenario, a ledger rule or the
+  // host driver changing mid-run is the same defect as a changed checker.
+  const { acceptance_source } = computeBuildHashes({ id: 'smoke' }, []);
+  assert.match(acceptance_source.digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(acceptance_source.files,
+    countFiles(join('tests', 'acceptance')) + countFiles(join('src', 'host')),
+    'the acceptance fingerprint covers tests/acceptance and src/host');
 
   const after = JSON.parse(JSON.stringify(before));
   after.lib_index = { digest: 'sha256:different', files: 1 };
