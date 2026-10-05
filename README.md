@@ -153,8 +153,8 @@ The standard path is the CLI; the bundle's own `cordis.patch.yml` then supplies 
 control plane, the Remote face and the 集群模式 preset:
 
 ```bash
-npm run build
-npm pack --workspace packages/dsh-flow --pack-destination /tmp
+pnpm run build
+pnpm --dir packages/dsh-flow pack --pack-destination /tmp
 dsh plugin --profile flow add /tmp/dsh-flow-0.1.0.tgz
 dsh --profile flow --dump-config
 ```
@@ -193,36 +193,46 @@ front. The token in the URL is the whole authorization — anyone holding it dri
 agent.
 
 ```bash
-# install the workspace, then type-check and build it
-npm install
-npm run typecheck     # Host build + Remote generation + Client + seed checks; skips Client bundle
+# Requires Node ^22.19.0 or >=24.0.0 and pnpm 12.9.1 (packageManager).
+# Install all workspace packages from the committed lockfile.
+pnpm install --frozen-lockfile
+pnpm run typecheck     # Host build + Remote generation + Client + seed checks; skips Client bundle
 
 # unit tests (mechanism, no model)
-npm test
+pnpm test
 
 # the functional verdict: native host contracts + every scenario, deterministic model
-npm run test:mock
+pnpm run test:mock
 
 # one deterministic scenario, for diagnosis
-npm run accept:mock -- --case recovery --run-id rec-diag-01
-npm run accept:mock -- --case scale --run-id scale-diag-01 --dataset-limit 16
+pnpm run accept:mock --case recovery --run-id rec-diag-01
+pnpm run accept:mock --case scale --run-id scale-diag-01 --dataset-limit 16
 
 # local Qwen protocol + tool round trip
-FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 npm run test:qwen
+FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1 FLOW_QWEN_MODEL=Qwen3.8-27B-FP8 pnpm run test:qwen
 
 # one acceptance case through a real, isolated DSH profile
-npm run accept -- --case smoke --run-id smoke-01
-npm run accept -- --case panel --run-id panel-01
-npm run accept -- --case website --run-id site-01 --mode all
-npm run accept -- --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
+pnpm run accept --case smoke --run-id smoke-01
+pnpm run accept --case panel --run-id panel-01
+pnpm run accept --case website --run-id site-01 --mode all
+pnpm run accept --case recursion --run-id recursion-generous-01 --budget-scale 4 --max-role-turns 64
 ```
+
+Workspace membership and dependency build permissions are declared in
+`pnpm-workspace.yaml`. The root manifest explicitly links `dsh-flow` through
+`workspace:*`; the vendored Typert protocol face remains separate from the
+published runtime protocol. The website seed also carries a standalone
+`pnpm-lock.yaml`, so a copied acceptance workspace installs with
+`pnpm install --ignore-workspace --frozen-lockfile --ignore-scripts` and uses its
+own dependencies. Script arguments follow the script name directly, for example
+`pnpm run accept --case smoke`.
 
 The suite passes a case only when its runner exits successfully, the scenario
 reports `PASSED`, and any reported mechanism verdict is `PASS`. A failed
 mechanism, nonzero exit, or signal termination cannot be overridden by a passing
-scenario; `npm run test:mock` then exits nonzero.
+scenario; `pnpm run test:mock` then exits nonzero.
 
-`npm run build` produces `lib/index.js`, `lib/tools.js`, `lib/web.js`,
+`pnpm run build` produces `lib/index.js`, `lib/tools.js`, `lib/web.js`,
 `lib/client.js`, the emitted declarations under `lib/types`, and the two generated
 Typert artifacts (`lib/typert.host.*`, `lib/typert.remote-client.*`). Host and Client
 are separate `tsc` programs; the browser bundle is built last, from the Client
@@ -235,7 +245,7 @@ FLOW_MODEL_PROVIDER=openai-compatible \
 FLOW_MODEL_ID=deepseek-v4.1-flash \
 FLOW_MODEL_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3 \
 FLOW_MODEL_API_KEY="$ANTHROPIC_AUTH_TOKEN" \
-  npm run accept -- --case smoke --run-id smoke-openai-01 \
+  pnpm run accept --case smoke --run-id smoke-openai-01 \
   --profile-patch examples/openai-compatible.patch.yml
 ```
 
@@ -496,8 +506,8 @@ repository must follow it too.
 | Role tools and `flow_sum` registered in the root tool registry | Registered in the cluster agent's own scope during its turn setup; `flow_sum` is a role tool, not a public user tool |
 | `ctx.inject(['sessionPersistence'], …)` plus `appReady`/`hostReady` polling | `inject = ['tools','agents','agentLoop','sessions','sessionPersistence']`, so a missing dependency is Cordis PENDING and the instance unloads; recovery finishes before `ctx.provide('flow', …)` |
 | `process.on('message'/'disconnect')` inside the production plugin, with `FLOW_IPC` | `src/host/ipc-bridge.ts`, mounted only by an acceptance overlay |
-| `scripts/link-dsh.mjs` and `npm run link:dsh` | Removed. Dependencies come from `npm install`; the launcher resolves `@deepseek-ai/dsh` itself |
-| `node tests/acceptance/run.mjs` | `npm run accept`, or `node --import tsx tests/acceptance/run.ts` |
+| `scripts/link-dsh.mjs` and `npm run link:dsh` | Removed. Dependencies come from `pnpm install`; the launcher resolves `@deepseek-ai/dsh` itself |
+| `node tests/acceptance/run.mjs` | `pnpm run accept`, or `node --import tsx tests/acceptance/run.ts` |
 
 Schema 2 is unchanged. Transaction inputs remain arbitrary JSON on read,
 including arrays, scalars and stored JSON `null`; object metadata such as

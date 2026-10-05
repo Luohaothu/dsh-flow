@@ -28,7 +28,7 @@
   "workspace": {
     "kind": "seed",
     "seed": "tests/acceptance/seeds/website",
-    "prepare": "npm-ci"
+    "prepare": "pnpm-install"
   },
   "referenceClock": "2026-09-26T12:00:00Z",
   "initial_transactions": [
@@ -37,7 +37,7 @@
       "objective": "Own the final integration and acceptance of the bilingual event registration site in {{workspace}}.",
       "expected_output": "A building, running site that satisfies every acceptance criterion, produced by the child management nodes and the verification worker.",
       "acceptance_criteria": [
-        "`npm run build` succeeds in the workspace",
+        "`pnpm run build` succeeds in the workspace",
         "Category and date filters change the visible event list",
         "Past events cannot be registered for",
         "An invalid email shows an error and writes no registration",

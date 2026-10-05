@@ -3,7 +3,7 @@
  *
  * These drive a *real* DSH host — real agent loop, real tool execution, real
  * Session and real SQLite — with only the model's generation replaced. They are
- * deliberately not part of `npm test`: they boot a host process, and their
+ * deliberately not part of `pnpm test`: they boot a host process, and their
  * subject is the plugin's boundary behaviour rather than its pure logic.
  *
  * N0 is the positive round trip the release gate names. F-permission,

@@ -42,7 +42,7 @@ export async function run({ workspace, layout }: CheckContext): Promise<CheckOut
     checks.push({ name, passed: Boolean(passed), evidence: String(evidence).slice(0, 3000) });
   };
 
-  const build = spawnSync('npm', ['run', 'build'], { cwd: workspace, encoding: 'utf8', maxBuffer: 1 << 28, timeout: 600000 });
+  const build = spawnSync('pnpm', ['run', 'build'], { cwd: workspace, encoding: 'utf8', maxBuffer: 1 << 28, timeout: 600000 });
   writeFileSync(join(layout.root, 'build.log'), `${build.stdout ?? ''}\n${build.stderr ?? ''}`);
   push('build-succeeds', build.status === 0, `exit ${build.status}: ${(build.stderr ?? '').slice(-1500)}`);
 
@@ -50,7 +50,7 @@ export async function run({ workspace, layout }: CheckContext): Promise<CheckOut
     return { checks, scenario_status: 'FAILED', failure_class: 'MODEL_OUTPUT' };
   }
 
-  const server = spawn('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', '0'], {
+  const server = spawn('pnpm', ['run', 'dev', '--host', '127.0.0.1', '--port', '0'], {
     cwd: workspace, env: { ...process.env, BROWSER: 'none' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let serverOut = '';

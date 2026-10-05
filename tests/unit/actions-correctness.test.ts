@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fromAny } from '@total-typescript/shoehorn';
@@ -75,7 +75,7 @@ interface Fixture {
 }
 
 function fixture(t: TestContext): Fixture {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-actions-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-flow-actions-')));
   // The runtime only reads the logger and `ctx.get()` from its context; this
   // stub stands in for the Cordis context these mechanism tests never load.
   const ctx: Context = fromAny({ logger: { warn() {}, error() {}, info() {} }, get() {} });

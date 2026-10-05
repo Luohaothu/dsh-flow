@@ -25,12 +25,12 @@ notes for this cutover — lives in the repository's top-level `README.md`.
 ## Running it
 
 ```sh
-npm run build      # Host program, Remote generation, Client program, website seed, bundles
-npm test           # unit suites, no model
-npm run test:mock  # native host contracts plus every deterministic scenario
+pnpm run build      # Host program, Remote generation, Client program, website seed, bundles
+pnpm test           # unit suites, no model
+pnpm run test:mock  # native host contracts plus every deterministic scenario
 ```
 
-`npm run build` emits `lib/index.js`, `lib/tools.js`, `lib/web.js` and
+`pnpm run build` emits `lib/index.js`, `lib/tools.js`, `lib/web.js` and
 `lib/client.js`, the declarations under `lib/types/`, and both generated Typert
 artifact pairs. The Host and Client halves are separate TypeScript programs; the
 browser bundle is built last, from the Client program, with the generated Remote

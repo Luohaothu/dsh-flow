@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,7 +9,7 @@ import { ensureProfile, inheritEnv } from '../../../src/host/host.ts';
 import { browserExecutablePath } from '../../../src/host/browser.ts';
 
 function scratch(t: TestContext): string {
-  const root = mkdtempSync(join(tmpdir(), 'flow-portability-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'flow-portability-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

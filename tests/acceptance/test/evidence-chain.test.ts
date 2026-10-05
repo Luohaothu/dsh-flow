@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -132,6 +132,7 @@ function scratch(t: TestContext): string {
 
 function countFiles(dir: string): number {
   return readdirSync(dir, { withFileTypes: true })
+    .filter(entry => entry.name !== 'node_modules')
     .reduce((n, entry) => n + (entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1), 0);
 }
 
@@ -374,6 +375,25 @@ test('the acceptance fingerprint covers the host modules under their own prefix'
   // A tree that is not there is unknown, never an empty-but-valid digest.
   assert.deepEqual(hashTree(join(dir, 'missing')), { digest: null, files: 0 });
   assert.deepEqual(hashTree(acceptance, [{ prefix: 'lib', root: join(dir, 'missing') }]), { digest: null, files: 0 });
+});
+
+test('source fingerprints ignore installed dependency trees and pnpm directory links', (t: TestContext) => {
+  const root = scratch(t);
+  const seed = join(root, 'seeds', 'website');
+  mkdirSync(seed, { recursive: true });
+  writeFileSync(join(seed, 'package.json'), '{"name":"seed"}');
+  writeFileSync(join(seed, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  const before = hashTree(root);
+  const modules = join(seed, 'node_modules');
+  const dependency = join(modules, '.pnpm', 'react@18.3.1', 'node_modules', 'react');
+  mkdirSync(dependency, { recursive: true });
+  writeFileSync(join(dependency, 'index.js'), 'export const installed = true;');
+  symlinkSync(dependency, join(modules, 'react'), 'dir');
+  assert.deepEqual(hashTree(root), before, 'installing dependencies does not change source evidence');
+  writeFileSync(join(dependency, 'index.js'), 'export const installed = false;');
+  assert.deepEqual(hashTree(root), before, 'store contents are not source files');
+  writeFileSync(join(seed, 'pnpm-lock.yaml'), "lockfileVersion: 'changed'\n");
+  assert.notEqual(hashTree(root).digest, before.digest, 'the seed lockfile is still fingerprinted');
 });
 
 test('a report notices when the build moved under it', (t: TestContext) => {

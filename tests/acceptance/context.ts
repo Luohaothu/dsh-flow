@@ -367,7 +367,7 @@ export interface Preparation {
     count: number;
     manifest: string;
   };
-  npm_ci?: { status: number | null; stderr: string };
+  pnpm_install?: { status: number | null; stderr: string };
   source_hashes?: { digest: string; files: number; excluded: readonly string[] };
   copy_integrity?: unknown;
   dataset?: { path: string; corpus: string; count: number };

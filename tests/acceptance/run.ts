@@ -280,7 +280,7 @@ export function hashTree(root: string, extra: readonly { prefix: string; root: s
   const files: Array<{ path: string; digest: string | null }> = [];
   for (const tree of [{ prefix: '', root }, ...extra]) {
     if (!existsSync(tree.root)) return { digest: null, files: 0 };
-    for (const entry of walk(tree.root)) {
+    for (const entry of walk(tree.root, ['node_modules'])) {
       const path = relative(tree.root, entry.path).split(sep).join('/');
       if (filter && !filter(path)) continue;
       files.push({ path: tree.prefix ? `${tree.prefix}/${path}` : path, digest: hashFile(entry.path) });
@@ -1126,6 +1126,9 @@ function prepareWorkspace(caseDef: CaseDefinition, workspace: string, layout: Ru
     rmSync(workspace, { recursive: true, force: true });
     const result = spawnSync('cp', ['-a', `${seed}/.`, workspace], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(`seed copy failed: ${result.stderr}`);
+    // Workspace installs contain symlinks into the repository store. The case
+    // must reinstall from its standalone lockfile, never reuse those links.
+    rmSync(join(workspace, 'node_modules'), { recursive: true, force: true });
     prep.details.push(`copied seed ${seed}`);
   } else if (config.kind === 'copy-repo') {
     if (!config.source) throw new Error(`case ${caseDef.id}: a copy-repo workspace needs a source path`);
@@ -1167,11 +1170,11 @@ function prepareWorkspace(caseDef: CaseDefinition, workspace: string, layout: Ru
   } else {
     mkdirSync(workspace, { recursive: true });
   }
-  if (config.prepare === 'npm-ci') {
-    const result = spawnSync('npm', ['ci', '--ignore-scripts'], { cwd: workspace, encoding: 'utf8', maxBuffer: 1 << 28 });
-    prep.npm_ci = { status: result.status, stderr: (result.stderr ?? '').slice(-2000) };
-    if (result.status !== 0) throw new Error(`npm ci failed in the case workspace: ${result.stderr}`);
-    prep.details.push('npm ci --ignore-scripts');
+  if (config.prepare === 'pnpm-install') {
+    const result = spawnSync('pnpm', ['install', '--ignore-workspace', '--frozen-lockfile', '--ignore-scripts'], { cwd: workspace, encoding: 'utf8', maxBuffer: 1 << 28 });
+    prep.pnpm_install = { status: result.status, stderr: (result.stderr ?? '').slice(-2000) };
+    if (result.status !== 0) throw new Error(`pnpm install failed in the case workspace: ${result.stderr}`);
+    prep.details.push('pnpm install --ignore-workspace --frozen-lockfile --ignore-scripts');
   }
   if (caseDef.dataset) {
     prep.dataset = buildDataset(caseDef.dataset, workspace);
@@ -1945,11 +1948,12 @@ function listSessions(layout: RunLayout): SessionFile[] {
   return walk(root).slice(0, 500);
 }
 
-function walk(root: string): SessionFile[] {
+function walk(root: string, excludedDirectories: readonly string[] = []): SessionFile[] {
   const out: SessionFile[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (excludedDirectories.includes(entry.name)) continue;
     const full = join(root, entry.name);
-    if (entry.isDirectory()) out.push(...walk(full));
+    if (entry.isDirectory()) out.push(...walk(full, excludedDirectories));
     else out.push({ path: full, bytes: statSync(full).size });
   }
   return out;

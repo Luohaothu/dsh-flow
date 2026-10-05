@@ -2,7 +2,7 @@
 
 Two suites live here, and they answer different questions.
 
-* **Deterministic mock suite** (`npm run test:mock`) — the *current* functional
+* **Deterministic mock suite** (`pnpm run test:mock`) — the *current* functional
   verdict. A local OpenAI-compatible server (`src/host/mock-model.mjs`,
   bound to `127.0.0.1:0`) replaces only the model's generation; every run still
   boots a real DSH host, runs the real agent loop, executes real tools, writes
@@ -20,7 +20,7 @@ design actions that are **not** implemented.
 
 ```bash
 # From the repository root, after the preparation below:
-FLOW_CHROMIUM_PATH=/usr/bin/chromium npm run test:mock
+FLOW_CHROMIUM_PATH=/usr/bin/chromium pnpm run test:mock
 ```
 
 That runs, in order: the native host contracts
@@ -31,8 +31,8 @@ context, browser, panel and both scale tiers (16 and 64) in their own run
 directories. Single-scenario diagnosis uses the same entry point:
 
 ```bash
-npm run accept:mock -- --case recovery --run-id rec-diag-1
-npm run accept:mock -- --case scale --run-id scale-diag-1 --dataset-limit 16
+pnpm run accept:mock --case recovery --run-id rec-diag-1
+pnpm run accept:mock --case scale --run-id scale-diag-1 --dataset-limit 16
 ```
 
 Mock mode refuses `--profile-patch`, `--budget-scale` and `--max-role-turns`:
@@ -46,25 +46,21 @@ as a plugin outcome.
 
 ## Preparation
 
-Use Node 22.19+ or 24+ and install the published DSH packages from the repository
+Use Node ^22.19.0 or >=24.0.0 and pnpm 12.9.1, and install the published DSH packages from the repository
 root. Browser scenarios also need the published browser providers and Playwright:
 
 ```bash
-npm install --ignore-scripts --no-package-lock
-npm install --no-save --ignore-scripts --no-package-lock \
-  @deepseek-ai/dsh-browser-use@0.1.7-rc.2 \
-  @deepseek-ai/dsh-experimental-browser-use-runtime@0.1.7-rc.2 \
-  @deepseek-ai/dsh-experimental-browser-use-playwright-mcp@0.1.7-rc.2 \
-  playwright@1.61.1
-npm run build
-npm test
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm test
 ```
 
 The acceptance launcher automatically resolves `@deepseek-ai/dsh` from the
-project's npm installation. Set `DSH_INSTALL_PATH` explicitly to select another
+project's pnpm workspace installation. Set `DSH_INSTALL_PATH` explicitly to select another
 published package directory or a built harness checkout's `apps/cli` directory.
-For a monorepo-based setup, `scripts/link-dsh.mjs` remains an idempotent alternative
-that links the harness and capability packages into this project.
+The browser providers and Playwright are declared in the root manifest.
+Copied website seeds install their own lockfile with
+`pnpm install --ignore-workspace --frozen-lockfile --ignore-scripts`.
 
 Set `FLOW_CHROMIUM_PATH` to the absolute path of an installed Chromium executable
 (for example `/usr/bin/chromium`). It is forwarded through the isolated host's

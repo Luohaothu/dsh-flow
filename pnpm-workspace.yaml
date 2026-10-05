@@ -1,0 +1,17 @@
+packages:
+  - packages/*
+  - tests/acceptance/seeds/website
+
+# The vendored Typert face is for generation; runtime dependencies use the
+# published protocol. Only explicit workspace: dependencies link locally.
+linkWorkspacePackages: false
+
+# Native runtime dependencies need their install helpers. The Google SDK's
+# preinstall is a no-op and does not need to run.
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': false
+  esbuild: true
+  koffi: true
+  node-pty: true
+  protobufjs: true
