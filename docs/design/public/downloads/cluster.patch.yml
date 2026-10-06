@@ -1,0 +1,35 @@
+# 在目标工作目录启动；这两个目录可用环境变量覆盖。
+- id: dsh-flow
+  config:
+    dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
+    workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+    provider: !!js ctx.agentDefaultModel.currentSelection().provider
+    model: !!js ctx.agentDefaultModel.currentSelection().model
+    reasoningEffort: !!js ctx.agentDefaultModel.currentSelection().reasoningEffort
+    # 预算核对只用内置计算工具，不需要文件或命令执行能力。
+    defaultCapabilities: []
+    # 给规划、执行和独立复核预留总计 30 分钟，实际耗时取决于模型服务。
+    defaultBudget:
+      wall_time_ms: 1800000
+
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+
+# 新会话保持 workspace-write 沙箱，不请求审批；需审批的操作直接拒绝。
+# 该默认值也影响同一配置方案中的普通新会话。
+- id: permission
+  config:
+    presets:
+      read-only: { sandbox: read-only, approval: ask }
+      workspace-write: { sandbox: workspace-write, approval: ask }
+      danger-full-access: { sandbox: danger-full-access, approval: never }
+      workspace-write-unattended: { sandbox: workspace-write, approval: never }
+    defaultPreset: workspace-write-unattended
+
+# web 组合默认关闭宿主压缩；集群角色需要此服务压缩自己的会话。
+- id: compaction-basic
+  disabled: false
+  config:
+    maxTokens: 4096

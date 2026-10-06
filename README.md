@@ -15,6 +15,18 @@ published package; its Host half (`src/index.ts`, `src/tools.ts`, `src/web.ts`,
 separate `tsc` programs, and the browser bundle is built from the Client program
 with the generated Remote contribution inlined.
 
+## Documentation
+
+The Chinese developer documentation lives in [`docs/design`](docs/design/index.md)
+and is served with VitePress. It covers getting started, agent roles, hierarchy,
+dispatch, communication, configuration, component internals, API and DSH compatibility.
+
+```bash
+pnpm run docs:dev      # local documentation server
+pnpm run docs:build    # static build and internal-link checks
+pnpm run docs:preview  # preview the production build
+```
+
 ## What is in the box
 
 | Module | Responsibility |

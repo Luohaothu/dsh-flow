@@ -15,7 +15,10 @@
     "test:mock": "node --import tsx --test --test-concurrency=1 tests/acceptance/native/*.test.ts && node --import tsx tests/acceptance/suite.ts --mock",
     "accept": "node --import tsx tests/acceptance/run.ts",
     "accept:mock": "node --import tsx tests/acceptance/run.ts --mock",
-    "test:qwen": "node --import tsx tests/acceptance/qwen-smoke.ts"
+    "test:qwen": "node --import tsx tests/acceptance/qwen-smoke.ts",
+    "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
+    "docs:build": "vitepress build docs/design",
+    "docs:preview": "vitepress preview docs/design"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.1.7-rc.2",
@@ -44,7 +47,10 @@
     "@deepseek-ai/dsh-session-persistence": "0.1.7-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.7-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-api-gateway": "0.1.7-rc.2"
+    "@deepseek-ai/dsh-api-gateway": "0.1.7-rc.2",
+    "mermaid": "11.17.2",
+    "vitepress": "1.6.4",
+    "vue": "3.5.43"
   },
   "packageManager": "pnpm@12.9.1"
 }

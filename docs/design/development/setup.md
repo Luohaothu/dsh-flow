@@ -1,0 +1,99 @@
+---
+title: 开发环境搭建
+description: 从源码安装依赖、构建并测试 dsh-flow，在独立 DSH 数据目录中调试插件。
+---
+
+# 开发环境搭建
+
+本页面向需要修改源码、验证改动或调试插件集成的开发者。完成以下步骤后，你将得到一个使用独立数据目录的 DSH 实例，可以验证插件安装、配置合并、网页面板和真实模型执行。
+
+安装、构建和模拟测试均不需要模型服务；提交目标并运行集群时，才需要接入可用的模型。日常使用集群的操作流程见[快速上手](/quick-start)。
+
+## 1. 安装开发依赖
+
+取得[仓库源码](https://github.com/Luohaothu/dsh-flow)，在仓库根目录执行以下命令。项目要求 **Node.js `^22.19.0 || >=24.0.0`** 和 **pnpm `12.9.1`**。
+
+```bash
+node --version
+pnpm --version
+pnpm install --frozen-lockfile
+```
+
+`pnpm-workspace.yaml` 已声明工作区和所需原生依赖的构建权限。如果安装时提示构建脚本被忽略，请核对该文件与本地 pnpm 版本，确认原生依赖完成构建后再继续。
+
+## 2. 构建并验证源码
+
+```bash
+pnpm run build
+pnpm test
+pnpm run test:mock
+```
+
+| 命令 | 检查范围 |
+| --- | --- |
+| `pnpm run build` | 宿主端类型检查与打包、Typert 远程接口生成、浏览器端类型检查与打包，以及独立网站测试种子的类型检查 |
+| `pnpm test` | 单元测试与验收基础设施测试 |
+| `pnpm run test:mock` | 原生接口检查与确定性模拟验收，不请求真实模型 |
+| `pnpm run typecheck` | 执行构建流程中的类型检查和远程接口生成，跳过浏览器端的最终打包 |
+
+构建产物位于 `packages/dsh-flow/lib/`。`typecheck` 也会生成中间产物，无需手动创建该目录。真实模型验收使用另一组命令，实验场景与验证要求见[开发文档](/development/#验证顺序)。
+
+## 3. 安装到独立调试实例
+
+以下示例创建临时 DSH 数据目录，并在内置 `web` 配置方案（profile）中安装插件，以加载网页界面和集群面板所需的宿主组件。请在同一终端执行后续步骤，保留这两个变量。
+
+```bash
+FLOW_DEMO_HOME="$(mktemp -d "${TMPDIR:-/tmp}/dsh-flow-home.XXXXXX")"
+FLOW_DEMO_PACKAGE="$(mktemp -d "${TMPDIR:-/tmp}/dsh-flow-package.XXXXXX")"
+
+pnpm --dir packages/dsh-flow pack --pack-destination "$FLOW_DEMO_PACKAGE"
+
+DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
+  plugin --profile web add "$FLOW_DEMO_PACKAGE/dsh-flow-0.1.0.tgz"
+```
+
+`pack` 会通过 `prepack` 再次构建。插件安装后，包自带的 `cordis.patch.yml` 会配置集群服务、远程接口与“集群模式”预设。启动脚本直接调用已安装 DSH 的 `runCli()`，可兼容未实现 `import.meta.main` 的部分 Node 版本。
+
+这里安装的是打包产物。修改源码后，需要重新构建、打包并安装，调试实例才会使用修改后的插件；只编辑源码不会自动更新已安装的包。
+
+## 4. 检查模型与覆盖配置
+
+[instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。请按实际部署修改模型提供方、模型名称、服务地址和上下文上限；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
+
+先检查合并后的配置，此步骤不会加载服务或运行模型：
+
+```bash
+DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
+  --profile web --patch examples/instance.patch.yml --dump-config
+```
+
+确认 `dsh-flow` 只出现一次、模型路由正确，并检查 `workspace`、`dataDir`、权限和宿主上下文压缩配置是否符合调试要求。`instance.patch.yml` 用于覆盖已安装插件组合中的配置条目；验收用的 `cluster.patch.yml` 则会显式插入插件。两者的安装前提不同，不能混用。
+
+## 5. 启动宿主并联调
+
+```bash
+DSH_HOME="$FLOW_DEMO_HOME" \
+FLOW_DATA_DIR="$FLOW_DEMO_HOME/flow-data" \
+node --import tsx src/host/dsh-launch.ts \
+  --profile web --patch examples/instance.patch.yml \
+  --host 127.0.0.1 --port 8791 --no-open
+```
+
+打开终端打印的带访问令牌的 URL。示例使用独立数据目录，启动后没有待恢复的旧集群；不提交目标就不会创建新的集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
+
+模型服务准备好后，在新会话中选择 **集群模式**，提交包含目标、工作目录、预期产物和验收条件的任务。会话通过 `flow_start` 创建集群，通过 `flow_read` 查看任务单元和证据，通过 `flow_control` 暂停、恢复或取消集群。执行智能体提交产物后，还必须通过业务验收和独立复核，任务单元才会被正式接受。
+
+联调时可按以下顺序定位问题：
+
+| 检查阶段 | 关注内容 | 进一步阅读 |
+| --- | --- | --- |
+| 插件加载 | 必要服务是否就绪，远程接口产物是否与宿主匹配 | [dsh 兼容性](/development/compatibility) |
+| 模型执行 | 模型路由、工具能力、上下文上限是否满足要求 | [智能体配置参数](/configuration/agents) |
+| 集群推进 | 是否因预算、并发或结构限制无法继续 | [集群配置参数](/configuration/cluster) |
+| 结果提交 | 任务单元、执行记录和验收证据是否一致 | [查询与可观测性](/development/components/observability) |
+
+需要调用工具或远程接口时，见 [API 手册](/development/api)。组件入口与职责见[代码结构](/development/code-structure)。
+
+## 源码依据
+
+[工作区命令与版本](https://github.com/Luohaothu/dsh-flow/blob/main/package.json)、[构建流程](https://github.com/Luohaothu/dsh-flow/blob/main/scripts/build.ts)、[启动脚本](https://github.com/Luohaothu/dsh-flow/blob/main/src/host/dsh-launch.ts)、[插件组合](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/cordis.patch.yml)。

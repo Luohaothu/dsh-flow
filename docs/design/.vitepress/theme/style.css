@@ -1,0 +1,80 @@
+.flow-lockup { display: inline-flex; align-items: center; gap: 8px; }
+.flow-tag {
+  border: 1px solid var(--vp-c-brand-soft);
+  border-radius: 999px;
+  padding: 1px 9px;
+  color: var(--vp-c-brand-1);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.page-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.page-actions-controls {
+  display: flex;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  font-size: 14px;
+}
+.page-actions-controls button, .page-actions-controls a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  min-height: 36px;
+}
+.page-actions-controls button { border-radius: 9px 0 0 9px; }
+.page-actions-controls a { border-left: 1px solid var(--vp-c-divider); border-radius: 0 9px 9px 0; color: var(--vp-c-text-2); }
+.page-actions-controls :is(button, a):hover { background: var(--vp-c-default-soft); }
+.page-actions-controls :is(button, a):focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+.page-actions-controls svg { width: 16px; height: 16px; }
+
+.mermaid-diagram {
+  margin: 24px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.diagram-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-2);
+  font-size: 12px;
+}
+.diagram-toolbar button {
+  color: var(--vp-c-brand-1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.diagram-toolbar button:focus-visible, .diagram-viewport:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: -2px;
+}
+.diagram-viewport {
+  overflow-x: auto;
+  padding: 18px;
+}
+.diagram-viewport svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: auto;
+}
+/* Keep SVG foreignObject labels at the line height Mermaid measured. */
+.mermaid-diagram .nodeLabel p,
+.mermaid-diagram .edgeLabel p { margin: 0; line-height: 1.5; }
+.natural-size .diagram-viewport svg { width: var(--diagram-width); max-width: none !important; }
+.mermaid-diagram details {
+  border-top: 1px solid var(--vp-c-divider);
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--vp-c-text-2);
+}
+.mermaid-diagram summary { cursor: pointer; }
+.mermaid-diagram pre { overflow-x: auto; margin: 12px 0; }
+.diagram-loading, .diagram-error { padding: 0 16px; }
+.diagram-error { color: var(--vp-c-danger-1); }
