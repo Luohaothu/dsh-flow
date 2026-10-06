@@ -1,0 +1,94 @@
+{
+  "generatedFrom": [
+    "index.html",
+    "styles.css",
+    "app.js"
+  ],
+  "screens": [
+    {
+      "id": "01-plugins",
+      "title": "S01 · 插件管理",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "02-settings",
+      "title": "S02 · 显示设置",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "03-start",
+      "title": "S03 · 启动团队",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "04-team-tree",
+      "title": "S04 · 顶栏派生树",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "05-topology",
+      "title": "S05 · 智能体拓扑",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "06-inspector",
+      "title": "S06 · 节点联动详情",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "07-agent-session",
+      "title": "S07 · 完整子会话",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "08-communication",
+      "title": "S08 · 通信记录",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "09-waiting",
+      "title": "S09 · 等待用户",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "10-completed",
+      "title": "S10 · 团队完成",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "11-state-gallery",
+      "title": "S11 · 数据与任务边界状态",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "id": "12-compact",
+      "title": "S12 · 紧凑窗口",
+      "width": 1080,
+      "height": 900
+    },
+    {
+      "id": "13-mobile",
+      "title": "S13 · 窄屏层级列表",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "id": "14-settings-states",
+      "title": "S14 · 插件与设置反馈",
+      "width": 1440,
+      "height": 900
+    }
+  ],
+  "browserErrors": []
+}
