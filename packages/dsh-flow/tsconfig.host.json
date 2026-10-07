@@ -17,7 +17,6 @@
     "src/messages.ts",
     "src/errors.ts",
     "src/service.ts",
-    "src/tools.ts",
     "src/types.ts",
     "src/validation.ts",
     "src/web.ts",

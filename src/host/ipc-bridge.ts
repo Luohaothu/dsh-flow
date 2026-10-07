@@ -163,8 +163,8 @@ export function requireTestRuntime(service: FlowService): FlowTestRuntime {
 function install(runtime: FlowTestRuntime,ctx:Context): () => void {
   const onDisconnect = (): void => {
     // A killed runner must not leave an orphaned host holding the workspace, the
-    // ports and the cluster database. The same drain, awaited, before the
-    // process goes: exiting first left the turns' bookkeeping half-written.
+    // ports and the cluster database. Await the drain so turn bookkeeping
+    // finishes before process exit.
     void Promise.resolve(runtime.dispose())
       .catch(error => console.error(messageOf(error)))
       .finally(() => process.exit(0));
@@ -265,8 +265,7 @@ async function handle(runtime: FlowTestRuntime, message: IpcRequest): Promise<un
     case 'report':
       return runtime.report(requireId(id, 'report'));
     case 'query': {
-      // The runner keeps its previous raw-data envelope: unwrap the tagged
-      // answer the standard service returns.
+      // The runner reads the same query envelope returned by the service.
       const what = typeof payload?.what === 'string' ? payload.what as FlowQueryKind : 'cluster';
       return runtime.queryCluster(requireId(id, 'query'), what, objectField(payload?.params) as FlowQueryParams);
     }

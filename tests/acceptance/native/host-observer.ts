@@ -7,7 +7,6 @@ import type { AgentHandle } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-commands';
 import type {} from '@deepseek-ai/dsh-compaction';
-import type {} from '@deepseek-ai/dsh-agent-preset-registry';
 import { scopeOf } from '@deepseek-ai/dsh-scope';
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller';
 import { asObject, requiredString, messageOf } from '../context.ts';
@@ -26,7 +25,7 @@ export interface Config {
 }
 
 export const name = 'flow-native-observer';
-export const inject = ['flow', 'agents', 'agentLoop', 'tools', 'llm', 'compaction', 'agentPresets', 'commands', 'sessionController'];
+export const inject = ['flow', 'agents', 'agentLoop', 'tools', 'llm', 'compaction', 'commands', 'sessionController'];
 
 /** Observes the real request waterfall and drives only fixture-owned Agents. */
 export function apply(ctx: Context, config: Config): void {
@@ -117,7 +116,7 @@ export function apply(ctx: Context, config: Config): void {
             await ordinary.agent.whenIdle();
             process.send?.({ nativeObserver: true, requestId, ok: true, value: { session_id: ordinary.agent.id, ordinary_tools: ordinaryTools } });
           } else {
-            process.send?.({nativeObserver:true,requestId,ok:true,value:{ordinary_tools:ordinaryTools,preset_removed:(await ctx.agentPresets.list()).every(preset=>preset.id!=='cluster')}});
+            process.send?.({nativeObserver:true,requestId,ok:true,value:{ordinary_tools:ordinaryTools}});
           }
         } finally {
           if (!disposed) await ordinary.dispose();

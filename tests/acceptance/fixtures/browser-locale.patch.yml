@@ -1,0 +1,4 @@
+# The browser fixture asserts the Chinese native plugin-manager heading.
+- id: locale
+  config:
+    preference: zh

@@ -104,14 +104,8 @@ function numOrNull(value: SQLOutputValue | undefined, label: string): number | n
 }
 
 /**
- * Narrow one stored timestamp column.
- *
- * The column is INTEGER and every row this store writes holds a number, but a
- * database that predates it (or that a human repaired by hand) can hold an ISO
- * string in the same column — the pre-migration store returned the raw value
- * and worked. Normalizing that text to epoch milliseconds keeps the decoded
- * value a number without discarding a row that really exists; the SQL ordering
- * is untouched either way, because it reads the column itself.
+ * Decode a stored integer or ISO timestamp as epoch milliseconds. SQL retains
+ * the stored representation for ordering; decoding does not discard text rows.
  */
 function timestampOf(value: SQLOutputValue | undefined, label: string): number {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -968,7 +962,7 @@ CREATE TABLE IF NOT EXISTS issues(
 CREATE INDEX IF NOT EXISTS issues_status ON issues(cluster_id,status);
 `;
 
-const LEGACY_TABLES = ['workflows', 'idem', 'result_messages', 'controller_workflows'];
+const WORKFLOW_TABLES = ['workflows', 'idem', 'result_messages', 'controller_workflows'];
 
 export class ClusterStore {
   readonly path: string;
@@ -996,16 +990,12 @@ export class ClusterStore {
     if (version > SCHEMA_VERSION) fail(`cluster database schema ${version} is newer than supported ${SCHEMA_VERSION}; choose another dataDir`, 409);
     const names = this.#db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
       .map(row => textOf(row.name, 'table name'));
-    if (version === 0 && LEGACY_TABLES.some(t => names.includes(t))) {
-      fail('legacy workflow database detected; choose a new dataDir (this store never migrates or deletes user data)', 409);
+    if (version === 0 && WORKFLOW_TABLES.some(t => names.includes(t))) {
+      fail('workflow database is not supported; choose a separate dataDir (existing data is left untouched)', 409);
     }
   }
 
-  /**
-   * Additive migrations for databases created by an earlier schema: a staged
-   * Worker proposal must be bound to the turn that produced it, and adding the
-   * binding must not require discarding an existing run.
-   */
+  /** Add missing durable columns without discarding existing runs or evidence. */
   #migrateColumns(): void {
     const additions: readonly (readonly [string, string, string])[] = [
       ['transactions', 'result_staged_epoch', 'INTEGER'],
@@ -1016,9 +1006,8 @@ export class ClusterStore {
       ['usage_receipts', 'reasoning_effort', 'TEXT'],
       ['issues', 'reviewed_revision', 'INTEGER'],
       ['clusters', 'declared_limits', 'TEXT'],
-      // A checkpoint records the *native* session offset separately from the
-      // cluster's own event cursor: they are different logs, and conflating them
-      // made a checkpoint unable to say where the session really stood.
+      // Native session offsets and cluster event cursors belong to different
+      // logs and are recorded independently.
       ['checkpoints', 'events_seq', 'INTEGER'],
       ['transactions', 'pre_pause_status', 'TEXT'],
       ['transactions', 'pre_pause_revision', 'INTEGER'],
@@ -1029,12 +1018,9 @@ export class ClusterStore {
       if (columns.includes(column)) continue;
       this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
-    // Ownership used to be stored only when a caller supplied it, so a database
-    // written by an earlier schema can hold `null` owners and transactions
-    // pointing at the branch above them. Both are derived facts now, and a
-    // reader that trusts the column must not see two answers for one fact.
-    // Normalise in one transaction: idempotent, no business column touched, no
-    // schema-version bump, and a failure rolls the whole repair back.
+    // Derive ownership from node kind and transaction placement. Normalize
+    // both tables atomically so readers see one canonical answer; failures
+    // roll back the complete correction without changing business state.
     this.tx(() => {
       this.#db.exec(`
         UPDATE nodes SET owner_management_id =
@@ -2003,13 +1989,8 @@ export class ClusterStore {
       // A delegated parent is always an aggregation task, not a Worker task;
       // accepting its last child must not revive a preexisting Worker grant.
       "NOT EXISTS (SELECT 1 FROM transactions c WHERE c.cluster_id=t.cluster_id AND c.parent_transaction_id=t.id)",
-      // `set_dependency` orders work, and the declared contract is that a
-      // dependent pauses until its dependency is settled ("its dependents pause
-      // until you answer the issue"). Holding the dependency only in the digest
-      // made the edge advisory: a dependent ran, and could only ever read an
-      // artifact its dependency had not produced yet. A dependency that is not
-      // ACCEPTED — including one that failed and will never be accepted — keeps
-      // the dependent out of the Worker frontier.
+      // Dependencies gate Worker admission. Every dependency must be ACCEPTED;
+      // pending, rejected and failed dependencies all keep the dependent queued.
       `NOT EXISTS (
          SELECT 1 FROM dependencies d
            LEFT JOIN transactions p ON p.id = d.depends_on AND p.cluster_id = t.cluster_id
@@ -2414,10 +2395,8 @@ export class ClusterStore {
       reasoning_tokens: numOrNull(row?.reasoning_tokens, 'usage.reasoning_tokens') ?? 0,
       unknown_requests: numOrNull(row?.unknown_requests, 'usage.unknown_requests') ?? 0,
       overshoot: numOrNull(row?.overshoot, 'usage.overshoot') ?? 0,
-      // The design's fifth cost dimension. This deployment is locally served, so
-      // there is no price to multiply by and no honest number to invent: the
-      // field is derived, says so, and is not a ledger column that could silently
-      // read as a real charge. See README's deviation table.
+      // No price model is configured. The local-unpriced marker distinguishes
+      // this placeholder from a measured zero monetary charge.
       api_cost: { amount: 0, currency: 'USD', pricing: 'local-unpriced' },
     };
   }
@@ -2935,12 +2914,9 @@ export class ClusterStore {
   }
 
   /**
-   * Correction *rounds* spent on one transaction, not the number of issues opened:
-   * `issue.corrections` is the counter `verify_correction` maintains, bumped when a
-   * correction fails to verify. Counting issue rows meant two freshly opened issues
-   * exhausted a budget configured as two correction rounds, and the branch was blocked
-   * with both issues OPEN and `corrections` zero (measured: a node blocked at seq 1554
-   * with `corrections=0`, after which the run spent a further three million tokens).
+   * Count correction rounds spent on a transaction. verify_correction advances
+   * issue.corrections when a correction fails verification; opening an issue
+   * does not itself spend a correction round.
    */
   countCorrections(clusterId: string, transactionId: string): number {
     return numOf(this.get(

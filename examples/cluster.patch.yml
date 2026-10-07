@@ -85,13 +85,8 @@
 # it inside the agent preset. A cluster agent never mounts that preset, so the
 # cluster enables the host-plane backend for the sessions it drives; without it
 # a long management session can only grow until the provider rejects it.
-# A native role has an 8,192-token input ceiling. The backend default
-# reserves 65,536 output tokens for each genuine summary request, which
-# exhausts small-tier compaction grants before the role can continue. A
-# 2,048-token cap was too small: the native summarizer reported an incomplete
-# checkpoint and correctly refused to commit it. Reserve 4,096 instead; the
-# host still generates and verifies the complete checkpoint, and the plugin
-# still refuses any later step whose measured input exceeds 8,192.
+# Compaction reserves 4,096 output tokens to produce a complete checkpoint
+# within the role's budget. Subsequent input must fit its 8,192-token ceiling.
 - id: compaction-basic
   disabled: false
   config:

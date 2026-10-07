@@ -2,14 +2,11 @@
 /**
  * Launch the DSH profile app in-process.
  *
- * The shipped `apps/cli/lib/bin.js` guards its entry point with
- * `import.meta.main`, which Node v24.0.1 does not implement (verified:
- * `typeof import.meta.main === 'undefined'`), so invoking the built bin
- * directly exits silently with status 0. This wrapper imports the exported
- * `runCli` and calls it with the same argv, which is the only difference.
+ * Invoke the installed CLI's exported `runCli` with the process argv. This
+ * supports Node runtimes that do not provide `import.meta.main`.
  *
- * Usage: node src/host/dsh-launch.ts --profile <name> [--patch <file>] <app args>
- * Environment: DSH_INSTALL_PATH points at the harness apps/cli directory.
+ * Usage: node --import tsx src/host/dsh-launch.ts --profile <name> [--patch <file>] <app args>
+ * Environment: DSH_INSTALL_PATH optionally identifies the installed CLI package.
  */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';

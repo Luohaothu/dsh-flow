@@ -36,10 +36,8 @@ const MAX_ISSUE_CORRECTIONS = 2;
 // -------------------------------------------------------------- handler shape
 
 /**
- * The actor a handler sees. Both actor kinds are accepted; the agent identity
- * is optional because the host operator carries none. A handler reads a missing
- * `agent_id`/`node_id` as "no agent identity", exactly as the previous untyped
- * code read the absent property.
+ * Both agents and the host operator can invoke handlers. Host operators have
+ * no agent identity, so the agent-specific fields are optional.
  */
 type ActionActor = FlowActor & Partial<Pick<FlowAgentActor, 'agent_id' | 'node_id' | 'session_id' | 'epoch' | 'turn_seq'>>;
 
@@ -327,10 +325,8 @@ function createWorkerForTransaction(
   if (node.id !== tx.node_id) {
     fail(`transaction ${tx.id} belongs to node ${tx.node_id}, not allocation node ${node.id}; allocate it under its owning node`, 409);
   }
-  // The delegated work must finish first: a parent's own attempts are what runs *after*
-  // its children report, and spending them early is how a branch escalated with its
-  // delegation still DRAFT (measured: the parent was allocated in the same turn that
-  // spawned its child). Filtering the hints was not enough — this is the execution path.
+  // Delegated child work must finish before the parent can use its result.
+  // Enforce the rule at allocation, independently of scheduling hints.
   if (rt.store.parentsAwaitingChildren(cluster.id).includes(tx.id)) {
     fail(`${tx.id} has delegated work still unfinished; wait for the child results and aggregate them`, 409);
   }
@@ -380,11 +376,8 @@ function createWorkerForTransaction(
   // directory cannot both hold the lock.
   const canonical = canonicalScope(cluster.workspace, writeScope);
   if (canonical === null) fail(`write scope ${JSON.stringify(writeScope)} cannot be resolved inside the workspace (a dangling symlink is refused)`, 409);
-  // A delegated transaction's write scope is a ceiling, not a suggestion an
-  // Allocator can override. An explicit allocation may narrow it; widening it
-  // requires the Orchestrator to revise the transaction first. Without this
-  // check the first Worker in the recursion case was granted deep/nested while
-  // its transaction still required deep/staging, bypassing the injected fault.
+  // Allocation may narrow a transaction's declared write scope. Widening
+  // that ceiling requires the Orchestrator to revise the transaction first.
   if (params.write_scope !== undefined && inputFields !== null && Object.hasOwn(inputFields, 'write_scope')) {
     const restricted = canonicalScope(cluster.workspace, validateWriteScope(inputFields.write_scope, 'inputs.write_scope'));
     if (restricted === null || canonical.some(entry => !restricted.some(parent => withinScope(entry, parent)))) {
@@ -761,10 +754,9 @@ export const HANDLERS = {
         kind: 'plan', target_revision: tx.revision, decision: 'PENDING', evidence: { requested_by: actor.agent_id ?? null },
       }) ?? fail('Failed to record audit', 500);
       audits.push({ audit_id: audit.id, transaction_id: tx.id, target_revision: tx.revision, decision: audit.decision });
-      // The Orchestrator owns transactions, so *it* makes the plan dispatchable:
-      // the plan audit is observational supervision, not a gate. The Auditor
-      // keeps its corrective authority (a rejection pulls the transaction back),
-      // but a silent or slow Auditor no longer freezes the whole subtree.
+      // The Orchestrator makes the plan dispatchable while the Auditor supervises
+      // it independently. A pending audit permits execution; rejection returns
+      // the transaction for correction.
       setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), 'READY');
       rt.store.appendEvent(cluster.id, 'dispatched', { transaction_id: tx.id, audit_id: audit.id, revision: tx.revision });
       rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'allocator')?.id, {
@@ -827,12 +819,8 @@ export const HANDLERS = {
       }
     }
     setStatus(rt, tx, 'DRAFT');
-    // The revision *must* advance: it is what an audit, a validation and a
-    // stale-plan check are keyed to. Treating the adjustment as a low-level
-    // write left a rejected plan at its old revision, so every re-dispatch
-    // reused the auditor's original rejection and the branch could only end in
-    // an escalation (measured: `transaction-adjusted` twice, revision 1 both
-    // times, then `escalated`).
+    // Audits, validation and stale-plan checks identify the exact revision.
+    // Every adjustment advances it and clears approval of the replaced plan.
     const updated = bumpRevision(rt, tx, { ...changes, validation: null, plan_approved_revision: null });
     rt.store.appendEvent(cluster.id, 'transaction-adjusted', { transaction_id: tx.id, fields: Object.keys(changes), revision: updated.revision });
     pauseDependents(rt, cluster, tx);
@@ -853,9 +841,8 @@ export const HANDLERS = {
   validate(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
     if (tx.status !== 'SUBMITTED') fail(`transaction ${tx.id} is ${tx.status}; only SUBMITTED results are validated`, 409);
-    // A parent's own result cannot be accepted while the work it delegated is open:
-    // the child results are part of the artifact, and accepting early is how a branch
-    // was closed on a result that could not exist yet.
+    // A parent's result includes its delegated children's work. Wait for those
+    // child results before accepting or aggregating the parent.
     if (params.accepted === true) {
       const open = rt.store.parentsAwaitingChildren(cluster.id).includes(tx.id);
       if (open) {
@@ -975,11 +962,8 @@ export const HANDLERS = {
       return { node_id: node.id, status: (rt.store.getNode(node.id) ?? fail('Node not found', 404)).status, blocked_transactions: pending.length };
     }
     const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
-    // A parent still owes its delegated result while a descendant can act.
-    // Escalating it first hides a live correction round (observed: the depth-1
-    // branch was blocked while the depth-3 Orchestrator was revising a rejected
-    // result). A failed or blocked descendant is an actual reason to escalate;
-    // DRAFT/READY/REJECTED/SUBMITTED descendants are not.
+    // An actionable descendant still owes its delegated result. Only a failed
+    // or blocked child can justify escalating the parent before aggregation.
     const unfinished = transactionSubtree(rt, cluster.id, tx.id).slice(1)
       .map((id): TransactionRecord | null => rt.store.getTransaction(id))
       .find(child => child !== null && !['ACCEPTED', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED'].includes(child.status));
@@ -1034,11 +1018,8 @@ export const HANDLERS = {
     const declaredSpawn = params.spawn_children;
     const requestedSpawn = typeof declaredSpawn === 'number' && Number.isFinite(declaredSpawn) ? declaredSpawn : 0;
     const spawnBudget = owed ? (owed.spawn_children ?? 0) : requestedSpawn;
-    // A management node at the depth cap cannot execute: its roles' Worker would need a
-    // node one level deeper, which `createWorkerForTransaction` refuses. Refusing the
-    // spawn names the fact (measured: a depth-4 terminal node with `max_depth: 4` and zero
-    // allocations while its transactions sat READY, so the artifact could never be written
-    // by the branch that owed it).
+    // A management node needs one deeper level for its Worker. Refuse a node
+    // at the depth cap because it cannot execute any transaction.
     if (parentNode.depth + 1 >= limits.max_depth) {
       fail(`a management node at depth ${parentNode.depth + 1} could not run a Worker: max_depth is ${limits.max_depth}, so its roles would have no identity to allocate. Delegate no deeper, or raise max_depth deliberately.`, 409);
     }
@@ -1077,51 +1058,22 @@ export const HANDLERS = {
         const wave = 3 + Math.max(1, Number(cluster.limits.max_active_agents) || 1);
         grant.agents = Math.max(Number(grant.agents) || 0, Math.min(Math.max(wave, need), available));
       }
-      // The same rule for the dimensions a node's own roles spend: a share of
-      // what is left over can be one request or none at all, and a node created
-      // with a single request cannot run its orchestrator, allocator and auditor
-      // once between them. Measured: a depth-2 node held `requests_limit` 1 and
-      // the deepest 0, so the branch the case exists to extend was refused on
-      // `model_requests` while the run had 64% of its requests unspent.
-      // Two rules, both grounded in what was measured rather than in the case's
-      // ceilings:
-      //
-      //  * a node must be able to run its three roles for a *working* number of
-      //    turns at this deployment's cost (~10 requests and ~13 k tokens per role
-      //    turn, measured: 188 role requests for 18 turns), or nothing in its
-      //    subtree can happen at all — a depth-2 node was created with 5 requests
-      //    and 6,172 tokens and could not spawn the level below it; and
-      //  * the parent must keep the same working amount for its own roles: a
-      //    parent that hands everything to its children cannot run the turn that
-      //    would dispatch them — measured: the root node's request file fell to 59
-      //    while its three children held ~100 each, and 150 requests were refused
-      //    against the parent's slice.
-      //
-      // `max_role_turns` is a ceiling (24 in the recursion case), not observed work,
-      // so it sizes neither rule; the *structural* share is the natural cap, and
-      // what the parent can spare is the hard one. More can always be granted
-      // later, by the Allocator, explicitly.
+      // Give the child a working allowance for all three management roles while
+      // retaining the same allowance for the parent's dispatch work. Structural
+      // shares and available parent capacity bound these initial grants; the
+      // Allocator can explicitly grant more as the work requires.
       const workingTurns = Math.min(3, Math.max(1, Number(cluster.limits?.max_role_turns) || 3));
       const declaredTools = Number(cluster.spec?.budget?.tool_calls ?? cluster.budget?.tool_calls ?? 0) || 0;
       const declaredTokens = Number(cluster.spec?.budget?.tokens ?? cluster.budget?.tokens ?? 0) || 0;
       const declaredRequests = Number(cluster.spec?.budget?.model_requests ?? cluster.budget?.model_requests ?? 0) || 0;
-      // Eight is the topology the recursion case builds — the root, its children and a
-      // delegated chain — so an even split of the *declared* tool budget is a deliberately
-      // generous per-node allowance that still leaves the root the remainder. It is what
-      // keeps a deep node from being born with 0 tool calls while its roles are refused to
-      // the last call (measured: node tool files of 433, 69, 0 and 122 against a declared
-      // 8,192, with agent grants spent 95/95, 62/62 and 57/57).
+      // Use one eighth of the declared tool budget as a per-node fair-share
+      // floor, bounded below by working needs and above by the available grant.
       const fairShareTools = declaredTools > 0 ? Math.floor(declaredTools / 8) : 0;
       const perTurn = Math.max(16_384, Number(rt.config?.context?.role ?? 8_192) * 2);
       const wave = Math.max(1, Number(cluster.limits?.max_active_agents) || 1);
-      // The same fair share applies to every dimension a node's own roles and Worker wave
-      // spend, not only tools: measured, a depth-3 node was created with 38,449 tokens and
-      // 5 requests — enough for neither a role turn nor a Worker — and its allocator spent
-      // its turns on `escalate-budget` while four transactions sat READY in the branch.
-      // A working estimate is not a requirement to give *every* child most of
-      // a small declared tool budget. Cap the minimum endowment at a quarter
-      // of the declaration: two small branches can then be funded without
-      // weakening the larger recursion case's fair-share floor.
+      // Apply the fair-share floor across tokens, requests and tool calls.
+      // Cap the tool minimum at a quarter of the declaration so small budgets
+      // can fund multiple branches.
       const toolFloor = Math.min(
         Math.max(workingTurns * 20 * 3 + wave * 16, fairShareTools),
         Math.max(4, Math.floor(declaredTools / 4)),
@@ -1131,10 +1083,7 @@ export const HANDLERS = {
       const floor: Record<string, number> = {
         tokens: Math.max(workingTurns * perTurn * 3 + wave * perTurn, tokenFloor),
         model_requests: Math.max(workingTurns * 10 + wave * 3, requestFloor),
-        // A role turn spends several tool calls (a query, an action, sometimes a
-        // second look), and a wave of Workers several each: measured on a recursion
-        // run, one node's tools ran out 35 times while its roles still had work to
-        // do — a sizing error, not a budget.
+        // The tool floor covers management actions and the Worker wave together.
         tool_calls: toolFloor,
       };
       // A target endowment includes several turns per role; missing it by a
@@ -1142,12 +1091,8 @@ export const HANDLERS = {
       // The hard minimum is one send/tool action for each management role and
       // a two-request Worker with its own 65,536-token grant at the leaf.
       const minimum: Record<string, number> = { tokens: 3 * perTurn + 65_536, model_requests: 5, tool_calls: 5 };
-      // The parent's own roles hold most of its capacity while they are between
-      // turns, and that capacity is the node's to reclaim before it funds a child —
-      // in scope, no other subtree involved. Without this the parent's file looks
-      // empty exactly when a child needs it (measured: the root node at 33/33
-      // requests with its three roles holding 186 idle, and two depth-3 children
-      // created with 5 and 3).
+      // Reclaim this parent's idle role grants before funding a child.
+      // The transfer stays within the parent's domain and preserves live turns.
       rt.reclaimIdleRoleGrants(cluster.id, parentBudget.id);
       const currentParent = rt.store.getBudget(parentBudget.id) ?? fail('Budget not found', 404);
       for (const [key, localTarget] of Object.entries(floor)) {
@@ -1454,8 +1399,8 @@ export const HANDLERS = {
     }) ?? fail('Failed to create agent', 500);
     const nodeBudget = rt.store.budgetForScope(cluster.id, 'node', allocation.node_id);
     if (nodeBudget) {
-      // The replacement inherits the same allocation, not a second worker
-      // slot. Return the retired identity's unused grant before funding it.
+      // The replacement uses the existing allocation. Return the replaced
+      // identity's unused grant before funding it.
       reclaimUnusedAgentGrant(rt, cluster.id, oldAgent.id, nodeBudget);
       rt.grantAgentBudget(cluster.id, rt.store.getNode(oldAgent.node_id) ?? fail('Node not found', 404), nodeBudget, replacement, oldAgent.role);
     }
@@ -1527,13 +1472,8 @@ export const HANDLERS = {
   },
 
   /**
-   * Move a management subtree under a new parent.
-   *
-   * Two phases, deliberately: a **pre-flight** that writes nothing and aborts
-   * nothing (an earlier version aborted the subtree's live turns and *then*
-   * failed with 409, so a rejected request had already destroyed work), and a
-   * short **commit** in one SQLite transaction that moves the tree, every
-   * descendant's path and ownership, and the budget grants together.
+   * Move a management subtree under a new parent. Validate without mutations
+   * or aborts, then atomically update topology, ownership and budget grants.
    */
   reparent(rt, cluster, actor, params) {
     const node = assertDomain(rt, cluster, actor, params.node_id);
@@ -1642,12 +1582,8 @@ export const HANDLERS = {
             : { path: `${newParent.path}.${siblingIndex}${suffix ? `.${suffix}` : ''}` }),
         });
       }
-      // A transaction's owner is the management node that hosts it, not the
-      // branch above it: the move relocates the tree, and every transaction in
-      // it keeps the owner it will be reassigned inside. Writing the new parent
-      // here instead put the moved node's existing transactions into a
-      // different owner domain from the ones it creates after the move, and a
-      // valid within-domain `reassign_agent` was then refused with a 409.
+      // Each transaction remains owned by its own management node when the
+      // containing subtree moves beneath another parent.
       for (const tx of rt.store.transactionsInSubtree(cluster.id, node.id)) {
         if (tx.owner_management_id === tx.node_id) continue;
         rt.store.updateTransaction(tx.id, { owner_management_id: tx.node_id });
@@ -1696,10 +1632,9 @@ export const HANDLERS = {
     if (checkpoint.cluster_id !== cluster.id || checkpoint.agent_id !== agent.id || checkpoint.session_id !== agent.session_id) {
       fail('checkpoint does not belong to this cluster, agent and session', 409);
     }
-    // §6.6: the durable offset must *equal* the checkpoint's. An offset ahead of
-    // it means history was appended after the checkpoint, and an unknown offset
-    // means the session cannot be proven to be at the checkpoint at all — both
-    // are refusals, checked before anything is mutated.
+    // The durable offset must equal the checkpoint's. A later offset proves
+    // appended history; an unknown offset cannot prove the checkpoint position.
+    // Reject either case before mutating the identity.
     const current = rt.sessionOffsetOf(agent.session_id);
     const checkpointOffset = checkpoint.flushed_seq ?? null;
     // An unknown offset is *no* verification, not a degenerate pass:
@@ -1888,10 +1823,8 @@ export const HANDLERS = {
       const current = rt.store.getTransaction(member.id);
       if (!current || TRANSACTION_TERMINAL.has(current.status)) continue;
       setStatus(rt, current, 'CANCELLED');
-      // Cancellation is a lifecycle change, and the revision is what a pending
-      // audit, a validation and a stale check are keyed to: leaving it behind
-      // left audits pending against a revision that no longer describes the
-      // transaction.
+      // Cancellation advances the lifecycle revision so pending audits,
+      // validation and stale checks cannot describe the cancelled state as current.
       rt.store.updateTransaction(current.id, { status: 'CANCELLED' });
       cancelled.push(current.id);
     }
@@ -2072,25 +2005,12 @@ export const HANDLERS = {
     if (!issue) fail('Issue not found', 404);
     assertDomain(rt, cluster, actor, issue.node_id);
     if (issue.status === 'CORRECTED') return { issue_id: issue.id, status: issue.status, deduped: true };
-    // A verdict has something to verify only once the transaction moved past the
-    // revision the issue was raised against. Verifying before that is not a
-    // correction round: it consumed the correction budget without anything having
-    // changed (measured: two such verdicts exhausted the budget and blocked a
-    // two-transaction smoke whose plans had both been approved).
-    // The *same* predicate the scheduler uses to offer a verdict: a plan
-    // adjustment or a re-validation past the issue's revision. Reading only the
-    // former refused the verdict for a revalidation the Orchestrator had already
-    // performed.
+    // Verification requires a plan adjustment or revalidation past the issue's
+    // revision, using the same predicate that offers the scheduler's verdict.
+    // An unchanged plan with no new validation is not a correction round.
     const decision = String(params.decision ?? '').toUpperCase();
-    // A wrong issue has to be withdrawable. The Auditor's escalation in a live run was
-    // *its own* retraction — “no defect in plan … I re-queried the transaction: it carries
-    // two checkable criteria” — and with no way to close an issue that nothing has
-    // changed for, the only exit was to block the cluster. `DISMISSED` is that exit: the
-    // reporter's own judgement that there was no defect, recorded as its own status so it
-    // can never be mistaken for a correction.
-    // A wrong issue has to be withdrawable: `DISMISSED` is the reporter's own judgement
-    // that there was no defect, recorded as its own status so it can never be mistaken
-    // for a correction.
+    // DISMISSED records the reporter's evidence-based judgement that an issue
+    // is mistaken. It remains distinct from CORRECTED, which proves a repair.
     if (decision === 'DISMISSED') {
       const dismissal = params.evidence;
       if (!dismissal || typeof dismissal !== 'object' || Array.isArray(dismissal) || !Object.keys(dismissal).length) {
@@ -2191,10 +2111,8 @@ export const HANDLERS = {
   },
 
   /**
-   * Section 18: score the eight health dimensions on the record. The runtime
-   * computes the deterministic signals; the Auditor supplies the judgement and
-   * the weights, and both are stored, so a later reader can see what was
-   * measured and by whom.
+   * Record the eight health dimensions. Runtime-derived signals and the
+   * Auditor's judgement and weights are stored together for later inspection.
    */
   evaluate_health(rt, cluster, actor, params) {
     const metrics = rt.healthMetricNames();
@@ -2340,13 +2258,8 @@ function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: T
   writeNodeSummary(rt, cluster, tx.node_id);
   rt.deliverFixtureMessages(cluster, tx);
   for (const issue of rt.store.openIssues(cluster.id, { transaction_id: tx.id, status: ['OPEN', 'VERIFYING'] })) {
-    // Acceptance is not by itself a correction. The same rule `verify_correction`
-    // applies decides it here: an issue that followed an incomplete Worker result
-    // is closed only when the transaction produced new Worker evidence after it.
-    // Otherwise the issue stays open for the Auditor. Either way the closure is
-    // recorded — a silent status flip left the ledger with a CORRECTED issue and
-    // no reason, and let an issue read as corrected while the fault it named was
-    // still in the accepted result.
+    // Acceptance closes outstanding issues. An incomplete Worker result still
+    // requires later Worker evidence before its issue can be marked corrected.
     if (rt.store.issueHasIncompleteWorkerResult(cluster.id, issue)
       && !rt.store.issueHasNewWorkerEvidence(cluster.id, issue)) continue;
     rt.store.updateIssue(issue.id, { status: 'CORRECTED' });
@@ -2451,12 +2364,9 @@ const LIMIT_COLUMN: Record<BudgetDimension, BudgetNumericColumn> = {
 };
 
 /**
- * A child's structural share of its parent's *limit*, not of whatever happens
- * to be left when it is created. Splitting the remainder made the order of
- * spawning decide who starves: a node created after its siblings had spent got
- * 781 tokens for its entire subtree, every role on it was refused on `tokens`,
- * and the run stopped as LIMIT_REACHED while the cluster still held 58% of its
- * budget. `grantBudget` still caps the transfer by what the parent really has.
+ * Size a child's structural share from its parent's limit so sibling creation
+ * order does not determine the target grant. grantBudget still caps the
+ * transfer at the parent's actual available capacity.
  */
 function shareOf(parentBudget: BudgetRecord, slots: number): Record<string, number> {
   const share: Record<string, number> = {};

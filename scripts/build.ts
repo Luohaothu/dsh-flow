@@ -5,7 +5,7 @@
  * Order, and why:
  *   1. `tsc -b tsconfig.host.json`   — Host program: types + JavaScript for the
  *      package leaf, plus every dev/acceptance caller.
- *   2. esbuild Host entries          — `lib/types/{index,tools,web}.js` become
+ *   2. esbuild Host entries          — `lib/types/{index,command,web}.js` become
  *      the stable runtime entry points; `@deepseek-ai/*` and `node:*` stay
  *      external so the plugin and the host share one service registry.
  *   3. Typert generation             — the Host `ts.Program` is the only seed
@@ -22,7 +22,7 @@
  * bundle, so a clean tree (no `lib/`) still type-checks without a prior build.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,7 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN_ROOT = join(PROJECT_ROOT, 'packages', 'dsh-flow');
 const PLUGIN_LIB = join(PLUGIN_ROOT, 'lib');
 const SEED_CONFIG = join(PROJECT_ROOT, 'tests', 'acceptance', 'seeds', 'website', 'tsconfig.json');
+const HOST_ENTRIES = ['index', 'web', 'command'];
 
 const typecheckOnly = process.argv.includes('--typecheck-only');
 const TSC = join(dirname(require.resolve('typescript/package.json')), 'bin', 'tsc');
@@ -58,7 +59,7 @@ async function buildHost(): Promise<void> {
     sourcemap: true,
     legalComments: 'none',
     define: { 'process.env.NODE_ENV': '"production"' },
-    entryPoints: ['index', 'tools', 'web', 'command'].map(name => join(PLUGIN_LIB, 'types', `${name}.js`)),
+    entryPoints: HOST_ENTRIES.map(name => join(PLUGIN_LIB, 'types', `${name}.js`)),
     outdir: PLUGIN_LIB,
     entryNames: '[name]',
     format: 'esm',
@@ -125,7 +126,6 @@ async function buildClient(): Promise<void> {
       '@deepseek-ai/dsh-client-ui-sidebar',
       '@deepseek-ai/dsh-client-ui-conversation/client',
       '@deepseek-ai/dsh-client-ui-chat/client',
-      '@deepseek-ai/dsh-client-ui-dockkit',
     ],
     banner: {
       js: `window.__ModuleLoader__.load({ id: ${JSON.stringify(manifest.name)}, factory: (require) => {\n`
@@ -135,16 +135,27 @@ async function buildClient(): Promise<void> {
   });
 }
 
-// Incremental TypeScript builds leave deleted sources' output behind. Do not
-// ship the retired Cluster panel or its execution bindings in a new package.
-for (const module of ['panel', 'operations']) {
-  for (const extension of ['.js', '.js.map', '.d.ts', '.d.ts.map']) {
-    rmSync(join(PLUGIN_LIB, 'types', 'client', module + extension), { force: true });
+/** Keep incremental output aligned with the current source tree and bundle entries. */
+function pruneOutputs(): void {
+  const typesRoot = join(PLUGIN_LIB, 'types');
+  if (existsSync(typesRoot)) {
+    for (const entry of readdirSync(typesRoot, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !/(?:\.d\.ts|\.js)(?:\.map)?$/.test(entry.name)) continue;
+      const output = join(entry.parentPath, entry.name);
+      const source = output.slice(typesRoot.length + 1).replace(/(?:\.d\.ts|\.js)(?:\.map)?$/, '');
+      if (['.ts', '.tsx', '.d.ts'].some(extension => existsSync(join(PLUGIN_ROOT, 'src', source + extension)))) continue;
+      rmSync(output);
+    }
+  }
+  if (existsSync(PLUGIN_LIB)) {
+    const bundleFiles = new Set([...HOST_ENTRIES, 'client'].flatMap(name => [`${name}.js`, `${name}.js.map`]));
+    for (const entry of readdirSync(PLUGIN_LIB, { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.js(?:\.map)?$/.test(entry.name) || entry.name.startsWith('typert.')) continue;
+      if (!bundleFiles.has(entry.name)) rmSync(join(PLUGIN_LIB, entry.name));
+    }
   }
 }
-for (const extension of ['.js', '.js.map', '.d.ts', '.d.ts.map']) {
-  rmSync(join(PLUGIN_LIB, 'types', 'client', 'read-projection' + extension), { force: true });
-}
+pruneOutputs();
 tsc('-b', 'tsconfig.host.json');
 await buildHost();
 generateTypert();

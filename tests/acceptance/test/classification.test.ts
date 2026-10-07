@@ -103,8 +103,7 @@ test('a cluster stop reason is only budget evidence in its coded form', () => {
   assert.equal(coded.failure_class, 'LIMIT_REACHED');
   assert.equal(coded.limit_reached?.blockedOnBudget, true);
 
-  // The exact prose that used to flip a healthy run into a limit stop: a model
-  // describing its own "exhausting max_attempts" is not a budget denial.
+  // Model prose about "exhausting max_attempts" is not a budget denial.
   const prose = classifyOutcome({
     failureClass: null, scenarioStatus: 'FAILED',
     budget: { tokens: 1048576, model_requests: 192, wall_time_ms: 21600000 },
@@ -149,10 +148,8 @@ test('the scale tier derives its own class from structured blockers', () => {
   });
   assert.equal(nodeBudget, 'LIMIT_REACHED', 'a node-level budget block outranks the missing cluster reason');
 
-  // Textual evidence is prefix-only, and the mechanism prefix wins: this is the
-  // historic shape whose *first* code names the cause. Reading the budget token
-  // wherever it appeared ranked a limit above a mechanism defect, which §1.6-1.7
-  // forbids.
+  // Textual evidence uses the leading code as the cause. A mechanism prefix
+  // outranks a budget token that appears later in the message.
   const wrapped = deriveFailureClass({
     ledger: { blockers: [], blocked_reason: 'CONTEXT_PRESSURE: BUDGET: the session could not be compacted because the cluster budget is exhausted' },
     report: { limit_reached: null, wall_time_ms: 1000 },

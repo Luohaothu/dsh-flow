@@ -1,5 +1,4 @@
 # The standard plugin owns execution, Remote reads and the main-session command.
-# The removed Cluster panel and cluster preset are not registered.
 - insert:
     - id: dsh-flow
       name: dsh-flow

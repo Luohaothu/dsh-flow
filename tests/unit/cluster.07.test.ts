@@ -47,8 +47,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -563,9 +562,8 @@ test('an unfunded compaction that leaves the request unsendable is a budget stop
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-unfunded-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   // The session is over the provider ceiling, compaction is attempted, and the
-  // compaction request itself cannot be funded: that is a budget stop produced by
-  // the *ceiling* code path, which used to be recognised only in its context
-  // shape.
+  // compaction request itself cannot be funded. The provider-ceiling path must
+  // report this as a budget stop.
   const host = createFakeHost({
     tokenMeter: { measure: () => ({ totalTokens: 131_000, logRevision: 1 }) },
     compaction: {
@@ -882,9 +880,8 @@ test('recovery keeps the holds of unknown and in-flight requests, and cannot ref
   const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', orchestrator.id), 'agent budget');
   const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
   const nodeBefore = required(budgetView(required(runtime.store.getBudget(nodeBudget.id), 'node budget')), 'node budget view');
-  // Both requests are charged to the *identity's own* scope on purpose: that is
-  // the scope the faulty recovery reset zeroed, so this regression fails against
-  // it (an exact-hold assertion cannot pass when the hold is erased).
+  // Charge both requests to the identity scope so recovery must preserve its
+  // exact outstanding reservations independently of the node scope.
   const chain = [agentBudget.id];
 
   // One request sent whose cost the provider never reported: its tokens stay held.

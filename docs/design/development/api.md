@@ -2,7 +2,7 @@
 
 系统提供宿主程序化服务、主会话命令与执行工具、浏览器只读观察接口，以及团队内部智能体的角色工具。这些入口共用控制平面，但调用权限、参数和返回数据的结构各不相同。
 
-本页描述当前已开放的接口。[设计动作索引](/development/action-catalog)另行列出设计层面的完整动作及其含义，其中的概念参数不能直接当作实际工具参数。
+本页描述公开接口及实际调用参数。[动作索引](/development/action-catalog)按角色解释已开放动作的职责，界面入口见[主会话与团队界面](/development/interface)。
 
 ## 公共服务：ctx.flow
 
@@ -10,13 +10,19 @@
 
 | 宿主端方法 | 参数 | 返回 |
 |---|---|---|
-| `startTeam(sessionId, intentId, objective, workspace?)` | 主会话、稳定提交意图、需求与工作区 | `FlowSnapshot` |
+| `startTeam(sessionId, intentId, objective, workspace?, model?)` | 主会话、稳定提交意图、需求与工作区 | `FlowSnapshot` |
 | `createTeam(sessionId, launchId, request, model?)` | 主会话、启动意图、评估与启动参数 | `FlowTeamSnapshot`，相同意图与参数幂等 |
 | `teamStartDefaults()` | 当前部署 | 生效的工作区、能力、预算与限制 |
 | `finalizeTeam(sessionId, runId)` | 所属主会话、终态运行 | `FlowTeamSnapshot`，回收资源并保留历史 |
 | `teamReply(sessionId, messageId, content, runId?)` | 主会话工具调用身份、正文与目标运行 | `void`，幂等进入团队收件箱 |
 | `teamRuns(sessionId)` | 所属主会话 | `readonly FlowTeamRun[]` |
 | `teamRead(sessionId, runId)` | 主会话与运行 ID；验证归属 | `FlowTeamSnapshot` |
+| `teamOwners()` | 无 | 已持久化的主会话 ID，供通知发现使用 |
+| `teamSelectModel(sessionId, model)` | 主会话及其模型选择 | `void`，更新该会话未结束且跟随主会话的团队 |
+| `isTeamAgentSession(sessionId)` | 原生会话 ID | 是否属于团队执行身份 |
+| `agentSession(sessionId)` | 成员会话 ID | `FlowAgentSession` 或 `null`，包含归属、输入资格和禁用原因 |
+| `promptAgent(sessionId, requestId, text, clientTimeZone?, mode?)` | 成员会话、稳定请求 ID、文本；`mode` 为 queue 或 steer | `void`，经生命周期检查后交给成员调度 |
+| `interruptAgent(sessionId)` | 成员会话 ID | `void`，中断当前成员轮次 |
 | `start(request)` | `FlowStartRequest` | `FlowSnapshot` |
 | `list(request)` | `{status?, limit?, offset?}` | `{clusters}` |
 | `read(id, request)` | 集群标识；`FlowReadQuery` | `FlowSnapshot` |
@@ -80,7 +86,7 @@ for (const event of page.events) {
 
 ## 远程接口：ctx.remote.flow
 
-`web.ts` 提供只读远程接口。团队视图使用 `teamRuns(sessionId)` 与 `teamRead(sessionId, runId)`，诊断读取保留 `list`、`read`、`events`、`query`、`report`。远程描述不公开 `start`、`control`；启动只通过人类提交的 `/agent-team` 命令，后续执行只通过主会话。查询方法 **`query`** 对应宿主端的 `queryCluster`。浏览器通过生成的 `ctx.remote.flow` 客户端调用这些方法，插件不应另行创建自有 HTTP 路由。
+`web.ts` 提供八个只读远程接口。团队视图使用 `teamRuns(sessionId)` 与 `teamRead(sessionId, runId)`，成员导航通过 `agentSession(sessionId)` 读取归属与输入策略，诊断读取使用 `list`、`read`、`events`、`query`、`report`。远程描述不公开 `start`、`control`。用户通过 `/agent-team` 加载 skill，由主 Agent 调用团队工具；成员文本续聊走宿主原生会话驱动。查询方法 **`query`** 对应宿主端的 `queryCluster`。浏览器通过生成的 `ctx.remote.flow` 客户端调用这些方法，插件不应另行创建自有 HTTP 路由。
 
 ```ts
 const result = await ctx.remote.flow.query(clusterId, 'nodes', {
@@ -142,8 +148,6 @@ const roots = result.value.data.items;
 skill 每个主会话轮次最多进行三次有等待上限的 read。重要终态、受阻或等待用户的通知只唤醒主 Agent，实际报告先经过 read；通知不会代替 Agent 创建、转发指令或收尾。
 
 read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘要为空不表示没有事务交付。初始列表最多 32 个事务，truncated 明示截断，单个事务可通过 transaction_id 读取完整结果和审查。skill 在缺乏用户额度约束或实测依据时继承默认预算，给管理、审查和收尾保留资源。
-
-`dsh-flow/tools` 仍可被宿主程序显式加载为旧程序化消费者，包含 `flow_start`、`flow_read`、`flow_control`。标准插件组合不加载它，也不提供旧集群模式预设或界面入口。
 
 ## 角色工具
 
@@ -236,8 +240,8 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 
 遇到冲突应重新读取对象与证据，判断是否需要释放旧分配、修订计划或处理未知副作用，再提交新动作。更换命令标识后盲目重放，不能使过期授权重新生效。
 
-## 设计动作与当前工具的区别
+## 源码依据
 
-当前未开放 `merge_transaction`、`set_requirements`、`request_review`、`route_capability`。设计中的细粒度 `inspect_*`、`detect_*` 多数没有独立工具动作，相关监督由 `inspect_plan` 等动作完成。当前还开放了 `finish_cluster`、`resolve_effect` 等集群控制与恢复动作。
+规划监督通过 `inspect_plan` 检查计划、依赖与管理决策；结果接受通过 `inspect_validation` 复核指定版本。角色动作集合由 `protocol.ts` 定义并在运行时检查。
 
 具体参数以 [role-tools.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)、[actions.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[protocol.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts) 为准；公共接口定义见 [service.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/service.ts)、[types.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/types.ts)、[web.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/web.ts)。

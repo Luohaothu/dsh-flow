@@ -13,10 +13,7 @@ runtime/
 .secrets/
 artifacts/private/
 .artifacts/
-# The built bundle at the repository root only. An unanchored `lib/` would also
-# match any source directory named `lib/` at any depth (the host modules the
-# runner imports now live in `src/host/`), and they would be silently never
-# committed.
+# Root build output; source directories named lib remain trackable.
 /lib/
 
 # Build output of the published plugin package. The vendored protocol face under

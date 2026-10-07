@@ -74,7 +74,7 @@
       "objective": "Own the deep branch of the tree: build one nested management level below you for as many levels as this instruction asks for, and make the deepest node write deep/nested/result.txt.",
       "max_children": 4,
       "spawn_children": 3,
-      "note": "Three levels of delegation: the fixture builds management depths 1, 2 and 3, and the depth-3 node allocates its Worker at depth 4 — inside max_depth 4. A management node created *at* the cap is refused, because its own Worker would need depth 5 (measured: a model-made depth-4 node with max_depth 4 and zero allocations while its transactions sat READY).",
+      "note": "Three levels of delegation: the fixture builds management depths 1, 2 and 3, and the depth-3 node allocates its Worker at depth 4 — inside max_depth 4. A management node created *at* the cap is refused, because its own Worker would need depth 5.",
       "inputs": {
         "write_scope": [
           "deep/staging"

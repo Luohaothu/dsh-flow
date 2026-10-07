@@ -4,16 +4,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fromAny, fromPartial } from '@total-typescript/shoehorn';
-import { ToolArgsError } from '@deepseek-ai/dsh-tools';
-import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { fromAny } from '@total-typescript/shoehorn';
 import { rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { Config, resolveConfig, INTERACTIVE_BUDGET, INTERACTIVE_LIMITS } from '../../packages/dsh-flow/src/config.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowService } from '../../packages/dsh-flow/src/service.ts';
 import type { FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
-import * as userTools from '../../packages/dsh-flow/src/tools.ts';
-import { FlowRemote } from '../../packages/dsh-flow/src/web.ts';
 import { createFakeHost } from './fake-host.ts';
 
 function fixture(t: TestContext) {
@@ -29,37 +25,23 @@ function fixture(t: TestContext) {
   });
   const flow: FlowService = runtime;
   host.ctx.provide('flow', flow);
-  const scoped = new Map<string, ToolDefinition>();
-  const toolsScope = host.ctx.extend({ tools: {
-    register(definition: ToolDefinition) { scoped.set(definition.name, definition); return () => scoped.delete(definition.name); },
-  } });
-  const toolsFiber = toolsScope.plugin(userTools);
-  const remote = new FlowRemote(host.ctx);
   t.after(async () => {
-    await toolsFiber.dispose();
     await runtime.dispose();
     await host.dispose();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { dir, host, scoped, flow, runtime, remote, toolsFiber };
+  return { dir, flow, runtime };
 }
 
-test('service, scoped user tool and Remote share persisted per-field start defaults', async t => {
+test('service starts persist deployment defaults merged per field', t => {
   const f = fixture(t);
-  await f.toolsFiber.await();
-  assert.deepEqual([...f.scoped.keys()].sort(), ['flow_control', 'flow_read', 'flow_start']);
-  assert.equal(f.host.tools.has('flow_start'), false, 'user tools remain in the selected scope');
   const request: FlowStartRequest = {
     objective: 'same partial envelope', budget: { tokens: 100_000 },
     limits: { max_children: 2 }, capabilities: [],
   };
-  const local = f.flow.start(request);
-  const remote = f.remote.start(request, new AbortController().signal);
-  const tool = f.scoped.get('flow_start');
-  assert.ok(tool);
-  await tool.execute(request, fromPartial<ToolRunContext>({ signal: new AbortController().signal }));
+  f.flow.start(request);
   const persisted = f.runtime.store.listClusters({});
-  assert.equal(persisted.length, 3);
+  assert.equal(persisted.length, 1);
   for (const row of persisted) {
     assert.equal(row.workspace, f.dir);
     assert.deepEqual(row.capabilities, [], 'an explicit empty capability list is not replaced');
@@ -74,16 +56,12 @@ test('service, scoped user tool and Remote share persisted per-field start defau
     assert.equal(row.budget.max_active_agents, INTERACTIVE_BUDGET.max_active_agents);
     assert.ok(f.flow.events(row.id, {}).events.length > 0);
   }
-  assert.notEqual(local.cluster.id, remote.cluster.id);
   const omitted = f.flow.start({ objective: 'omitted capabilities' });
   assert.deepEqual(omitted.cluster.capabilities, ['fs_read', 'fs_write']);
 });
 
-test('invalid starts reject across all entrypoints without writing clusters or events', async t => {
+test('invalid service starts reject without writing clusters or events', t => {
   const f = fixture(t);
-  await f.toolsFiber.await();
-  const tool = f.scoped.get('flow_start');
-  assert.ok(tool);
   const malformed: unknown[] = [
     { budget: { tokens: 0 } }, { budget: { tokens: -1 } }, { budget: { tokens: '100' } },
     { budget: null }, { limits: { max_children: 0 } }, { limits: { max_depth: -1 } },
@@ -97,13 +75,6 @@ test('invalid starts reject across all entrypoints without writing clusters or e
     const request = fromAny<FlowStartRequest, object>({ objective: 'must not persist', ...input });
     const before = f.runtime.store.all('SELECT * FROM events');
     assert.throws(() => f.flow.start(request), rejected);
-    assert.throws(() => f.remote.start(request, new AbortController().signal), rejected);
-    // The native tool's declared string parameter rejects null before the
-    // flow handler; JSON budget/limits null still reach flow/rejected above.
-    await assert.rejects(
-      tool.execute(request, fromPartial<ToolRunContext>({ signal: new AbortController().signal })),
-      'workspace' in input && input.workspace === null ? ToolArgsError : rejected,
-    );
     assert.deepEqual(f.runtime.store.listClusters({}), []);
     assert.deepEqual(f.runtime.store.all('SELECT * FROM events'), before);
   }

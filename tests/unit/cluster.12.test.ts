@@ -669,9 +669,8 @@ test('a spawned node is never born with a scrap tool allowance', async t => {
     assert.ok(endowment >= Math.floor(8_192 / 8),
       `a child is not born with a scrap allowance: ${endowment}`);
   }
-  // The same fair share applies to what a node's roles and Worker wave *spend*, not only to
-  // tools: a deep node was measured at 38,449 tokens and 5 requests, enough for neither a
-  // role turn nor a Worker.
+  // The same fair share funds a node's management turns and Worker wave
+  // across tokens, model requests and tool calls.
   for (const nodeId of spawned) {
     const budget = required(runtime.store.getBudget(required(runtime.store.budgetForScope(clusterId, 'node', nodeId), 'node budget').id), 'node budget');
     const roles = firstOf(runtime.store.all(

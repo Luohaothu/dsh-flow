@@ -90,7 +90,7 @@ const INBOX_PRIORITY_SUBJECTS = [
 export const MUTATING_EFFECT_TOOLS = new Set(['write', 'edit', 'bash', 'job_kill']);
 const INCOMPLETE_WORKER_RESULT = /^(?:blocked|failed|incomplete)(?:[_-]|$)/i;
 
-/** Section 18's eight health dimensions, in the vocabulary the Auditor scores. */
+/** The eight health dimensions scored by the Auditor. */
 export const HEALTH_METRICS = [
   'transaction_coverage',
   'decomposition_quality',
@@ -107,19 +107,13 @@ const CLUSTER_EVENTS_SKIP_PROGRESS = new Set([
   // notification must not look like it made progress, or it can never be
   // recognised as stagnant.
   'turn-actions', 'load-changed', 'transaction-stale',
-  // Metering, context management and *refusals* are not state changes either.
-  // Each model step emits `context-step`, each provider request an `llm-slot` and
-  // each tool call a `tool-call-charged`, so counting them meant every turn
-  // "progressed" — including a turn that only queried state or spent its steps on
-  // actions the plugin refused. Measured: a run where 26 tool results were errors
-  // (17 of them the Allocator guessing a budget amount above what the source
-  // held) reported progress for all 15 of its turns, so the stagnation guard
-  // never fired and the guessing loop consumed the whole budget.
+  // Metering, context management and refusals do not count as state changes.
+  // Otherwise a role that only queries or repeats rejected actions could evade
+  // the stagnation guard merely by spending requests and tool calls.
   'context-step', 'llm-slot', 'tool-call-charged', 'tool-call-released', 'tool-call-refused',
   'usage-reconciled', 'budget-topup', 'budget-refused', 'budget-shortfall', 'budget-grandtotal',
   'agent-anomaly', 'turn-start-failed', 'inbox-reopened', 'delivery-unknown',
-  // A *stop* and a fence are not progress either: a node blocked by another
-  // identity's stagnation mid-turn made the stagnant turn look productive.
+  // Stop and fencing events do not establish productive work by a role.
   'node-blocked', 'cluster-blocked', 'agent-blocked', 'lease-fenced',
   'turn-aborted', 'turn-fenced', 'transaction-stranded',
 ]);
@@ -134,9 +128,8 @@ const CRITICAL_NOTIFICATION_SUBJECTS = new Set([
   'agent-anomaly',
   'child-blocked', 'issue-opened', 'result-withheld', 'delivery-unknown',
   'escalation', 'context-pressure',
-  // §7.2's governance work includes the *communication* a role must act on: an
-  // addressed message and a blackboard change a role subscribed to are work, not
-  // noise. Without them an idle recipient never ran to read what it was sent.
+  // Addressed messages and subscribed blackboard changes are pending work
+  // that must wake their recipient.
   'message', 'blackboard',
 ]);
 
@@ -387,9 +380,7 @@ function summaryOfData(clusterId: string, asOfSeq: number, data: FlowJsonValue):
         blocked_nodes: (Array.isArray(health.blocked_nodes) ? health.blocked_nodes : []).map(node => String(node)),
       },
     }),
-    // The stored summary carries the same two words; a row written by an
-    // earlier build holds 1/0 for the same fact, so it is normalized rather
-    // than dropped.
+    // Stored summaries accept status words or numeric 1/0 representations.
     ...(record.confidence === 'high' || record.confidence === 'partial'
       ? { confidence: record.confidence }
       : record.confidence === 1 ? { confidence: 'high' as const }
@@ -623,13 +614,7 @@ function jsonColumn(value: unknown, label: string): FlowJsonValue | undefined {
   return value;
 }
 
-/**
- * A TEXT column: any string, and an absent value reads as the empty one.
- *
- * `textField` refuses the empty string on purpose — it narrows a *name* — but a
- * transaction's `expected_output` and a turn's recorded inbox list are ordinary
- * TEXT columns where the empty value is legitimate and was always stored.
- */
+/** Ordinary TEXT columns allow empty strings; identity validators do not. */
 function stringColumn(value: unknown, label: string): string {
   if (value === undefined || value === null) return '';
   if (typeof value !== 'string') fail(`Invalid ${label}`);
@@ -914,24 +899,17 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       });
       const rootRow = this.store.getBudget(rootBudget.id);
       if (!rootRow) fail('Root budget not found', 500);
-      // Compaction is accounted separately (V6): it is the operation that makes a
-      // session affordable again, so it must not be starved by the very
-      // consumption it exists to reduce. It gets its own scope, funded before the
-      // tree can spend the rest.
-      // The earmark takes a *share*, never a floor that could exceed the work:
-      // a small cluster must still be able to run its own roles and workers.
+      // Seed the preferred compaction payer before funding the management tree.
+      // The shared payer selector also permits ordinary requests to use this
+      // pool when their own scopes cannot cover the full request.
       const share = (limit: number, floor: number, fraction: number): number => {
         if (!Number.isFinite(limit) || limit <= 0) return 0;
         const bounded = Math.min(Math.max(floor, Math.floor(limit * fraction)), Math.floor(limit * 0.25));
         return bounded >= Math.min(floor, limit) ? bounded : 0;
       };
-      // A compaction reserves the summary request's whole envelope, which can
-      // reach the backend's 65,536-token output ceiling, even though it settles
-      // for less. A fixed 400k-token/128-request pool almost ran out after only
-      // 16 files (389,743 tokens spent); it cannot support the 64-file tier.
-      // Fund a tenth of the declared tokens and a fifth of its requests, capped
-      // at a quarter for small budgets. These grants come out of the root budget,
-      // not in addition to it; ordinary work retains the other shares.
+      // Allocate a tenth of declared tokens and a fifth of requests, with
+      // minimum envelopes capped at a quarter of each root dimension.
+      // These grants are transferred from the root budget, not added to it.
       const compactionTokens = share(rootRow.tokens_limit, 64_000, 0.10);
       const compactionRequests = share(rootRow.requests_limit, 4, 0.20);
       if (compactionTokens > 0 || compactionRequests > 0) {
@@ -1266,9 +1244,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       const status = textField(row.status, 'recipient.status', 32);
       const agent = this.store.getAgent(recipient);
       const sessionId = sessionIdFor(agent);
-      // A session that does not exist cannot have been injected: that is a
-      // *proven* absence, not an unreadable one, and treating it as unknown
-      // blocked a whole cluster at boot for a delivery that had never been sent.
+      // A missing durable session proves no admission. An unreadable session
+      // remains uncertain and needs a different recovery decision.
       const exists = sessionId ? await this.sessionExists(sessionId) : false;
       if (this.#disposed) break;
       const proof: DeliveryProof = !persistence || !sessionId
@@ -1337,8 +1314,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       return new Set(this.store.all('SELECT id FROM nodes WHERE cluster_id=?', clusterId)
         .map(row => textField(row.id, 'node.id', 128)));
     }
-    // One recursive CTE, not a page-and-fixpoint loop: a domain with more nodes
-    // than one page used to be truncated to whatever the page held.
+    // A recursive CTE includes every node in the domain without pagination limits.
     const rows = this.store.all(
       `WITH RECURSIVE sub(id) AS (
          SELECT ?
@@ -1428,10 +1404,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
         return {
           ancestors: this.managementAncestors(clusterId, node.id),
           // A topology lookup normally needs path, depth and child references.
-          // Nested delegation scope repeats long objectives and acceptance
-          // criteria on every ancestor: one real Auditor fetched two 3.5 kB
-          // node details, then could not fit its validation under 8k. Keep
-          // complete scope available by id when explicitly requested.
+          // Compact references bound repeated delegation data in model context;
+          // complete scope remains available by id when explicitly requested.
           node: actor.role === 'user' || params.full === true ? node : nodeReference(node),
           transactions: pageList(transactions.items.map(transactionReference), transactions.total),
           agents: pageList(agents.map(agentReference), agentsTotal),
@@ -1557,9 +1531,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
         })
           .filter(agent => actor.role === 'user' || domain.has(agent.node_id)
             || (agent.node_id === ownerNodeId && agent.role !== 'worker'));
-        // A large subtree has many role and Worker identities. Preserve the
-        // full count and cursor, but do not deliver all of them into one 8k
-        // management context (the live root read 3.6 kB in a single query).
+        // Bound model pages while retaining exact totals and cursors. Agent
+        // references expose identity and topology without consuming the whole context.
         const agentLimit = actor.role === 'user' ? limit : Math.min(limit, 8);
         return { ...pageList(agents.slice(offset, offset + agentLimit).map(agentReference), agents.length), limit: agentLimit };
       }
@@ -1571,11 +1544,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
         return pageList(allocations.slice(offset, offset + limit), allocations.length);
       }
       case 'budgets': {
-        // A list is for choosing a spendable source, not replaying every
-        // dimension's limit/reserved/spent/available ledger. In the native
-        // recursion run a six-row page alone consumed 5.5 kB of an
-        // Orchestrator's 8k-token identity context. Keep the host's complete
-        // ledger; give a model the same scope IDs and actual available amounts.
+        // Models receive spendable scope IDs and available amounts in bounded
+        // pages. Host readers retain every dimension of the full budget ledger.
         const budgetLimit = actor.role === 'user' ? limit : Math.min(limit, 6);
         const rows = evaluateTree(this.store, clusterId)
           .filter(row => row.node_id === null || domain.has(row.node_id))
@@ -1619,9 +1589,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           })).filter(issue => !params.status || (Array.isArray(params.status)
             ? params.status.includes(issue.status) : issue.status === params.status));
         const scoped = issues.filter(issue => !issue.node_id || domain.has(issue.node_id));
-        // A real Auditor fetched nine historical and open issues as one 5.5 kB
-        // tool result and could not fit its next step under the role budget.
-        // Offer unresolved work first, with a cursor for every older verdict.
+        // Offer unresolved issues first in bounded model pages. Stable cursors
+        // keep all remaining issue records accessible without loading their evidence.
         if (actor.role !== 'user') scoped.sort((a, b) =>
           Number(b.status === 'OPEN') - Number(a.status === 'OPEN')
           || a.created - b.created || a.id.localeCompare(b.id));
@@ -1818,8 +1787,8 @@ case 'effects': {
    * tagged with the branch that produced them so a Remote consumer narrows
    * `data` instead of asserting the shape it hoped for.
    *
-   * The two business checks the removed HTTP route performed live here, so a
-   * local caller and a Remote caller are refused identically.
+   * Validate the cluster identifier and page limit for both local and Remote
+   * callers before entering the query branch.
    */
   queryCluster(id: string, what: FlowQueryKind, params: FlowQueryParams = {}): FlowQueryResult {
     const clusterId = typeof id === 'string' ? id.trim() : '';
@@ -1900,7 +1869,7 @@ case 'effects': {
         sources_captured: this.store.countSources(id),
         message_deliveries: traffic.deliveries,
         events: this.store.latestEventSeq(id),
-        // Section 19's named scale signals.
+        // Control-plane scale indicators.
         subtree_size: Object.fromEntries(subtree),
         orchestrator_context: contextByAgent,
         agent_utilization: {
@@ -1945,12 +1914,9 @@ case 'effects': {
     this.#timer = null;
     const live = [...this.#activeTurns.values()];
     for (const entry of live) entry.ac.abort(new Error('cluster runtime disposed'));
-    // The abort is asynchronous, so the finishers run *after* it: the store stays
-    // open until they have settled (a bounded wait, because a turn wedged in the
-    // host must not hold the process up) and only then is the remainder
-    // reconciled. Closing under them left leases, `RUNNING` identities and
-    // `RESERVED` requests at rest (measured on a blocked smoke: 2 leases, 2
-    // RUNNING agents, 1 RESERVED receipt).
+    // Keep the store open while asynchronous abort finishers settle, up to the
+    // disposal deadline. Reconcile any remaining leases and reservations before
+    // closing the database.
     const deadline = Promise.withResolvers<boolean>();
     const timer = setTimeout(() => deadline.resolve(false), this.config.disposeTimeoutMs);
     let settled = false;
@@ -2141,13 +2107,9 @@ case 'effects': {
       const cluster = this.store.getCluster(id);
       if (!cluster) fail('Cluster not found', 404);
       if (['COMPLETED', 'FAILED', 'CANCELLED', 'PAUSED'].includes(cluster.status)) return this.read(id, { include_events: false });
-      // A budget stop is not necessarily final: a settling request releases what it
-      // did not use, and that released capacity is what the stopped node needs
-      // (measured: a pool 252 tokens short was made whole 1,361 ms later by a
-      // settlement, while a run that returned on BLOCKED ended before it landed).
-      // So the loop keeps scheduling — which is where the resume lives — for a
-      // `BUDGET_EXHAUSTED` stop, inside its own deadline, and returns as soon as the
-      // cluster is no longer blocked. Every other stop reason is immediate.
+      // In-flight requests can release enough capacity to clear BUDGET_EXHAUSTED.
+      // Keep scheduling within this wait's deadline so reconciliation can resume
+      // the cluster. Other stop reasons return immediately.
       const blockedForBudget = cluster.status === 'BLOCKED' && this.#recoverableBudgetStop(id);
       if (cluster.status === 'BLOCKED' && !blockedForBudget) return this.read(id, { include_events: false });
       if (blockedForBudget) {
@@ -2209,11 +2171,8 @@ case 'effects': {
     if (this.#scheduling.has(id)) return;
     this.#scheduling.add(id);
     try {
-      // Repair-then-run: a node stopped for `BUDGET_EXHAUSTED` is resumed as soon
-      // as its file can pay a turn again. Balances alone were not enough — a
-      // rebalance changes numbers, while scheduling only ever selects ACTIVE
-      // nodes, so two nodes that received 120 k/12 and 40 k/4 after being blocked
-      // stayed blocked for the rest of the run and their subtrees never ran again.
+      // Restore budget-blocked nodes to ACTIVE once their request is affordable.
+      // A balance change alone cannot make a BLOCKED node schedulable.
       this.#resumeBudgetRepaired(cluster);
       this.#applyCorrectionBudgetStops(cluster);
       await this.#scheduleClusterLocked(cluster);
@@ -2266,31 +2225,19 @@ case 'effects': {
       cluster.id, type, nodeId,
     );
     /**
-     * A node is runnable again only when *both* hold:
-     *  - the request that failed is affordable now, in full; and
-     *  - something authorized actually funded it after the stop.
-     *
-     * The second half matters as much as the first: a node holding 20,000 tokens
-     * and one request that refused a 40,000-token request would pass a bare
-     * threshold and be resumed into the same refusal, over and over. A resumed node
-     * must be one whose budget was *changed* by a transfer, which in this plugin is
-     * an explicitly authorized act — never an inference from a balance.
+     * Resume only budget-blocked nodes whose failed request is fully affordable.
+     * Recheck the recorded envelope against an authorized payer and its deadline.
      */
     /**
-     * The envelope the stop was about, taken from the refusal of the *identity*
-     * that failed — never from the node's own scope, which a refusal does not name
-     * (measured: the refusals behind two blocked nodes named an agent and the
-     * compaction pool, so a node-scoped lookup found nothing and no node qualified).
+     * Read the failed identity's complete request envelope. Its payer can be
+     * an Agent or compaction pool, independently of the node's own scope.
      */
     const envelopeOf = (block: Record<string, SQLOutputValue>) => {
       const data = jsonRecordOf(JSON.parse(textField(block.data, 'event.data', 1 << 20)));
       const agentId = typeof data?.agent_id === 'string' ? data.agent_id : null;
       if (!agentId) return null;
-      // The recorded envelope is authoritative: it is what the request needed in
-      // every dimension. A refusal only names the dimension that ran out, and
-      // repairing just that one resumes a node into the same refusal (measured: a
-      // token-only repair with zero requests, and a request-limit refusal checked
-      // against a single token rather than the tokens the request would have cost).
+      // Resume requires every dimension of the recorded request envelope.
+      // The dimension named by a refusal alone cannot establish affordability.
       const recorded = jsonRecordOf(data?.envelope);
       const refusal = this.store.get(
         `SELECT data FROM events WHERE cluster_id=? AND type='budget-refused' AND json_extract(data,'$.agent_id')=? ORDER BY seq DESC LIMIT 1`,
@@ -2309,15 +2256,9 @@ case 'effects': {
       };
     };
     /**
-     * One legal payer must cover the *whole* envelope, under a live deadline. The
-     * check is *current* affordability — nothing else. Capacity can become available
-     * without any grant: a reservation that settles releases the difference between
-     * what it held and what it used (measured: a pool 252 tokens short of a request
-     * was made whole 1,361 ms later when an in-flight request settled, releasing
-     * 352 of its 15,775 reserved tokens). Requiring a transfer event would have kept
-     * that node stranded, so what the resume insists on is that the payer can pay
-     * *now* — which still refuses to resume anything whose balances are unchanged
-     * and still short.
+     * One legal payer must cover the whole envelope under a live deadline.
+     * Settlement can release unused reservations without a transfer event,
+     * so current available capacity determines whether the node can resume.
      */
     const affordable = (envelope: { readonly agentId: string; readonly tokens: number; readonly modelRequests: number; readonly toolCalls: number }) => {
       const agent = this.store.getAgent(envelope.agentId);
@@ -2468,16 +2409,9 @@ case 'effects': {
     }
 
     const rotation = this.#rotation.get(id) ?? 0;
-    // Rotation is not fairness by itself: a pass stops when the window fills, and the
-    // nodes that always have work — the root and the shallow branches — win every slot
-    // ahead of a deep node whose roles have never run at all (measured: a depth-3
-    // auditor and allocator at 0 turns with two plan audits pending, while depths 0-2
-    // had 2-3 turns each, and the run ended on the Orchestrator's escalation about
-    // exactly those undecided audits). A node none of whose roles has ever been admitted
-    // is therefore served first.
-    // Per *role*, not per node: the failed node had already taken one Orchestrator turn,
-    // so a node-level test left its zero-turn Allocator and Auditor starving behind
-    // branches that always have work.
+    // Prioritize nodes with roles that have never been admitted, then rotate.
+    // Readiness is checked per role: an admitted Orchestrator does not establish
+    // that its Allocator and Auditor have had a chance to run.
     const freshRoles = (nodeId: string) => {
       const roles: FlowAgentRole[] = [];
       for (const role of MANAGEMENT_ROLES) {
@@ -2498,14 +2432,8 @@ case 'effects': {
     const refusalsBefore = this.#refusals.get(id) ?? 0;
     let registered = 0;
 
-    // The window is shared, and it is shared *by purpose*: supervision may not
-    // consume the slots the work itself needs. A run of 26 management turns with
-    // zero Worker turns — three transactions READY with ACTIVE allocations and no
-    // dependencies, for 1067 seconds — is what "management first" costs when five
-    // management nodes each have three roles and the window is six.
-    //
-    // One slot is held back whenever a Worker is waiting to run, and the
-    // per-pass ceiling below is what lets it through.
+    // Management and Worker turns share the active window. Reserve a slot
+    // for a waiting Worker so supervision cannot consume the entire window.
     const workerWaiting = this.store.readyForWorker(id, { limit: 1 }).length > 0;
     // A one-slot window is a serialization: management work is effectively endless
     // (a role always has something to look at), so taking the slot every pass starves
@@ -2514,32 +2442,17 @@ case 'effects': {
     const lastClass = this.#lastAdmittedClass.get(id) ?? null;
     const { managementCeiling } = scheduleAdmission({ window: limits.max_active_agents, workerWaiting });
     const yieldSlotToWorker = singleSlot && workerWaiting && lastClass === 'management';
-    // The window is read live before every start. `started` is only a progress
-    // counter for the rotation below — adding it to the live count as well
-    // double-counted every turn this pass had registered and left a slot empty
-    // in each pass.
+    // Read the active count before every admission. Starts registered in this
+    // pass are already included; rotation counters must not add them again.
     for (const node of ordered) {
       if (yieldSlotToWorker) break;
-      // Two independent guards, and both are needed:
-      //  - the *window* is a hard cap on resident turns of every class together
-      //    (§9/G6: peak resident turns may never exceed `max_active_agents`), so
-      //    it is checked against the total, not against one class; and
-      //  - the class ceiling decides how much of that window management may take
-      //    without leaving a waiting Worker nothing, which is a fairness rule, not
-      //    a capacity rule.
-      // Measuring the fairness rule against the total was the earlier starvation
-      // (Workers holding every slot skipped every manager); measuring *only*
-      // against the class, as a first attempt at the fix did, admits a manager on
-      // top of a full window of Workers.
+      // The total active-turn count enforces the hard capacity limit.
+      // The management count separately enforces its class share, leaving room
+      // for a waiting Worker without excluding management behind active Workers.
       if (this.#activeTurnCount(id) >= limits.max_active_agents) break;
       if (this.#activeTurnCount(id, 'management') >= managementCeiling) break;
-      // Roles rotate per node, on actual starts: a fixed order with a tight window
-      // let the first role consume every slot while the later ones never ran at all
-      // (measured: a depth-3 Auditor still READY with zero turns and five pending
-      // notifications, while its Orchestrator had taken three turns). Round-robin
-      // starts at whatever the node admitted last.
-      // A role that has never been admitted at all goes first in this node's scan, before
-      // the rotation decides the rest.
+      // Roles with no admitted turn take priority; otherwise rotate from the
+      // node's last actual start so a tight window gives each role a turn.
       const fresh = freshRoles(node.id);
       const roleOrder = fresh.length
         ? [...fresh, ...MANAGEMENT_ROLES.filter(role => !fresh.includes(role))]
@@ -2590,9 +2503,8 @@ case 'effects': {
       if (singleSlot && workersStarted > 0) this.#lastAdmittedClass.set(id, 'worker');
     }
 
-    // Section 11's producers that only the scheduler can observe: a transaction
-    // that has not moved for too long, an identity whose provider call failed,
-    // and a load signal the Allocator must see.
+    // The scheduler produces transaction-stall, provider-failure and load
+    // notifications for the roles responsible for resolving them.
     this.#publishStaleTransactions(cluster);
     this.#publishLoad(cluster, limits);
 
@@ -2630,9 +2542,8 @@ case 'effects': {
       const nodeId = textField(row.node_id, 'transaction.node_id', 128);
       const revision = integer(row.revision, 0, Number.MAX_SAFE_INTEGER, 'transaction.revision');
       const status = textField(row.status, 'transaction.status', 128);
-      // One notification per (transaction, revision): the fact is the same on
-      // every tick, and a scan that appended an event each time wrote ten
-      // thousand rows in one stalled run.
+      // A transaction revision produces one stall notification, independently
+      // of how many scheduler ticks observe the same stalled state.
       this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, nodeId, 'auditor')?.id, {
         subject: 'transaction-stale', payload: { transaction_id: transactionId, status, stale_ms: staleMs, revision },
         dedupeKey: `stale:${transactionId}:${revision}`,
@@ -2703,9 +2614,8 @@ case 'effects': {
       for (const tx of page) {
         cursor = { priority: tx.priority, created: tx.created, id: tx.id };
         if (started >= slots) break;
-        // The window is a hard cap on resident turns of every class together
-        // (§9/G6): the pass allowance already leaves a class reserve, and this is
-        // the capacity check that no allowance may exceed.
+        // The total resident-turn count enforces the hard capacity limit,
+        // independently of the class allowance for this pass.
         if (this.#activeTurnCount(id) >= limits.max_active_agents) break;
         const allocation = this.store.activeAllocationForTransaction(tx.id);
         if (!allocation) continue;
@@ -2829,10 +2739,8 @@ case 'effects': {
       });
       return { started: false };
     }
-    // Fund the turn before it starts. A node dry in one dimension at the moment
-    // its role is due to run stops the node on budget — the case's mechanism
-    // stop — even when the cluster holds the capacity in another branch: the
-    // refusal must be a real exhaustion, not a stale partition.
+    // Fund every required dimension before starting the turn. Reclaim or
+    // transfer available capacity before classifying a genuine exhaustion.
     this.ensureTurnFunding(cluster, agent);
     const ac = new AbortController();
     this.#flowCalls.set(agent.id, 0);
@@ -2870,11 +2778,8 @@ case 'effects': {
           this.#auditCursor.set(node.id, { created: last.created, id: last.id });
         }
       } else if (this.#auditCursor.has(node.id)) {
-        // Nothing left past the cursor, and this turn is still running: the
-        // survey is over, so the next one starts from the oldest pending
-        // decision again. Without the reset an audit that arrived after the
-        // cursor advanced was never visited, and its transaction sat in
-        // VALIDATING forever.
+        // Restart the audit scan from the oldest pending decision once the current
+        // page sequence is exhausted, including audits inserted behind the cursor.
         this.#auditCursor.delete(node.id);
       }
     }
@@ -2907,9 +2812,8 @@ case 'effects': {
     const onAdmitted = () => {
       admittedThisTurn = true;
     };
-    // The host answers the flush with a boolean; a rejected flush is not a
-    // durable turn, and pretending otherwise acked deliveries that were never
-    // written to disk.
+    // A delivery is durable only when the host flush returns true.
+    // Keep rejected flushes unacknowledged so their messages can be retried.
     const onFlushed = (ok: boolean) => {
       flushedThisTurn = ok !== false;
     };
@@ -2925,11 +2829,9 @@ case 'effects': {
       let outcome: TurnOutcome | null = null;
       let error: unknown = null;
       let slot: (() => void) | null = null;
-      // The permit is taken *inside* the cleanup: a failure while acquiring it —
-      // or while collecting deliveries, or building the prompt — must still reach
-      // the finisher, which releases the lease, books the turn and hands an
-      // unanswered message back. Outside it, the closure threw before its own
-      // finisher and the message stayed consumed.
+      // Permit acquisition, delivery collection and prompt construction all
+      // belong inside the cleanup boundary. Every failure must book the turn,
+      // release its lease and return unanswered messages to the queue.
       try {
         slot = await this.acquireLlmSlot(id);
         // Delivery collection happens inside the turn: it may have to prove
@@ -2999,10 +2901,8 @@ case 'effects': {
       });
       return { started: false };
     }
-    // Fund the turn before it starts. A node dry in one dimension at the moment
-    // its role is due to run stops the node on budget — the case's mechanism
-    // stop — even when the cluster holds the capacity in another branch: the
-    // refusal must be a real exhaustion, not a stale partition.
+    // Fund every required dimension before starting the turn. Reclaim or
+    // transfer available capacity before classifying a genuine exhaustion.
     this.ensureTurnFunding(cluster, agent);
     const ac = new AbortController();
     this.#flowCalls.set(agent.id, 0);
@@ -3041,9 +2941,8 @@ case 'effects': {
         this.store.updateTransaction(tx.id, { attempts: current.attempts + 1, __bump_revision: false });
       });
     };
-    // The host answers the flush with a boolean; a rejected flush is not a
-    // durable turn, and pretending otherwise acked deliveries that were never
-    // written to disk.
+    // A delivery is durable only when the host flush returns true.
+    // Keep rejected flushes unacknowledged so their messages can be retried.
     const onFlushed = (ok: boolean) => {
       flushedThisTurn = ok !== false;
     };
@@ -3191,26 +3090,10 @@ case 'effects': {
           });
         }
         if (!progress && stagnation >= 3) {
-          // A role that cannot act because its scope has no budget left has not
-          // stagnated: naming the budget is what makes the stop diagnosable
-          // instead of looking like a planning failure.
-          // "Starved" means no scope in this identity's funding chain can pay,
-          // which is exactly what admission concluded — not that the node file is
-          // empty. A request charged to the compaction pool leaves the node's own
-          // request column at zero, and reading that as starvation stopped a node
-          // whose turns were being admitted the whole time.
-          // Classify from the refusal's own admission facts: the scope that really
-          // refused and the dimension it ran out of. Deriving "starved" from
-          // `budgetChainForAgent` was wrong twice over — that helper ignores the
-          // dimension it is asked about and normal picks the compaction pool, whose
-          // tool quota is deliberately zero, so a no-op role with ample tool quota
-          // was reported as budget-blocked.
-          // Only a *terminal* refusal for this identity, recorded since its last
-          // progress, can relabel these turns. A repaired shortfall is a different
-          // event type; a refusal from before its last productive turn is history; and
-          // with no refusal at all the stop is the stagnation this bound exists for —
-          // inferring budget failure from one row declared a query-only role
-          // exhausted while its pool was solvent and no request had been refused.
+          // Only a terminal admission refusal since this identity's last progress
+          // establishes budget starvation. Use its recorded payer and dimension;
+          // a single empty scope or a repaired shortfall does not prove exhaustion.
+          // With no qualifying refusal, the turn remains subject to stagnation limits.
           const progressSeq = this.store.get(
             `SELECT seq FROM events WHERE cluster_id=? AND type='turn-end'
               AND json_extract(data,'$.agent_id')=? AND json_extract(data,'$.progress') IN (1,'true')
@@ -3309,11 +3192,7 @@ case 'effects': {
    */
   finishWorkerTurn(cluster: ClusterRecord, agent: AgentRecord, tx: TransactionRecord, allocation: AllocationRecord, options: TurnFinishOptions): void {
     const { outcome, error, before, lease, deliveries, admitted = false, durable = false, turnSeq = null } = options;
-    // The durable counter is the source of truth, not a caller-supplied copy:
-    // the turn body passes what it read before the turn, and this is the one
-    // place that increments it, so it must also be able to read it. Counting a
-    // copy left the bound below unreachable — every start failure reported
-    // `attempt: 1` forever, and the identity was retried without limit.
+    // Carry the runtime retry count across turns for this agent identity.
     let failures = options.failures ?? this.#startFailures.get(agent.id) ?? 0;
     const leaseValid = this.leaseStillHeld(lease);
     if (!leaseValid) {
@@ -3364,10 +3243,8 @@ case 'effects': {
           // anything must not advance the counter that selects create versus
           // resume, and must not consume the transaction's attempts.
           failures = (failures ?? 0) + 1;
-          // Persisted, not merely counted: this is the map the next attempt
-          // reads, and the bound below is what stops a capability that can never
-          // be served from being retried forever. Counting a local copy left the
-          // bound unreachable — every attempt reported `attempt: 1`.
+          // Persist capability failures so the next attempt observes the retry
+          // count and the bound can stop an unserviceable capability.
           this.#startFailures.set(agent.id, failures);
           this.store.appendEvent(cluster.id, 'turn-start-failed', {
             agent_id: agent.id, role: 'worker', transaction_id: tx.id, attempt: failures,
@@ -3544,11 +3421,8 @@ case 'effects': {
   }
 
   /**
-   * Abort a turn that has been in flight far longer than any request may take.
-   * A hung turn holds its lease, its transaction (RUNNING) and a model permit;
-   * without this backstop a single stuck stream stops a transaction for the rest
-   * of the run (measured: one transaction sat RUNNING for 29 minutes while the
-   * cluster counted down to its wall deadline).
+   * Request cancellation of a turn that exceeds its lifetime bound. Resource
+   * release depends on the turn settling and running its cleanup handlers.
    */
   #abortHungTurns() {
     const cutoff = this.timestamp() - this.config.maxTurnMs;
@@ -3730,7 +3604,7 @@ case 'effects': {
     return [...this.#activeTurns.keys()];
   }
 
-  /** Permits currently held, for the concurrency gate and its regressions. */
+  /** Permits currently held by the concurrency gate. */
   llmSlotsInUse(clusterId?:string) {
     return clusterId?this.#slotsFor(clusterId).inUse:this.#llmSlots.inUse+[...this.#runLlmSlots.values()].reduce((sum,slots)=>sum+slots.inUse,0);
   }
@@ -3794,9 +3668,8 @@ case 'effects': {
   }
 
   /**
-   * Section 18's health signals, all of them *derived* from the durable ledger
-   * rather than asserted: the model supplies the judgement when it calls
-   * `evaluate_health`, never the measurement.
+   * Derive health signals from the durable ledger. The Auditor supplies its
+   * judgement through evaluate_health; measurement remains deterministic.
    */
   healthSignals(clusterId: string, { windowMs = this.config.staleMs }: { windowMs?: number } = {}): FlowHealthSignals {
     if (!Number.isFinite(windowMs) || windowMs <= 0) fail('Health evaluation window must be a finite positive number');
@@ -3876,7 +3749,7 @@ case 'effects': {
     };
   }
 
-  /** The §18 signals, projected for a prompt: the numbers, not the status table. */
+  /** Measured health signals projected for role prompts. */
   #healthDigest(clusterId: string): unknown {
     try {
       const signals = this.healthSignals(clusterId);
@@ -4445,12 +4318,8 @@ case 'effects': {
 
 
   /**
-   * Serialize a receipt body by *bounding its fields*, never by cutting the JSON.
-   *
-   * `JSON.stringify(body).slice(0, 8000)` produced malformed JSON whenever the
-   * body was longer — 17 `flow_query` receipts in one run could not be parsed at
-   * all — so a reader could no longer tell a long answer from a corrupt one. The
-   * structure is preserved and the strings inside it are truncated.
+   * Serialize receipts as valid JSON by bounding strings and collection sizes
+   * before encoding. The shape remains readable even when evidence is long.
    */
   boundReceiptBody(value: unknown, maxString = 8_000, maxItems = 50): string {
     try {
@@ -4599,15 +4468,10 @@ case 'effects': {
           this.store.now(), cluster.id,
         );
         facts.requeued = this.store.changed();
-        // Stray *capacity* from the previous process is returned to the node: the
-        // identity and concurrency reservations a dead turn held are structural,
-        // and a reservation whose turn no longer exists must not shrink the
-        // cluster. The *economic* holds are not stray: a request that was in
-        // flight (RESERVED) or whose cost is unknown keeps its tokens, and
-        // zeroing them here made an unknown-cost send spendable again — the exact
-        // capacity `releaseLlmRequest(dispatched: true)` deliberately retains.
-        // The reserved counters are therefore recomputed from the durable receipts
-        // rather than cleared.
+        // Return structural identity and concurrency reservations after process
+        // loss. Economic holds remain until their receipt is settled: RESERVED
+        // and UNKNOWN requests still own their tokens and request allowance.
+        // Recompute those counters from receipts instead of clearing them.
         this.store.run(
           `UPDATE budgets SET
              agents_reserved=0, max_active_reserved=0,
@@ -4869,11 +4733,8 @@ case 'effects': {
   recordBudgetRefusal(agent: AgentRecord | null, reason: string, facts: BudgetRefusalFacts = {}): unknown {
     if (!agent?.cluster_id) return null;
     this.#refusals.set(agent.cluster_id, (this.#refusals.get(agent.cluster_id) ?? 0) + 1);
-    // A refusal for tokens in a cluster that has less than one request's worth
-    // left anywhere is not a bookkeeping hiccup: the cluster cannot pay for its
-    // own next request, and saying so stops it — otherwise it spins until its
-    // wall deadline, refusing every request it tries (measured: a tier sat for
-    // hours with 997,670 of its 1,048,576 tokens spent and no progress).
+    // A cluster that cannot fund one complete request must stop rather than
+    // keep dispatching requests that will fail until its wall deadline.
     if (facts.dimension === 'tokens' && facts.available === 0) {
       const rollup = rollupBudgets(this.store, agent.cluster_id);
       const left = rollup.tokens.limit - rollup.tokens.reserved - rollup.tokens.spent;
@@ -4882,10 +4743,8 @@ case 'effects': {
           `BUDGET: ${String(reason).slice(0, 200)} (only ${left} tokens remain in the cluster)`, 'BUDGET_EXHAUSTED');
       }
     }
-    // A shortfall that a repair then closed is *not* a refusal: the request was
-    // admitted. Recording it as one made the acceptance classifier read a
-    // recovered request as a terminal limit (measured: twelve `budget-refused`
-    // events for one identity, all with a SETTLED receipt within 20 ms).
+    // A funded shortfall belongs to an admitted request. Record it as repaired
+    // so consumers can distinguish successful funding from a terminal refusal.
     const type = facts.terminal === false ? 'budget-shortfall' : 'budget-refused';
     return this.store.tx(() => {
       const event = this.store.appendEvent(agent.cluster_id, type, {
@@ -4998,20 +4857,12 @@ case 'effects': {
     const fresh = this.store.getBudget(nodeBudget.id) ?? fail('Budget not found', 404);
     const limits: Record<string, number> = { tokens: 0, model_requests: 0, tool_calls: 0, agents: 0, max_active_agents: 0 };
     if (role === 'worker') {
-      // A worker runs one short transaction: its grant must cover a couple of
-      // requests, never a share that would starve the long-lived roles. On
-      // this deployment a request carries 10-70k input tokens, so the token
-      // budget, not the request count, is the binding constraint.
+      // Bound each Worker's initial grant so management roles retain capacity
+      // to plan, review and close the transaction.
       const workerGrant: { tokens: number; model_requests: number; tool_calls: number } = { tokens: 65_536, model_requests: 8, tool_calls: 32 };
-      // A declared per-Worker request allowance is a ceiling on what this
-      // identity may send as *task* requests (see `countWorkerRequests`), so
-      // granting many more parks capacity the next Worker needs: measured at 64
-      // files, Workers were handed 8 requests each out of a node that holds 234,
-      // and the last 50 were born with an allocation of zero requests — they
-      // could not start. The grant is the allowance plus one working
-      // reservation: a request that is reserved and then released before
-      // dispatch still has to fit, and a compaction the summary pool cannot pay
-      // falls back here. The ordinary ceiling stays enforced per request.
+      // Grant at most the per-Worker task-request allowance plus one reservation
+      // for compaction or a send released before dispatch. The hard allowance
+      // remains enforced on every task request.
       const perWorkerAllowance = Number(this.store.getCluster(clusterId)?.limits?.worker_model_requests) || 0;
       if (perWorkerAllowance > 0) {
         workerGrant.model_requests = Math.min(workerGrant.model_requests, perWorkerAllowance + 1);
@@ -5019,34 +4870,20 @@ case 'effects': {
       for (const key of ['tokens', 'model_requests', 'tool_calls'] as const) {
         limits[key] = Math.max(1, Math.min(workerGrant[key], dimensionAvailable(fresh, key)));
       }
-      // No per-agent active-slot grant: concurrency is enforced once, by the
-      // cluster-level window, and a single agent can only run one turn at a
-      // time (`#activeTurns.has(agent.id)`). Granting a worker its own
-      // `max_active_agents` limit added no constraint and leaked the node's
-      // capacity one wave at a time, because only the node's own reservation
-      // was ever returned.
+      // Enforce concurrency at the cluster window. An Agent can hold only one
+      // active turn, so it needs no separate max_active_agents grant.
     } else {
-      // The three management roles carry the planning, allocation and audit work
-      // of the whole domain, and the node's file is the pool they draw from when
-      // their own grant runs out (`agentBudgetChain`). Their *initial* grant is a
-      // working allowance — the turns this deployment gives a role, at the cost a
-      // management request actually carries here — not a greedy quarter of the
-      // file. A quarter each drained the node before its children existed: a
-      // depth-1 node held 134,430 tokens, its three roles took them, and the two
-      // levels below it were created with 11,000 and 6,067 tokens, so the branch
-      // the case exists to exercise was born unable to run a single one of its
-      // roles' turns.
+      // Each management role receives an initial working allowance, bounded by
+      // one quarter of the node's available capacity. Further turns can draw
+      // from the node through agentBudgetChain.
       const cluster = this.store.getCluster(clusterId);
       const perTurn = Math.max(16_384, (Number(this.config?.context?.role) || 8192) * 2);
       const turns = Math.max(1, Number(cluster?.limits?.max_role_turns) || 3);
       const working = Math.min(perTurn * turns, Math.floor(dimensionAvailable(fresh, 'tokens') / 4));
       limits.tokens = Math.max(1, working);
       limits.model_requests = Math.max(1, Math.min(turns * 4, Math.floor(dimensionAvailable(fresh, 'model_requests') / 4)));
-      // Tool calls are consumed several per turn across a whole run, not three turns'
-      // worth: a role spent 62, 33, 31 and 27 of its 60-token grant while the run still
-      // had work, and every one of the 24 tool-call refusals was an agent scope spent
-      // to the last call. The grant is a working allowance for the turns this
-      // deployment actually gives a role, still bounded by a quarter of the node.
+      // Size tool grants for the role's allowed turns and bound them by a
+      // quarter of the node's available tool-call capacity.
       limits.tool_calls = Math.max(1, Math.min(turns * 20, Math.floor(dimensionAvailable(fresh, 'tool_calls') / 4)));
     }
     const budget = createBudget(this.store, {
@@ -5223,12 +5060,9 @@ case 'effects': {
     if (!agentBudget || !nodeBudget) return null;
     const wanted = positiveLedgerAmounts(amounts);
     const allowance = this.workerRequestAllowance(agent);
-    // A per-identity *request* allowance is final: a top-up must not extend it.
-    // It says nothing about tool calls, though. A Worker that has sent both of
-    // its requests still has to run the tool call that submits the result, and
-    // refusing that refill here made the last step of an otherwise finished
-    // Worker fail (measured: a Worker holding 32 tool calls, two requests sent,
-    // and a refused final submit that ended its transaction FAILED).
+    // Top-ups cannot extend a Worker's per-identity request allowance.
+    // Tool calls remain fundable so a Worker can submit its final result after
+    // using its last model request.
     const wantsRequests = Number(wanted.model_requests ?? 0) > 0;
     if (allowance !== null && wantsRequests && this.store.countWorkerRequests(cluster.id, agent.id) >= allowance) return null;
     const row = this.store.getBudget(agentBudget.id) ?? fail('Budget not found', 404);
@@ -5317,17 +5151,9 @@ case 'effects': {
     return granted;
   }
 
-  /** Move every sibling identity's unused, unreserved surplus back to its node. */
   /**
-   * Fund the compaction pool from the node lineage when the earmark cannot cover
-   * a summary request.
-   *
-   * The pool is a *share* of the cluster's budget, so a long run exhausts it
-   * while the node still holds capacity — and an unfundable compaction is an
-   * unshrinkable session (measured: the allocator's session grew to 124k and
-   * every later step was refused at the provider ceiling). Idle identities'
-   * grants are reclaimed first, because the capacity they hold is capacity the
-   * node no longer has.
+   * Fund the compaction pool's measured deficit from the root node budget.
+   * Reclaim that node's idle identity grants while retaining live reservations.
    */
   topUpCompactionPool(clusterId: string, amounts: LedgerAmounts = {}): unknown {
     const poolId = this.compactionBudgetId(clusterId);
@@ -5371,10 +5197,9 @@ case 'effects': {
    * Every idle identity's unused, unreserved grant, back to *the scope that
    * funded it*.
    *
-   * The parent check is load-bearing: this function runs while funding the
-   * cluster's compaction pool, and without it every delegated subtree's grants
-   * were swept into the root node — one subtree's capacity paying another
-   * subtree's summary. Reclamation never crosses a `parent_budget_id`.
+   * The parent check confines reclamation to identities funded by this node.
+   * Other subtrees retain their capacity; reclamation never crosses a
+   * `parent_budget_id`.
    */
   reclaimAllIdleGrants(clusterId: string, nodeBudgetId: string): Record<string, number> | null {
     const moved: Record<string, number> = {};
@@ -5403,12 +5228,8 @@ case 'effects': {
    * spent is exactly the capacity the starving identity needed.
    */
   /**
-   * Bring back the idle grants of *every* identity this node funds. Called before
-   * a node hands capacity to a child: the parent's own roles hold most of its
-   * requests while they are between turns (measured: the root node's three roles
-   * held 96, 78 and 59 requests with 27 spent between them, while the node itself
-   * refused 21 requests and two of its depth-3 children were created with 5 and 3),
-   * and that capacity is in scope for the node that granted it.
+   * Reclaim idle identity grants before this node funds a child. The capacity
+   * remains inside the granting node's domain, and live turns retain theirs.
    */
   /** Idle identities funded by one node hand their unspent, unreserved grants back to it. */
   reclaimIdleRoleGrants(cluster: ClusterRecord | string, nodeBudgetId: string): Record<string, number> | null {
@@ -5422,12 +5243,9 @@ case 'effects': {
     const moved: Record<string, number> = {};
     for (const budget of this.store.listBudgets(clusterId, { scope_kind: 'agent' })) {
       if (budget.parent_budget_id !== nodeBudgetId) continue;
-      // Idle identities only, and nothing retained. §5.6 permits reclaiming what an
-      // identity holds *and* has no live turn to spend it in — a leased identity is
-      // mid-turn, and moving its grant would take capacity from a request it is
-      // about to make. Redistributing a live turn's grant is the Allocator's
-      // explicit `rebalance_budget`, never a side effect of a repair, and no fixed
-      // floor is kept back: the repair is the gap a request actually needs.
+      // Reclaim only idle identities. Live-turn grants require an explicit
+      // Allocator rebalance; reclaiming them here could unfund an imminent request.
+      // Return the full idle grant so the request's actual gap can be funded.
       if (this.store.leaseForAgent(budget.scope_id)) continue;
       const row = this.store.getBudget(budget.id);
       if (!row) continue;
@@ -5472,12 +5290,9 @@ case 'effects': {
   returnFencedGrants(clusterId: string): Record<string, number> | null {
     const moved: Record<string, number> = {};
     for (const sibling of this.store.listBudgets(clusterId, { scope_kind: 'agent' })) {
-      // A *Worker* grant belongs to one transaction's turn; when the process
-      // dies, that worker's work is over and its grant goes home. A management
-      // role's grant is not returned: the role survives the restart and would
-      // otherwise start every dimension at zero (measured: an orchestrator with
-      // 1,285 tool calls returned to its node could not make a single tool call
-      // afterwards, and burned its whole turn budget on refusals).
+      // Worker grants belong to one transaction turn and return to their node
+      // after process loss. Management identities retain their grants because
+      // they continue after restart.
       const owner = this.store.getAgent(sibling.scope_id);
       if (!owner || owner.role !== 'worker') continue;
       if (this.store.leaseForAgent(sibling.scope_id)) continue;
@@ -5632,10 +5447,8 @@ case 'effects': {
     const recipient = agent?.id ?? this.roleAgentOf(id, node.id, role)?.id ?? null;
     const notifications: PendingAction[] = [];
     if (recipient) {
-      // Notifications *ride along* with the next turn this role starts for its
-      // own work; they never manufacture a turn. A role woken only by "the load
-      // changed" burned 107 turns in one run, each a full management request,
-      // and exhausted its turn budget without allocating anything.
+      // Queue notifications for the next useful turn. The wakes_role flag below
+      // identifies critical messages that can independently wake an idle role.
       for (const row of this.store.listInbox(id, {
         recipient, status: 'PENDING', limit: 8, priority: INBOX_PRIORITY_SUBJECTS,
       })) {
@@ -5652,9 +5465,7 @@ case 'effects': {
       }
     }
     if (role === 'orchestrator') {
-      // Each status is asked for on its own, by SQL. A node with more
-      // transactions than one page used to show the model only that page, so
-      // the work behind it was never dispatched.
+      // Query each status directly so pagination cannot hide pending work.
       for (const tx of this.store.listTransactions({ cluster_id: id, node_id: node.id, status: 'DRAFT', limit: 64 })) {
         const unanswered = this.store.openIssues(id, { transaction_id: tx.id, status: 'OPEN' })
           .find(issue => !this.issueProgressed(id, issue).progressed);
@@ -5689,11 +5500,9 @@ case 'effects': {
       }
       if (node.delegated_transaction_id) {
         const delegated = this.store.getTransaction(node.delegated_transaction_id);
-        // Submission and validation can need a parent notification. Once the
-        // delegated result is ACCEPTED, its parent already reads that durable
-        // status through aggregatableParents; offering report-to-parent on
-        // every tick made a completed child spend three idle Orchestrator turns
-        // and become BLOCKED while its Auditor was still closing health.
+        // Notify the parent while submission or validation is pending. Accepted
+        // child results are already visible through aggregatableParents and do
+        // not require additional reporting turns.
         if (delegated && ['SUBMITTED', 'VALIDATING'].includes(delegated.status)) {
           items.push({ action: 'report-to-parent', transaction_id: delegated.id, status: delegated.status });
         }
@@ -5752,20 +5561,11 @@ case 'effects': {
       if (releasable.length) items.push({ action: 'release_agent', allocations: releasable.map(a => a.id).slice(0, 64) });
       const nodeBudget = this.store.budgetForScope(id, 'node', node.id);
       {
-        // §11's load producer, made concrete: capacity out of reach of the branch
-        // that needs it is a *rebalance*, which the design gives to the Allocator.
-        // The hint must be executable by the identity that receives it, and
-        // `rebalance_budget` permits an actor to move capacity only *within its own
-        // domain* — so a subtree that is short is named to the ancestor whose
-        // allocator owns both ends, never to the short subtree's own allocator,
-        // which would get a 403 for the source it was told to use.
+        // A rebalance hint must name an Allocator whose domain owns both ends.
+        // Capacity outside the requesting subtree belongs to an ancestor's decision.
         const within = this.store.nodesInSubtree(id, node.id).map(entry => entry.id);
-        // Idle capacity is not only on node scopes: the roles of a rich node hold
-        // their grants, and that is exactly where it sat when a child branch was
-        // refused — measured: the root node's three roles held 96, 78 and 59
-        // requests with 26, 19 and 18 spent, while a depth-1 node was refused at
-        // 4/4. Naming those grants as sources is what makes the hint worth acting
-        // on; the Allocator still decides.
+        // Include idle role grants as candidate sources as well as node scopes.
+        // The responsible Allocator decides whether to move the capacity.
         const budgets = new Map<string, BudgetRowWithNode>();
         for (const row of this.store.listBudgets(id, {})) {
           // Only scopes this allocator owns: its own node and the subtree below.
@@ -5777,11 +5577,8 @@ case 'effects': {
             if (agent && within.includes(agent.node_id)) budgets.set(row.scope_id, { ...row, via_node_id: agent.node_id });
           }
         }
-        // Every dimension a role spends, tool calls included: a node can be out of
-        // tools while its tokens and requests are untouched (measured: 35 tool-call
-        // refusals across five identities, with 7,700 tool-call quota unspent
-        // cluster-wide), and a hint that ignores the exhausted dimension cannot be
-        // acted on.
+        // Include every spendable dimension so a tool-call shortfall is visible
+        // even when the node has ample tokens and model requests.
         const headroomOf = (row: BudgetRowWithNode): BudgetHeadroom => ({
           scope_kind: row.scope_kind === 'agent' ? 'agent' : 'node', scope_id: row.scope_id,
           node_id: row.node_id ?? row.via_node_id ?? null,
@@ -5893,11 +5690,8 @@ case 'effects': {
         }
       }
       for (const audit of pending) {
-        // The facts the verdict is *about*, carried with the action: a plan audit that
-        // arrives without its transaction's criteria invites the Auditor to assume there
-        // are none — measured: an issue claiming `acceptance_criteria is empty` for a
-        // transaction that carries two, followed by the model's own retraction. The item
-        // names what is being judged, not only where to look.
+        // Carry the transaction's actual acceptance criteria with each audit
+        // action so the verdict refers to the exact contract being reviewed.
         const subject = audit.transaction_id === null ? null : this.store.getTransaction(audit.transaction_id);
         items.push({
           action: audit.kind === 'plan' ? 'inspect_plan' : 'inspect_validation',
@@ -6021,35 +5815,18 @@ case 'effects': {
         });
       }
     }
-    // Notifications ride along with work rather than replacing it — an inbox-only
-    // turn manufactured 107 Allocator turns in one run — with one exception: a
-    // *critical* message is governance work, and an otherwise-idle role must
-    // still be woken to handle and consume it. The noisy subjects (`load-changed`,
-    // the context notices) are coalesced at their producer and never wake a role
-    // on their own.
+    // Notifications accompany pending work. Only critical messages wake an
+    // otherwise idle role; load and context notices are coalesced by producers.
     if (items.length) return [...items, ...notifications];
     const critical = notifications.filter(item => item.wakes_role);
     return critical;
   }
 
-  /**
-   * Open issues that have something to verify: the transaction they name made
-   * durable progress past the revision the issue was raised against. An issue
-   * nobody has answered yet is waiting for the Orchestrator, not for the Auditor.
-   */
+  /** Offer actionable review candidates, including one review of a newly raised issue. */
   #issuesAwaitingVerdict(clusterId: string, nodeId: string, agent: AgentRecord | null = null): readonly (IssueRecord & { progressed: boolean })[] {
-    // Every OPEN issue is a candidate verdict, with a hint about which verdict the state
-    // supports: a correction that moved the transaction can be verified, while an issue
-    // *nothing* has changed for may still be dismissed when the Auditor re-checks and finds
-    // no defect. Filtering the unprogressed ones out entirely made the dismissal
-    // unreachable — the Auditor had no work for the issue it had raised in error, and its
-    // only exit was the escalation that stopped the domain.
-    //
-    // The unprogressed candidate is *one-shot*, though: it is offered while the issue is
-    // newer than this Auditor's last turn, so a genuine issue nothing has changed for does
-    // not queue an endless stream of Auditor turns (which would burn its turn budget and
-    // stop the node for stagnation). A repair re-arms it through the ordinary
-    // `progressed` path.
+    // Open issues can be verified after correction or dismissed on contrary
+    // evidence. Offer an unchanged issue once, after it is raised; durable
+    // progress makes it eligible again without scheduling idle review loops.
     const lastTurnSeq = agent ? Number(this.store.get(
       `SELECT MAX(seq) AS seq FROM events WHERE cluster_id=? AND type='turn-start'
         AND json_extract(data,'$.agent_id')=?`, clusterId, agent.id)?.seq ?? 0) : 0;
@@ -6075,30 +5852,15 @@ case 'effects': {
   }
 
   /**
-   * Whether the issue's transaction made durable progress past the revision the
-   * issue was raised against — the one thing a verdict can be about.
-   *
-   * Two corrections are real, and the predicate has to recognise both or a
-   * fulfilled request becomes unverifiable:
-   *
-   * * a **plan** correction: the transaction was adjusted at a later revision;
-   * * a **revalidation**: `validate` recorded a new validation at a later
-   *   result revision (`request_revalidation → validate` never emits
-   *   `transaction-adjusted`, so reading only that left the Auditor unable to
-   *   close the very issue the re-run answered).
-   *
-   * `issue.corrections` is deliberately not evidence: it advances when a verdict
-   * *fails*.
+   * Compare the issue with later durable plan adjustments and validation
+   * result revisions. issue.corrections counts failed verdicts and cannot
+   * itself establish progress.
    */
   issueProgressed(clusterId: string, issue: IssueRecord, { since = 'reviewed' }: { since?: 'raised' | 'reviewed' } = {}): IssueProgress {
     const target = Number(issue.target_revision ?? 0);
-    // Each verdict binds to the revision it reviews: `reviewed_revision` is written when a
-    // failed verdict charges a round, so reviewing the *same* correction twice costs
-    // nothing and a second charge needs a second repair. Without it, one adjustment
-    // followed by two rejection calls spent both rounds and blocked the node although
-    // only one repair had been attempted.
-    // Closing a round needs only that *something* changed since the issue was raised;
-    // charging another round needs a correction later than the one already reviewed.
+    // A closing verdict needs progress since the issue was raised. A failed
+    // verdict charges a round only for a revision later than reviewed_revision,
+    // so repeated review of the same correction cannot consume another round.
     const reviewed = Number(issue.reviewed_revision ?? 0);
     const lowest = since === 'raised' ? target : Math.max(target, reviewed);
     const adjustment = this.store.get(
@@ -6109,10 +5871,8 @@ case 'effects': {
       "SELECT MAX(CAST(json_extract(data,'$.result_revision') AS INTEGER)) AS revision FROM events WHERE cluster_id=? AND type='validation-proposed' AND json_extract(data,'$.transaction_id')=?",
       clusterId, issue.transaction_id,
     );
-    // The *latest* eligible revision across both streams: returning on the adjustment
-    // first recorded a lower revision, and the later validation — which already existed
-    // before the first verdict — was then discovered on the second call and charged a
-    // round with no intervening work.
+    // Compare the latest adjustment and validation together so each durable
+    // correction revision can consume at most one review round.
     const adjusted = Number(adjustment?.revision ?? 0);
     const revalidated = Number(validation?.revision ?? 0);
     const latest = Math.max(adjusted, revalidated);
@@ -6130,11 +5890,8 @@ case 'effects': {
   #refusals = new Map();
 
   #rolePrompt(cluster: ClusterRecord, node: NodeRecord, agent: AgentRecord, role: FlowAgentRole, pending: readonly PendingAction[]): string {
-    // The prompt carries *references* and the actions to take, never the whole
-    // tree: a management session that inlines every transaction and every
-    // budget row each turn is what made one orchestrator turn cost tens of
-    // thousands of tokens. The model can read any of it on demand with
-    // `flow_query`.
+    // Prompts carry pending actions and references. Models load full evidence
+    // through flow_query when needed, keeping each management turn bounded.
     const statusCounts = Object.fromEntries(
       this.store.countTransactionsByStatus(cluster.id, { nodeId: node.id }).map(row => [row.status, Number(row.c)]),
     );
@@ -6309,9 +6066,8 @@ case 'effects': {
       const corrective = new Set(['request_replan', 'revise-plan', 'escalate']);
       const matches = pendingRefusals.filter(entry => {
         if (!corrective.has(action)) return false;
-        // Either target closes it: a replan carries the transaction, an escalation
-        // carries the node, and requiring the transaction first made the node-level
-        // escalation (which returns no transaction id) match nothing.
+        // Match either the transaction carried by a replan or the node carried
+        // by an escalation; node-level actions need no transaction identifier.
         const targetsTransaction = Boolean(entry.transaction_id)
           && (entry.transaction_id === result.transaction_id || entry.transaction_id === params.transaction_id);
         const targetsNode = Boolean(entry.node_id)
@@ -6542,12 +6298,8 @@ case 'effects': {
     if (total === 0) return;
     const accepted = this.store.countTransactions(clusterId, { parent_transaction_id: null, status: ['ACCEPTED'] });
     if (accepted === total) {
-      // Not while a management turn is still running: the roles' closing acts
-      // belong to those turns, and completing the cluster under them is what left
-      // a finished run with unbooked turns and no `turn-end` record (measured:
-      // a smoke run reported 0 management role turns while its Auditor had
-      // approved both plans and both results were accepted). The next pass
-      // retries.
+      // Finalization waits for management turns to finish and book their own
+      // closing actions. The next scheduling pass retries.
       if (root?.status !== 'COMPLETED') return;
       if (this.#activeTurns.size > 0 && this.#activeTurnsForCluster(clusterId)) return;
       this.store.tx(() => {
@@ -6574,7 +6326,6 @@ case 'effects': {
     }
   }
 
-  /** The three finishing acts of one management node, then its COMPLETED state. */
   /** Whether any live turn belongs to this cluster. */
   #activeTurnsForCluster(clusterId: string): boolean {
     for (const agentId of this.#activeTurns.keys()) {
@@ -6585,15 +6336,8 @@ case 'effects': {
   }
 
   /**
-   * Book a finished turn exactly once.
-   *
-   * A node that closes while a role is mid-turn books that turn itself (see
-   * `#completeManagementNode`), because the turn's own finisher may not get to
-   * run before the cluster is torn down — and an unbooked turn is a turn whose
-   * session the next turn would treat as a first turn. The sequence number is
-   * what makes the two paths idempotent: a turn's own sequence is
-   * `agent.turns + 1` when it starts, so a row already at that count has been
-   * booked.
+   * Compute the finished-turn count from the stored count and supplied sequence.
+   * A positive turnSeq advances to their maximum; otherwise increment once.
    */
   #bookTurn(agent: AgentRecord, turnSeq: number | null, fallback: number): number {
     const current = this.store.getAgent(agent.id);
@@ -6630,14 +6374,9 @@ case 'effects': {
       // owes a report: finishing the node now would hide unfinished work.
       if (delegated && !['ACCEPTED', 'CANCELLED', 'SUPERSEDED'].includes(delegated.status)) return;
     }
-    // The node's own roles finish first. Their closing acts are *theirs* (the
-    // Allocator returns capacity, the Auditor evaluates, the Orchestrator
-    // aggregates), so a node that closed while one of them was mid-turn either
-    // aborted that act or cut it off at teardown — measured: a smoke run whose
-    // cluster completed mid-turn recorded no management `turn-end` at all, and
-    // the roles' own turn counts stayed zero. Returning here leaves the cluster
-    // running; the next scheduling pass retries (a hung turn is still bounded by
-    // `#abortHungTurns`).
+    // Wait for the node's roles to finish their closing actions: capacity
+    // return, health evaluation and result aggregation. The next scheduling
+    // pass retries; #abortHungTurns still bounds stalled turns.
     const managementRoles: readonly FlowAgentRole[] = ['orchestrator', 'allocator', 'auditor'];
     const liveRoles = managementRoles
       .map(role => this.roleAgentOf(cluster.id, node.id, role))
@@ -6689,11 +6428,8 @@ case 'effects': {
       for (const role of managementRoles) {
         const roleAgent = this.roleAgentOf(cluster.id, node.id, role);
         if (!roleAgent) continue;
-        // A role that is mid-turn when its node closes is aborted *and*
-        // terminated: the abort lets the turn's own finisher book it (the
-        // identity keeps its status), and the termination is what stops a
-        // finished cluster from hosting live identities. Without the abort the
-        // turn was simply cut off at shutdown and never counted.
+        // Live role turns have settled before closeout reaches this point.
+        // Preserve their completed outcome and prevent further admission.
         this.store.recordTeamEnd(roleAgent, 'COMPLETED');
         this.store.updateAgent(roleAgent.id, { status: 'TERMINATED' });
       }
@@ -6804,30 +6540,12 @@ case 'effects': {
 // ------------------------------------------------------------------ helpers
 
 
+/** Reserve space for a waiting Worker while management turns supervise the run. */
 /**
- * How the active window is shared between supervision and work.
- *
- * A Worker waiting to run holds one slot back from the management roles; without
- * that, five management nodes with three roles each saturate a six-slot window and
- * the work never runs (measured: 26 management turns, three transactions READY
- * with ACTIVE allocations and no dependencies, and **zero** Worker turns in 1067
- * seconds). Workers then take what is left — never a negative or reserved slot.
- */
-/**
- * How one scheduling pass shares the concurrency window between the two classes
- * of turn. Both directions of starvation are real and were measured:
- *
- *  - supervision filling the window left a waiting Worker nothing to run in
- *    (zero Worker turns in a 1067-second run), and
- *  - Workers filling it left management nothing to run in: with five active
- *    Workers and a sixth waiting, counting the ceiling against *all* live turns
- *    skipped every pending management role on every pass, for as long as the
- *    Worker queue stayed populated.
- *
- * So the ceiling is measured against the turns it governs — management-active
- * turns — while the Worker allowance keeps one slot back only when a management
- * turn is *owed and none is running*. A class that is already running does not
- * need an extra reservation, and one that is not owed does not take one.
+ * Share one scheduling window between management and Worker turns.
+ * Management uses a class ceiling. Workers reserve a slot only when a
+ * management turn is owed and none is running, avoiding an unused reservation
+ * for a class already making progress or with no pending work.
  */
 export function scheduleAdmission({
   window, active = 0, workerWaiting = false,
@@ -6841,13 +6559,8 @@ export function scheduleAdmission({
 }) {
   const total = Number.isFinite(window) && window > 0 ? Math.floor(window) : 0;
   const live = Math.max(0, Math.min(active, total));
-  // A one-slot window is the case that broke this: `total - 1` for management and
-  // `total - live - 1` for workers both came out zero, so neither class could ever
-  // start (measured: `max_active_agents: 1` at three points in one run, with
-  // management work owed and a Worker ready). A single slot goes to the class that is
-  // owed it — management first, because its turns are what dispatch the rest — and
-  // the reservation is only ever taken out of a window that has more than one slot to
-  // share.
+  // A single slot serializes the classes. Reserve capacity for another
+  // class only when the window has more than one slot to share.
   const managementCeiling = total <= 1 ? total : Math.max(0, total - (workerWaiting ? 1 : 0));
   const reserveForManagement = Boolean(managementPending) && managementActive === 0 && total > 1;
   const workerSlots = Math.max(0, total - live - (reserveForManagement ? 1 : 0));

@@ -1,25 +1,17 @@
 /**
  * The plugin's single failure vocabulary.
  *
- * Cluster rejections are business answers, not defects: every command path,
- * tool call, local caller and Remote endpoint fails through {@link fail}, which
- * throws the one `RemoteError` the Gateway already knows how to carry. The
- * former per-domain `StoreError` (and the `store`/`protocol` re-exports of
- * `fail`) is gone: a caller imports this module directly, and the 400/403/404/409
- * distinction lives in `details.status` instead of an ad-hoc `error.status`.
- *
- * This module is Client-safe on purpose: the browser panel validates form input
- * with the same helpers that refuse a command on the host.
+ * Command paths, tools, local callers and Remote endpoints reject operations
+ * through {@link fail}. The Gateway carries the shared `RemoteError` and its
+ * business status in `details.status`. This module is safe for Client imports.
  */
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
     /**
-     * A cluster command was refused. `status` preserves the four business
-     * meanings the previous local error carried: 400 malformed or out-of-range
-     * input, 403 an actor or domain the caller may not touch, 404 an unknown
-     * identity, 409 a state conflict (a fenced turn, a terminal transition).
+     * A refused cluster command: 400 malformed or out-of-range input,
+     * 403 unauthorized actor or domain, 404 unknown identity, or 409 state conflict.
      */
     'flow/rejected': { readonly status: number }
   }

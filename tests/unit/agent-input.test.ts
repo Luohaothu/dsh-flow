@@ -37,7 +37,7 @@ test('first task remains user input on empty resume; later scheduling retains it
   assert.equal(host.lastTurn?.prompt?.source.kind, 'flow', 'resumed scheduling is not attributed to the human');
 });
 
-test('team communication projection preserves explicit categories and falls back for legacy rows', async t => {
+test('team communication projection preserves explicit categories and defaults unclassified messages to discussion', async t => {
   const runtime = new ClusterRuntime(new Context(), { path: ':memory:', autoTick: false });
   t.after(() => runtime.dispose());
   const team = runtime.startTeam('main', 'classified-team', '分类消息', '/tmp');
@@ -47,11 +47,11 @@ test('team communication projection preserves explicit categories and falls back
       kind: 'direct', content: { category, text: category } });
     runtime.store.insertRecipient(category, lead.id);
   }
-  runtime.store.insertMessage({ id: 'legacy', cluster_id: team.cluster.id, from_agent: null, from_node: lead.node_id,
-    kind: 'direct', content: { text: 'older message' } });
-  runtime.store.insertRecipient('legacy', lead.id);
+  runtime.store.insertMessage({ id: 'unclassified', cluster_id: team.cluster.id, from_agent: null, from_node: lead.node_id,
+    kind: 'direct', content: { text: 'unclassified message' } });
+  runtime.store.insertRecipient('unclassified', lead.id);
   const rows = runtime.teamRead('main', team.cluster.id).communications;
   assert.equal(rows.length, 9);
   for (const category of COMMUNICATION_CATEGORIES) assert.equal(rows.find(row => row.id.startsWith(`${category}:`))?.category, category);
-  assert.equal(rows.find(row => row.id.startsWith('legacy:'))?.category, 'discussion');
+  assert.equal(rows.find(row => row.id.startsWith('unclassified:'))?.category, 'discussion');
 });

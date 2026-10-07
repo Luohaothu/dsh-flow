@@ -51,8 +51,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();

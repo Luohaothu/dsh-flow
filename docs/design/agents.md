@@ -2,7 +2,7 @@
 
 智能体集群由四类角色协作完成任务：**编排智能体负责规划与验收，资源分配智能体负责执行资源，审计智能体负责独立监督，执行智能体负责具体执行**。前三类角色共同组成管理节点，执行智能体位于管理树的叶子节点。节点与智能体身份的区别见[层次化智能体结构](/hierarchy)。
 
-本页介绍各类角色的职责、决策权限和生命周期。图示说明设计中的逻辑关系，部分中间状态在当前实现中已合并或省略，详见文末。初次使用可先阅读[快速上手](/quick-start)，模型、能力和执行参数见[智能体配置参数](/configuration/agents)。
+本页介绍各类角色的职责、决策权限和生命周期。身份状态、执行结果与界面状态分别说明，避免把一轮执行结束等同于任务验收。初次使用可先阅读[快速上手](/quick-start)，模型、能力和执行参数见[智能体配置参数](/configuration/agents)。
 
 ## 四类角色
 
@@ -70,75 +70,50 @@ flowchart TB
 | 本管理域无法满足上级要求 | 编排智能体将目标或范围问题提交上级处理；资源分配智能体说明资源缺口；审计智能体提供监督证据 |
 | 根节点无法解决冲突 | 请求用户或宿主介入，并记录阻塞原因；根节点没有可继续上报的父节点 |
 
-## 执行智能体状态机
+## 执行身份与显示状态
 
 ```mermaid
-%%{init: {"state": {"rankSpacing": 80, "nodeSpacing": 70}}}%%
 stateDiagram-v2
-    state "已创建" as CREATED
-    state "就绪" as READY
+    state "待命" as READY
     state "执行中" as RUNNING
-    state "等待事件" as WAITING
     state "受阻" as BLOCKED
     state "已暂停" as PAUSED
-    state "本次执行完成" as COMPLETED
-    state "执行失败" as FAILED
-    state "身份已终止" as TERMINATED
-    [*] --> CREATED
-    CREATED --> READY: 初始化完成
-    READY --> RUNNING: 获准执行
-    RUNNING --> WAITING: 等待
-    WAITING --> READY: 事件就绪
-    RUNNING --> BLOCKED: 需干预
-    BLOCKED --> READY: 解除阻碍
-    RUNNING --> PAUSED: 安全暂停
-    PAUSED --> READY: 获准恢复
-    RUNNING --> COMPLETED: 结束并结算
-    RUNNING --> FAILED: 执行失败
-    FAILED --> READY: 获准重试
-    COMPLETED --> READY: 重新分配
-    COMPLETED --> TERMINATED: 回收身份
-    FAILED --> TERMINATED: 放弃并回收
+    state "已回收" as TERMINATED
+    [*] --> READY: 创建身份
+    READY --> RUNNING: 取得有效分配与租约
+    RUNNING --> READY: 本轮结束并结算
+    RUNNING --> BLOCKED: 需要干预
+    BLOCKED --> READY: 修复并重新检查
+    READY --> PAUSED: 暂停团队
+    RUNNING --> PAUSED: 暂停团队
+    PAUSED --> READY: 恢复团队
+    READY --> TERMINATED: 释放身份
     TERMINATED --> [*]
 ```
 
-图中展示的是逻辑生命周期，`WAITING` 不是完成前必须经过的状态。三类暂停推进的情况需要区分：
+图中展示常规执行与控制路径。角色身份创建后为 `READY`，每轮执行由有效租约驱动；正常结束并结算后回到 `READY`，回收后为 `TERMINATED`。阻塞、暂停和回收还会协调正在退出的轮次，不能只修改一个显示标记。
 
-- `WAITING`：等待预期会发生的外部事件，通常可由事件自动唤醒。
-- `BLOCKED`：缺少继续执行所需条件，需要角色或外部责任方采取行动。
-- `PAUSED`：用户或管理者主动要求停止推进，必须经过明确恢复动作。
+团队界面的 `waiting_user`、`waiting_agent`、`completed` 等状态来自任务结果、待处理消息与运行记录的投影。它们与数据库中的身份状态分别建模：等待用户意味着需要用户答复，等待其他智能体意味着依赖执行或审查；已回收意味着不再接受新的输入。工作完成的记录在回收后仍保留。
 
-`COMPLETED` 与 `FAILED` 描述当前执行的结果，智能体身份仍可复用；`TERMINATED` 才表示该身份不能再次运行。复用前，必须释放旧分配，隔离不适用的上下文，确认没有活跃租约，并重新授权。取消执行时，也要先结束正在进行的工具调用，记录能够确认的外部变更，再回收资源。管理角色同样具有执行状态，但一轮执行结束并不代表所在管理节点已完成交付。
-
-任务单元、智能体和管理节点不能共用一个“完成”标志：执行智能体 `COMPLETED` 表示当前执行结束；[任务单元 `ACCEPTED`](/dispatch#事务状态机) 表示结果经过验收与独立复核；[管理节点 `COMPLETED`](/hierarchy#管理节点如何收敛) 表示本管理域已完成交付与收尾。
+任务单元 `ACCEPTED` 表示结果经过验收与独立复核；管理节点 `COMPLETED` 表示本管理域已完成交付与收尾。执行轮次正常结束并不自动建立这两种结论。未回收成员的文本续聊仍受团队终态、执行分配、预算和调度规则约束，详见[主会话与团队界面](/development/interface)。
 
 ## 审计智能体的纠正闭环
 
-下图说明监督问题从发现到解决或终止的处理过程。图中的状态用于说明逻辑流程，不要求与数据库中的状态枚举同名。
+纠正项记录受影响任务、目标版本、严重程度、证据和需要完成的修改。审计智能体通过 `verify_correction` 核对新证据，结果保存在同一纠正项中。
 
 ```mermaid
-%%{init: {"state": {"rankSpacing": 100, "nodeSpacing": 70}}}%%
-stateDiagram-v2
-    state "待处理" as Open
-    state "纠正中" as Correcting
-    state "复核中" as Verifying
-    state "已解决" as Resolved
-    state "已提交上级" as Escalated
-    state "已关闭" as Closed
-    [*] --> Open: 审计智能体发现问题
-    Open --> Correcting: 编排智能体接收要求
-    Correcting --> Verifying: 提交新证据
-    Verifying --> Resolved: 审计智能体确认修复
-    Verifying --> Correcting: 可继续纠正
-    Open --> Escalated: 严重问题或超时
-    Correcting --> Escalated: 超出限制，提交上级
-    Escalated --> Correcting: 上级给出处置
-    Escalated --> Closed: 上级终止并记录
-    Resolved --> [*]
-    Closed --> [*]
+flowchart TD
+    Open["OPEN：待纠正"] --> Change["编排调整、重新分配或结果重验收"]
+    Change --> Verify["审计智能体核对新证据"]
+    Verify -->|满足纠正要求| Corrected["CORRECTED：已纠正"]
+    Verify -->|仍未满足且次数可用| Open
+    Verify -->|耗尽纠正次数| Escalated["ESCALATED：升级并阻塞"]
+    Open -->|证据证明问题不成立| Dismissed["DISMISSED：撤回"]
 ```
 
-纠正请求应写明问题、证据、受影响的任务单元、需要修改的行为以及复核条件。编排智能体需要提供实际修复证据，仅声明“已修改计划”并不足够。审计智能体应明确指出问题，不能反复要求重新规划却不说明原因。系统应允许配置重试次数、纠正时限和提交上级处理的条件，避免两类智能体无限往复。非根节点将无法解决的问题提交父节点，根节点则请求用户或宿主介入。
+没有新的计划、验收或执行证据时，运行时拒绝把同一内容当作新一轮纠正。若问题源于执行智能体提交的不完整结果，单纯修改计划不足以确认纠正，需要新的分配或结果证据。撤回也必须提供证据，已确认的未完成执行或被拒绝写入不能仅凭解释消除。
+
+`max_corrections` 限制纠正次数；达到上限后，相关管理域或集群受阻，并保留未解决的问题。编排智能体、资源分配智能体和审计智能体分别在自身权限内处理，不以反复声明已修改替代实际检查。
 
 ## 编排智能体的履职评价维度
 
@@ -157,8 +132,6 @@ stateDiagram-v2
 
 履职评价应说明采用的记录、评价时间范围和判定依据，并支持追溯。缺少证据时应标为“未知”，不能用一个总分掩盖尚未解决的关键问题。
 
-## 当前实现与开发入口
+## 开发入口
 
-当前实现中，执行智能体创建后直接进入 `READY`，一轮执行正常结束后通常回到 `READY`，释放身份后进入 `TERMINATED`。主流程不会经过图示中的 `CREATED`、`WAITING`、`COMPLETED`，这些逻辑状态不应被当作当前数据库必然出现的值。
-
-设计中的细粒度监督动作不一定逐个开放为工具，一些审查合并为 `inspect_plan`。完整动作语义与责任范围见[设计动作索引](/development/action-catalog)，实际工具参数见 [API 手册](/development/api)，状态及能力差异见 [dsh 兼容性](/development/compatibility)，代码定位见[代码结构](/development/code-structure)。
+规划监督通过 `inspect_plan` 记录检查与结论，结果通过 `inspect_validation` 完成版本绑定的独立复核。角色动作和责任范围见[动作索引](/development/action-catalog)，实际工具参数见 [API 手册](/development/api)，代码定位见[代码结构](/development/code-structure)。

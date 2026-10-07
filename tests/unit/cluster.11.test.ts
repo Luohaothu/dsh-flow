@@ -48,8 +48,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -738,8 +737,7 @@ test('a turn that takes up a refusal acknowledges it only when its action commit
   // in a fake host, so the tool call itself belongs to the live case; what is under
   // test here is the acknowledgement rule, driven through the real command path.)
   // An unrelated command from the same identity — approving another plan — is not a
-  // correction and must not acknowledge anything (it used to, because it returns a
-  // transaction id).
+  // correction and must not acknowledge it, even when it returns a transaction id.
   const other = command(runtime, orchestrator, 'create_transaction', {
     objective: 'an unrelated branch', acceptance_criteria: ['x'],
   });

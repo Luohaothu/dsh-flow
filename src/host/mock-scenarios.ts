@@ -77,10 +77,8 @@ export function checkpointFor(classified: MockRequestClassification | null): str
   const transactionId = classified?.transactionId ?? null;
   const objective = classified?.objective ?? null;
   const digest = classified?.digest ?? null;
-  // Only what the next step of this turn needs. Carrying the whole digest made
-  // the compacted session as large as the region it replaced — at a 64-file
-  // tier the hidden prompt alone put the identity back over its own budget — so
-  // the long `recent` transaction list is dropped and the rest is kept verbatim.
+  // Keep only the next step's domain state. Exclude the long `recent` list
+  // so the checkpoint remains within the identity's context budget.
   const carried = digest ? {
     ...(digest.cluster ? { cluster: { id: asRecord(digest.cluster)?.id ?? null, status: asRecord(digest.cluster)?.status ?? null } } : {}),
     ...(digest.node ? { node: digest.node } : {}),
@@ -206,10 +204,8 @@ function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext)
     case 'dispatch':
     case 'replan-or-redispatch':
       // A node-level dispatch covers every DRAFT transaction it owns, so the
-      // whole tier becomes READY in one turn instead of one per transaction.
-      // Serialising the frontier also serialises the ladder: measured, a
-      // turn-per-transaction dispatch left one Worker running at a time and
-      // exhausted the tier's request budget before the last files were read.
+      // whole tier becomes READY in one turn, preserving request capacity
+      // and making independent Workers available for concurrent scheduling.
       return call('flow_transaction', {
         action: 'dispatch',
         params: { node_id: request.classified.nodeId, limit: 64 },
@@ -325,21 +321,19 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
   // but what the node still owes — every remaining Worker needs a couple of
   // requests and its designed tool-call allowance — so a node that can fill the
   // window but not the work behind it is topped up before its Workers are born
-  // with an allowance of zero. At 64 files this is the dimension that binds: the
-  // node spent its whole request share while its tool calls were untouched.
+  // with an allowance of zero. Request capacity bounds this allocation batch.
   const owed = Number(actions.find(entry => entry.action === 'allocate_agent')?.unallocated_total ?? frontier);
   // A Worker is funded from the node for its whole allowance, so the node must
   // be able to pay for every Worker in the batch. Allocating more than it can
   // fund leaves the last Workers of the wave with an allowance of zero — they
   // cannot send even their first request, their turns fail, and the transaction
   // ends FAILED. The batch is therefore sized by what the node can actually
-  // cover, and a node that can cover nothing is topped up first; a turn that
-  // allocated work it could not fund used to burn the whole tier.
+  // cover, and a node that can cover nothing is topped up first.
   const perWorkerRequests = numberOf(asRecord(ctx.limits)?.worker_model_requests) || 8;
   // Only requests bound the batch: a Worker's tool-call grant is generous and
   // its unspent part returns to the node on release, while a Worker with no
-  // requests cannot start at all. Sizing by tool calls split the ladder into
-  // waves of two and spent the tier's own request budget on allocation turns.
+  // requests cannot start at all. The batch must preserve enough requests
+  // for the allocation turns themselves.
   const affordable = Number.isFinite(nodeRequests)
     ? Math.floor(nodeRequests / perWorkerRequests)
     : Infinity;
@@ -897,9 +891,8 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
     auditor(request, item) {
       // Every decision here is bound to evidence the fixture itself observed:
       // a Worker that submitted a result it marked incomplete, and a *later*
-      // submission for the same transaction. Deciding from the objective text or
-      // from "the plan changed" is what produced a rejected good result and an
-      // issue verified before any replacement work existed.
+      // submission for the same transaction. Neither objective text nor a plan
+      // edit proves that corrective work completed.
       const txKey = item.transaction_id;
       const submissions = state.submissions.get(txKey) ?? [];
       // A `flow_query what:"transaction"` answer, when this step just made one:
@@ -1300,7 +1293,7 @@ export function buildScenario({
     name: `mock:${caseId}`,
     respond(request) {
       const classified = request.classified;
-      // Initial Flow tasks now use native user provenance, which also enables
+      // Initial Flow tasks use native user provenance, which also enables
       // the host's ordinary first-prompt session-title provider.
       if (classified.kind === 'unknown' && classified.userText.startsWith('Generate the session title from this JSON array of human messages:\n')) {
         return say('原生任务会话');

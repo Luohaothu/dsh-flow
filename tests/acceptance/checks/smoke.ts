@@ -133,9 +133,8 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
 
   // The independent gate is the *result* gate: every acceptance must be an
   // Auditor decision, evidenced by an approved validation audit for a transaction.
-  // Plan audits are supervision (§7.1): the Auditor may approve, reject, or leave
-  // one undecided while the work runs, and requiring an approval for every plan
-  // measured the model's eagerness rather than the mechanism.
+  // Plan audits provide supervision: the Auditor may approve, reject, or leave
+  // one undecided while the work runs. Acceptance requires validation approval.
   const requested = events.filter(event => event.type === 'dispatched' && event.data.audit_id).length;
   const acceptedEvents = events.filter(event => event.type === 'result-accepted').length;
   const validationApprovals = (ledger.audits ?? []).filter(row => row.kind === 'validation' && row.decision === 'APPROVED').reduce((sum, row) => sum + Number(row.c), 0);
@@ -143,10 +142,10 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
     requested >= transactions.length && acceptedEvents >= transactions.length && validationApprovals >= transactions.length,
     `${requested} plan audits requested, ${validationApprovals} approved validation audits, ${acceptedEvents} accepted results for ${transactions.length} transactions`));
 
-  // §9's G1 requirements, checked by name rather than left implicit.
+  // Successful smoke execution cannot withhold a Worker result.
   const withheld = events.filter(event => event.type === 'result-withheld').length;
   checks.push(check('no-result-withheld', withheld === 0, `${withheld} withheld results`));
-  // §9 limits the *provider requests* a Worker sends, not only its ordinary ones:
+  // Worker request limits include every provider request:
   // a Worker's compaction is a provider request too, and it is recorded under that
   // Worker with `kind='compaction'`. Every sent kind is summed per identity.
   const byWorker = new Map<LedgerScalar | undefined, WorkerUsage>();
@@ -170,7 +169,7 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   // is what is asserted.
   const hashes = report.build_hashes ?? null;
   const hashKeys = [
-    'plugin_source', 'lib_index', 'lib_client', 'lib_tools', 'lib_web',
+    'plugin_source', 'lib_index', 'lib_client', 'lib_command', 'lib_web',
     'typert_host', 'typert_host_types', 'typert_remote_client', 'typert_remote_client_types',
     'host_source', 'acceptance_source', 'case_file',
   ];

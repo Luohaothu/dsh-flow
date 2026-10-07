@@ -2,14 +2,12 @@
 export interface DisplayPreferences {
   readonly view: 'graph' | 'list'
   readonly ended: 'show' | 'collapse'
-  readonly communications: 'related' | 'all' | 'hidden'
   readonly motion: 'system' | 'reduce'
-  readonly summaries: boolean
   readonly tokens: 'short' | 'exact'
   readonly follow: boolean
 }
 export const DEFAULT_PREFERENCES: DisplayPreferences = {
-  view: 'graph', ended: 'show', communications: 'related', motion: 'system', summaries: true, tokens: 'short', follow: true,
+  view: 'graph', ended: 'show', motion: 'system', tokens: 'short', follow: true,
 };
 export interface PreferenceStorage { read(): string | null; write(value: string): Promise<void> }
 export interface PreferenceSnapshot {
@@ -27,12 +25,11 @@ function decode(raw: string | null): DisplayPreferences {
   const value: unknown = JSON.parse(raw);
   if (value === null || typeof value !== 'object') throw new Error('保存的显示设置格式无效');
   const field = (key: string) => Reflect.get(value, key);
-  const view = field('view'), ended = field('ended'), communications = field('communications'), motion = field('motion'), summaries = field('summaries'), tokens = field('tokens'), follow = field('follow');
+  const view = field('view'), ended = field('ended'), motion = field('motion'), tokens = field('tokens'), follow = field('follow');
   if ((view !== 'graph' && view !== 'list') || (ended !== 'show' && ended !== 'collapse')
-    || (communications !== 'related' && communications !== 'all' && communications !== 'hidden')
-    || (motion !== 'system' && motion !== 'reduce') || typeof summaries !== 'boolean'
+    || (motion !== 'system' && motion !== 'reduce')
     || (tokens !== 'short' && tokens !== 'exact') || typeof follow !== 'boolean') throw new Error('保存的显示设置格式无效');
-  return { view, ended, communications, motion, summaries, tokens, follow };
+  return { view, ended, motion, tokens, follow };
 }
 /** Saving is serialized; failures retain the entire draft and never publish success. */
 export class PreferenceStore {
@@ -57,7 +54,6 @@ export class PreferenceStore {
     if (this.value.saving) return;
     this.publish({ ...this.value, draft: DEFAULT_PREFERENCES, dirty: !equal(DEFAULT_PREFERENCES, this.value.saved), error: null, notice: '已恢复为默认值，保存后生效' });
   }
-  isDefault(): boolean { return equal(this.value.draft, DEFAULT_PREFERENCES); }
   save(): Promise<boolean> {
     if (this.pending) return this.pending;
     if (!this.value.dirty && this.value.readError === null) return Promise.resolve(true);

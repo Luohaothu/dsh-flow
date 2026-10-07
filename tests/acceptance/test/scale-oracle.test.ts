@@ -1,7 +1,6 @@
 /**
  * The scale tier's oracle: a result counts only when it answers the question its
- * own transaction asked. The regression is the circular reading — a Worker that
- * read one file and answered for another was graded against the file it named.
+ * own transaction asked, using the frozen file assignment as the oracle.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,9 +1,7 @@
 /**
- * The plugin's *real* lifecycle, against a real Cordis context.
+ * The plugin lifecycle against a real Cordis context.
  *
- * These tests replace the old ones that called `apply(fakeCtx)` and then read
- * the returned `ClusterRuntime` as if it were the published contract. What is
- * asserted here is only what a deployment can observe from outside:
+ * These tests assert the contract a deployment observes:
  *
  *  - a missing required service leaves the plugin PENDING — no `flow` service,
  *    no Consumer started, nothing written to disk;

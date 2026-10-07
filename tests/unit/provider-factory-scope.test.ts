@@ -7,7 +7,7 @@ import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
 
 // Execute the installed provider's actual outlet and identity allocator. The
-// surrounding React/slot seats are inert so this regression has no browser.
+// surrounding React/slot seats are inert so the provider scope is tested directly.
 function factoryProbe() {
   const require=createRequire(new URL('../../packages/dsh-flow/package.json',import.meta.url));
   const root=dirname(require.resolve('@deepseek-ai/dsh-client-ui-renderer/package.json'));

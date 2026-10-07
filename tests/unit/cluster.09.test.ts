@@ -48,8 +48,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -283,10 +282,6 @@ test('the window keeps a slot for waiting work, whatever supervision wants', () 
   assert.equal(scheduleAdmission({ window: 6, active: 6, workerWaiting: true }).workerSlots, 0);
   assert.equal(scheduleAdmission({ window: 0, active: 0, workerWaiting: true }).workerSlots, 0);
   assert.equal(scheduleAdmission({ window: 6, active: 9, workerWaiting: true }).workerSlots, 0);
-  // The old rule — supervision first, then a Worker reserve subtracted again —
-  // could only ever offer `window - live - 1`, which is why the Workers waited.
-  const oldRule = ({ window, active }: { window: number; active: number }): number => Math.max(0, window - active - 1);
-  assert.equal(oldRule({ window: 6, active: 6 }), 0, 'and that rule is what the fix replaces');
 });
 
 test('a receipt whose payer holds nothing is uncertain: nothing moves and the owner stops', async t => {
@@ -380,7 +375,7 @@ test("a side-effect tool's long body is bounded in both ledgers, and they agree"
   const effectBody = JSON.parse(textOf(effect.body, 'effect body'));
   assert.match(receiptBody.text, /chars omitted/, 'the receipt body states its omission');
   assert.equal(effectBody.text, receiptBody.text,
-    'both ledgers hold the same bounded body (the effect used to hold the full output)');
+    'both ledgers hold the same bounded body');
   assert.ok(effectBody.text.length <= 8_200, `bounded, not unbounded: ${effectBody.text.length}`);
 });
 
@@ -666,9 +661,8 @@ test('Workers holding the window do not starve a management role that is owed a 
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'Workers must not hold every slot a manager needs', workspace: dir, capabilities: [],
-    // A three-slot window: three live Worker turns saturate it completely, and
-    // the ceiling that governs management was measured against *all* live turns,
-    // so `3 >= 3 - 1` skipped every pending management role on every pass.
+    // A three-slot window must retain admission capacity for a management
+    // role while Workers are eligible to fill it.
     limits: { max_children: 8, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 4, max_role_turns: 40 },
     budget: { tokens: 4_000_000, model_requests: 400, tool_calls: 400, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
@@ -894,14 +888,12 @@ test('a request is admitted when the node holds no requests and the pool no toke
       runtime.store.updateBudget(textOf(row.id, 'budget id'), { requests_limit: 0, requests_spent: 0, requests_reserved: 0 });
     }
   });
-  // A real turn: its compaction request is the one that used to be refused, and
-  // the receipt must name the pool as the scope that paid for it.
+  // The compaction request receipt must name the pool as its paying scope.
   let failure: unknown = null;
   host.setScript(async turn => {
     if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'orchestrator') return;
     try {
-      // The request that used to be refused: the pool holds the requests and no
-      // tokens, the node the tokens and no requests.
+      // The pool has requests but no tokens; the node has tokens but no requests.
       await turn.request({ purpose: 'compaction', usage: { totalTokens: 200, inputTokens: 150, outputTokens: 50 } });
     } catch (error) { failure = error; }
   });

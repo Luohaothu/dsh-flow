@@ -1,27 +1,14 @@
 import { fail } from './errors.ts';
 /**
- * `dsh-flow` — hierarchical agent clusters for a DeepSeek Harness deployment.
+ * Hierarchical agent clusters for a DeepSeek Harness deployment.
  *
- * One plugin instance owns one cluster control plane: the durable database, the
- * management-tree scheduler, the recovery reconciliation and the `ctx.flow`
- * service other plugins and the Remote face consume.
+ * One plugin instance owns the durable database, management-tree scheduler,
+ * recovery reconciliation and `ctx.flow` service. Cordis waits for all required
+ * dependencies and unloads the instance when any disappears. Recovery proves
+ * durable session admission before the service is published.
  *
- * Three properties of this entry point are load-bearing:
- *
- *  - **Required dependencies, not polling.** `tools`, `agents`, `agentLoop`,
- *    `sessions` and `sessionPersistence` are declared up front. Cordis holds the
- *    plugin `PENDING` until all five are live, and unloads the whole instance if
- *    one disappears. The previous implementation instead waited for an
- *    `appReady` callback while already published, which meant a plugin that was
- *    ACTIVE and had sent its ready message could still be unable to run a turn.
- *  - **Recovery before publication.** `ctx.provide('flow', runtime)` happens
- *    only after `recoverAndReconcile()` has read the durable sessions and proved
- *    which injections were really admitted. A failure propagates, so the fiber
- *    never becomes ACTIVE on a half-recovered database.
- *  - **No environment, no process, no route.** Deployment parameters arrive as
- *    configuration, never as `FLOW_*` variables; the acceptance IPC bridge lives
- *    in its own module and is mounted only by an acceptance overlay; the
- *    browser talks to the cluster through the standard Remote face.
+ * Deployment parameters arrive through configuration. The acceptance IPC bridge
+ * is mounted separately; browser clients use the generated Remote interface.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -104,9 +91,9 @@ export async function apply(ctx: Context, input: ConfigInput | ResolvedConfig): 
   }
 
   ctx.provide('flow', runtime);
-  // Flow owns independent native sessions, outside the host subagent catalog.
-  // Classify both old and new list summaries through the host API; their raw
-  // headers retain the independent observation and continuation contract.
+  // Flow owns independent native sessions outside the host subagent catalog.
+  // The host API classifies list summaries without changing their raw headers or
+  // their independent observation and continuation policy.
   ctx.inject(['sessionController'], (child) => {
     child.effect(() => child.sessionController.registerSessionDriver({
       owns:id => !runtime.closed && runtime.isTeamAgentSession(id),

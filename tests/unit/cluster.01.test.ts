@@ -42,8 +42,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -797,9 +796,7 @@ test('cluster control-plane tools consume the shared tool-call budget', async t 
   assert.equal(admit(3).ok, true);
   assert.equal(required(runtime.store.getBudget(budget.id), 'budget').tool_calls_reserved, 4, 'four calls are held against this identity');
   // The identity's own grant is a bookkeeping boundary, not the ceiling: a node
-  // that still holds tool-call capacity funds the next call (measured: a role
-  // whose tool calls were all returned to its node could not call a single tool
-  // afterwards and burned its whole turn budget on refusals).
+  // that still holds tool-call capacity funds the next call.
   assert.equal(admit(4).ok, true, 'the node still holds capacity, so the call is funded from it');
   assert.ok(required(runtime.store.getBudget(budget.id), 'budget').tool_calls_limit >= 5);
 

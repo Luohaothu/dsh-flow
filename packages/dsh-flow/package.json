@@ -15,10 +15,6 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./tools": {
-      "types": "./lib/types/tools.d.ts",
-      "default": "./lib/tools.js"
-    },
     "./web": {
       "types": "./lib/types/web.d.ts",
       "default": "./lib/web.js"
@@ -48,7 +44,6 @@
   },
   "files": [
     "lib/index.js",
-    "lib/tools.js",
     "lib/web.js",
     "lib/client.js",
     "lib/types/**/*.js",

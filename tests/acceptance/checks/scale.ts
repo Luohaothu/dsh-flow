@@ -101,8 +101,8 @@ export function frozenGrantedFile(specEntries: readonly FrozenSpecEntry[] | null
  * The corpus path a settled `read` receipt proved, or null.
  *
  * `dispatch_status: 'SETTLED'` means the *call* finished, not that the tool
- * succeeded: an errored read also settles (measured: a malformed-argument call
- * settles with `isError: true` and no content). A path is only evidence when the
+ * succeeded: malformed arguments can settle with `isError: true` and no content.
+ * A path is only evidence when the
  * receipt carries a successful result and no transport error.
  */
 export function successfulReadPath(receipt: ReadReceiptInput | null | undefined): string | null {
@@ -216,7 +216,7 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
   const duplicateCharges = Number(ledger.get('SELECT COUNT(*) AS c FROM (SELECT request_id FROM usage_receipts WHERE cluster_id=? GROUP BY request_id HAVING COUNT(*)>1)', clusterId)?.c ?? 0);
   push('no-duplicate-charges', duplicateCharges === 0, `${duplicateCharges} duplicated request ids`);
 
-  // §9 asks the tier for "越 scope 写入 0". An escaped write is a proven
+  // The tier requires zero completed writes outside the granted scope. An escape is a
   // settled write outside its identity's grant; prevented attempts are the
   // sandbox working and are reported as their own number. With no write-capable
   // call settled the invariant is unmeasured, not satisfied.
@@ -251,10 +251,8 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
   // A control-plane tool call that was refused at *lookup* time ("no plan audit
   // for transaction … at revision …") is not a domain refusal: it means the
   // caller asked about a revision nothing was offered for, or under a reference
-  // the item did not carry. The fixture used to send verdicts without the
-  // offered `audit_id`, so every verdict on a revised plan resolved to the
-  // transaction's *current* revision and missed. Nothing in a healthy run should
-  // be refused for a reason the caller was already told.
+  // the item did not carry. Verdicts must use the offered `audit_id` so they
+  // refer to the exact plan revision under review.
   const controlCalls = ledger.all(
     "SELECT tool, result_body, error FROM tool_call_receipts WHERE cluster_id=? AND tool IN ('flow_audit','flow_transaction','flow_allocation','flow_query')",
     clusterId,
@@ -556,7 +554,7 @@ export function deriveFailureClass({ ledger, report, failed }: ScaleFailureInput
     'ACCOUNTING_UNCERTAIN', 'WRITE_SCOPE', 'PERMISSION', 'FENCE', 'TOOL_IDENTITY_MISSING',
   ];
   const LIMIT_CODES = ['BUDGET_EXHAUSTED', 'LIMIT_REACHED', 'DEADLINE_PASSED'];
-  // The order is the contract (§1.6-1.7): a mechanism defect outranks a limit,
+  // The failure order is explicit: a mechanism defect outranks a limit,
   // which outranks the environment, which outranks the model. A stop that is
   // *both* fenced and out of budget is a mechanism failure first — the fence is
   // the defect, the budget is what it ran out of.

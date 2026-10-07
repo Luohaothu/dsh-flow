@@ -186,7 +186,7 @@ export interface BuildHashes {
   host_source: HashTree;
   lib_index: string | null;
   lib_client: string | null;
-  lib_tools: string | null;
+  lib_command: string | null;
   lib_web: string | null;
   typert_host: string | null;
   typert_host_types: string | null;

@@ -7,7 +7,8 @@
   ],
   "patches": [
     "examples/cluster.patch.yml",
-    "examples/cluster.web.patch.yml"
+    "examples/cluster.web.patch.yml",
+    "tests/acceptance/fixtures/browser-locale.patch.yml"
   ],
   "limits": {
     "max_children": 4,

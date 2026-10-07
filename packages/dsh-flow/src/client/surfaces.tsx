@@ -44,7 +44,7 @@ export function ProviderPanels({wide,title,conversation,information,onClose}: {w
     resizeSplit: (splitId,sizes) => setState(state => applyOp(state,{type:'resize',splitId,sizes}).state),
     closeTab: () => onClose(),
     splitPane: () => {}, addTab: () => {}, duplicateTab: () => {},
-    // P0 permits resizing and tab selection, without an arbitrary workspace editor.
+    // Detail panes support resizing and tab selection within this fixed layout.
     floatTab: () => {}, unfloatPane: () => {}, placeTab: tabId => intents.focusTab(tabId), dropTab: tabId => intents.focusTab(tabId), moveFloat: () => {}, resizeFloat: () => {},
   };
   return <div className="flow-dock"><DockSurface allowTabDrag={false} state={displayed} canSplit={false} hideSplitWhenBlocked canAddTab={()=>false} canCloseTab={id=>state.tabs[id]?.kind!=='structure'} intents={intents} labels={LABELS}

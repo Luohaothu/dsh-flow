@@ -60,7 +60,7 @@ const teamUiPlugin = {
       return preferences.subscribe(()=>{
         const saved=preferences.getSnapshot().saved;if(saved===previous)return;previous=saved;
         for(const views of locals.values())for(const view of views.values()) {
-          view.view=saved.view;view.scope=saved.communications;view.showEnded=saved.ended==='show';
+          view.view=saved.view;view.showEnded=saved.ended==='show';
         }
       });
     },'dsh-flow: apply saved display preferences');
@@ -111,9 +111,8 @@ const teamUiPlugin = {
     registerAgentSidebar(ctx);
     registerCommunicationRenderer(ctx);
     ctx.slots.inject('conversation.view',()=>ctx.slots.register({name:'conversation.view',id:'dsh-flow-agents',order:20,label:()=> '智能体',inject:(sessionId:SessionId)=>({ui:ui(sessionId)})},TeamViewEntry));
-    const tab=(id:SessionId,visible:boolean):(()=>void)=>{
+    const tab=(id:SessionId,visible:boolean):void=>{
       if(available.has(id)!==visible){available=new Set(available);visible?available.add(id):available.delete(id);for(const listener of availabilityListeners)listener();}
-      return()=>{};
     };
     const ui=(id:SessionId):TeamUi=>{
       let local=locals.get(id);if(!local){local=new Map();locals.set(id,local);}
@@ -125,7 +124,7 @@ const teamUiPlugin = {
           ctx.uiWorkspace.openSession(SessionId(agent.session_id),{allowUnlisted:true,observationOnly:true});
         },
         main:()=>{ctx.uiWorkspace.openSession(id);const binding=ctx.sessions.binding(id);if(binding)requestAnimationFrame(()=>ctx.conversation.input.for(binding.ctx).focus());},
-        openTeam:()=>{pendingViews.set(id,'dsh-flow-agents');ctx.uiWorkspace.openSession(id);},openView:()=>{}, tab:available=>tab(id,available),
+        openTeam:()=>{pendingViews.set(id,'dsh-flow-agents');ctx.uiWorkspace.openSession(id);},tab:available=>tab(id,available),
       };
     };
     ctx.slots.inject('conversation.session.header.actions',()=>ctx.slots.register({name:'conversation.session.header.actions',id:'dsh-flow-team',order:-19,inject:(id:SessionId)=>({ui:ui(id),source:agentSource(id),ownerUi:ui,takeView:()=>{const view=pendingViews.get(id);pendingViews.delete(id);return view;}})},TeamHeaderEntry));
@@ -150,8 +149,8 @@ function TeamHeaderEntry(props:PropsRuntime<'conversation.session.header.actions
   return createElement('span',{className:'flow-agent-session-header'},
     value?createElement(Button,{size:'sm',onClick:()=>ui.main()},'主会话'):null,
     value?.agent.recycled?createElement(Tag,null,'已回收'):null,
-    createElement(TeamHeader,{ui:{...ui,currentView:props.currentView,openView:view=>props.selectView(view),openTeam:()=>value?ui.openTeam():props.selectView('dsh-flow-agents')}}));
+    createElement(TeamHeader,{ui:{...ui,openTeam:()=>value?ui.openTeam():props.selectView('dsh-flow-agents')}}));
 }
 function TeamViewEntry(props:PropsRuntime<'conversation.view'> & PropsRenderFactories & {ui:TeamUi}) {
-  return TeamView({ui:{...props.ui,renderReader:options=>props.renderFactorySlot('dsh-flow.reader',options),openView:view=>props.openView(view,''),main:()=>{props.openView('chat','');props.ui.main();}}});
+  return TeamView({ui:{...props.ui,renderReader:options=>props.renderFactorySlot('dsh-flow.reader',options),main:()=>{props.openView('chat','');props.ui.main();}}});
 }

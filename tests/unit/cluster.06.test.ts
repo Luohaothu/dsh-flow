@@ -49,8 +49,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -414,9 +413,7 @@ test('a node waits for its own roles to finish before it closes, and books their
       return;
     }
     if (role !== 'auditor') return;
-    // The old call handed `pendingFor` a `FlowAgentActor`, which has no `id`, so
-    // it always fell back to the role's own agent; `null` asks for that same
-    // resolution explicitly.
+    // Resolve the Auditor identity from its role and management node.
     const pending = runtime.pendingFor('auditor', required(runtime.store.getNode(root.id), 'root node'), required(runtime.store.getCluster(clusterId), 'cluster'));
     if (pending.some(item => item.action === 'evaluate_health' && 'evaluation_window' in item && item.evaluation_window === 'subtree-close')) {
       scoreFinalHealth(runtime, clusterId, root.id);
@@ -461,7 +458,7 @@ test('a node waits for its own roles to finish before it closes, and books their
   for (const roleAgent of runtime.store.listAgents(clusterId, {}).filter(agent => agent.role !== 'worker')) {
     assert.equal(roleAgent.status, 'TERMINATED', `${roleAgent.role} is terminated`);
     // Every role that really took a turn is *accounted*: either the turn is
-    // booked (the count the identity's next session and the G1 check read), or
+    // booked (the count the identity's next session and the smoke check read), or
     // the ledger records that it failed before reaching the model — which is the
     // one case in which a turn must not advance that count.
     if (startedRoles.has(roleAgent.role) && roleAgent.turns === 0) {

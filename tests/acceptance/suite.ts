@@ -5,7 +5,7 @@
  * a blocked state cannot disturb the next one.
  *
  * Usage:
- *   node tests/acceptance/suite.ts [--only smoke,recovery,website] [--parallel 2]
+ *   node --import tsx tests/acceptance/suite.ts [--only smoke,recovery,website] [--parallel 2]
  *                            [--timeout-scale-ms 21600000]
  */
 import { spawn } from 'node:child_process';
@@ -64,8 +64,8 @@ const DEFAULT_SUITE: readonly SuiteEntry[] = [
 ];
 
 /**
- * The deterministic suite. One job per scenario, in the order the acceptance
- * plan fixes them; the two scale tiers are separate jobs because each is a
+ * The deterministic suite runs one job per scenario in declaration order.
+ * The two scale tiers are separate jobs because each is a
  * distinct fixture with its own denominator.
  */
 const MOCK_SUITE: readonly SuiteEntry[] = [

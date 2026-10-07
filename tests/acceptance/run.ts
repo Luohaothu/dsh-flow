@@ -292,11 +292,6 @@ export function hashTree(root: string, extra: readonly { prefix: string; root: s
 }
 
 /**
- * The code fingerprint of one run: the plugin sources, both built entry points,
- * the case file and every patch the host loads. It is what makes "the same
- * build" a checkable claim instead of an assumption.
- */
-/**
  * Which part of the build fingerprint moved between two samples, or null when
  * the run describes one single build. Kept as a named function because the
  * claim "this report describes one build" is only checkable if the rule that
@@ -306,7 +301,7 @@ export function buildDrift(before: BuildHashes | null | undefined, after: BuildH
   if (!before || !after) return 'the fingerprint was never taken';
   const changed = [];
   for (const key of [
-    'plugin_source', 'lib_index', 'lib_client', 'lib_tools', 'lib_web',
+    'plugin_source', 'lib_index', 'lib_client', 'lib_command', 'lib_web',
     'typert_host', 'typert_host_types', 'typert_remote_client', 'typert_remote_client_types',
     'host_source', 'acceptance_source', 'case_file',
   ]) {
@@ -336,7 +331,7 @@ export function computeBuildHashes(caseDef: CaseDefinition, patches: readonly st
     ], path => path.endsWith('.ts')),
     lib_index: hashFile(join(lib, 'index.js')),
     lib_client: hashFile(join(lib, 'client.js')),
-    lib_tools: hashFile(join(lib, 'tools.js')),
+    lib_command: hashFile(join(lib, 'command.js')),
     lib_web: hashFile(join(lib, 'web.js')),
     typert_host: hashFile(join(lib, 'typert.host.js')),
     typert_host_types: hashFile(join(lib, 'typert.host.d.ts')),
@@ -344,12 +339,10 @@ export function computeBuildHashes(caseDef: CaseDefinition, patches: readonly st
     typert_remote_client_types: hashFile(join(lib, 'typert.remote-client.d.ts')),
     // The acceptance code is part of the experiment: a checker or a scenario
     // that changed mid-run would make the report describe two different tests.
-    // The host driver, the mock model, the scenarios and the ledger decide most
-    // of what a run proves, so they are covered here too — under the `lib/`
-    // prefix they used to live at, which keeps "the acceptance facility" one
-    // namespace even though the sources now sit in `src/host/`.
+    // Host drivers, mock scenarios and ledger checks share this fingerprint.
+    // The `host/` prefix identifies their files within the combined namespace.
     acceptance_source: hashTree(join(PROJECT_ROOT, 'tests/acceptance'), [
-      { prefix: 'lib', root: join(PROJECT_ROOT, 'src/host') },
+      { prefix: 'host', root: join(PROJECT_ROOT, 'src/host') },
     ]),
     case_file: caseDef.id ? hashFile(join(CASES_DIR, `${caseDef.id}.json`)) : null,
     patches: (patches ?? []).map(path => ({ path, digest: hashFile(path) })),
@@ -676,16 +669,12 @@ async function runOnce({ args, caseDef, mode, runId }: { args: RunArgs; caseDef:
   }
   // Classification is finalised before the mechanism verdict is computed, so a
   // check-level MECHANISM failure can never be relabelled by the budget branch.
-  // Only a class the checks *derived* is carried here: stamping MODEL_OUTPUT on
-  // every unclassified failure before the limit facts were consulted labelled a
-  // budget-limited run as a model failure (measured: 16 structured refusals and a
-  // `MODEL_OUTPUT` class on the same report).
+  // Carry only a class derived by the checks; leave unclassified failures open
+  // until structured limit evidence has been considered.
   if (report.failure_class === null && report.scenario_status === 'FAILED' && checkResult.failure_class) {
     report.failure_class = checkResult.failure_class;
   }
-  // The wall clock is *measured here*, before it is classified: passing
-  // `report.wall_time_ms` while it is still unset made every wall-time verdict a
-  // comparison against zero.
+  // Measure the final wall time before evaluating deadline exhaustion.
   report.finished_at = new Date().toISOString();
   report.wall_time_ms = Date.now() - started;
   // The same measurement again, now that the checks may have set a class: the
@@ -1483,10 +1472,8 @@ export type UsageView = {
  * The measured clock and the structured limit evidence, set on the report
  * *before* the case's own checks run.
  *
- * The scale checks read `report.wall_time_ms` and `report.limit_reached` while
- * they derive their class; measuring both only after they had run left those
- * branches comparing against an unset clock and a null limit, and their verdict
- * was then preserved by the classifier. One measurement, taken once, before.
+ * Scale checks require `report.wall_time_ms` and `report.limit_reached` to
+ * derive their failure class from the same measured evidence.
  */
 export interface MeasuredRun {
   failure_class: string | null;

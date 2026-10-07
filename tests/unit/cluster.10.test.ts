@@ -47,8 +47,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -629,7 +628,7 @@ test('an incomplete repair does not resume the node, and a complete one does', a
   // fixture scripts the roles' requests but leaves several identities starved, so a
   // request it drives here would prove the fixture's state, not the mechanism. The
   // unit asserts the transition (tokens alone: no resume; tokens + requests: resume),
-  // and G2 asserts that a resumed subtree really sends and settles again.
+  // and recovery acceptance verifies that a resumed subtree sends and settles again.
 });
 
 test('a settlement that frees capacity resumes the node with no grant at all', async t => {

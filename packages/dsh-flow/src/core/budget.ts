@@ -89,10 +89,6 @@ export class BudgetError extends Error {
   }
 }
 
-export const limitReached = (message: string): never => {
-  throw new BudgetError(message, 409, 'LIMIT_REACHED');
-};
-
 /** Everything `createBudget` needs; unlike the wire budget it carries scope identity. */
 export interface CreateBudgetInput {
   readonly cluster_id: string;

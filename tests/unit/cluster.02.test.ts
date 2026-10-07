@@ -43,8 +43,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -727,7 +726,7 @@ test('completion and progress observe the whole cluster, not a page of it', t =>
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'COMPLETED');
 
-  // Progress must keep advancing past the old 500-event page.
+  // Progress must advance beyond a single 500-event page.
   const before = runtime.progressSeq(clusterId);
   runtime.store.tx(() => {
     for (let index = 0; index < 900; index += 1) runtime.store.appendEvent(clusterId, 'filler', { index });

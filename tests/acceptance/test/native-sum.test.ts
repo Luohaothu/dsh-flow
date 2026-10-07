@@ -12,7 +12,7 @@ const answer = { seq: 12, type: 'assistant/message', data: {
   message: { content: [{ type: 'text', text: '5' }] },
 } };
 
-test('G0 requires a durable matching host result before the assistant answers 5', () => {
+test('a native sum requires a durable matching host result before the assistant answers 5', () => {
   const good = inspectNativeSumRoundTrip([call, result, answer]);
   assert.deepEqual(good, { verified: true, call_id: 'sum-call', call_seq: 10, result_seq: 11, answer_seq: 12 });
   const verdict = (...events: RunEvent[]) => inspectNativeSumRoundTrip(events).verified;
@@ -30,7 +30,7 @@ test('G0 requires a durable matching host result before the assistant answers 5'
     'a different sum does not prove the requested [2,3] path');
 });
 
-test('G0 does not substitute a submitted transaction value for the assistant reply', () => {
+test('a native sum cannot substitute a submitted transaction value for the assistant reply', () => {
   const command = JSON.stringify({ action: 'submit_result', params: JSON.stringify({ transaction_id: 'tx', result: 5 }) });
   const submission = { seq: 12, type: 'assistant/message', data: { message: { content: [{
     type: 'tool-call', id: 'submission', name: 'flow_transaction', arguments: command,

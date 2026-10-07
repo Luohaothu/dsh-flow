@@ -165,7 +165,7 @@ const LIMIT_CODES = ['BUDGET_EXHAUSTED', 'LIMIT_REACHED', 'DEADLINE_PASSED'];
 const MECHANISM_CHECKS = ['no-duplicate-accounting', 'cluster-database-present', 'cluster-id-resolved'];
 
 /**
- * The class this case derives from its own evidence, in §1.7's order: a mechanism
+ * The class this case derives from its own evidence: a mechanism
  * defect first, then a coded limit, then the model's judgement.
  */
 interface RunClassInput {
@@ -222,8 +222,7 @@ export async function run({ workspace, report, layout, events }: RecursionContex
   // A correction round is proven by a *durable change*, not by the correction
   // counter: `verify_correction` increments `issue.corrections` only when the
   // verification fails, so a plan corrected and verified on the first try closes
-  // the issue at zero. Requiring `corrections >= 1` made the gate unfalsifiable
-  // in the path that actually worked.
+  // the issue at zero.
   // Both real corrections count: a plan adjustment, and a re-validation at a
   // later result revision (`request_revalidation → validate` never emits
   // `transaction-adjusted`).
@@ -468,7 +467,7 @@ export async function run({ workspace, report, layout, events }: RecursionContex
 
   const failed = checks.filter(entry => entry.passed === false);
   // A run that stopped on a *coded* limit is a limit stop, not a model failure —
-  // even when its artifacts are also missing. The order is §1.7's: a mechanism
+  // even when its artifacts are also missing. A mechanism
   // defect outranks the limit, the limit outranks the model.
   const limitCoded = (report.limit_reached?.blockedOnBudget === true) || beaconCodes.some(code => LIMIT_CODES.includes(code));
   // A descendant may already be BLOCKED for another reason, preventing a second

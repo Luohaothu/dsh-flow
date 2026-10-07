@@ -1,19 +1,11 @@
 /**
- * The plugin's shared input validators.
- *
- * These are the checks both faces need: the Host uses them on every command
- * path and on the resolved deployment configuration, and the browser panel uses
- * the same functions on form input. They deliberately depend on nothing but
- * {@link ./types.ts} and {@link ./errors.ts}, so the Client bundle can import
- * them without pulling in the store, the scheduler or any Node module.
- *
- * Every validator takes `unknown` and narrows it to a concrete type: an entry
- * point that receives JSON — a model tool parameter, a Remote argument, a panel
- * form field — must not be able to claim a shape by assertion.
+ * Shared boundary validators for command arguments and resolved deployment
+ * configuration. Each validator narrows unknown input to a concrete type.
+ * Client-safe imports keep validation independent of the store and scheduler.
  */
 import { isJsonValue } from '@deepseek-ai/dsh-util-values';
 import { fail } from './errors.ts';
-import type { FlowBudget, FlowBudgetInput, FlowCapability, FlowJsonValue, FlowLimitsInput } from './types.ts';
+import type { FlowBudgetInput, FlowCapability, FlowJsonValue, FlowLimitsInput } from './types.ts';
 
 /** Total length cap for one free-text field crossing a command boundary. */
 const TEXT_MAX = 1 << 16;
@@ -60,21 +52,6 @@ export function objectField(value: unknown, label: string): Record<string, unkno
 export const BUDGET_KEYS = [
   'tokens', 'model_requests', 'tool_calls', 'wall_time_ms', 'agents', 'max_active_agents',
 ] as const;
-
-/**
- * Copy the keys a patch is allowed to carry.
- * @param source - patch object.
- * @param keys - permitted key names.
- * @returns a new object holding only the keys the source actually set.
- */
-export function pickDefined<K extends string>(
-  source: Record<string, unknown>,
-  keys: readonly K[],
-): { [P in K]?: unknown } {
-  const out: { [P in K]?: unknown } = {};
-  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
-  return out;
-}
 
 /**
  * Narrow a page size.
@@ -174,19 +151,6 @@ export function validateBudget(value: unknown, label = 'budget'): FlowBudgetInpu
  */
 export function isFlowJsonValue(value: unknown): value is FlowJsonValue {
   return isJsonValue(value);
-}
-
-/**
- * Assert a partial budget is complete.
- * @param budget - dimensions already validated.
- * @param label - field name used in the refusal message.
- * @returns the budget with every dimension present.
- */
-export function requireBudget(budget: FlowBudgetInput, label = 'budget'): FlowBudget {
-  for (const key of BUDGET_KEYS) {
-    if (budget[key] === undefined) fail(`Missing ${label}.${key}`);
-  }
-  return budget as FlowBudget;
 }
 
 /** Every declared limit key, in the order the protocol documents them. */

@@ -17,7 +17,7 @@ disable-model-invocation: true
 
 - 调用 `agent_team_read {run_id, after_version, wait_ms: 20000}` 轮询实际状态。每次使用上次返回的 version；每个主会话轮次最多等待三次。仍在运行时简要报告当前阶段并结束本轮；关键状态变化会唤醒主会话，届时先 read 再回应。
 - 数量、审查结论和交付结果以 read 返回的 execution 与事务详情为准。聚合 result 为空时，继续检查 execution.transactions：已接受的事务仍可能有独立核验的结果。业务事务验收与整个团队最终完成分别报告；团队的初始角色数不等于已安排的执行代理数。
-- 用户追加任务约束或回答团队的问题时，先读取对应团队，再通过 `agent_team_message` 发送整理后的自包含指令，随后读取确认。所有执行指令通过主会话工具发出。
+- 用户在主会话追加任务约束或回答团队的问题时，先读取对应团队，再通过 `agent_team_message` 发送整理后的自包含指令，随后读取确认。用户也可以在未回收智能体的原生会话中直接发送文本；主会话通过 read 核对其执行结果。
 - waiting_user 时向用户转述具体问题；blocked / failed 时解释证据中的原因。用户明确要求暂停、恢复或取消时调用 `agent_team_control`，再 read 确认。
 
 ## 收尾

@@ -136,9 +136,8 @@ export interface FlowValidation {
 }
 
 /**
- * The historical JSON blob stored on a cluster row. Unlike the other decoded
- * columns it is never validated on read — an older row may predate any field —
- * so every member is optional and the decoder only checks that it is an object.
+ * A cluster's persisted JSON specification. Fields are optional because a
+ * stored request can omit them; decoding verifies the object shape only.
  */
 export interface StoredSpec {
   readonly objective?: string
@@ -469,14 +468,6 @@ export interface LeaseRecord {
   readonly created: number
 }
 
-/** One issue-correction record as the store counts them. */
-export interface IssueCorrectionRecord {
-  readonly cluster_id: string
-  readonly transaction_id: string
-  readonly issue_id: string
-  readonly created: number
-}
-
 // -------------------------------------------------------------- start input
 
 /** A reproducible message fixture entry: a deterministic send for the delivery pipeline. */
@@ -518,8 +509,8 @@ export interface FlowStartSpec {
 /**
  * The defaults a deployment contributes to a start request.
  *
- * One copy of the interactive envelope lives here so the local service, the
- * model tool and the Remote endpoint cannot disagree about it.
+ * Every service or main-Agent caller resolves omitted fields through this
+ * same envelope.
  */
 export interface FlowStartDefaults {
   readonly workspace: string
@@ -534,20 +525,6 @@ export interface FlowExecutionDefaults {
   readonly model: FlowModelSelection | null
   readonly options: FlowModelSelection
   readonly dispatchMode: 'parallel' | 'serial'
-}
-
-/** A partial start request as it arrives from a boundary, before resolution. */
-export interface FlowStartInput {
-  readonly objective: unknown
-  readonly id?: unknown
-  readonly workspace?: unknown
-  readonly capabilities?: unknown
-  readonly budget?: unknown
-  readonly limits?: unknown
-  readonly initial_transactions?: unknown
-  readonly acceptance_criteria?: unknown
-  readonly delegation?: unknown
-  readonly message_fixture?: unknown
 }
 
 /**
@@ -753,15 +730,6 @@ export interface FlowCommandOutcome {
   readonly deduped: boolean
   readonly revision: number
   readonly result: FlowJsonValue
-}
-
-/** What one node's delegated work looks like to the scheduler. */
-export interface PendingWork {
-  readonly node_id: string
-  readonly role: FlowAgentRole
-  readonly kind: string
-  readonly transaction_id: string | null
-  readonly objective: string
 }
 
 export type { FlowActorRole, FlowCapability, FlowLimitsInput, FlowLimits, FlowBudget };

@@ -48,6 +48,6 @@ sequenceDiagram
 - 结果处于 `SUBMITTED` 或 `VALIDATING` 时，不能重复调用 `aggregate` 来替换审计智能体正在审查的版本。
 - 因结果不完整而提出的纠正要求，不能仅凭计划被编辑就视为已落实。
 
-调用示例见 [API 手册](/development/api#角色工具)。概念状态机与当前实现的差异见[任务派发](/dispatch)。
+调用示例见 [API 手册](/development/api#角色工具)。状态与执行路径见[任务派发](/dispatch)。
 
 源码：[actions.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[protocol.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts)。

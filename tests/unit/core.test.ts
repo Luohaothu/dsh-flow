@@ -98,7 +98,7 @@ function seedCluster(store: ClusterStore, overrides: Record<string, unknown> = {
   }, spec.budget), 'cluster');
 }
 
-test('store rejects a newer schema and legacy workflow databases', t => {
+test('store rejects unsupported schema versions and workflow databases', t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -108,11 +108,11 @@ test('store rejects a newer schema and legacy workflow databases', t => {
   db.close();
   assert.throws(() => new ClusterStore(newer), /newer than supported/);
 
-  const legacy = join(dir, 'legacy.sqlite');
-  const legacyDb = new DatabaseSync(legacy);
-  legacyDb.exec('CREATE TABLE workflows(id TEXT PRIMARY KEY)');
-  legacyDb.close();
-  assert.throws(() => new ClusterStore(legacy), /legacy workflow database/);
+  const workflow = join(dir, 'workflow.sqlite');
+  const workflowDb = new DatabaseSync(workflow);
+  workflowDb.exec('CREATE TABLE workflows(id TEXT PRIMARY KEY)');
+  workflowDb.close();
+  assert.throws(() => new ClusterStore(workflow), /workflow database.*not supported/);
 });
 
 test('schema-2 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
@@ -151,7 +151,7 @@ test('schema-2 transaction JSON inputs survive creation, updates and reopened co
     cluster_id: clusterId, node_id: root.id, agent_id: orchestrator.id,
     session_id: orchestrator.session_id, role: 'orchestrator',
   };
-  // Creation historically defaults both missing and explicitly null inputs to
+  // Creation defaults both missing and explicitly null inputs to
   // {}, but an existing row containing JSON null must remain JSON null.
   const absent = runtime.createTransactionInternal(clusterId, root, { id: 'json-input-absent', objective: 'absent input' });
   assert.deepEqual(absent.inputs, {});
@@ -162,7 +162,7 @@ test('schema-2 transaction JSON inputs survive creation, updates and reopened co
   assert.deepEqual(explicitUndefined.inputs, {});
   expected.set(explicitUndefined.id, {});
   const storedNull = runtime.createTransactionInternal(clusterId, root, {
-    id: 'json-input-stored-null', objective: 'historical null input',
+    id: 'json-input-stored-null', objective: 'stored null input',
   });
   runtime.store.run('UPDATE transactions SET inputs=? WHERE id=?', 'null', storedNull.id);
   expected.set(storedNull.id, null);
@@ -216,7 +216,7 @@ test('schema-2 transaction JSON inputs survive creation, updates and reopened co
   expected.set('json-input-4', ['updated', 42]);
   runtime.store.updateTransaction('json-input-4', { inputs: undefined });
   assert.deepEqual(must(runtime.store.getTransaction('json-input-4'), 'updated transaction').inputs, ['updated', 42]);
-  // SQL NULL is still forbidden by the historical NOT NULL column; it is not
+  // SQL NULL is forbidden by the NOT NULL column; it is not
   // interchangeable with a row whose JSON text is "null".
   assert.throws(() => runtime.store.updateTransaction('json-input-4', { inputs: null }));
   const count = runtime.store.countTransactions(clusterId);

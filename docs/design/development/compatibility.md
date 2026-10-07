@@ -45,7 +45,6 @@ Cordis 会等待这些服务就绪。插件完成恢复与对账后，才会发�
 | --- | --- |
 | `dsh-flow` | 宿主端控制平面，提供 `ctx.flow` |
 | `dsh-flow/command` | 主会话 `/agent-team`、进展与执行指令 |
-| `dsh-flow/tools` | 旧的可选程序化消费者，标准组合不加载 |
 | `dsh-flow/web` | 远程接口服务，绑定通信命名空间 `flow` |
 | `dsh-flow/types` | 宿主端、远程接口与浏览器端共享的类型定义 |
 | `dsh-flow/client` | 团队顶栏、智能体视图和显示设置 |
@@ -54,13 +53,13 @@ Cordis 会等待这些服务就绪。插件完成恢复与对账后，才会发�
 
 包还导出 `cordis.patch.yml` 和 `package.json`。安装插件组合时，会将其中声明的插件加入配置方案；内部 `core/` 模块不在公开导出范围内。
 
-标准组合只注册 `/agent-team` skill 启动入口，不注册额外智能体预设或侧栏入口。管理角色工具仍在各身份自己的作用域中。主会话执行工具先验证团队归属。当前基线需应用仓库 `patches/` 的 15 个提供方补丁，涉及命令意图、观察布局、原生消息与图片、历史恢复、子会话输入驱动和导航守卫。普通 npm 宿主同版本尚无完整扩展。具体来源、版本、公开契约、生命周期和验证口径见 [UX 实现记录](https://github.com/Luohaothu/dsh-flow/blob/main/docs/plans/ux-implementation.md)。
+标准组合只注册 `/agent-team` skill 启动入口，不注册额外智能体预设或侧栏入口。管理角色工具仍在各身份自己的作用域中。主会话执行工具先验证团队归属。当前基线需应用仓库 `patches/` 的 15 个提供方补丁，涉及命令意图、观察布局、原生消息与图片、历史恢复、子会话输入驱动和导航守卫。普通 npm 宿主同版本尚无完整扩展。公开契约、生命周期和安装校验见[宿主接口与补丁](/development/provider-interfaces)，实际界面行为见[主会话与团队界面](/development/interface)。
 
 ## 远程接口与 Typert 的边界 {#remote-与-typert-的边界}
 
-浏览器通过 `ctx.remote.flow` 调用远程接口（Remote）。请求经过 DSH 的连接服务和 API 网关，进入宿主端的远程接口实现，再调用同一个 `ctx.flow` 服务。观察使用 `teamRuns`、`teamRead`；诊断读取保留 `list`、`read`、`events`、`query`、`report`。远程描述不包含启动和控制操作，参数与语义见 [API 接口](/development/api)。
+浏览器通过 `ctx.remote.flow` 调用远程接口（Remote）。请求经过 DSH 的连接服务和 API 网关，进入宿主端的远程接口实现，再调用同一个 `ctx.flow` 服务。观察使用 `teamRuns`、`teamRead`、`agentSession`；诊断读取保留 `list`、`read`、`events`、`query`、`report`。远程描述不包含启动和控制操作，参数与语义见 [API 接口](/development/api)。
 
-标准 HTTP 传输使用 `/api/flow/<method>` 路径和结构化的 `args` 参数。旧的单一路由 `/api/flow` 加 `{ op, id, payload }` 不属于当前协议。`settle`、`tick`、`single`、`recover`、`dispose` 是开发验收使用的进程间通信（IPC）能力，不属于浏览器远程 API；控制平面插件本身也不会读取 `FLOW_IPC` 来启用这些能力。
+标准 HTTP 传输使用 `/api/flow/<method>` 路径和结构化的 `args` 参数。`settle`、`tick`、`single`、`recover`、`dispose` 是开发验收使用的进程间通信（IPC）能力，不属于浏览器远程 API；控制平面插件本身也不会读取 `FLOW_IPC` 来启用这些能力。
 
 构建顺序必须保留：
 

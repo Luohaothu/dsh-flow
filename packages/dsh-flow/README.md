@@ -1,47 +1,39 @@
 # dsh-flow
 
-A hierarchical agent cluster for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-one management tree of three-role management nodes, durable transactions with an
-independent audit gate, restart recovery, layered budgets, and read-only team observation in the main conversation.
+A hierarchical agent team for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), coordinated from the main conversation. The main Agent assesses the task, creates and monitors a team, sends instructions and finalizes completed runs. Each management node has an Orchestrator, Allocator and Auditor; Workers execute durable transactions under layered budgets and independent result review.
 
-This package is the published half of the plugin. The repository that contains it
-also holds the development and acceptance chain; the full documentation —
-management model, configuration table, acceptance commands and the migration
-notes for this cutover — lives in the repository's top-level `README.md`.
+The main conversation provides a team tree and topology view. Selecting an Agent opens its complete native conversation and trace. Active Agents accept messages through Flow scheduling; reclaimed Agents and terminal teams retain their records with input disabled. Inspectors and the sidebar provide read-only conversation views.
+
+See the repository [README](../../README.md) and [developer guide](../../docs/design/index.md) for the control model, deployment and validation.
 
 ## Exports
 
-| Subpath | What it is |
+| Subpath | Purpose |
 |---|---|
-| `dsh-flow` | The Cordis plugin: `name`, `inject`, `Config` and `apply`. Publishes the `ctx.flow` service contract and the DTO types; it does **not** export the runtime class. |
+| `dsh-flow` | Cordis plugin: `name`, `inject`, `Config` and `apply`; the `ctx.flow` service contract and DTO types. |
 | `dsh-flow/command` | The `/agent-team` skill command and main-Agent create/read/message/control/finalize tools. |
-| `dsh-flow/tools` | Optional backend consumer: `flow_start`, `flow_read`, `flow_control`, excluded from the standard human interface and bundle. |
-| `dsh-flow/web` | The standard Remote face: read-only `@Remote` methods over `ctx.flow`. |
-| `dsh-flow/types` | The Client-safe wire vocabulary, shared by Host and browser. |
-| `dsh-flow/client` | The browser assembly: mounts the generated Remote contribution, then the team header, conversation view and display settings. |
-| `dsh-flow/typert` | Generated Host descriptors (build artifact). |
-| `dsh-flow/remote` | Generated Client contribution and type merges (build artifact). |
-| `dsh-flow/cordis.patch.yml` | The bundle patch: the control plane, the Remote face, and the `/agent-team` command. |
+| `dsh-flow/web` | Read-only `@Remote` methods over `ctx.flow`. |
+| `dsh-flow/types` | Client-safe wire types shared by Host and browser. |
+| `dsh-flow/client` | Browser assembly: generated Remote contribution, team views, native session navigation, communication cards and settings. |
+| `dsh-flow/typert` | Generated Host descriptors. |
+| `dsh-flow/remote` | Generated Client contribution and type merges. |
+| `dsh-flow/cordis.patch.yml` | Bundle configuration: control plane, Remote face and `/agent-team` command. |
 
-## Running it
+## Build and validation
+
+Run these commands from the workspace root:
 
 ```sh
-pnpm run build      # Host program, Remote generation, Client program, website seed, bundles
-pnpm test           # unit suites, no model
-pnpm run test:mock  # native host contracts plus every deterministic scenario
+pnpm run build      # Host, Remote generation, Client, website seed and bundles
+pnpm run typecheck  # Type graph and generated Remote contracts
+pnpm test           # Unit and acceptance-harness contract suites, no model
+pnpm run test:mock  # Native host contracts and deterministic scenarios
 ```
 
-`pnpm run build` emits `lib/index.js`, `lib/tools.js`, `lib/web.js`, `lib/command.js` and
-`lib/client.js`, the declarations under `lib/types/`, and both generated Typert
-artifact pairs. The Host and Client halves are separate TypeScript programs; the
-browser bundle is built last, from the Client program, with the generated Remote
-contribution and its zod codec inlined.
+The build emits `lib/index.js`, `lib/web.js`, `lib/command.js`, `lib/client.js`, declarations under `lib/types/`, and the generated Typert artifacts. Host and Client are separate TypeScript programs. The browser bundle inlines the generated Remote contribution and its zod codec while using provider-owned UI modules from the host.
 
 ## Configuration
 
-Every deployment parameter is configuration, validated by a schemastery schema in
-`src/config.ts`. The plugin reads no environment variable. The bundle's own row
-derives `provider`/`model`/`reasoningEffort` from the host's default-model
-provider, so the plugin routes wherever the deployment routes. The deployment and
-acceptance overlays interpret `FLOW_*` variables; the production core does not.
-The pinned host requires the public provider API patches committed in the workspace. A standalone npm host of the same version does not yet provide these extensions. Use the repository frozen install and launcher; see `docs/plans/ux-implementation.md` for patch contracts and evidence.
+Deployment parameters are validated by the schemastery schema in `src/config.ts`. Production code reads no environment variables. The bundle derives model defaults from the host's default-model provider; the main Agent can carry the active conversation's model into a team. Execution settings apply to newly created teams, while display preferences belong to the current browser user.
+
+The pinned host requires the public provider API patches included in this workspace. Use the frozen workspace install and its launcher. The [provider interface guide](../../docs/design/development/provider-interfaces.md) describes these dependencies, and the [validation guide](../../docs/design/development/validation.md) describes the checks.

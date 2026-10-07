@@ -56,7 +56,7 @@ export interface FlowService {
   finalizeTeam(sessionId: string, runId: string): FlowTeamSnapshot
   /** Start a deduplicated main-session command intent. */
   startTeam(sessionId: string, intentId: string, objective: string, workspace?: string,model?:FlowModelSelection): FlowSnapshot
-  /** Ordinary instructions are accepted only through the main-session path. */
+  /** Apply the main-session model selection to active teams that follow it. */
   teamSelectModel(sessionId:string,model:FlowModelSelection):void
   teamReply(sessionId: string, messageId: string, content: string, runId?: string): void
   /** Runs are isolated by their owning main session. */

@@ -62,7 +62,7 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
 
 [instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。请按实际部署修改模型提供方、模型名称、服务地址和上下文上限；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
 
-通过 `/agent-team` 启动时，团队继承主会话当前选中的模型；主会话后续选择同步给该会话未结束的团队。示例中的固定模型用于底层程序化启动的默认路由。若团队受阻且提示模型服务连接失败，先核对主会话选中服务是否可连接。
+团队默认模型为“跟随主会话”时，创建使用主会话当前选中的模型，后续选择同步给该会话未结束的团队；设置为固定模型时保持团队选择。示例中的 `provider/model` 同时提供底层程序化启动的默认路由。若团队受阻且提示模型服务连接失败，先核对主会话选中服务是否可连接。
 
 先检查合并后的配置，此步骤不会加载服务或运行模型：
 
@@ -83,9 +83,9 @@ node --import tsx src/host/dsh-launch.ts \
   --host 127.0.0.1 --port 8791 --no-open
 ```
 
-打开终端打印的带访问令牌的 URL。示例使用独立数据目录，启动后没有待恢复的旧集群；不提交目标就不会创建新的集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
+打开终端打印的带访问令牌的 URL。示例使用独立数据目录；不提交目标就不会创建集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
 
-模型服务准备好后，在主会话输入 `/agent-team <需求>`，说明目标、预期产物和验收条件。后续指令通过主会话下达，“智能体”视图只读。执行智能体提交产物后，还必须通过业务验收和独立复核，任务单元才会被正式接受。
+模型服务准备好后，在主会话输入 `/agent-team <需求>`，说明目标、预期产物和验收条件。团队指令通过主会话下达，“智能体”视图和检查器只读；成员完整原生会话允许符合生命周期条件的文本续聊。执行智能体提交产物后，还必须通过业务验收和独立复核，任务单元才会被正式接受。
 
 联调时可按以下顺序定位问题：
 

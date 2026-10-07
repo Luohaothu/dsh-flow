@@ -132,7 +132,7 @@ export function startTeam(runtime: ClusterRuntime, sessionId: string, intentId: 
     return run;
   });
 }
-/** Preserve independent histories and ownership; legacy unbound runs are never relabeled. */
+/** List only runs explicitly bound to this main session. */
 export function teamRuns(runtime: ClusterRuntime, sessionId: string): readonly FlowTeamRun[] {
   return runtime.store.all('SELECT c.id FROM clusters c JOIN team_runs t ON t.run_id=c.id WHERE t.main_session_id=? ORDER BY c.created DESC,c.id', sessionId)
     .map(row => runOf(runtime, sessionId, String(row.id)));

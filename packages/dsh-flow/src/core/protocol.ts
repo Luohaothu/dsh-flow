@@ -24,9 +24,6 @@ import type { DelegationFixtureEntry, FlowActor, MessageFixtureEntry } from './m
 export const CLUSTER_STATUSES = [
   'RUNNING', 'PAUSED', 'COMPLETED', 'BLOCKED', 'FAILED', 'CANCELLED',
 ] as const satisfies readonly FlowClusterStatus[];
-export const CLUSTER_TERMINAL: ReadonlySet<FlowClusterStatus> = new Set<FlowClusterStatus>(
-  ['COMPLETED', 'FAILED', 'CANCELLED'] as const satisfies readonly FlowClusterStatus[],
-);
 
 export const NODE_STATUSES = [
   'ACTIVE', 'DRAINING', 'PAUSED', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELLED', 'RELEASED',
@@ -45,9 +42,6 @@ export const TRANSACTION_STATUSES = [
 ] as const satisfies readonly FlowTransactionStatus[];
 export const TRANSACTION_TERMINAL: ReadonlySet<FlowTransactionStatus> = new Set<FlowTransactionStatus>(
   ['ACCEPTED', 'CANCELLED', 'SUPERSEDED', 'FAILED'] as const satisfies readonly FlowTransactionStatus[],
-);
-export const TRANSACTION_OPEN: ReadonlySet<FlowTransactionStatus> = new Set<FlowTransactionStatus>(
-  ['DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'VALIDATING', 'REJECTED', 'BLOCKED', 'PAUSED'] as const satisfies readonly FlowTransactionStatus[],
 );
 
 export const MANAGEMENT_ROLES = ['orchestrator', 'allocator', 'auditor'] as const satisfies readonly FlowManagementRole[];
@@ -79,8 +73,8 @@ export const ALLOCATOR_ACTIONS = [
 export const AUDITOR_ACTIONS = [
   'inspect_plan', 'inspect_validation', 'request_correction', 'request_replan',
   'request_revalidation', 'verify_correction', 'escalate',
-  // Section 18's supervision surface: record a signal, recommend a change, and
-  // score the eight health dimensions on the record.
+  // Supervision records signals, recommendations and the Auditor's scores
+  // for all eight health dimensions.
   'notify', 'recommend', 'evaluate_health',
 ] as const satisfies readonly string[];
 
@@ -171,20 +165,9 @@ export function toolsForCapabilities(capabilities: readonly FlowCapability[]): s
   return [...tools].sort();
 }
 
-export function validateIdentifier(value: unknown, label = 'identifier', max = 128): string {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) || value.length > max) fail(`Invalid ${label}`);
-  return value;
-}
-
 export function validateText(value: unknown, label: string, max = 32768): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) fail(`Invalid ${label}`);
   return value;
-}
-
-export function validateList(value: unknown, label: string, max = 64, itemMax = 4096): string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > max) fail(`Invalid ${label}`);
-  return value.map((item: unknown) => validateText(item, `${label} entry`, itemMax));
 }
 
 export function validateStatusTransition(table: 'transaction', from: FlowTransactionStatus, to: FlowTransactionStatus): boolean {
@@ -259,36 +242,19 @@ export const DEFAULT_LIMITS: FlowDefaultLimits = {
 };
 
 /**
- * Context pressure thresholds per role.
- *
- * Measured on this host: a management role's session already carries ~6-8k
- * tokens of system prompt and tool schemas before any work, so the design's
- * raw 8192/16384 numbers would flag ordinary fixed prompts. Measure with
- * `tokenMeter`, compact at a fraction of the identity budget, and block only
- * when the resulting request still exceeds the provider's input window.
+ * Context pressure thresholds per role. tokenMeter measures the current
+ * session; compaction starts at a fraction of the identity budget. The model
+ * and server input windows bound the request that can actually be sent.
  */
 export const DEFAULT_CONTEXT_LIMITS: FlowContextLimits = {
-  /**
-   * The approved per-role context budgets. These are the compaction window:
-   * they are what keeps a management session from growing to six figures and
-   * making every turn cost tens of thousands of prompt tokens.
-   */
+  /** Per-role context budgets used to trigger compaction. */
   role: 8192,
   worker: 16384,
   /** Fraction of the role/identity compaction budget. */
   compaction_threshold: 0.8,
-  /**
-   * The conservative declared window of the served model (the patch routes
-   * `local-sglang/Qwen3.8-27B-FP8` with `contextWindow: 131072`). Reaching it
-   * is the real overflow risk; the per-role numbers above are the point at
-   * which the session is worth compacting.
-   */
+  /** Model context window declared by the deployment. */
   model: 131072,
-  /**
-   * The served deployment's own input cap (`max_req_input_len` from
-   * `/get_server_info`). A request above it is rejected outright, so it is a
-   * harder ceiling than the model's nominal window.
-   */
+  /** Deployment input ceiling applied alongside the model window. */
   server_input: 142074,
 };
 

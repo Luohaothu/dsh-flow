@@ -23,9 +23,7 @@ export interface TeamUi {
   openAgent(agent:FlowTeamAgent):void
   main(): void
   openTeam(): void
-  currentView?:string|undefined
-  openView(view:string):void
-  tab(available: boolean): () => void
+  tab(available: boolean): void
 }
 function Status({agent,compact=false}: {agent:Pick<FlowTeamAgent,'state'|'raw_state'|'recycled'>;compact?:boolean}) {
   const dot = agent.state==='failed'?'error':agent.state==='running'?'ongoing':agent.state.startsWith('waiting')||agent.state==='paused'||agent.state==='blocked'?'warning':agent.state==='completed'?'done':'idle';
@@ -41,7 +39,7 @@ function TreeToggle({name,hasChildren,collapsed,toggle}: {name:string;hasChildre
 function useLocal(ui: TeamUi, team: FlowTeamSnapshot | null, defaults: DisplayPreferences) {
   const key=team?.run.id??'loading';
   let local=ui.local.get(key);
-  if (!local) {local=createLocalView(defaults.view);local.scope=defaults.communications;local.showEnded=defaults.ended==='show';ui.local.set(key,local);}
+  if (!local) {local=createLocalView(defaults.view);local.showEnded=defaults.ended==='show';ui.local.set(key,local);}
   const [,render]=useState(0);
   const update=(operation:()=>void)=>{operation();render(value=>value+1);};
   return {local,update};
@@ -88,7 +86,7 @@ export function TeamHeader({ui}: {ui:TeamUi}) {
   const leave=()=>{clearTimeout(openTimer.current);if(!fixed)closeTimer.current=setTimeout(()=>setOpen(false),250);};
   if(!data.runs.length)return null;
   const team=data.team;
-  const headerRows=team?treeRows(team.agents,'',new Set(),local.collapsed):[];
+  const headerRows=team?treeRows(team.agents,local.collapsed):[];
   const headerEnded=team?.agents.filter(agent=>ENDED.has(agent.state)).length??0;
   const headerVisible=visibleEndedRows(headerRows,team?.agents??[],local.showEnded);
   const full=(id:string)=>{const agent=team?.agents.find(agent=>agent.id===id);if(agent)ui.openAgent(agent);close();};
@@ -153,7 +151,7 @@ function Graph({rows,local,select,change,settings}: {rows:readonly TreeRow[];loc
         <svg width={width} height={height} className="flow-lines" aria-label="智能体派生关系">
           {rows.map(row=>{const parent=row.agent.parent_id?local.positions.get(row.agent.parent_id):undefined;const here=local.positions.get(row.agent.id)!;return parent&&ids.has(row.agent.parent_id!)?<path key={row.agent.id} d={`M${parent.x+NODE_WIDTH/2} ${parent.y+NODE_HEIGHT} V${(parent.y+NODE_HEIGHT+here.y)/2} H${here.x+NODE_WIDTH/2} V${here.y}`} fill="none" stroke="currentColor"/>:null;})}
         </svg>
-        {rows.map(row=>{const position=local.positions.get(row.agent.id)!;return <button type="button" key={row.agent.id} className="flow-node" data-role={row.agent.role} data-agent-id={row.agent.id} style={{left:position.x,top:position.y,opacity:row.matched?1:.65}} aria-pressed={local.selected===row.agent.id} aria-label={`${row.agent.name}，${ROLE_LABELS[row.agent.role]}，${STATE_LABELS[row.agent.state]}`} title={`${row.agent.name} · ${ROLE_LABELS[row.agent.role]}\n${row.agent.responsibility}`} onClick={()=>select(row.agent.id)}><span className="flow-node-meta"><span>{ROLE_LABELS[row.agent.role]}</span><RowStatus agent={row.agent} compact/></span><span className="flow-node-person"><span className="flow-avatar" aria-hidden="true">{agentEmoji(row.agent.id,row.agent.role)}</span><strong>{row.agent.name}</strong></span><small className="flow-node-task">{row.agent.responsibility}</small><small className="flow-node-usage">{formatMetric(row.agent.tokens,settings.tokens)} Token · {duration(row.agent.created,row.agent.ended)}</small>{row.incomplete&&<small>正在补全关系</small>}</button>;})}
+        {rows.map(row=>{const position=local.positions.get(row.agent.id)!;return <button type="button" key={row.agent.id} className="flow-node" data-role={row.agent.role} data-agent-id={row.agent.id} style={{left:position.x,top:position.y}} aria-pressed={local.selected===row.agent.id} aria-label={`${row.agent.name}，${ROLE_LABELS[row.agent.role]}，${STATE_LABELS[row.agent.state]}`} title={`${row.agent.name} · ${ROLE_LABELS[row.agent.role]}\n${row.agent.responsibility}`} onClick={()=>select(row.agent.id)}><span className="flow-node-meta"><span>{ROLE_LABELS[row.agent.role]}</span><RowStatus agent={row.agent} compact/></span><span className="flow-node-person"><span className="flow-avatar" aria-hidden="true">{agentEmoji(row.agent.id,row.agent.role)}</span><strong>{row.agent.name}</strong></span><small className="flow-node-task">{row.agent.responsibility}</small><small className="flow-node-usage">{formatMetric(row.agent.tokens,settings.tokens)} Token · {duration(row.agent.created,row.agent.ended)}</small>{row.incomplete&&<small>正在补全关系</small>}</button>;})}
       </div>
     </div>
   </section>;
@@ -179,12 +177,6 @@ export function TeamView({ui}: {ui:TeamUi}) {
   const selected=team?.agents.find(agent=>agent.id===local.selected)??null;
   const reader=useMemo(()=>selected?ui.reader(selected.session_id):null,[selected?.id,selected?.session_id,team?.run.id]);
   useEffect(()=>()=>reader?.dispose(),[reader]);
-  useEffect(()=>{
-    if(!team)return;
-    const ids=new Set(team.agents.map(agent=>agent.id));
-    if(local.known.size&&local.interacted) for(const id of ids)if(!local.known.has(id)&&!local.added.includes(id))local.added.push(id);
-    local.known=ids;
-  },[team]);
   const select=(id:string)=>update(()=>{
     local.selected=id;local.inspector=true;
     let parent=team?.agents.find(agent=>agent.id===id)?.parent_id;
@@ -192,14 +184,14 @@ export function TeamView({ui}: {ui:TeamUi}) {
     while(parent&&!seen.has(parent)){seen.add(parent);local.collapsed.delete(parent);parent=team?.agents.find(agent=>agent.id===parent)?.parent_id;}
   });
   const full=(id:string)=>{const agent=team?.agents.find(agent=>agent.id===id);if(agent)ui.openAgent(agent);};
-  const rows=team?treeRows(team.agents,'',new Set(),local.collapsed):[];
+  const rows=team?treeRows(team.agents,local.collapsed):[];
   const conversations:ReactNode=selected&&reader&&ui.renderReader?<div className="flow-conversation-detail"><div className="flow-detail-heading"><strong>{selected.name}</strong><span className="flow-id">{selected.id}</span></div>{ui.renderReader({source:reader,agentId:selected.id,follow:preferences.follow,variant:'embedded',openFull:()=>full(selected.id)})}</div>:null;
   const information:ReactNode=selected&&team?<Information agent={selected} team={team} select={select} main={ui.main}/>:null;
   const structure:ReactNode=<div className="flow-structure">
 
     {!rows.length&&<p>暂无智能体</p>}
     {team?.agents.length===1&&<p>尚未派生子代理</p>}
-    {view==='graph'?<Graph rows={rows} local={local} select={select} change={()=>update(()=>{})} settings={preferences}/>:<div className="flow-scroll" role="list" aria-label="智能体层级列表">{rows.slice(0,page).map(row=><div role="listitem" key={row.agent.id} className="flow-list-row" data-role={row.agent.role} style={{paddingInlineStart:`${row.depth*1.2}em`}}><TreeToggle name={row.agent.name} hasChildren={!!row.children} collapsed={local.collapsed.has(row.agent.id)} toggle={()=>update(()=>{local.collapsed.has(row.agent.id)?local.collapsed.delete(row.agent.id):local.collapsed.add(row.agent.id);})}/><Button className="flow-title" onClick={()=>select(row.agent.id)} title={row.agent.name} aria-pressed={local.selected===row.agent.id}>{row.agent.name}</Button><RowStatus agent={row.agent}/><small>{formatMetric(row.agent.tokens,preferences.tokens)} Token{!row.matched&&' · 关系节点'}{row.incomplete&&' · 正在补全关系'}</small></div>)}{rows.length>page&&<Button onClick={()=>setPage(value=>value+100)}>显示更多代理（{rows.length-page} 个）</Button>}</div>}
+    {view==='graph'?<Graph rows={rows} local={local} select={select} change={()=>update(()=>{})} settings={preferences}/>:<div className="flow-scroll" role="list" aria-label="智能体层级列表">{rows.slice(0,page).map(row=><div role="listitem" key={row.agent.id} className="flow-list-row" data-role={row.agent.role} style={{paddingInlineStart:`${row.depth*1.2}em`}}><TreeToggle name={row.agent.name} hasChildren={!!row.children} collapsed={local.collapsed.has(row.agent.id)} toggle={()=>update(()=>{local.collapsed.has(row.agent.id)?local.collapsed.delete(row.agent.id):local.collapsed.add(row.agent.id);})}/><Button className="flow-title" onClick={()=>select(row.agent.id)} title={row.agent.name} aria-pressed={local.selected===row.agent.id}>{row.agent.name}</Button><RowStatus agent={row.agent}/><small>{formatMetric(row.agent.tokens,preferences.tokens)} Token{row.incomplete&&' · 正在补全关系'}</small></div>)}{rows.length>page&&<Button onClick={()=>setPage(value=>value+100)}>显示更多代理（{rows.length-page} 个）</Button>}</div>}
   </div>;
   const notices=team?<div className="flow-notices">{team.run.reason&&<p className="flow-run-reason" role="status">{team.run.reason}</p>}
       {ENDED.has(team.run.state)&&<div className="flow-result"><p>结束：{team.run.ended?new Date(team.run.ended).toLocaleString():'尚未提供'}</p>{team.run.result&&<details><summary>团队结果</summary><pre>{JSON.stringify(team.run.result,null,2)}</pre></details>}</div>}

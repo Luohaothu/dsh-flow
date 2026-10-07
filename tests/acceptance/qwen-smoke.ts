@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * V1: local Qwen acceptance for the plugin's model and tool path.
+ * Local Qwen acceptance for the plugin's model and tool path.
  *
  * Every tool assertion goes through a complete DSH profile assembly — a direct
  * HTTP probe proves nothing about the harness wiring. Receipts are written to
  * .artifacts/<run-id>/qwen-smoke.json.
  *
- * Usage: FLOW_QWEN_BASE_URL=... FLOW_QWEN_MODEL=... node tests/acceptance/qwen-smoke.mjs
+ * Usage: FLOW_QWEN_BASE_URL=... FLOW_QWEN_MODEL=... pnpm run test:qwen
  */
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -341,11 +341,8 @@ async function webFetchSuite(host: DshHost, layout: RunLayout, receipts: QwenRec
   }, 900_000));
   if (!single) throw new Error('single reply is not a single-agent result');
   receipts.host.web_fetch = single;
-  // The capability was exercised when the tool really ran *and* the outcome
-  // reached the ledger. Requiring prose as well made the check fail a run whose
-  // model submitted the fetch refusal as a structured result instead of
-  // narrating it — the harness's own record of the turn is the evidence, not the
-  // model's style.
+  // A capability is exercised when the native tool runs and its outcome
+  // reaches the ledger, including a structured refusal result.
   const fetchCalled = single.tool_calls.some(call => call.name === 'web_fetch');
   let recorded: unknown = null;
   try {

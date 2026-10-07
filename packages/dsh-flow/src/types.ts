@@ -1,17 +1,17 @@
 /**
  * The plugin's wire vocabulary: everything that crosses a boundary — a model
- * tool parameter, a Remote argument, a panel form field, an IPC envelope — is
+ * tool parameter, a Remote argument, a settings value, an IPC envelope — is
  * described here, and nothing in this module may reach for Node, the store or a
  * Host Context. The published `./types` subpath is exactly this file, so the
- * browser panel and the Host share one declaration of every shape.
+ * browser views and the Host share one declaration of every shape.
  *
  * Two rules keep the generated Remote codec representable:
  *   1. every member is a concrete interface, a literal union, an array, or a
  *      concrete instantiation of {@link FlowPage};
  *   2. free-form JSON is {@link FlowJsonValue} rather than `unknown` or `any`,
  *      so a codec can be generated for it.
- * Type operators (mapped, indexed-access, conditional, `typeof` queries) are
- * deliberately absent from this module.
+ * Types reflected into Remote codecs use concrete shapes. Main-Agent tool
+ * requests can derive their fields from those shared declarations.
  */
 // --------------------------------------------------------------- vocabulary
 
@@ -102,13 +102,10 @@ export type FlowScopeKind = 'cluster' | 'root' | 'node' | 'transaction' | 'agent
 /** The three operations a cluster may be told to perform on its own state. */
 export type FlowControlAction = 'pause' | 'resume' | 'cancel';
 
-/** Section 18's eight health dimensions, in the Auditor's vocabulary. */
+/** The eight health dimensions scored by the Auditor. */
 export type FlowHealthMetric =
   | 'transaction_coverage' | 'decomposition_quality' | 'responsiveness' | 'planning_stability'
   | 'goal_alignment' | 'acceptance_quality' | 'result_integration' | 'escalation_quality';
-
-/** The kind of payload a transaction's saved result holds. */
-export type FlowResultKind = 'text' | 'structured' | 'aggregate' | 'submission';
 
 /** Every query a caller may ask of one cluster. */
 export type FlowQueryKind =
@@ -268,10 +265,8 @@ export interface FlowNodeScopeReference {
 /**
  * One management ancestor of a node.
  *
- * The lineage projection carries topology only: a nested delegation scope
- * repeats a long objective on every ancestor, and one real Auditor could not
- * fit its validation under its identity budget after fetching two such
- * details.
+ * The lineage projection carries topology only, keeping repeated delegation
+ * objectives and acceptance criteria outside the model's ancestor lookup.
  */
 export interface FlowNodeAncestor {
   readonly id: string
@@ -489,8 +484,8 @@ export interface FlowUsageSummary {
 }
 
 /**
- * The cost line of a usage summary. This deployment is locally served, so there
- * is no price to multiply by: the field says so instead of inventing a number.
+ * The cost line of a usage summary. No monetary price model is configured;
+ * `local-unpriced` marks the placeholder independently of the provider route.
  */
 export interface FlowUsageCost {
   readonly amount: number
@@ -595,7 +590,7 @@ export interface FlowSummaryManagementHealth {
   readonly blocked_nodes: readonly string[]
 }
 
-/** Section 18's derived signals, as the ledger measures them. */
+/** Health signals derived from the durable ledger. */
 export interface FlowHealthSignals {
   readonly window_ms: number
   readonly transaction_coverage: number | null
@@ -820,7 +815,7 @@ export interface FlowReportValidation {
   readonly checks: number
 }
 
-/** Section 18/19's measured mechanism block. */
+/** Measured control-plane health and scale indicators. */
 export interface FlowReportMechanism {
   readonly nodes: number
   readonly management_nodes: number

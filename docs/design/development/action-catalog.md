@@ -1,80 +1,67 @@
-# 设计动作索引
+# 动作索引
 
-本页按角色列出设计层面的动作及参数含义。这些参数用于说明设计意图，不代表当前工具的实际参数定义；已开放的动作及调用方式见 [API 手册](/development/api)。
+角色工具根据原生执行身份校验权限。所有命令均受管理域、对象版本、执行安全点与预算约束；通信不会授予额外控制权。本页解释已开放动作的职责，调用参数与示例见 [API 手册](/development/api#角色工具)。
 
-所有动作均受管理域权限、版本、安全点和预算约束。`accept_result` 表达编排智能体的业务接受意见，结果达到正式接受状态 `ACCEPTED`，仍须遵循[任务单元与独立审计](/development/components/transactions)的版本复核规则。
+## 编排智能体
 
-创建执行智能体、分解任务单元和验收结果的设计动作分别为 `spawn_agent`、`decompose` 和 `validate`。`spawn_worker`、`decompose_transaction`、`validate_transaction` 是这些设计动作的同义表述，不代表额外的工具接口。
+工具为 `flow_transaction`。
 
-## 编排智能体动作
+| 动作 | 职责 |
+|---|---|
+| `create_transaction` / `decompose` | 创建工作单元或将目标分解为子任务，记录约束与验收标准 |
+| `set_dependency` / `set_priority` | 设置无环依赖和执行优先级 |
+| `dispatch` | 将计划提交调度，并发起异步规划审查 |
+| `adjust_transaction` | 在安全点修订计划，增加版本并使过期分配失效 |
+| `validate` / `accept_result` | 提交有检查项和证据的业务接受意见，等待对应结果版本的独立复核 |
+| `reject_result` | 驳回候选结果并记录理由 |
+| `aggregate` | 基于已接受的下级工作生成汇总候选结果 |
+| `pause_transaction` / `resume_transaction` / `cancel_transaction` | 控制本管理域内的单个任务单元 |
+| `request_user` | 记录需要用户回答的问题，并暂停相应角色的自主推进 |
+| `escalate` | 将本管理域无法解决的问题提交上级 |
+| `finish_cluster` | 根编排智能体请求整体收尾；运行时仍检查交付和资源条件 |
 
-| 动作                 | 语义                        | 可调整参数                                                                     |
-| -------------------- | --------------------------- | ------------------------------------------------------------------------------ |
-| `create_transaction` | 创建新的任务单元                | `objective`、`inputs`、`constraints`、`expected_output`、`acceptance_criteria` |
-| `decompose`          | 将任务单元拆解为多个子任务单元      | `transaction`、`subtransactions`、`dependencies`、`priorities`                 |
-| `merge_transaction`  | 合并多个相关任务单元            | `transactions`、`objective`、`acceptance_criteria`                             |
-| `set_dependency`     | 定义任务单元之间的依赖关系      | `source`、`target`、`dependency_type`                                          |
-| `set_priority`       | 调整任务单元优先级              | `transaction`、`priority`、`deadline`                                          |
-| `set_requirements`   | 定义任务单元执行要求            | `transaction`、`capabilities`、`quality_level`、`latency_target`、`cost_limit` |
-| `dispatch`           | 派发任务单元，由资源分配智能体安排执行 | `transaction`、`requirements`、`budget_constraint`                             |
-| `adjust_transaction` | 根据反馈修改任务单元定义        | `transaction`、`objective_delta`、`constraints`、`acceptance_criteria`         |
-| `pause_transaction`  | 暂停任务单元                    | `transaction`、`reason`、`checkpoint_policy`                                   |
-| `resume_transaction` | 恢复任务单元                    | `transaction`、`resume_point`、`updated_requirements`                          |
-| `cancel_transaction` | 取消任务单元                    | `transaction`、`reason`、`artifact_policy`                                     |
-| `request_review`     | 请求对结果进行独立审查      | `transaction`、`review_scope`、`criteria`                                      |
-| `validate`           | 根据验收标准验证任务单元结果    | `transaction`、`result`、`acceptance_criteria`                                 |
-| `reject_result`      | 驳回任务单元结果并要求调整      | `transaction`、`issues`、`required_changes`                                    |
-| `accept_result`      | 提出接受任务单元结果的业务意见                | `transaction`、`result`、`confidence`                                          |
-| `aggregate`          | 汇总多个任务单元结果            | `transactions`、`aggregation_scope`、`output_schema`                           |
-| `escalate`           | 将任务单元中的问题提请上级管理节点处理   | `issue`、`transaction`、`severity`、`evidence`                                 |
+`accept_result` 不是绕过审计的捷径。`ACCEPTED` 必须来自当前 `revision/result_revision` 的业务接受与独立审查，见[任务单元与独立审计](/development/components/transactions)。
 
-## 资源分配智能体动作
+## 资源分配智能体
 
-| 动作                    | 语义                                    | 可调整参数                                                                     |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------------------------------ |
-| `allocate_agent`        | 为任务单元匹配已有智能体                    | `transaction`、`agent`、`capability_match`、`allocation_weight`                |
-| `spawn_agent`           | 为任务单元创建新的执行智能体                   | `transaction`、`role`、`capabilities`、`model`、`budget`、`lifetime`           |
-| `spawn_management_node` | 为复杂任务单元创建下级管理节点      | `transaction`、`scope`、`budget`、`max_children`                               |
-| `release_agent`         | 回收当前智能体                          | `agent`、`handoff_policy`、`state_policy`                                      |
-| `replace_agent`         | 替换正在执行任务单元的智能体                | `transaction`、`source_agent`、`target_agent`、`state_transfer`                |
-| `reassign_agent`        | 将智能体调整到其他任务单元                 | `agent`、`source_transaction`、`target_transaction`                            |
-| `select_model`          | 为智能体选择模型                       | `agent`、`transaction`、`model`、`reasoning_level`、`cost_limit`               |
-| `route_capability`      | 根据能力要求匹配执行智能体              | `transaction`、`required_capabilities`、`candidate_agents`、`selection_policy` |
-| `allocate_budget`       | 分配任务单元或智能体的执行预算             | `target`、`tokens`、`wall_time`、`tool_calls`、`compute`、`cost`               |
-| `rebalance_budget`      | 动态调整资源预算                        | `sources`、`targets`、`resource_types`、`amounts`                              |
-| `set_concurrency`       | 设置任务单元并行度                          | `transaction`、`min`、`target`、`max`                                          |
-| `scale_out`             | 增加任务单元执行资源                        | `transaction`、`additional_agents`、`additional_compute`                       |
-| `scale_in`              | 缩减任务单元执行资源                        | `transaction`、`target_agents`、`target_compute`                               |
-| `reparent`              | 调整智能体或管理节点的父节点 | `target`、`new_parent`、`state_transfer`                                       |
-| `set_context_budget`    | 配置智能体的上下文策略                 | `agent`、`context_limit`、`compression_threshold`、`retention_policy`          |
-| `checkpoint`            | 保存智能体执行状态                     | `agent`、`scope`、`reason`                                                     |
-| `restore`               | 从检查点恢复智能体                | `agent`、`checkpoint`、`target_resource`                                       |
-| `evaluate_allocation`   | 评估当前资源配置效率                    | `transaction`、`metrics`、`evaluation_window`                                  |
+工具为 `flow_allocation`。
 
-## 审计智能体动作
+| 动作 | 职责 |
+|---|---|
+| `allocate_agent` / `spawn_agent` | 为任务建立执行分配与身份 |
+| `spawn_management_node` | 为需独立规划的任务建立下级管理域和三类管理身份 |
+| `release_agent` / `replace_agent` / `reassign_agent` | 在轮次与租约结束后回收、替换或重新分配执行身份 |
+| `allocate_budget` / `rebalance_budget` | 在授权范围内分配或调拨尚未占用的额度 |
+| `set_concurrency` / `scale_out` / `scale_in` | 调整执行容量和执行者数量，仍受全局限制与预算约束 |
+| `select_model` | 设置目标身份的模型路由 |
+| `set_context_budget` | 设置目标身份的上下文额度、压缩触发比例与保留策略 |
+| `reparent` | 在无活跃执行和未结算副作用等前提下移动子树 |
+| `checkpoint` / `restore` | 保存检查点或按有效证据恢复身份 |
+| `resolve_effect` | 依据实际证据处置未知副作用，决定是否允许继续执行 |
+| `evaluate_allocation` | 保存资源配置的评估依据 |
 
-| 动作                        | 语义                               | 可调整参数                                            |
-| --------------------------- | ---------------------------------- | ----------------------------------------------------- |
-| `inspect_decomposition`     | 检查任务单元拆解质量                   | `transaction`、`subtransactions`、`coverage_scope`    |
-| `inspect_dependency`        | 检查任务单元依赖关系                   | `transactions`、`dependencies`、`constraints`         |
-| `inspect_priority`          | 检查任务单元优先级                     | `transactions`、`priorities`、`criticality`           |
-| `inspect_requirements`      | 检查任务单元执行要求                   | `transaction`、`requirements`、`constraints`          |
-| `inspect_dispatch`          | 检查任务派发信息是否充分         | `transaction`、`requirements`、`acceptance_criteria`  |
-| `inspect_progress_handling` | 检查编排智能体对执行反馈的处理 | `transaction`、`events`、`decision_history`           |
-| `inspect_validation`        | 检查任务单元验收过程                   | `transaction`、`result`、`criteria`、`decision`       |
-| `detect_omission`           | 识别任务单元规划遗漏                   | `scope`、`required_items`、`evidence`                 |
-| `detect_conflict`           | 识别任务单元或管理决策冲突             | `transactions`、`decisions`、`constraints`            |
-| `detect_oscillation`        | 检查规划是否频繁反复               | `decision_history`、`window`、`threshold`             |
-| `detect_goal_drift`         | 检查任务单元规划是否偏离目标           | `goal`、`transactions`、`decision_history`            |
-| `evaluate_health`           | 综合评估编排智能体的履职情况   | `dimensions`、`weights`、`evaluation_window`          |
-| `notify`                    | 向编排智能体提供监督信息       | `issue`、`evidence`、`severity`                       |
-| `recommend`                 | 提出任务单元管理改进建议               | `issue`、`recommendation`、`expected_effect`          |
-| `request_correction`        | 要求修正任务单元安排                   | `issue`、`affected_transactions`、`required_change`   |
-| `request_replan`            | 要求相关任务单元重新规划               | `scope`、`reason`、`constraints`                      |
-| `request_revalidation`      | 要求重新执行结果验收               | `transaction`、`reason`、`criteria`                   |
-| `verify_correction`         | 验证监督反馈是否得到落实           | `feedback_id`、`expected_change`、`evaluation_window` |
-| `escalate`                  | 将持续或严重的问题提请上级管理节点处理      | `issue`、`severity`、`evidence`、`history`            |
+资源动作不能隐式改变目标、验收标准或根预算总额。写路径检查、迁移和分配条件见[执行分配与组织调整](/development/components/allocation)。
 
-## 执行智能体与通信动作
+## 审计智能体
 
-执行智能体通过 `submit_result` 提交候选结果与证据，通过通信动作报告进度、阻塞原因和协作中发现的信息。通信动作见[通信组件](/development/components/communication)。执行智能体不拥有任务单元验收、预算扩张和管理拓扑变更权限。
+工具为 `flow_audit`。
+
+| 动作 | 职责 |
+|---|---|
+| `inspect_plan` | 审查规划、依赖和管理决策，记录证据与结论 |
+| `inspect_validation` | 针对指定结果版本独立审查业务验收 |
+| `request_correction` / `request_replan` / `request_revalidation` | 明确纠正要求、重新规划或重新验收的原因 |
+| `verify_correction` | 用修复证据复核纠正项 |
+| `notify` / `recommend` | 记录监督信号或管理建议 |
+| `evaluate_health` | 依据观测信号评价八项编排质量维度 |
+| `escalate` | 将持续或严重的问题提交上级处理 |
+
+规划审查不阻塞每次派发，结果审查是正式接受的必要条件。审查绑定的版本与当前结果不一致时，结论不能使当前结果通过。
+
+## 执行智能体与共享工具
+
+执行智能体的 `flow_transaction` 只允许 `submit_result`，用于暂存候选结果与证据。一轮执行正常结束、租约有效且记账可确认后，运行时才正式发布结果。执行智能体不能自行验收、扩大预算或改变管理结构。
+
+所有角色可使用 `flow_query` 读取自身权限范围内的状态，通过 `flow_communicate` 发送消息、管理协作组或读写共享黑板。通信动作与参数见[通信与共享黑板](/development/components/communication)。
+
+源码依据：[角色权限](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts)、[命令处理](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[工具注册](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)。

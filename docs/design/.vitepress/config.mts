@@ -52,6 +52,9 @@ export default defineConfig({
           { text: '开发概览', link: '/development/' },
           { text: '开发环境搭建', link: '/development/setup' },
           { text: '代码结构', link: '/development/code-structure' },
+          { text: '主会话与团队界面', link: '/development/interface' },
+          { text: '宿主接口与补丁', link: '/development/provider-interfaces' },
+          { text: '验证方法', link: '/development/validation' },
           {
             text: '核心组件',
             collapsed: false,
@@ -67,7 +70,7 @@ export default defineConfig({
             ],
           },
           { text: 'API 手册', link: '/development/api' },
-          { text: '设计动作索引', link: '/development/action-catalog' },
+          { text: '动作索引', link: '/development/action-catalog' },
           { text: 'dsh 兼容性', link: '/development/compatibility' },
         ],
       },

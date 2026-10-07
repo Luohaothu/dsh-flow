@@ -198,11 +198,9 @@ export class DshHost {
 
   async start(options: DshHostStartOptions = {}): Promise<this> {
     mkdirSync(this.cwd, { recursive: true });
-    // The launcher is TypeScript, and the dev chain runs under tsx rather than
-    // Node's strip-types mode (which cannot handle decorators or JSX and is not
-    // the delivery mechanism this migration chose). The preload is an absolute
-    // URL: the child starts in an isolated cwd with a whitelisted environment,
-    // so it cannot resolve `tsx` by itself.
+    // The TypeScript launcher uses tsx for decorators and JSX. Resolve the
+    // preload to an absolute URL because the child runs in an isolated cwd
+    // with a whitelisted environment.
     const args = ['--import', import.meta.resolve('tsx'), LAUNCHER, '--profile', this.profile];
     if (options.fromDefaultProfile) args.push('--from-default-profile', options.fromDefaultProfile);
     for (const patch of this.patches) args.push('--patch', patch);

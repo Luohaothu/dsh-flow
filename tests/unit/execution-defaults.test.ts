@@ -35,7 +35,7 @@ test('official volatile defaults capture new teams without relabelling active or
   assert.equal(runtime.modelFor(secondLead).model,'fixed');assert.equal(runtime.modelFor(secondLead).reasoningEffort,'high');
   runtime.teamSelectModel('main',{provider:'owner',model:'new-owner',reasoningEffort:'medium'});
   assert.equal(runtime.modelFor(secondLead).model,'fixed','explicit team model survives a main-dialogue selection');
-  assert.equal(runtime.modelFor(lead).model,'new-owner');assert.equal(runtime.modelFor(lead).maxTokens,2048,'old output cap remains captured');
+  assert.equal(runtime.modelFor(lead).model,'new-owner');assert.equal(runtime.modelFor(lead).maxTokens,2048,'the team retains its captured output cap');
   assert.equal(runtime.store.getCluster(first.cluster.id)!.limits.max_depth,2);
   await runtime.dispose();output=8192;route=null;mode='parallel';
   runtime=new ClusterRuntime(new Context(),{...deployment.runtime,path,autoTick:false});

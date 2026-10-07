@@ -1,21 +1,12 @@
 /**
  * The standard Remote face of the cluster service.
  *
- * This module is the whole browser contract: seven methods, each one a thin
- * adaptation of a `ctx.flow` operation. It owns no database, no scheduler and
- * no background loop, and it caches nothing — every call reads the live service,
- * so an unloaded or replaced flow service cannot leave a stale object behind
- * here.
+ * Browser methods adapt read-only ctx.flow operations. Each call reads the
+ * currently mounted service without caching a runtime reference. The Cordis
+ * service binds to the flow namespace through bindTypertRemote.
  *
- * The binding is `bindTypertRemote` rather than a `TypertRemoteService` base
- * class: the generated descriptor, the wire namespace and the visible gateway
- * binding are identical, and this form keeps the class hierarchy to the Cordis
- * `Service` the plugin already needs.
- *
- * What is deliberately *not* here: `settle`, `tick`, `single`, `recover` and
- * `dispose`. Those drive the host itself and are reachable only through the
- * development IPC bridge an acceptance overlay mounts; an authenticated browser
- * must not be able to close the database and abort every turn with one request.
+ * Team creation, messaging and lifecycle changes belong to the main-Agent
+ * tools. Scheduler, recovery and disposal controls belong to the Host.
  */
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
@@ -25,7 +16,6 @@ import type {
   FlowTeamRun,
   FlowAgentSession,
   FlowTeamSnapshot,
-  FlowControlAction,
   FlowEventQuery,
   FlowEventsResult,
   FlowListQuery,
@@ -36,12 +26,11 @@ import type {
   FlowReadQuery,
   FlowReport,
   FlowSnapshot,
-  FlowStartRequest,
 } from './types.ts';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Typed Remote control of this deployment's agent clusters. */
+    /** Read-only Remote access to this deployment's agent clusters. */
     flowRemote: FlowRemote
   }
 }
@@ -86,17 +75,6 @@ export class FlowRemote extends Service {
   }
 
   /**
-   * Start one cluster.
-   * @param request - objective plus overrides; omitted fields come from configuration.
-   * @param signal - carrier cancellation.
-   * @returns the new cluster's initial snapshot.
-   */
-  start(request: FlowStartRequest, signal: AbortSignal): FlowSnapshot {
-    signal.throwIfAborted();
-    return this.ctx.flow.start(request);
-  }
-
-  /**
    * List clusters.
    * @param request - optional status filter and page window.
    * @param signal - carrier cancellation.
@@ -132,18 +110,6 @@ export class FlowRemote extends Service {
   events(id: string, request: FlowEventQuery, signal: AbortSignal): FlowEventsResult {
     signal.throwIfAborted();
     return this.ctx.flow.events(id, request);
-  }
-
-  /**
-   * Pause, resume or cancel one cluster.
-   * @param id - cluster id.
-   * @param action - the operator's whole-cluster switch.
-   * @param signal - carrier cancellation.
-   * @returns the snapshot after the transition.
-   */
-  control(id: string, action: FlowControlAction, signal: AbortSignal): FlowSnapshot {
-    signal.throwIfAborted();
-    return this.ctx.flow.control(id, action);
   }
 
   /**

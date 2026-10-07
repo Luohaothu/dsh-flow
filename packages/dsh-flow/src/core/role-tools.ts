@@ -35,7 +35,7 @@ const ROLE_TOOL_DESCRIPTIONS: Record<string, string> = {
   flow_allocation:
     'Allocator control: agent identity, write scopes, budget ledger, concurrency and scaling inside your own management domain.',
   flow_audit:
-    'Auditor control: independent plan/validation gates and durable correction requests inside your own management domain.',
+    'Auditor control: plan supervision, independent result acceptance and durable correction requests inside your own management domain.',
 };
 
 /**
@@ -77,12 +77,9 @@ function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolNam
       const outcome = runtime.command(actor, {
         command_id, action: args.action, params: resolved, expected_revision: args.expected_revision,
       });
-      // A successful management decision changes the pending state. Yield to the
-      // scheduler so child roles can act before this session polls their state
-      // again. A single Allocator turn previously made 104 provider requests,
-      // mostly queries and reminders, after it had already spawned the child it
-      // was waiting for. Workers only yield on submit_result: their earlier tool
-      // calls are still part of the same task.
+      // A successful management decision yields so the scheduler can run its
+      // recipients before this role reads their state again. Workers continue
+      // their task until submit_result.
       if (outcome.deduped !== true
         && (actor.role !== 'worker' || args.action === 'submit_result')) {
         exec.concludeTurn();
@@ -113,14 +110,8 @@ function registerCommunicationTool(agentCtx: Context, runtime: ClusterRuntime): 
       if (mutating) runtime.assertActorFence(actor, { mutating: true });
       const result = runtime.communicateFrom(actor, args.action, coerceParams(args.params));
       runtime.wake();
-      // A management send hands work to another role. Let the scheduler run that
-      // recipient before this session polls the same unchanged allocation:
-      // continuing immediately once drove a single Orchestrator through 40 query
-      // steps into its hard identity context limit.
-      //
-      // Only a group operation can answer `deduped`, so anything else yields a
-      // turn: that is exactly what `result.deduped !== true` meant before the
-      // answer became a discriminated union.
+      // A management send yields to the scheduler so the recipient can act.
+      // Group-operation deduplication does not suppress direct or multicast sends.
       const deduped = 'deduped' in result && result.deduped === true;
       if (actor.role !== 'worker' && (args.action === 'send' || args.action === 'multicast') && !deduped) {
         exec.concludeTurn();

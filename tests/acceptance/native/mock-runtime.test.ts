@@ -738,11 +738,10 @@ test('N-team-launch: the native main Agent loads the skill, creates, reads and f
   assert.ok(ledger.all('SELECT session_id FROM agents WHERE cluster_id=?',runId).every(agent=>agent.session_id!==id));
 });
 
-test('N-scopes: the retired preset is absent and ordinary Agents do not inherit cluster role tools', async t => {
+test('N-scopes: ordinary Agents receive team lifecycle tools while role tools stay scoped', async t => {
   const { host, layout } = await harness(t, { name: 'scopes' });
   const scopes = await observerRequest(host, 'scopes');
   const ordinaryTools = asArray(scopes.ordinary_tools);
-  assert.equal(scopes.preset_removed,true);
   assert.ok(ordinaryTools);
 
   assert.deepEqual(ordinaryTools.filter(tool => typeof tool === 'string' && tool.startsWith('flow_')), []);
@@ -751,7 +750,6 @@ test('N-scopes: the retired preset is absent and ordinary Agents do not inherit 
   assert.ok(ordinaryTools.includes('agent_team_create'));
   assert.ok(ordinaryTools.includes('agent_team_message'));
   assert.ok(ordinaryTools.includes('agent_team_finalize'));
-  assert.equal(ordinaryTools.includes('flow_start'),false);
 
   const created = decodeStartReply(await host.request('start', undefined, {
     objective: 'Sum [2,3] and submit 5 through the native tool.',

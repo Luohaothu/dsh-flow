@@ -4,9 +4,7 @@
  * These are the mechanisms that make a report trustworthy: a run directory that
  * cannot be reused, an environment a case cannot hijack, fixture ids that cannot
  * collide across runs, a tier denominator that has one source, and a build
- * fingerprint that notices when the code moved under it. Every one of them was
- * previously only exercised by running a case, which is how a report could look
- * authoritative while describing a mixture of two builds.
+ * fingerprint that detects code changes during execution.
  */
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
@@ -250,7 +248,7 @@ test('fixture ids are namespaced per run, and a broken fixture is refused before
   assert.equal(required(first.spec.message_fixture?.[0]).from, 'run-a-rec-deep');
   assert.equal(first.map['rec-deep'], 'run-a-rec-deep');
 
-  // Two runs never collide, which is the collision that used to abort `start`.
+  // Independent runs must not share fixture ids.
   const second = namespaceFixtures(spec, 'run-b');
   assert.notDeepEqual(first.ids, second.ids);
   // Namespacing is idempotent for ids that already carry the run prefix.
@@ -352,7 +350,7 @@ test('the acceptance fingerprint covers the host modules under their own prefix'
   writeFileSync(join(acceptance, 'run.ts'), 'export const runner = 1;\n');
   writeFileSync(join(acceptance, 'mock-scenarios.ts'), 'export const scenario = 1;\n');
   writeFileSync(join(host, 'mock-scenarios.ts'), 'export const scenario = 1;\n');
-  const extra = [{ prefix: 'lib', root: host }];
+  const extra = [{ prefix: 'host', root: host }];
   const before = hashTree(acceptance, extra);
 
   assert.match(before.digest ?? '', /^sha256:[0-9a-f]{64}$/);
@@ -368,13 +366,13 @@ test('the acceptance fingerprint covers the host modules under their own prefix'
   assert.notEqual(afterHost.digest, before.digest, 'a host-module change moves the fingerprint');
 
   // An acceptance file still moves it, and the two trees stay one namespace
-  // under their prefixes (`lib/mock-scenarios.mjs` is its own entry).
+  // under their prefixes (`host/mock-scenarios.ts` is its own entry).
   writeFileSync(join(acceptance, 'run.ts'), 'export const runner = 2;\n');
   assert.notEqual(hashTree(acceptance, extra).digest, afterHost.digest, 'an acceptance change moves the fingerprint');
 
   // A tree that is not there is unknown, never an empty-but-valid digest.
   assert.deepEqual(hashTree(join(dir, 'missing')), { digest: null, files: 0 });
-  assert.deepEqual(hashTree(acceptance, [{ prefix: 'lib', root: join(dir, 'missing') }]), { digest: null, files: 0 });
+  assert.deepEqual(hashTree(acceptance, [{ prefix: 'host', root: join(dir, 'missing') }]), { digest: null, files: 0 });
 });
 
 test('source fingerprints ignore installed dependency trees and pnpm directory links', (t: TestContext) => {
@@ -539,8 +537,8 @@ test('the clock and the limit evidence are measured before the case checks run',
   assert.equal(required(withRefusal.limit_reached).blockedOnBudget, true);
 
   // Build drift is measured *before* the checks too, not only at the end: a check
-  // that asserts "this report describes one build" runs before the final
-  // comparison, and reading a flag that is set later made it vacuous.
+  // that asserts "this report describes one build" needs the drift evidence
+  // before it chooses a verdict.
   const fingerprint = computeBuildHashes({ id: 'smoke' }, []);
   const drifting: MeasuredRun = { failure_class: null, scenario_status: null, spec: { budget }, build_hashes: { ...fingerprint, plugin_source: { digest: 'sha256:a', files: 1 } } };
   measureRun(drifting, {
@@ -690,7 +688,7 @@ test('the fingerprint check keeps failure, unknown and pass apart', async () => 
   const dir = mkdtempSync(join(tmpdir(), 'dsh-smoke-hashes-'));
   const complete = {
     plugin_source: { digest: 'sha256:a', files: 9 },
-    lib_index: 'sha256:b', lib_client: 'sha256:c', lib_tools: 'sha256:d', lib_web: 'sha256:e',
+    lib_index: 'sha256:b', lib_client: 'sha256:c', lib_command: 'sha256:d', lib_web: 'sha256:e',
     typert_host: 'sha256:f', typert_host_types: 'sha256:g',
     typert_remote_client: 'sha256:h', typert_remote_client_types: 'sha256:i',
     acceptance_source: { digest: 'sha256:j', files: 9 },
@@ -712,7 +710,7 @@ test('the fingerprint check keeps failure, unknown and pass apart', async () => 
     const drifted = await evaluate({ ...base, build_hashes: complete, build_drift: 'plugin_source' });
     assert.equal(drifted.passed, false, String(drifted.evidence));
     assert.match(String(drifted.evidence), /drift="plugin_source"/);
-    // Not measured at all (a report from before the field existed): unknown.
+    // An absent measurement is unknown.
     assert.equal((await evaluate({ ...base, build_hashes: complete })).passed, null);
     // An incomplete fingerprint is a failure whatever the drift says.
     assert.equal((await evaluate({ ...base, build_hashes: { ...complete, patches: [] }, build_drift: null })).passed, false);
@@ -980,7 +978,7 @@ test('queued usage reservations do not count as concurrent admitted model reques
   for(const [id,start,end] of [['first',10,40],['second',20,50]] as const)store.run(
     "INSERT INTO usage_receipts(request_id,cluster_id,role,kind,provider,model,status,created,settled) VALUES (?,?,'worker','worker','fixture','fixture','SETTLED',?,?)",id,'queued',start,end);
   store.close();
-  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'legacy interval evidence still detects overlap');
+  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'request interval evidence detects overlap');
   const admitted=new ClusterStore(join(layout.data,'cluster.sqlite'));
   for(const count of [1,0,1,0])admitted.appendEvent('queued','llm-slot',{in_use:count,limit:1});
   admitted.close();

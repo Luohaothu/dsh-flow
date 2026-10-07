@@ -52,8 +52,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -749,9 +748,8 @@ test('one scheduling pass fills the active window exactly, never one slot short'
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
 
   // Two role turns are eligible at the same moment: the Orchestrator has a
-  // DRAFT plan to dispatch, the Auditor has a pending plan decision. The
-  // regression counted the turns it had just registered *and* the live count, so
-  // it stopped after the first one and left a slot empty for the whole pass.
+  // DRAFT plan to dispatch, the Auditor has a pending plan decision. Admission
+  // must count each active turn once and fill both available slots.
   command(runtime, orchestrator, 'dispatch', { transaction_id: firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction').id });
   assert.ok(runtime.store.pendingAudits(clusterId, { limit: 10 }).length >= 1);
 

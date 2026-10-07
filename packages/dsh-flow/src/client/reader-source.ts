@@ -5,7 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client';
 import { SessionId } from '@deepseek-ai/dsh-session/types';
 
-export interface ReaderSnapshot { readonly reference: SessionReference | null; readonly loading: boolean; readonly older: boolean; readonly error: string | null }
+export interface ReaderSnapshot { readonly reference: SessionReference | null; readonly loading: boolean; readonly error: string | null }
 export interface ReaderSource {
   getSnapshot(): ReaderSnapshot
   subscribe(listener: () => void): () => void
@@ -14,7 +14,7 @@ export interface ReaderSource {
 }
 /** Retention owns only observation; it never resumes, sends to, or drives the child Agent. */
 export function createReader(ctx: Context, id: string): ReaderSource {
-  let value: ReaderSnapshot = { reference: null, loading: true, older: false, error: null };
+  let value: ReaderSnapshot = { reference: null, loading: true, error: null };
   const listeners = new Set<() => void>();
   let reference: SessionReference | null = null, binding: SessionBinding | null = null;
   let generation = 0, disposed = false;
@@ -48,7 +48,7 @@ export function createReader(ctx: Context, id: string): ReaderSource {
       const update = () => {
         const lifecycle=current.session.getSnapshot();
         initialOpenFailed = lifecycle.openState === 'error' && !lifecycle.removed;
-        publish({reference:lifecycle.openState==='open'&&!lifecycle.removed?held:null,loading:lifecycle.openState==='loading'||lifecycle.loadingOlder,older:lifecycle.hasMore,error:lifecycle.removed?'此会话已不可用':lifecycle.openState==='error'?'暂时无法读取对话':lifecycle.historyError?'暂时无法读取更早的消息':null});
+        publish({reference:lifecycle.openState==='open'&&!lifecycle.removed?held:null,loading:lifecycle.openState==='loading'||lifecycle.loadingOlder,error:lifecycle.removed?'此会话已不可用':lifecycle.openState==='error'?'暂时无法读取对话':lifecycle.historyError?'暂时无法读取更早的消息':null});
         if (lifecycle.openState === 'error' && !lifecycle.removed) retryAfterCreation();
       };
       // Activate the provider target and let native Chat own transcript updates.

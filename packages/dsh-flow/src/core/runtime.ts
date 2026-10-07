@@ -89,12 +89,6 @@ interface CodedError extends Error {
   readonly phase?: string
 }
 
-/** The model route one request was sent on, in the ledger's own vocabulary. */
-export interface RequestRoute {
-  readonly provider: string
-  readonly model: string
-}
-
 /** The reservation `reserveLlmRequest` records before one provider call. */
 export interface LlmRequestReservation {
   readonly request_id: string
@@ -414,17 +408,14 @@ async function measureAndCompact(
   // may generate. It is enforced per request in `installRequestAccounting`; here
   // it is the outer yardstick only.
   const limit = budget.window - (model.maxTokens ?? 4096);
-  // The measured surface is what the session *carries*: it has no floor derived
-  // from the last settled request (that floor made every compaction look
-  // ineffective, because the next charge could never fall below the previous
-  // one), and it does *not* include the output allowance — that is room the
-  // provider needs, not pressure the session holds.
+  // Measure the session's current content without a floor from past charges.
+  // Output allowance belongs to the provider sending ceiling, not to stored
+  // context pressure.
   const measuredTokens = measurement.totalTokens;
   result.request_tokens_estimate = measuredTokens;
   result.sending_estimate = measuredTokens + (model.maxTokens ?? 4096);
   result.sending_ceiling = limit;
-  // Compress at the identity's fraction, not at a provider-window fraction:
-  // the latter made 0.8 mean 100k tokens for an 8k role budget.
+  // Apply the compaction trigger to the identity budget, not the provider window.
   const trigger = Math.min(budget.limit, Math.max(1, Math.floor(budget.limit * budget.trigger)));
   result.context_budget = budget.limit;
   if (!force && measuredTokens < trigger) return result;
@@ -435,10 +426,8 @@ async function measureAndCompact(
     // call sits outside one.
     result.maintenance_available = typeof live.runMaintenance === 'function';
     let outcome: CompactionResult | null = null;
-    // The host contract is `compactNow(agent, signal, sourceCommandId?)`: it takes
-    // the Agent itself and starts its own idle task. Passing a dependency object
-    // made the selection read an undefined session and the whole call fail as a
-    // summary-stage error.
+    // compactNow receives the native Agent and opens its own idle task.
+    // Without an idle maintenance window, compaction stays inside the turn.
     if (result.maintenance_available) {
       outcome = await compaction.compactNow(live, abortSignal);
     } else {
@@ -453,13 +442,8 @@ async function measureAndCompact(
       // A compaction that could not be made durable is reported: the summary
       // exists only in memory and the next turn will pay for it again.
       result.flush_ok = flushed !== false;
-      // Re-measure so the reported pressure is the post-compaction one — and so
-      // `totalTokens` *is* the size the session has now. Leaving it at the
-      // pre-compaction value made the caller's "what did the last compaction
-      // leave behind" anchor the size *before* it: the session was then allowed
-      // to grow a further `trigger` beyond a number it had already passed, which
-      // is how an orchestrator session reached 47k-57k against an 8,192 window
-      // while every step reported `proceed-ineffective`.
+      // Re-measure after compaction so the next pressure decision uses the
+      // session's current size as its compaction anchor.
       try {
         const after = measure();
         result.tokens_after_compaction = after.totalTokens;
@@ -606,14 +590,8 @@ function installContextPressure(
       record({ decision: 'proceed' });
       return decision;
     }
-    // One compaction per *shrink cycle*, not one per turn. A session that was
-    // compacted and then grew past the trigger again is a session that needs
-    // compacting again — that is what a long turn with big tool results looks
-    // like, and refusing it let a role session reach 54,614 tokens against an
-    // 8,192 budget, so every one of its requests reserved ~40k and a 2M-token
-    // case could not finish. A session that did *not* shrink stops here instead:
-    // paying for a second attempt that cannot reduce anything is the pathology
-    // this rule was added for.
+    // Within the sending limit, reuse the compacted surface until it grows by
+    // another trigger window. Pressure above the limit requires a new attempt.
     if (turnState.compacted) {
       const compactedAt = turnState.compactedAt ?? null;
       const grewAgain = compactedAt !== null && pressure >= compactedAt + trigger;
@@ -622,9 +600,8 @@ function installContextPressure(
         return decision;
       }
     }
-    // Over the identity's budget: one compaction attempt, inside the turn, then
-    // re-measure. Compaction is funded from its own pool, never from the grant
-    // of the session it is about to shrink.
+    // Attempt compaction at the pressure threshold, then re-measure. The payer
+    // selector prefers the compaction pool and checks funded fallback scopes.
     const compaction = ctx.get('compaction') ?? live.ctx.get('compaction');
     const receiptBefore = Number(flow.store?.get?.(
       "SELECT COALESCE(MAX(rowid),0) AS watermark FROM usage_receipts WHERE cluster_id=? AND agent_id=? AND kind='compaction'",
@@ -711,10 +688,8 @@ export function reserveLlmRequest(store: ClusterStore, options: ReserveLlmReques
     budgetIds: initialBudgetIds, reservationTokens, turn_seq, maxRequests, fund = null, reselect = null, onShortfall = null,
   } = options;
   const requestId = randomUUID();
-  // The chain is mutable on purpose: a funding step can make a *different*
-  // scope payable (the compaction pool is refilled, the node is not), and
-  // charging the scope chosen before that step refused a request the pool could
-  // now pay — and, with the node-stop rule, stopped the node for it.
+  // Funding can make a different payer affordable. Reselect its chain
+  // before reservation so the request uses the capacity that was funded.
   let budgetIds = initialBudgetIds;
   // An empty chain enforces nothing: `reserveChain([])` succeeds, the request is
   // sent, and its receipt carries no scope — a free request that cannot be
@@ -737,10 +712,8 @@ export function reserveLlmRequest(store: ClusterStore, options: ReserveLlmReques
     }
   }
   store.tx(() => {
-    // Funding and reserving happen in one transaction. A gap computed before
-    // the transaction, then re-checked after an await, races with whatever the
-    // previous request settled in between: the observed failure was a top-up of
-    // exactly the gap followed by a refusal that was still 2,802 tokens short.
+    // Fund and reserve atomically so settlement cannot change the shortfall
+    // between calculating the needed capacity and reserving it.
     const wanted = { tokens: reservationTokens, model_requests: 1 };
     const take = (): void => {
       // Settlement may exceed a request's reservation. Other scopes still have
@@ -1244,9 +1217,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     admitted = true;
     onAdmitted?.();
     await live.whenIdle();
-    // The host returns whether the session really reached its durable store.
-    // Treating a rejected flush as success is what let a delivery be acked
-    // while the message it carried was not on disk.
+    // Respect the host's durable flush result before acknowledging delivery.
     const flushed = await ctx.sessions.flush(live.session);
     onFlushed?.(flushed !== false);
   } finally {
@@ -1278,11 +1249,9 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   const hardLimit = budget.window - (model.maxTokens ?? 4096);
   const contextOverBudget = context !== null && (context.sending_estimate ?? context.totalTokens) >= hardLimit;
   const compactionFailed = Boolean(context?.compaction_error);
-  // "Compaction could not produce a smaller summary" is a real failure only when
-  // the request itself could not be sent: being over the *role* budget is the
-  // normal state of a management session on this host, and blocking a cluster
-  // for it (observed: `CONTEXT_PRESSURE (compaction could not be funded):
-  // orchestrator holds 9089 tokens`) stops work the provider would have served.
+  // Failure to shrink a summary blocks execution only when the request
+  // reaches the provider's sending ceiling. Exceeding the role budget alone
+  // does not establish that the request is unsendable.
   const overSendingCeiling = context !== null && (context.sending_estimate ?? context.totalTokens) >= hardLimit;
   // A rejected step records why, so the turn's own stop detail carries it.
   const rejection = [...rejections.entries()].map(([, value]) => value).pop() ?? null;
@@ -1342,9 +1311,8 @@ function installRequestAccounting(agentCtx: Context, { agent, role, transactionI
       // The native summarizer replays the role's system head and tools to
       // reuse its provider prefix. Neither is part of the shadowed history:
       // the system head survives compaction, and tools cannot run inside this
-      // auxiliary call. Qwen has returned tool calls or a near-verbatim copy
-      // of the static rules instead of a small text checkpoint. Exclude those
-      // inputs before estimating/reserving the real summary request. The
+      // auxiliary call. Exclude those inputs so the summary focuses on the
+      // history being compacted, before estimating and reserving its request. The
       // normal role request keeps the unchanged system head and tools.
       //
       // Only when the summary runs on the *same* route as the roles: a
@@ -1405,23 +1373,14 @@ function installRequestAccounting(agentCtx: Context, { agent, role, transactionI
     // The funder runs *inside* the reservation transaction, so the gap it
     // closes is the gap the reservation then sees.
     const funder = (_error: CodedError): unknown => {
-      // Every candidate is offered the *complete* envelope, never only the
-      // dimension that happened to fail. A refusal names one dimension, but the
-      // payer a request needs is the one that can cover both halves, and the repair
-      // helpers move only the dimension actually missing: passing
-      // `{model_requests: 1}` alone asked a token-rich, request-less node for the
-      // one thing it could not give, while the pool that held 23 spare requests and
-      // no tokens was never offered the tokens it needed.
+      // Fund tokens and requests together. The selected payer must cover the
+      // complete request envelope before reservation can succeed.
       const amounts = { tokens: reservationTokens, model_requests: 1 };
       const poolId = flow.compactionBudgetId?.(agent.cluster_id) ?? null;
       const selected = selectChain()[0] ?? null;
       const chain = (): readonly string[] => flow.budgetChainForAgent?.(agent, { tokens: reservationTokens, requests: 1, kind }) ?? [];
-      // The retry only succeeds if some candidate can cover *both* halves, so the
-      // repairs are tried until one of them makes a candidate payable — not once
-      // each. A repair that moves one dimension into a scope that still lacks the
-      // other leaves the request refused, and stopping there was the original
-      // failure: the node gained tokens it already had, while the pool that held
-      // the requests was never given the tokens it was missing.
+      // Try repairs until a single candidate can cover tokens and requests.
+      // Funding only one dimension is insufficient when the other is exhausted.
       const payable = (chainId: string): boolean => {
         const row = flow.store.getBudget?.(chainId);
         if (!row) return false;
@@ -1479,13 +1438,8 @@ function installRequestAccounting(agentCtx: Context, { agent, role, transactionI
       // rather than only the ones that failed.
       flow.recordBudgetRefusal?.(agent, `model request refused: ${errorMessage(caught)}`, refusalFacts(failure, selectChain()));
       if (!granted) {
-        // The top-up did not cover the gap: this identity cannot pay for its
-        // next request from anywhere it is allowed to draw on. That is a stop,
-        // not a per-turn error — measured: 49 of 63 role turns in one recursion
-        // run ended in `error ... budget exhausted` while the cluster kept
-        // scheduling turns that could never be funded.
-        // The whole envelope, not the dimension that happened to fail: what a
-        // resume must make affordable is the request this identity could not send.
+        // Stop this node when no permitted payer can cover the next request.
+        // Record the whole envelope so resume checks every required dimension.
         flow.blockNodeOnBudget?.(agent, `model request refused: ${errorMessage(caught)}`, {
           dimension: failure?.dimension ?? null, requested: failure?.requested ?? null,
           envelope: { tokens: reservationTokens, model_requests: 1, tool_calls: 0 },

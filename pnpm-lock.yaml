@@ -195,9 +195,6 @@ importers:
       '@deepseek-ai/dsh-agent-default-model':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(4317c6a2cef51de1a10810fe31ae47b5)
-      '@deepseek-ai/dsh-agent-preset-registry':
-        specifier: 0.1.7-rc.2
-        version: 0.1.7-rc.2(08263e44ecf101da4a8dbc89dde81e35)
       '@deepseek-ai/dsh-api-gateway':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(patch_hash=2282d431434460060db6a59a5e06552a61d08b6786e51d747d30218e198526ae)(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-client-connection@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-scope@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))))

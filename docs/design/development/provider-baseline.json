@@ -1,8 +1,5 @@
 {
-  "captured": "2026-10-08",
-  "node": "v26.10.0",
   "baseline": "0.1.7-rc.2",
-  "evidence": "Pinned npm packages and explicit patch hashes; no inferred upstream Git revision",
   "records": [
     {
       "name": "@deepseek-ai/dsh-api-gateway",
@@ -10,7 +7,6 @@
       "patch": "patches/@deepseek-ai__dsh-api-gateway@0.1.7-rc.2.patch",
       "patch_sha256": "2282d431434460060db6a59a5e06552a61d08b6786e51d747d30218e198526ae",
       "package_json_sha256": "3d5a6a5cb2a80d1a66ea7e97397bd540479162dfbcf40851cc56b7d0e56849be",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "ab72e05df730f474737be99e0035f5bd7152433f8a817d3d037876087e993172",
         "lib/client.js": "52b3f8234072b9ff22cf9204b662a7b3d65158306a0ceacf7acb131e8ba46020",
@@ -24,7 +20,6 @@
       "patch": "patches/@deepseek-ai__dsh-api-remotes@0.1.7-rc.2.patch",
       "patch_sha256": "101f7013666facb61da9a3afb6afda6af84091eb27f092fab2ca3ca18aa6e3a3",
       "package_json_sha256": "1e48b72dfdf8d984fa15aacb7d956fa40b8fc801c56ee8481dc427837406a98f",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "cec4c600bf45db5d59941bd89203a656a31a5d8dc1903822b7780b0e000aaec5",
         "lib/client.js": "06a6cc1784da322265b4a26bea358a8e192860aff88332fcde3a33842f70bb45",
@@ -38,7 +33,6 @@
       "patch": "patches/@deepseek-ai__dsh-api-session-controller@0.1.7-rc.2.patch",
       "patch_sha256": "328d85850672b8cb59ea50e68ba070da6ae1942dbf4e0b2a65436dcfa0f1696b",
       "package_json_sha256": "2e7e0343b5de1cdfd7e7a31a7e2e679c410caf9f69fbcbb5300dd8994809a4ea",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "4fd7cf25512bc04455cb4ab571cdcf1134acea9b6209944dcea2b9cabbc8a7b8",
         "lib/client.js": "7f613c9c68156b19a41a5e6fe9b31f74f56cbcd5cec7b6a525054f07d65697e4",
@@ -52,7 +46,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-chat@0.1.7-rc.2.patch",
       "patch_sha256": "d0aae7a249aeeb669916d76b05db368c2fc9afb773877208b4f2ccb33266f240",
       "package_json_sha256": "df568d06e30f6921b0950b707ba8beba2096f235180ef5e0f3b874bcf0518100",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "bd34ad4a597ec6dd2cbd6e83cac3d38a618d57b8164c6c7ee3f3fc52fdbb47c9",
         "lib/client.js": "f1e03632936b6cc52d5ba5b452110fbe9f75a27de3d90cef45bc6ea93f12255e",
@@ -66,7 +59,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-commands@0.1.7-rc.2.patch",
       "patch_sha256": "dae49ccf9bdba7d62ed008e62c07d73ccf9e077a7fc1e9b7b79d9df802de6075",
       "package_json_sha256": "e3f7b79ce531d8cf8093fddabf3c58478613cc647b0b0c114e7ec1ddb5faf4b5",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "5082aa27c2e1762df7c44d375c9fa53a1343ebf7aa49dccbb293a3e8b99707eb",
         "lib/client.js": "a333b2c54255e3f11638ccb4f36e52bcc2c851680074f1ab18c4f351ea63904a",
@@ -80,7 +72,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-conversation@0.1.7-rc.2.patch",
       "patch_sha256": "8e10f4d2ed784962f5e167aee5de30d20290dead945680009740448cc9ed5967",
       "package_json_sha256": "4ce8372e777aee4560f423290582bb23cf4d0428866a05835b2d50ff919137ca",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "046ea85e5fa3b6bb2950b6a0ce55cd06ae516f37e8b6a84497c2ca74a3364c31",
         "lib/client.js": "ffa04002ce13b909d27a69160865d094461d1c13a3f70a8ec4917fabf320bd58",
@@ -94,7 +85,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-dockkit@0.1.7-rc.2.patch",
       "patch_sha256": "9ef40011f6029b1675315f3338def9498817c4f1b6357a2de0006f9e9e65fc05",
       "package_json_sha256": "adb3288fb925942e0a3b17e8ebe30592ec6ebac074cff3ea54dc3eae35813c2a",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "b4d5e53b6d2eef71d21c62494ef21832f93eee319c803adc47885ec41ff16ebe",
         "lib/types/index.d.ts": "4c16145f11380d3a325ed9952348cce473cbbe3541b539ac7b223c51ed187c7c"
@@ -106,7 +96,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-layout@0.1.7-rc.2.patch",
       "patch_sha256": "b961886c5af66a9996f7f97bc42c6b8b20eca880854aec4e167a0e7332969883",
       "package_json_sha256": "1038e662346f363d9610054ddc11e108ef225fbbb14c9fe91e2c36cb27a13f16",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "c62669c2bcf72075724aa3d4c90bb6064f8b5952322c7950640cc8ca95389859",
         "lib/client.js": "698b2f947c6dec2e23ecf0ce87e11b604a9cbfa6a3a04ad37e17329568abf5d6",
@@ -120,7 +109,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.1.7-rc.2.patch",
       "patch_sha256": "da9a9090a2a28bac21dc06cd1fff0ffb6be0d20a204a8a41956b7a7ba087f9d3",
       "package_json_sha256": "f30d16b4984d56e5d2313b7e921e5cfd96c1976d43fd35267315ada2c358a29f",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "421deeb3f647bbbb0e5778e97fef508b226cb31dd67a3631b3aa9dbcdb498a2d",
         "lib/client.js": "cc2dd61ca802bf2bc6f9b3a0b6b030e581d75723ee5d415b8e8e81a117e50180",
@@ -134,7 +122,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-renderer@0.1.7-rc.2.patch",
       "patch_sha256": "513607f5dae43a11200036be2b09b133d773315778b7209f70ce16a7be4d6120",
       "package_json_sha256": "13144ee51b15e18e6f452b0874fa5efa2fb9bc078ca4592baa9c54ac008726f5",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "a2a4d657f9500da5a8b2aef06f54fbb1251fbc7d31ddc5ba25720b60445c30b6",
         "lib/client.js": "35671c9eff176a593c130bb92e4c78994a1017f2e0b8d768416ab46be16eb4ae",
@@ -148,7 +135,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-subagent@0.1.7-rc.2.patch",
       "patch_sha256": "3925545302b8988712afe0689c7d1c0dddc72aad99f847e61238a618c5c17263",
       "package_json_sha256": "fef6e734a2b9c65fbae88b7ad3cd3892b1273e45988ffd0872767a3c2ac5c47c",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "eb78389cb207434d09bb4d75d80db5c409337e32c249b6ab2dbe17e5f9c6efb9",
         "lib/client.js": "2567faf9c7ae677a0513c5dd4d410b367b43628998e1a5765bed81a0f64ab0a1",
@@ -162,7 +148,6 @@
       "patch": "patches/@deepseek-ai__dsh-client-ui-workspace@0.1.7-rc.2.patch",
       "patch_sha256": "7fcac7d63cd8410ee7f6d466ed72eeb64f0004f24a11c0415cd1e20cdeef5e8a",
       "package_json_sha256": "e8143c2dfb00d19174371f36b59719bcea6d26c68e9d27a43104c16df9e012b8",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "e6cdc4b725585354102a5c4598c9d8c79d6abac62d7979c09919821716370438",
         "lib/client.js": "61436cbf340c45770882542147d72f5485d2c2f092d8c7de3d4e9b888388f9a2",
@@ -176,7 +161,6 @@
       "patch": "patches/@deepseek-ai__dsh-commands@0.1.7-rc.2.patch",
       "patch_sha256": "868226d5c7c28343b34735752a9c473b08fcbbb87fbdf9df4fef5f91a3a4b754",
       "package_json_sha256": "3fca6ea818532b030eff8eccc187c22586cae6f6cf6a4e99cd49760eedfc62af",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "06a613c4af75b0c2f1c0a29b9f9c30f7fd2909ba66b615d298819eaf761ab09e",
         "lib/types/index.d.ts": "053f2868475b0527a3a56a963b27e2a6cc09595bf193c3ee688508d011b64c7f"
@@ -188,7 +172,6 @@
       "patch": "patches/@deepseek-ai__dsh-session-format-v3-to-v4@0.1.7-rc.2.patch",
       "patch_sha256": "1937fad5831c4bae4d2f177ef3fd34d7c3929b15d56debacbb46126ee433591e",
       "package_json_sha256": "efa6c2c8659466b795d6f12e2401f85c43391c769b0ef17efa39a817be7e0dfb",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "f08781abe7ff080152ae2089ec711bde01c20a7816d8710df96ea6fa75c7f4bb",
         "lib/types/index.d.ts": "86ff2bf7e13b90b9a6be02c370ff545cf734729eded5db9c222306411c2c5bd8"
@@ -200,7 +183,6 @@
       "patch": "patches/@deepseek-ai__dsh-session@0.1.7-rc.2.patch",
       "patch_sha256": "921dae1694697f5da162f0c40450fa1df6f3adc294c2657eb4e3cea5b49430b5",
       "package_json_sha256": "9946cc74d54f358486f39475aca0dbd8e34dbb255ade18ecf3de15de0029e525",
-      "note": "Installed patched package bytes after frozen installation; checked against pinned manifest and patch SHA-256",
       "entries": {
         "lib/index.js": "6f8c0e1245746c7f57b8600c5b5183d81be783243b8df8f1ef7d747d2c762ccd",
         "lib/types/index.d.ts": "39eaa333481563f2c4758effdf7eb2ab2ca4e91b3923e9723c4410a2f8102461"

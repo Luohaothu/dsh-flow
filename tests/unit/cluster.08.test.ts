@@ -49,8 +49,7 @@ interface TestServices {
 /**
  * A real Cordis context for a directly constructed runtime.
  *
- * `ClusterRuntime` takes a `Context`, so a plain object no longer matches: the
- * context is the real root context; persistence is attached through the runtime seam.
+ * Persistence is attached through the runtime seam on the root Context.
  */
 function testContext(): Context {
   return new Context();
@@ -420,8 +419,7 @@ test('tool quota is reconciled once, by how far the call got — not by the effe
   assert.deepEqual(counters(), { reserved: 4, spent: 1 }, 'and nothing moved');
 
   // 2b. `UNKNOWN` is terminal for the hold: recovery already consumed that call,
-  // so a decision on it must move nothing at all (it used to be treated as held,
-  // which took a call out of the reserve or out of someone else's hold).
+  // so a decision on it must not consume any reservation again.
   seed('call-already-unknown', 'UNKNOWN');
   const beforeUnknown = counters();
   command(runtime, allocator, 'resolve_effect', { call_id: 'call-already-unknown', decision: 'settled', note: 'it ran' });
@@ -834,8 +832,7 @@ test('a role that only queries or is refused is stagnant, and stops at the bound
   assert.ok(allocatorEnds.length >= 1, 'the role took turns');
   assert.ok(allocatorEnds.every(flag => flag === false),
     `query-only turns are not progress: ${JSON.stringify(allocatorEnds)}`);
-  // The events those turns emitted are exactly the ones that used to look like
-  // progress: each step meters context and charges a tool call.
+  // Context metering and tool charging must not count as domain progress.
   const countOf = (type: string): number => numberOf(required(runtime.store.get('SELECT COUNT(*) AS c FROM events WHERE cluster_id=? AND type=?', clusterId, type), 'event count').c, 0, 1e9, 'count');
   assert.ok(countOf('llm-slot') > 0, 'the provider requests were metered');
   assert.ok(countOf('tool-call-charged') > 0, 'and the query was charged');
@@ -919,7 +916,7 @@ test('a long tool result is stored as valid JSON, never as a truncation of it', 
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');
-  // Escapes, newlines and a length far past the old 8,000-character cut.
+  // Preserve escapes, newlines and message bodies longer than 8,000 characters.
   const long = `line "quoted" \\ backslash\n${'x'.repeat(20_000)}`;
   host.registerTool({
     name: 'read', description: 'read', parameters: {}, output: { schema: { type: 'string' }, render: () => [] },

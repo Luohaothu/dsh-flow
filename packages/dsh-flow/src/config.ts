@@ -1,22 +1,10 @@
 /**
  * Deployment configuration and start-request resolution.
  *
- * Two things live here and nowhere else:
- *
- *  1. {@link Config}, the schemastery schema a profile row is validated
- *     against. Every default is declared in the schema, so a deployment that
- *     writes nothing still gets a workable cluster, and the plan's interactive
- *     envelope exists in exactly one place.
- *  2. {@link resolveStartRequest}, the pure merge that turns a start request
- *     into a spec: `schema default < deployment configuration < this request`.
- *     The local service, the model tool and the Remote endpoint all funnel
- *     through it, so `{budget:{tokens:100000}}` keeps 100000 and still gets the
- *     other five dimensions filled, on every entry point.
- *
- * The plugin core reads **no** environment variable. Deployment parameters a
- * launcher needs to vary are written into the profile patch as configuration
- * (`examples/*.patch.yml`); environment variables are evaluated by the
- * acceptance launcher that builds those patches.
+ * Config defines the schemastery schema and defaults. resolveStartRequest
+ * merges schema defaults, deployment configuration and request overrides per
+ * field for all start callers. Production code reads no environment variables;
+ * acceptance launchers express environment choices through profile patches.
  */
 import { resolve } from 'node:path';
 
@@ -33,7 +21,7 @@ import type {
   FlowLimitsInput,
   FlowStartRequest,
 } from './types.ts';
-import { fail, messageOf } from './errors.ts';
+import { fail } from './errors.ts';
 import {
   integer,
   isFlowJsonValue,
@@ -415,15 +403,6 @@ export function resolveStartRequest(
     delegation,
     message_fixture: messageFixture,
   };
-}
-
-/**
- * Offer a diagnostic for a value that failed start resolution.
- * @param error - any caught value.
- * @returns the message a launcher should print.
- */
-export function describeRejection(error: unknown): string {
-  return `dsh-flow: invalid start request: ${messageOf(error)}`;
 }
 
 function threshold(value: number, label: string): number {

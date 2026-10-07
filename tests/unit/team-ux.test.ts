@@ -1,4 +1,4 @@
-/** Ownership, truthful projection and concurrent read/display behaviours in UX 1.2. */
+/** Ownership, truthful projection and concurrent native team observation. */
 import {fromPartial} from '@total-typescript/shoehorn';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -101,7 +101,7 @@ test('teams inherit each main model and later choices stay confined to the owner
   const leadB=runtime.store.listAgents(b.cluster.id,{role:'orchestrator'})[0]!;
   assert.equal(runtime.modelFor(leadA).model,'selected-a');
   assert.equal(runtime.modelFor(leadB).model,'selected-b');
-  assert.equal(runtime.modelFor(leadB).reasoningEffort,undefined,'the new adapter default clears the old explicit effort');
+  assert.equal(runtime.modelFor(leadB).reasoningEffort,undefined,'an owner without explicit effort uses its adapter default');
   runtime.teamSelectModel('main-a',{provider:'online-a',model:'replacement'});
   for(const agent of runtime.store.listAgents(a.cluster.id))assert.equal(runtime.modelFor(agent).model,'replacement');
   assert.equal(runtime.modelFor(leadB).model,'selected-b');
@@ -306,12 +306,13 @@ test('read failure keeps temporary defaults until explicit save',async()=>{
   await store.save();assert.deepEqual(JSON.parse(written),DEFAULT_PREFERENCES);assert.equal(store.getSnapshot().readError,null);
 });
 
-test('selection and reconnect fence late replies, preserve stale data and reject cross-session snapshots',async()=>{
+test('reconnect fences late replies, follows the current run and rejects cross-session snapshots',async()=>{
   const delayed=deferred<FlowTeamSnapshot>();let readCount=0;
+  let runs=[run];
   let current:FlowTeamSnapshot={...snapshot,run:{...run,id:'next',version:2}};
-  const source=new TeamObserver('main',{async runs(){return [run,{...run,id:'next'}];},async read(){readCount++;return readCount===1?delayed.promise:current;}},100000);
+  const source=new TeamObserver('main',{async runs(){return runs;},async read(){readCount++;return readCount===1?delayed.promise:current;}},100000);
   const first=source.refresh();await Promise.resolve();
-  source.select('next');await source.refresh();delayed.resolve(snapshot);await first;
+  runs=[current.run,run];source.reset();await source.refresh();delayed.resolve(snapshot);await first;
   assert.equal(source.getSnapshot().team?.run.id,'next');
   current={...current,run:{...current.run,version:1}};await source.refresh();assert.equal(source.getSnapshot().team?.run.version,2);
   current={...current,run:{...current.run,main_session_id:'other',version:3}};await source.refresh();assert.match(source.getSnapshot().error??'',/其他会话/);assert.equal(source.getSnapshot().team?.run.version,2);
@@ -322,11 +323,9 @@ test('1000 stable identities, depth 10, repeated 80-character titles and incompl
   const agents=Array.from({length:1000},(_,index)=>agent(`agent-${index}`,index===0?null:`agent-${index<11?index-1:0}`));
   agents.push(agent('orphan','missing'));
   const collapsed=new Set(['agent-0']);
-  assert.equal(treeRows(agents,'',new Set(),collapsed).length,2,'collapsed descendants stay hidden; unresolved roots remain');
-  const rows=treeRows(agents,'agent-10',new Set(),collapsed);
-  assert.equal(rows.find(row=>row.agent.id==='agent-10')?.depth,10);
-  assert.ok(rows.filter(row=>!row.matched).length>=10,'search retains ancestors despite collapse');
+  assert.equal(treeRows(agents,collapsed).length,2,'collapsed descendants stay hidden; unresolved roots remain');
   const all=treeRows(agents);assert.equal(new Set(all.map(row=>row.agent.id)).size,1001);
+  assert.equal(all.find(row=>row.agent.id==='agent-10')?.depth,10,'expansion restores the complete derivation depth');
   assert.equal(all.find(row=>row.agent.id==='orphan')?.incomplete,true);
   assert.equal(formatMetric({value:0,unit:'Token',scope:'self',estimated:false}),'0');
   assert.equal(formatMetric({value:null,unit:'Token',scope:'self',estimated:false}),'—');
@@ -335,15 +334,18 @@ test('1000 stable identities, depth 10, repeated 80-character titles and incompl
 });
 
 
-test('an unavailable selection retains the latest run directory and can recover to another run',async()=>{
-  let runs=[run,{...run,id:'next'}];
-  const source=new TeamObserver('main',{async runs(){return runs;},async read(_session,id){if(id==='next')throw new Error('暂时无法读取');return snapshot;}},100000);
-  await source.refresh();source.select('next');await source.refresh();
-  assert.equal(source.getSnapshot().team,null);assert.equal(source.getSnapshot().selectedRun,'next');
-  assert.equal(source.getSnapshot().runs.length,2);assert.match(source.getSnapshot().error??'',/无法读取/);
-  runs=[run];await source.refresh();assert.deepEqual(source.getSnapshot().runs.map(item=>item.id),['run']);
-  assert.match(source.getSnapshot().error??'',/所选运行已不可用/);
-  source.select('run');await source.refresh();assert.equal(source.getSnapshot().team?.run.id,'run');assert.equal(source.getSnapshot().error,null);source.dispose();
+test('the current run follows the authoritative directory and retains readable data on failure',async()=>{
+  let runs=[run];let unavailable=true;
+  const next={...run,id:'next'};
+  const source=new TeamObserver('main',{async runs(){return runs;},async read(_session,id){if(id==='next'&&unavailable)throw new Error('暂时无法读取');return {...snapshot,run:runs.find(item=>item.id===id)!};}},100000);
+  await source.refresh();assert.equal(source.getSnapshot().team?.run.id,'run');
+  runs=[next,run];await source.refresh();
+  assert.equal(source.getSnapshot().team?.run.id,'run','a failed read leaves the loaded snapshot available');
+  assert.deepEqual(source.getSnapshot().runs.map(item=>item.id),['next','run']);assert.match(source.getSnapshot().error??'',/无法读取/);
+  unavailable=false;await source.refresh();assert.equal(source.getSnapshot().team?.run.id,'next');assert.equal(source.getSnapshot().error,null);
+  runs=[{...next,state:'completed',version:2},run];await source.refresh();assert.equal(source.getSnapshot().team?.run.id,'run','an active run is preferred over a completed entry');
+  runs=[{...next,state:'completed',version:2},{...run,state:'cancelled',version:2}];await source.refresh();assert.equal(source.getSnapshot().team?.run.id,'next','the newest run is shown when all teams are terminal');
+  runs=[];await source.refresh();assert.equal(source.getSnapshot().team,null);source.dispose();
 });
 
 
@@ -353,5 +355,5 @@ test('ended collapse hides wholly ended branches but keeps ended ancestors of li
   const live=agent('live','old');const ended=[root,old,leaf];
   assert.deepEqual(visibleEndedRows(treeRows(ended),ended,false).map(row=>row.agent.id),['root']);
   const agents=[...ended,live];assert.deepEqual(visibleEndedRows(treeRows(agents),agents,false).map(row=>row.agent.id),['root','old','live']);
-  assert.deepEqual(visibleEndedRows(treeRows(agents,'',new Set(),new Set(['old'])),agents,false).map(row=>row.agent.id),['root','old']);
+  assert.deepEqual(visibleEndedRows(treeRows(agents,new Set(['old'])),agents,false).map(row=>row.agent.id),['root','old']);
 });

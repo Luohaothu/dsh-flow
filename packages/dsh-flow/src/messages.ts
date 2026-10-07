@@ -18,7 +18,7 @@ export function isCommunicationCategory(value: unknown): value is FlowCommunicat
   return typeof value === 'string' && Object.hasOwn(COMMUNICATION_LABELS, value);
 }
 
-/** Persisted legacy content may be an encoded object or plain text. */
+/** Persisted content accepts an encoded object or plain text. */
 export function communicationContent(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
     try { return communicationContent(JSON.parse(value)); } catch { return { text: value }; }
