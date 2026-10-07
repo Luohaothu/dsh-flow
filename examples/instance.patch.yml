@@ -3,7 +3,7 @@
 # Layers the deployment policy (model route, sandbox, compaction) on top of a
 # shipped profile template whose bundle list already includes `dsh-flow`. The
 # plugin row comes from that bundle's own `cordis.patch.yml`, together with the
-# **集群模式** agent preset, so this file must not insert `dsh-flow` a second
+# `/agent-team` command, so this file must not insert `dsh-flow` a second
 # time. (`examples/cluster.patch.yml` is the acceptance overlay: its profile does
 # not depend on the package, so there it inserts the row explicitly.)
 #
@@ -95,8 +95,8 @@
   config:
     dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
     workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
-    provider: local-sglang
-    model: Qwen3.8-27B-FP8
+    provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
+    model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
     reasoningEffort: off
     maxTokens: 4096
     context:

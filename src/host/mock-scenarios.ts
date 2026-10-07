@@ -97,7 +97,7 @@ export function checkpointFor(classified: MockRequestClassification | null): str
     '## Primary Request and Intent',
     `Continue the cluster work for ${role ?? 'worker'} on node ${nodeId ?? 'unknown'}.`,
     '## Key Technical Concepts',
-    'Hierarchical agent cluster; one transaction per Worker; independent validation.',
+    '插件; one transaction per Worker; independent validation.',
     '## Files and Code',
     'No file content is summarised here; read the transaction detail before acting.',
     '## Errors and Fixes',
@@ -669,17 +669,22 @@ export interface MockScenarioContext {
  */
 const CASE_HOOKS: Record<string, (context: MockCaseContext) => MockScenarioHooks> = {
   /**
-   * The panel drives pause, resume and cancel from a real page. It can only do
-   * that while the cluster is still live, so the final closeout request is held
-   * on a named barrier until the checker has finished driving the panel and is
-   * about to cancel. The hold is a slow model, not a stopped plugin: the SSE
-   * stream stays open.
+   * Observation acceptance needs a stable live team while the browser reads it.
+   * Hold final closeout until the checker finishes; only test IPC performs cleanup.
+   * This is a slow model with an open SSE stream.
    */
-  panel: () => ({
-    orchestrator: (_request, item) => (item.action === 'finish_cluster'
-      ? { ...call('flow_transaction', { action: 'finish_cluster', params: {} }), hold: 'panel-hold' }
-      : null),
-  }),
+  panel: () => {
+    const questioned=new Set<string>();
+    const stoppedForQuestion=new Set<string>();
+    return {orchestrator:(request,item)=>{
+      const id=request.classified.agentId??'';
+      if(request.classified.userText.includes('UX native')&&!questioned.has(id)) {
+        questioned.add(id);return call('flow_transaction',{action:'request_user',params:{question:'请确认使用当前工作区'}});
+      }
+      if(request.classified.lastToolResult?.includes('waiting_user')&&!stoppedForQuestion.has(id)){stoppedForQuestion.add(id);return say('等待主会话答复');}
+      return item.action==='finish_cluster'?{...call('flow_transaction',{action:'finish_cluster',params:{}}),hold:'panel-hold'}:null;
+    }};
+  },
   recursion: context => recursionHooks(context),
   recovery: context => recoveryHooks(context),
   scale: context => scaleHooks(context),
@@ -1203,19 +1208,19 @@ function browserHooks(): MockScenarioHooks {
         // The shipped app opens with an internal-testing notice that covers the
         // frame; a real page must acknowledge it before the panel is clickable.
         if (!state.noticeDismissed) {
-          const notice = refFor(text, /button\s+"continue"/iu);
+          const notice = refFor(text, /button\s+"(?:continue|继续|我已了解)"/iu);
           state.noticeDismissed = true;
           if (notice) return call(CLICK, { target: notice });
         }
         if (!state.clicked) {
-          const ref = refFor(text, /cluster/iu);
-          if (!ref) throw new Error(`no Cluster control ref in the snapshot: ${text.slice(0, 600)}`);
+          const ref = refFor(text, /button\s+"(?:插件|Plugins)"/iu);
+          if (!ref) throw new Error(`no Plugins control ref in the snapshot: ${text.slice(0, 600)}`);
           state.ref = ref;
           state.clicked = true;
           return call(CLICK, { target: ref });
         }
         const title = titleOf(text);
-        const heading = /heading "Hierarchical agent cluster"/iu.test(text);
+        const heading = /heading "插件"/iu.test(text);
         if (!title || !heading) {
           throw new Error(`the post-click snapshot lacks the panel heading or page title: ${text.slice(0, 600)}`);
         }
@@ -1225,11 +1230,11 @@ function browserHooks(): MockScenarioHooks {
             transaction_id: c.transactionId,
             result: {
               page_title: title,
-              heading: 'Hierarchical agent cluster',
+              heading: '插件',
               ref: state.ref,
               tools: ['browser_navigate', 'browser_snapshot', 'browser_click'],
             },
-            notes: 'navigated to the host page, dismissed its notice, clicked the Cluster control by its snapshot ref and snapshotted the opened panel',
+            notes: 'navigated to the host page, dismissed its notice, clicked the Plugins control by its snapshot ref and snapshotted the opened panel',
           },
         });
       }
@@ -1295,6 +1300,36 @@ export function buildScenario({
     name: `mock:${caseId}`,
     respond(request) {
       const classified = request.classified;
+      // Initial Flow tasks now use native user provenance, which also enables
+      // the host's ordinary first-prompt session-title provider.
+      if (classified.kind === 'unknown' && classified.userText.startsWith('Generate the session title from this JSON array of human messages:\n')) {
+        return say('原生任务会话');
+      }
+      if(caseId==='panel'&&classified.kind==='unknown') {
+        const messages=JSON.stringify(request.body);
+        if(classified.userText.trim().startsWith('NATIVE-ORDINARY:'))return classified.lastToolName==='agent_team_message'?say('OK，已收到主会话答复'):call('agent_team_message',{text:classified.userText});
+        if(messages.includes('native-A-')||messages.includes('native-B-'))return say('原生观察记录');
+      }
+      if((caseId==='team-launch'||caseId==='panel')&&classified.kind==='unknown') {
+        const wire=recordsOf(asRecord(request.body)?.messages);
+        const newestInvocation=wire.findLastIndex(message=>message.role==='user'&&(typeof message.content==='string'?message.content:recordsOf(message.content).map(block=>textOf(block.text)??'').join('\n')).trim().startsWith('/agent-team '));
+        if(newestInvocation>=0&&!wire.slice(newestInvocation+1).some(message=>message.role==='tool'))return call('agent_team_read',{});
+        let data:Record<string,unknown>|null=null;
+        try{data=asRecord(JSON.parse(classified.lastToolResult??'null'));}catch{/* The first main request has no tool result. */}
+        const run=asRecord(data?.run);
+        if(!data)return call('agent_team_read',{});
+        const launch=listOf(data?.launches).map(asRecord).find(launch=>launch&&!listOf(data?.runs).some(value=>asRecord(value)?.launch_id===launch.launch_id));
+        if(!run||launch) {
+          return call('agent_team_create',{launch_id:launch?.launch_id,objective:caseId==='panel'?launch?.objective:'Sum [2,3] with flow_sum and independently verify the total 5.',assessment:{complexity:'simple',rationale:'One task with independent validation'},acceptance_criteria:caseId==='panel'?['The result names the task objective']:['Verified total is 5'],capabilities:[]});
+        }
+        if(['completed','cancelled','failed'].includes(String(run.state))) {
+          if(!run.finalized_at)return call('agent_team_finalize',{run_id:run.id});
+          if(classified.lastToolName==='agent_team_finalize')return call('agent_team_read',{run_id:run.id});
+          return say('结果 5 已通过审查，团队已收尾，历史保留。');
+        }
+        if(caseId==='panel')return say(run.state==='waiting_user'?'团队等待你确认使用当前工作区。':'团队正在执行，可以继续查看原生记录。');
+        return call('agent_team_read',{run_id:run.id,after_version:run.version,wait_ms:30000});
+      }
       if (classified.kind === 'compaction') {
         seen.compaction += 1;
         return say(checkpointFor(classified));

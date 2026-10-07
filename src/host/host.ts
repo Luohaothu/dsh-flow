@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess, Serializable } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createWriteStream, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { WriteStream } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +60,7 @@ export const RUNNER_ENV_KEYS: readonly string[] = [
   'HOME', 'TMPDIR', 'DSH_HOME', 'DSH_TELEMETRY_DISABLED', 'NODE_NO_WARNINGS',
   'FLOW_IPC', 'FLOW_DATA_DIR', 'FLOW_WORKSPACE', 'FLOW_QWEN_BASE_URL',
   'FLOW_QWEN_MODEL', 'FLOW_MODEL_PROVIDER', 'FLOW_MODEL_API_KEY',
+  'PWTEST_SOCKETS_DIR',
 ];
 
 export const CASE_ENV_KEYS: readonly string[] = [
@@ -182,6 +183,8 @@ export class DshHost {
   exitInfo: DshExitInfo | undefined;
   child: ChildProcess | null = null;
   #logStream: WriteStream | null = null;
+  #socketDir: string | null = null;
+  #startError: Error | null = null;
 
   constructor(options: DshHostOptions) {
     const patchList = options.patches ?? (options.patch ? [options.patch] : []);
@@ -204,9 +207,13 @@ export class DshHost {
     if (options.fromDefaultProfile) args.push('--from-default-profile', options.fromDefaultProfile);
     for (const patch of this.patches) args.push('--patch', patch);
     args.push('--host', '127.0.0.1', '--port', '0', '--no-open');
+    // Playwright MCP uses Unix sockets. A full evidence-directory path can
+    // exceed macOS's socket limit; keep TMPDIR isolated and give this host a
+    // separate short, exclusive socket directory that is removed on exit.
+    if (process.platform !== 'win32') this.#socketDir = mkdtempSync('/tmp/flow-pw-');
     const child = spawn(process.execPath, args, {
       cwd: this.cwd,
-      env: this.env,
+      env: { ...this.env, ...(this.#socketDir ? { PWTEST_SOCKETS_DIR: this.#socketDir } : {}) },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     this.child = child;
@@ -238,14 +245,25 @@ export class DshHost {
       if (message.ok) entry.resolve(message.result);
       else entry.reject(Object.assign(new Error(message.error.message ?? 'flow op failed'), { status: message.error.status, code: message.error.code }));
     });
-    child.on('exit', (code, signal) => {
+    // Failed spawn emits error/close without exit. Use close as the shared
+    // terminal event so both normal shutdown and failed startup can settle.
+    child.on('close', (code, signal) => {
       this.exitInfo = { code, signal };
+      this.#removeSocketDir();
       this.#logStream?.end();
       for (const [, entry] of this.pending) entry.reject(new Error(`host exited (code=${code} signal=${signal}) before answering`));
       this.pending.clear();
       this.#flush();
     });
-    await this.waitFor(() => this.ready, this.readyTimeoutMs, 'dsh-flow plugin readiness');
+    child.on('error', error => {
+      this.#startError = error;
+      for (const [, entry] of this.pending) entry.reject(error);
+      this.pending.clear();
+      this.#flush();
+    });
+    await this.waitFor(() => this.ready || this.#startError !== null || this.exitInfo !== undefined, this.readyTimeoutMs, 'dsh-flow plugin readiness');
+    if (this.#startError !== null) throw this.#startError;
+    if (!this.ready) throw new Error(`host closed before plugin readiness (code=${this.exitInfo?.code} signal=${this.exitInfo?.signal})`);
     return this;
   }
 
@@ -281,6 +299,12 @@ export class DshHost {
     for (const waiter of [...this.stdoutWaiters]) waiter();
   }
 
+  #removeSocketDir(): void {
+    if (this.#socketDir === null) return;
+    rmSync(this.#socketDir, { recursive: true, force: true });
+    this.#socketDir = null;
+  }
+
   request(op: DshHostOp, id: string | undefined, payload?: unknown, timeoutMs = 3_600_000): Promise<unknown> {
     const child = this.child;
     if (!child?.connected) return Promise.reject(new Error('host is not running'));
@@ -314,7 +338,7 @@ export class DshHost {
     const { signal = 'SIGTERM', graceMs = 15_000 } = options;
     const child = this.child;
     if (!child || this.exitInfo) return this.exitInfo ?? null;
-    const exited = new Promise<void>(resolvePromise => child.once('exit', () => resolvePromise()));
+    const exited = new Promise<void>(resolvePromise => child.once('close', () => resolvePromise()));
     try {
       child.kill(signal);
     } catch {
@@ -393,7 +417,7 @@ export function ensureProfile(home: string, profile: string, {
     writeFileSync(manifestPath, `${JSON.stringify({
       name: `dsh-profile-${profile}`,
       private: true,
-      dependencies: {},
+      dependencies: bundles?.includes('dsh-flow') ? {'dsh-flow':`link:${resolve(packagePath)}`} : {},
       dsh: { profile: { bundles: [...(bundles ?? [])] } },
     }, undefined, 2)}\n`);
   }

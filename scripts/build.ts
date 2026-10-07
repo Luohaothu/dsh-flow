@@ -22,7 +22,7 @@
  * bundle, so a clean tree (no `lib/`) still type-checks without a prior build.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +58,7 @@ async function buildHost(): Promise<void> {
     sourcemap: true,
     legalComments: 'none',
     define: { 'process.env.NODE_ENV': '"production"' },
-    entryPoints: ['index', 'tools', 'web'].map(name => join(PLUGIN_LIB, 'types', `${name}.js`)),
+    entryPoints: ['index', 'tools', 'web', 'command'].map(name => join(PLUGIN_LIB, 'types', `${name}.js`)),
     outdir: PLUGIN_LIB,
     entryNames: '[name]',
     format: 'esm',
@@ -91,6 +91,7 @@ function generateTypert(): void {
 async function buildClient(): Promise<void> {
   const manifest = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'package.json'), 'utf8')) as { name: string };
   await esbuild.build({
+    loader: { '.svg': 'dataurl' },
     bundle: true,
     logLevel: 'info',
     sourcemap: true,
@@ -122,6 +123,9 @@ async function buildClient(): Promise<void> {
       '@deepseek-ai/dsh-client-ui-renderer',
       '@deepseek-ai/dsh-client-ui-layout',
       '@deepseek-ai/dsh-client-ui-sidebar',
+      '@deepseek-ai/dsh-client-ui-conversation/client',
+      '@deepseek-ai/dsh-client-ui-chat/client',
+      '@deepseek-ai/dsh-client-ui-dockkit',
     ],
     banner: {
       js: `window.__ModuleLoader__.load({ id: ${JSON.stringify(manifest.name)}, factory: (require) => {\n`
@@ -131,6 +135,16 @@ async function buildClient(): Promise<void> {
   });
 }
 
+// Incremental TypeScript builds leave deleted sources' output behind. Do not
+// ship the retired Cluster panel or its execution bindings in a new package.
+for (const module of ['panel', 'operations']) {
+  for (const extension of ['.js', '.js.map', '.d.ts', '.d.ts.map']) {
+    rmSync(join(PLUGIN_LIB, 'types', 'client', module + extension), { force: true });
+  }
+}
+for (const extension of ['.js', '.js.map', '.d.ts', '.d.ts.map']) {
+  rmSync(join(PLUGIN_LIB, 'types', 'client', 'read-projection' + extension), { force: true });
+}
 tsc('-b', 'tsconfig.host.json');
 await buildHost();
 generateTypert();

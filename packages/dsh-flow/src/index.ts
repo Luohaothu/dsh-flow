@@ -1,3 +1,4 @@
+import { fail } from './errors.ts';
 /**
  * `dsh-flow` — hierarchical agent clusters for a DeepSeek Harness deployment.
  *
@@ -28,9 +29,10 @@ import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-agent-loop';
 import type {} from '@deepseek-ai/dsh-session-persistence';
+import type {} from '@deepseek-ai/dsh-api-session-controller';
 
 import { Config, resolveConfig } from './config.ts';
-import type { Config as ConfigInput } from './config.ts';
+import type { Config as ConfigInput, ResolvedConfig } from './config.ts';
 import { ClusterRuntime } from './core/cluster.ts';
 import type { RecoveryOutcome } from './core/cluster.ts';
 import type {} from './service.ts';
@@ -50,11 +52,14 @@ export const inject = ['tools', 'agents', 'agentLoop', 'sessions', 'sessionPersi
  * @param ctx - the deployment context.
  * @param input - the profile row's configuration.
  */
-export async function apply(ctx: Context, input: ConfigInput): Promise<void> {
-  // The loader validates a row against this schema before the plugin mounts; the
-  // call is still made here so the defaults are applied in exactly one place and
-  // a hand-mounted composition gets the same resolved values.
-  const resolved = resolveConfig(Config(input), { logger: ctx.logger });
+function isResolved(input:ConfigInput | ResolvedConfig):input is ResolvedConfig {
+  return typeof input.maxTokens==='object'&&input.maxTokens!==null&&'get' in input.maxTokens;
+}
+export async function apply(ctx: Context, input: ConfigInput | ResolvedConfig): Promise<void> {
+  // The loader supplies live Volatile references. Preserve them so native
+  // configuration edits reach future starts without restarting the controller.
+  // Direct compositions may still pass a raw row through the same schema.
+  const resolved = resolveConfig(isResolved(input)?input:Config(input), { logger: ctx.logger });
   mkdirSync(resolved.dataDir, { recursive: true });
 
   const runtime = new ClusterRuntime(ctx, {
@@ -99,4 +104,22 @@ export async function apply(ctx: Context, input: ConfigInput): Promise<void> {
   }
 
   ctx.provide('flow', runtime);
+  // Flow owns independent native sessions, outside the host subagent catalog.
+  // Classify both old and new list summaries through the host API; their raw
+  // headers retain the independent observation and continuation contract.
+  ctx.inject(['sessionController'], (child) => {
+    child.effect(() => child.sessionController.registerSessionDriver({
+      owns:id => !runtime.closed && runtime.isTeamAgentSession(id),
+      async prompt(request,signal) {
+        signal.throwIfAborted();
+        if (request.content.some(part=>part.type !== 'text')) fail('智能体会话当前支持文本消息，请在主会话提供附件',400);
+        const text=request.content.flatMap(part=>part.type==='text'?[part.text]:[]).join('\n');
+        runtime.promptAgent(request.sessionId,request.requestId,text,request.clientTimeZone,request.mode);
+        return {accepted:true};
+      },
+      cancel(request) { runtime.interruptAgent(request.sessionId);return {accepted:true}; },
+    }), 'dsh-flow: native session execution driver');
+    child.effect(() => child.sessionController.registerSessionOrigin(id =>
+      !runtime.closed && runtime.store.getAgentBySession(id) ? 'subagent' : undefined), 'dsh-flow: internal session classification');
+  });
 }

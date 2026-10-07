@@ -25,7 +25,7 @@ export interface RunLayout {
 /** Every development operation the acceptance runner may send over IPC. */
 export type DshHostOp =
   | 'ping' | 'start' | 'list' | 'read' | 'events' | 'control' | 'report'
-  | 'query' | 'settle' | 'tick' | 'single' | 'recover' | 'dispose';
+  | 'query' | 'settle' | 'tick' | 'single' | 'recover' | 'dispose' | 'observation-fixture';
 
 /**
  * One request sent to the host process. `op` is the development operation and

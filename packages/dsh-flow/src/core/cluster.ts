@@ -1,3 +1,4 @@
+import { agentSession, promptAgent, startTeam, createTeam, finalizeTeam, teamRuns, readTeam, replyTeam } from './team.ts';
 /**
  * ClusterRuntime: the control loop, scheduler, and command surface of the
  * hierarchical agent cluster.
@@ -7,6 +8,10 @@
  * scheduled, never awaited from inside a transaction.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import type { UserMessage } from '@deepseek-ai/dsh-llm';
+import { COMMUNICATION_LABELS, DELIVERY_MARKER, NOTIFICATION_LABELS, communicationBody, communicationCategory, communicationContent, communicationHeadline, notificationCategory, notificationHeadline, notificationTone } from '../messages.ts';
+import { agentGivenName, ROLE_LABELS } from '../identity.ts';
 import type { SQLOutputValue } from 'node:sqlite';
 
 import type { Context } from '@deepseek-ai/cordis';
@@ -61,7 +66,7 @@ import type {
   FlowEventsResult, FlowHealthSignals, FlowJsonValue,
   FlowBudgetInput, FlowIssueStatus, FlowLimits, FlowListQuery, FlowListResult, FlowNodeAncestor, FlowNodeKind, FlowNodeRecord, FlowNodeReference,
   FlowQueryKind, FlowQueryParams, FlowQueryResult, FlowReadQuery, FlowReport, FlowSnapshot, FlowStartRequest, FlowSummary, FlowTransactionStatus, FlowUsageSummary,
-  FlowTransactionRecord, FlowTransactionReference,
+  FlowTransactionRecord, FlowTransactionReference, FlowTeamCreateRequest,
 } from '../types.ts';
 import type {
   AgentRecord, AllocationRecord, AuditRecord, BudgetRecord, ClusterRecord,
@@ -140,7 +145,7 @@ const ROLE_INSTRUCTIONS = {
     'You are the Orchestrator of one management node in a hierarchical agent cluster.',
     'You own planning, decomposition, dispatch, validation and aggregation for the transactions in your domain.',
     'Actions available through the flow_transaction tool:',
-    '  create_transaction, decompose, set_dependency, set_priority, dispatch, adjust_transaction, validate, accept_result, reject_result, aggregate, escalate, finish_cluster.',
+    '  create_transaction, decompose, set_dependency, set_priority, dispatch, adjust_transaction, validate, accept_result, reject_result, aggregate, escalate, finish_cluster, request_user.',
     'Rules:',
     '- Write acceptance_criteria that a third party can check against concrete evidence (files, command exit codes, sources).',
     '- dispatch makes the transaction ready for allocation itself and *also* requests an independent plan audit of that exact revision. The audit is supervision: if the Auditor never decides, your work still runs. If it rejects, the transaction returns to DRAFT and its dependents pause until you answer the issue with adjust_transaction (a new revision is what clears the rejection).',
@@ -148,7 +153,7 @@ const ROLE_INSTRUCTIONS = {
     '- validate must compare the submitted result against the acceptance criteria of the recorded result revision; the Auditor then approves or rejects it independently.',
     '- Never declare your own result accepted: worker results become SUBMITTED, and only an auditor decision turns a validation into ACCEPTED.',
     '- aggregate a parent only after every child transaction is ACCEPTED.',
-    '- When you are blocked by missing information or an unresolvable conflict, use escalate with the concrete reason.',
+    '- When information from the human is required, call request_user with params.question. Stop after the question; wait for a main-conversation reply. For an unresolvable execution conflict use escalate with the concrete reason.',
     '- At the root, acceptance of every transaction starts the final cluster-objective turn. Perform remaining post-acceptance work (for example publish the required blackboard result with flow_communicate publish) before calling finish_cluster. Never finish merely because the transaction rows are accepted.',
     'Use flow_query to read the current state of your domain before acting.',
     'Exact shapes (params is a JSON object, never a string):',
@@ -451,6 +456,7 @@ interface ActiveTurnEntry {
   readonly ac: AbortController
   lease: LeaseRecord | null
   instance: Agent | null
+  humanDeliveries?: string[]
   settled: boolean
 }
 
@@ -755,6 +761,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       routes,
       autoTick: config.autoTick ?? true,
       startDefaults: config.startDefaults,
+      executionDefaults: config.executionDefaults,
     };
     this.store = new ClusterStore(config.path ?? config.dbPath ?? ':memory:', { now: config.now ?? Date.now });
     this.#activeTurns = new Map();
@@ -773,6 +780,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
   #activeTurns: Map<string, ActiveTurnEntry>;
   #scheduling: Set<string>;
   #llmSlots: LlmSlots;
+  #runLlmSlots = new Map<string,LlmSlots>();
   #rotation: Map<string, number>;
   /** Which class took a one-slot window last: with one slot, the classes alternate. */
   #lastAdmittedClass: Map<string, 'management' | 'worker'>;
@@ -793,10 +801,68 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
   #wakePromise: Promise<void> | null = null;
   #wakeResolve: (() => void) | null = null;
 
+  /** Start exactly one main-session intent, including retries after lost acknowledgments. */
+  startTeam(sessionId: string, intentId: string, objective: string, workspace?: string,model?:FlowModelSelection): FlowSnapshot {
+    return startTeam(this, sessionId, intentId, objective, workspace,model);
+  }
+
+  createTeam(sessionId: string, launchId: string, request: FlowTeamCreateRequest, model?: FlowModelSelection) {
+    return createTeam(this, sessionId, launchId, request, model);
+  }
+
+  teamStartDefaults() { return this.config.executionDefaults?.().start ?? this.config.startDefaults; }
+
+  isTeamAgentSession(sessionId: string): boolean { return Boolean(this.store.getAgentBySession(sessionId)); }
+
+  agentSession(sessionId: string) { return agentSession(this,sessionId); }
+  promptAgent(sessionId: string, requestId: string, text: string, clientTimeZone?: string, mode: 'queue' | 'steer' = 'queue'): void {
+    promptAgent(this,sessionId,requestId,text,clientTimeZone,mode);
+    const agent=this.store.getAgentBySession(sessionId);if(agent)this.#injectHumanPrompts(agent);
+  }
+  /** Active native turns retain their role scope; cold turns remain in the durable Flow inbox. */
+  #injectHumanPrompts(agent: AgentRecord): void {
+    const entry=this.#activeTurns.get(agent.id);
+    if(!entry?.instance || entry.settled || entry.ac.signal.aborted)return;
+    for(const row of this.store.pendingDeliveries(agent.id)) {
+      const human=communicationContent(communicationContent(row.content).human_prompt);
+      if(row.from_agent!==null || typeof human.rpc_id!=='string')continue;
+      const input=this.#communicationMessages(agent,[row])[0]!;
+      this.store.tx(()=>this.store.markDeliveryInjected(row.message_id,agent.id));
+      (entry.humanDeliveries??=[]).push(row.message_id);
+      entry.instance.send(input,human.mode==='steer'?'next-step':'next-turn',true);
+    }
+  }
+  #settleHumanPrompts(clusterId:string,agentId:string,admitted:boolean,durable:boolean):void {
+    const entry=this.#activeTurns.get(agentId),ids=entry?.humanDeliveries??[];
+    if(ids.length)this.settleDeliveries(clusterId,agentId,ids,{admitted,durable});
+  }
+  interruptAgent(sessionId: string): void {
+    const agent=this.store.getAgentBySession(sessionId);
+    if (!agent) fail('智能体会话不存在',404);
+    this.#activeTurns.get(agent.id)?.ac.abort(new Error('用户停止当前智能体轮次'));
+  }
+
+  finalizeTeam(sessionId: string, runId: string) { return finalizeTeam(this, sessionId, runId); }
+
+  /** Forward an ordinary main-session instruction once. */
+  teamReply(sessionId: string, messageId: string, content: string, runId?: string): void { replyTeam(this, sessionId, messageId, content, runId); }
+
+  /** Read the runs belonging to one main conversation. */
+  teamRuns(sessionId: string) { return teamRuns(this, sessionId); }
+
+  /** Main owners survive release of the host's live Session and Agent. */
+  teamOwners(): readonly string[] {
+    return this.store.all('SELECT DISTINCT main_session_id FROM team_runs ORDER BY main_session_id').map(row=>String(row.main_session_id));
+  }
+
+  /** Read one consistent observing snapshot without mutating execution. */
+  teamRead(sessionId: string, runId: string) { return readTeam(this, sessionId, runId); }
+
   // ------------------------------------------------------------ public API
 
   start(request: FlowStartRequest, internals: FlowStartInternals = {}): FlowSnapshot {
-    const defaults = this.config.startDefaults;
+    const execution = this.config.executionDefaults?.();
+    const defaults = execution?.start ?? this.config.startDefaults;
     // A deployment's defaults fill every field the caller omitted; a pure
     // business test that constructed the runtime directly has none, and its
     // request is validated as it stands.
@@ -831,11 +897,16 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
 
       const root = this.store.insertNode({
         id: randomUUID(), cluster_id: clusterId, parent_id: null, kind: 'management', depth: 0,
-        status: 'ACTIVE', scope: { objective: normalized.objective }, capabilities: normalized.capabilities,
+        status: 'ACTIVE', scope: asJsonValue({ objective: normalized.objective, ...(execution ? {
+          team_model: { ...this.config.model, ...(execution.model ?? {}), ...execution.options },
+          team_model_fixed: execution.model !== null,
+          team_model_options: { ...execution.options },
+          team_dispatch_mode: execution.dispatchMode,
+        } : {}) }), capabilities: normalized.capabilities,
         path: '0', max_children: normalized.limits.max_children,
       });
       if (!root) fail('Root node could not be created', 500);
-      this.store.updateNode(root.id, { scope: { objective: normalized.objective, root: true } });
+      this.store.updateNode(root.id, { scope: { ...root.scope, root: true } });
 
       const rootNodeBudget = createBudget(this.store, {
         cluster_id: clusterId, scope_kind: 'node', scope_id: root.id, node_id: root.id,
@@ -898,7 +969,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
     });
 
     if (!cluster) fail('Cluster not found', 404);
-    this.setLlmConcurrency(cluster.limits.max_llm_concurrency);
+    this.setLlmConcurrency(cluster.limits.max_llm_concurrency,cluster.id);
     this.#ensureTicking();
     this.wake();
     return this.read(clusterId, { include_events: false });
@@ -2480,7 +2551,7 @@ case 'effects': {
         if (this.#activeTurnCount(id) >= limits.max_active_agents) break;
         if (this.#activeTurnCount(id, 'management') >= managementCeiling) break;
         const agent = this.roleAgentOf(id, node.id, role);
-        if (!agent || agent.status === 'TERMINATED' || agent.status === 'BLOCKED' || this.#activeTurns.has(agent.id)) continue;
+        if (!agent || agent.status === 'TERMINATED' || agent.status === 'BLOCKED' || (agent.meta.ui_state === 'waiting_user' && agent.meta.reply_pending !== true) || this.#activeTurns.has(agent.id)) continue;
         if (agent.turns >= limits.max_role_turns) {
           this.blockNodeInternal(id, node.id, `role ${role} exhausted its turn budget (${limits.max_role_turns})`);
           continue;
@@ -2502,7 +2573,7 @@ case 'effects': {
     // the window one slot short of what the pass actually admitted.
     const managementPending = ordered.some(node => MANAGEMENT_ROLES.some(role => {
       const agent = this.roleAgentOf(id, node.id, role);
-      return agent !== null && agent.status !== 'TERMINATED' && agent.status !== 'BLOCKED'
+      return agent !== null && agent.status !== 'TERMINATED' && agent.status !== 'BLOCKED' && (agent.meta.ui_state !== 'waiting_user' || agent.meta.reply_pending === true)
         && !this.#activeTurns.has(agent.id) && agent.turns < limits.max_role_turns
         && this.#pendingFor(role, node, cluster, agent).length > 0;
     }));
@@ -2584,7 +2655,7 @@ case 'effects': {
    */
   #publishLoad(cluster: ClusterRecord, limits: FlowLimits): void {
     const active = this.#activeTurnCount(cluster.id);
-    const waiting = this.llmWaiters();
+    const waiting = this.llmWaiters(cluster.id);
     if (active < limits.max_active_agents && waiting === 0) return;
     const bucket = Math.floor(this.timestamp() / Math.max(1000, this.config.staleMs / 4));
     const key = `load:${cluster.id}:${bucket}`;
@@ -2592,7 +2663,7 @@ case 'effects': {
     if (this.#alreadyNotified(key, recipient)) return;
     this.notifyInternal(cluster.id, recipient, {
       subject: 'load-changed',
-      payload: { active_turns: active, max_active_agents: limits.max_active_agents, llm_waiters: waiting, llm_in_use: this.llmSlotsInUse() },
+      payload: { active_turns: active, max_active_agents: limits.max_active_agents, llm_waiters: waiting, llm_in_use: this.llmSlotsInUse(cluster.id) },
       dedupeKey: key,
     });
     this.store.appendEvent(cluster.id, 'load-changed', {
@@ -2643,7 +2714,7 @@ case 'effects': {
         // Allocator must drain and replace it before scheduling another turn.
         if (this.store.allocationOutdated(id, allocation)) continue;
         const agent = this.store.getAgent(allocation.agent_id);
-        if (!agent || agent.status === 'TERMINATED' || agent.status === 'BLOCKED' || this.#activeTurns.has(agent.id)) continue;
+        if (!agent || agent.status === 'TERMINATED' || agent.status === 'BLOCKED' || (agent.meta.ui_state === 'waiting_user' && agent.meta.reply_pending !== true) || this.#activeTurns.has(agent.id)) continue;
         // eslint-disable-next-line no-await-in-loop
         const outcome = await this.#startWorkerTurn(cluster, agent, tx, allocation);
         if (outcome?.started) started += 1;
@@ -2831,7 +2902,7 @@ case 'effects': {
     const bind = (live: Agent) => {
       this.bindTurnIdentity(live, identity);
       const entry = this.#activeTurns.get(agent.id);
-      if (entry) entry.instance = live;
+      if (entry) {entry.instance = live;this.#injectHumanPrompts(agent);}
     };
     const onAdmitted = () => {
       admittedThisTurn = true;
@@ -2865,9 +2936,10 @@ case 'effects': {
         // messages against the Session, and that wait must not hold the
         // scheduling pass that is filling the rest of the window.
         deliveries = await this.collectDeliveries(agent);
-        const prompt = this.#rolePrompt(cluster, node, agent, role, pending, deliveries.messages);
+        const prompt = this.#rolePrompt(cluster, node, agent, role, pending);
         outcome = await runTurn(this.ctx, {
           agent, role, prompt,
+          messages: this.#communicationMessages(agent, deliveries.messages, inboxIds),
           systemInstructions: role === 'worker' ? WORKER_PROMPT_HEADER : ROLE_INSTRUCTIONS[role],
           allowedTools: policy.allowed, globalTools: policy.global,
           capabilities: policy.capabilities, resume: agent.turns > 0, cwd: cluster.workspace,
@@ -2950,7 +3022,7 @@ case 'effects': {
     const bind = (live: Agent) => {
       this.bindTurnIdentity(live, identity);
       const entry = this.#activeTurns.get(agent.id);
-      if (entry) entry.instance = live;
+      if (entry) {entry.instance = live;this.#injectHumanPrompts(agent);}
     };
     const budgetIds = this.agentBudgetChain(cluster, agent);
     const policy = this.allowedToolsFor(cluster, 'worker', agent);
@@ -2983,9 +3055,10 @@ case 'effects': {
       try {
         slot = await this.acquireLlmSlot(id);
         deliveries = await this.collectDeliveries(agent);
-        const prompt = this.#workerPrompt(cluster, tx, allocation, deliveries.messages);
+        const prompt = this.#workerPrompt(cluster, tx, allocation);
         outcome = await runTurn(this.ctx, {
           agent, role: 'worker', prompt, allowedTools: policy.allowed, globalTools: policy.global,
+          messages: this.#communicationMessages(agent, deliveries.messages),
           capabilities: policy.capabilities, resume: agent.turns > 0, cwd: cluster.workspace,
           model: this.modelFor(agent), signal: ac.signal, logger: this.logger,
           budgetIds, transactionId: tx.id, turnSeq, flow: this, contextLimits: this.config.context,
@@ -3056,6 +3129,7 @@ case 'effects': {
           'ACCOUNTING_UNCERTAIN');
       }
       if (deliveries?.length) this.settleDeliveries(cluster.id, agent.id, deliveries, { admitted, durable });
+      this.#settleHumanPrompts(cluster.id,agent.id,admitted,durable);
       // A turn that took messages and never made its prompt *durable* did not
       // answer them: not admitted, or admitted and then refused at the flush. They
       // go back to the queue, where the next pass offers them again.
@@ -3278,6 +3352,7 @@ case 'effects': {
         accountingBlocked = true;
       }
       if (deliveries?.length) this.settleDeliveries(cluster.id, agent.id, deliveries, { admitted, durable });
+      this.#settleHumanPrompts(cluster.id,agent.id,admitted,durable);
       this.store.tx(() => {
         const current = this.store.getTransaction(tx.id);
         const rejectedRevision = current?.status === 'RUNNING'
@@ -3553,7 +3628,7 @@ case 'effects': {
         epoch, expires: at + this.config.leaseTtlMs, event_upper_bound: this.store.latestEventSeq(cluster.id),
       });
       if (!lease) fail(`agent ${agent.id} could not take a turn lease`, 409);
-      this.store.updateAgent(agent.id, { status: 'RUNNING', epoch });
+      this.store.updateAgent(agent.id, { status: 'RUNNING', epoch, ...(agent.meta.reply_pending===true?{meta:{...agent.meta,ui_state:null,status_reason:null,waiting_since:null,reply_pending:false}}:{}) });
       // Ownership of the inbox rides with the same transaction as the lease: a
       // message is either still queued or owned by a turn that exists.
       if (inboxIds.length) this.store.consumeInbox(inboxIds);
@@ -3636,11 +3711,12 @@ case 'effects': {
   // ---------------------------------------------------------- llm slots
 
   /** Public: the Allocator's set_concurrency action adjusts the live semaphore. */
-  setLlmConcurrency(limit: number | null | undefined): void {
-    this.#llmSlots.limit = Math.max(1, limit ?? 2);
+  setLlmConcurrency(limit: number | null | undefined, clusterId:string|null=null): void {
+    const slots=this.#slotsFor(clusterId);
+    slots.limit = Math.max(1, limit ?? 2);
     // Raising the cap must let queued work in immediately; lowering it must not
     // admit anything new until the running work drops below the new cap.
-    this.#pumpLlmSlots();
+    this.#pumpLlmSlots(slots);
   }
 
   /** The declared per-Worker model-request allowance, or null when unlimited. */
@@ -3655,13 +3731,13 @@ case 'effects': {
   }
 
   /** Permits currently held, for the concurrency gate and its regressions. */
-  llmSlotsInUse() {
-    return this.#llmSlots.inUse;
+  llmSlotsInUse(clusterId?:string) {
+    return clusterId?this.#slotsFor(clusterId).inUse:this.#llmSlots.inUse+[...this.#runLlmSlots.values()].reduce((sum,slots)=>sum+slots.inUse,0);
   }
 
   /** Waiters queued for a permit. */
-  llmWaiters() {
-    return this.#llmSlots.waiters.length;
+  llmWaiters(clusterId?:string) {
+    return clusterId?this.#slotsFor(clusterId).waiters.length:this.#llmSlots.waiters.length+[...this.#runLlmSlots.values()].reduce((sum,slots)=>sum+slots.waiters.length,0);
   }
 
   /** Number of in-flight cluster turns for one cluster. */
@@ -3829,14 +3905,23 @@ case 'effects': {
    * *transferred* to the next waiter: decrementing and re-incrementing across
    * the handoff would let a third caller in while the waiter is still running.
    */
+  /** Each run owns its own cap and queue; a new main session cannot enlarge another run's window. */
+  #slotsFor(clusterId:string|null):LlmSlots {
+    if(clusterId===null)return this.#llmSlots;
+    let slots=this.#runLlmSlots.get(clusterId);
+    if(!slots){slots={limit:Math.max(1,this.store.getCluster(clusterId)?.limits.max_llm_concurrency??2),inUse:0,waiters:[]};this.#runLlmSlots.set(clusterId,slots);}
+    return slots;
+  }
+
   acquireLlmSlot(clusterId: string | null = null): Promise<() => void> {
-    if (this.#llmSlots.inUse < this.#llmSlots.limit) {
-      this.#llmSlots.inUse += 1;
+    const slots=this.#slotsFor(clusterId);
+    if (slots.inUse < slots.limit) {
+      slots.inUse += 1;
       this.#noteLlmSlot(clusterId, 'acquired');
       return Promise.resolve(this.slotReleaser(clusterId));
     }
     return new Promise(resolve => {
-      this.#llmSlots.waiters.push(() => {
+      slots.waiters.push(() => {
         this.#noteLlmSlot(clusterId, 'acquired-after-wait');
         resolve(this.slotReleaser(clusterId));
       });
@@ -3852,7 +3937,8 @@ case 'effects': {
   #noteLlmSlot(clusterId: string | null, kind: string): void {
     if (!clusterId) return;
     try {
-      this.store.appendEvent(clusterId, 'llm-slot', { kind, in_use: this.#llmSlots.inUse, limit: this.#llmSlots.limit });
+      const slots=this.#slotsFor(clusterId);
+      this.store.appendEvent(clusterId, 'llm-slot', { kind, in_use: slots.inUse, limit: slots.limit });
     } catch {
       /* the receipt is diagnostic: it must never fail a turn */
     }
@@ -3864,23 +3950,24 @@ case 'effects': {
    * moves permits to waiters only while `inUse` stays below the limit — so
    * lowering the cap stops new work instead of handing a busy slot on.
    */
-  #pumpLlmSlots() {
-    while (this.#llmSlots.inUse < this.#llmSlots.limit) {
-      const next = this.#llmSlots.waiters.shift();
+  #pumpLlmSlots(slots:LlmSlots) {
+    while (slots.inUse < slots.limit) {
+      const next = slots.waiters.shift();
       if (!next) return;
-      this.#llmSlots.inUse += 1;
+      slots.inUse += 1;
       next();
     }
   }
 
   slotReleaser(clusterId: string | null = null): () => void {
+    const slots=this.#slotsFor(clusterId);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.#llmSlots.inUse = Math.max(0, this.#llmSlots.inUse - 1);
+      slots.inUse = Math.max(0, slots.inUse - 1);
       this.#noteLlmSlot(clusterId, 'released');
-      this.#pumpLlmSlots();
+      this.#pumpLlmSlots(slots);
     };
   }
 
@@ -3992,6 +4079,7 @@ case 'effects': {
           : { result: null }),
         __bump_revision: false,
       });
+      this.store.recordTeamEnd(prepared.agent,completed?'COMPLETED':'FAILED');
       this.store.updateAgent(prepared.agent.id, { turns: 1, status: 'TERMINATED' });
       this.store.updateCluster(clusterId, { status: completed ? 'COMPLETED' : 'FAILED' });
       this.store.appendEvent(clusterId, 'single-control-finished', {
@@ -4885,7 +4973,7 @@ case 'effects': {
       .find(agent => agent.status !== 'TERMINATED') ?? null;
   }
 
-  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>): Record<'orchestrator' | 'allocator' | 'auditor', string> {
+  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>, parentAgentId: string | null = null): Record<'orchestrator' | 'allocator' | 'auditor', string> {
     const created: Record<'orchestrator' | 'allocator' | 'auditor', string> = {
       orchestrator: '', allocator: '', auditor: '',
     };
@@ -4896,7 +4984,7 @@ case 'effects': {
       const agent = this.store.insertAgent({
         id: randomUUID(), cluster_id: clusterId, node_id: node.id, role,
         session_id: randomUUID(), status: 'READY', capabilities: [...node.capabilities],
-        meta: { management: true },
+        meta: { management: true, parent_agent_id: role === 'orchestrator' ? parentAgentId : created.orchestrator },
       });
       if (!agent) fail('Agent could not be created', 500);
       this.grantAgentBudget(clusterId, node, nodeBudget, agent, role);
@@ -5463,8 +5551,22 @@ case 'effects': {
     return transfer;
   }
 
+  teamSelectModel(sessionId:string,model:FlowModelSelection):void {
+    if(!model.provider||!model.model)return;
+    for(const run of this.teamRuns(sessionId).filter(run=>!['completed','cancelled','failed'].includes(run.state))) {
+      const root=this.store.nodesInSubtree(run.id,null).find(node=>node.parent_id===null);
+      if(!root||root.scope?.team_model_fixed===true||JSON.stringify(root.scope?.team_model)===JSON.stringify(model))continue;
+      this.store.tx(()=>{
+        this.store.updateNode(root.id,{scope:{...root.scope,team_model:{...model}}});
+        this.store.appendEvent(run.id,'team-model-selected',asJsonValue({main_session_id:sessionId,model}));
+      });
+    }
+  }
+
   modelFor(agent: AgentRecord): FlowModelSelection {
-    const base = { ...this.config.model, ...(agent.meta?.model ?? {}) };
+    const root=this.store.nodesInSubtree(agent.cluster_id,null).find(node=>node.parent_id===null);
+    const route=root?.scope?.team_model;
+    const base = { ...(route?{maxTokens:this.config.model.maxTokens,...route}:this.config.model), ...(root?.scope?.team_model_options ?? {}), ...(agent.meta?.model ?? {}) };
     // A scale tier may cap generated tokens per Worker; management keeps the
     // configured budget, since its planning and audit turns are longer.
     const cap = Number(this.store.getCluster(agent.cluster_id)?.limits?.worker_max_tokens) || null;
@@ -6027,7 +6129,7 @@ case 'effects': {
    *  "everything was refused". */
   #refusals = new Map();
 
-  #rolePrompt(cluster: ClusterRecord, node: NodeRecord, agent: AgentRecord, role: FlowAgentRole, pending: readonly PendingAction[], messages: readonly DeliveryPromptMessage[] = []): string {
+  #rolePrompt(cluster: ClusterRecord, node: NodeRecord, agent: AgentRecord, role: FlowAgentRole, pending: readonly PendingAction[]): string {
     // The prompt carries *references* and the actions to take, never the whole
     // tree: a management session that inlines every transaction and every
     // budget row each turn is what made one orchestrator turn cost tens of
@@ -6041,9 +6143,9 @@ case 'effects': {
       ? [] : this.store.listTransactions({ cluster_id: cluster.id, node_id: node.id, limit: 20 });
     const openIssues = role === 'auditor' && actions.length
       ? [] : this.store.openIssues(cluster.id, { node_id: node.id, status: 'OPEN' });
-    // The prompt carries the role's own decisions *and* the notifications it
-    // must answer, in separate fields: a queue of eight notifications must never
-    // push the decision it exists to prompt out of the prompt.
+    // The prompt carries decisions and notification references. Full incoming
+    // messages are separately attributed native inputs, so a notification
+    // queue cannot displace the role's actionable decisions.
     // The decisions themselves carry current criteria and issues. An Auditor
     // with decisions to make need not receive the same transactions, issues,
     // topology and budget as another copy of the queue on every resumed turn.
@@ -6075,7 +6177,9 @@ case 'effects': {
       },
       ancestors: this.managementAncestors(cluster.id, node.id),
       pending_actions: actions.slice(0, 8),
-      unread_notifications: notifications.slice(0, 8),
+      unread_notifications: notifications.slice(0, 8).map(item => ({
+        inbox_id: item.inbox_id, subject: item.subject,
+      })),
       transactions: {
         by_status: statusCounts,
         ...(recent.length ? { recent: recent.map(tx => ({
@@ -6111,7 +6215,6 @@ case 'effects': {
       `Role: ${role}. Node: ${node.id} (depth ${node.depth}). Agent id: ${agent.id}.`,
       `Workspace: ${cluster.workspace}`,
       '',
-      ...(messages.length ? [renderMessages(messages), ''] : []),
       'Current domain state (read anything else with flow_query; every list answers with items/total/next_offset):',
       JSON.stringify(digest),
       '',
@@ -6120,7 +6223,7 @@ case 'effects': {
     ].join('\n');
   }
 
-  #workerPrompt(cluster: ClusterRecord, tx: TransactionRecord, allocation: AllocationRecord, messages: readonly DeliveryPromptMessage[] = []): string {
+  #workerPrompt(cluster: ClusterRecord, tx: TransactionRecord, allocation: AllocationRecord): string {
     const criteria = jsonStringList(tx.acceptance_criteria);
     const constraints = jsonStringList(tx.constraints);
     const inputs = tx.inputs;
@@ -6134,12 +6237,54 @@ case 'effects': {
       criteria.length ? `Acceptance criteria:\n${criteria.map(c => `- ${c}`).join('\n')}` : '',
       constraints.length ? `Constraints:\n${constraints.map(c => `- ${c}`).join('\n')}` : '',
       hasInputs ? `Inputs:\n${JSON.stringify(inputs, null, 1).slice(0, 4000)}` : '',
-      ...(messages.length ? [renderMessages(messages), ''] : []),
       `Workspace root: ${cluster.workspace}`,
       allocation.write_scope.length ? `You own these paths (do not write outside them): ${allocation.write_scope.join(', ')}` : 'You own no file paths; do not write files.',
       '',
       'Use the tools you have to actually perform the work, then submit the result.',
     ].filter(Boolean).join('\n');
+  }
+
+  /** One model-facing message per communication, with durable source attribution. */
+  #communicationMessages(agent: AgentRecord, deliveries: readonly DeliveryPromptMessage[], inboxIds: readonly string[] = []): UserMessage[] {
+    const nameOf = (identity: AgentRecord): string => `${typeof identity.meta.display_name === 'string' ? identity.meta.display_name : agentGivenName(identity.id)} · ${ROLE_LABELS[identity.role]}`;
+    const recipientName = nameOf(agent);
+    const message = (id: string, senderId: string | null, senderName: string, content: unknown, at: number, marker = '', eventSubject?: string): UserMessage => {
+      const envelope = communicationContent(content);
+      const human = communicationContent(envelope.human_prompt);
+      if (senderId === null && typeof human.rpc_id === 'string') return createUserMessage({
+        content:[{type:'text',text:typeof envelope.text==='string'?envelope.text:''}],
+        source:{kind:'user',rpcId:human.rpc_id,...(typeof human.client_time_zone==='string'?{clientTimeZone:human.client_time_zone}:{})},
+      });
+      const category = communicationCategory(envelope);
+      const subject = typeof envelope.subject === 'string' ? envelope.subject : COMMUNICATION_LABELS[category];
+      const transactionId = typeof envelope.transaction_id === 'string' ? envelope.transaction_id : null;
+      const headline = eventSubject ? notificationHeadline(eventSubject, envelope) : communicationHeadline(envelope);
+      const tone = eventSubject ? notificationTone(eventSubject) : category === 'blocker_report' ? 'warning' : 'neutral';
+      const header = `[${COMMUNICATION_LABELS[category]}] ${senderName} → ${recipientName}\n${subject}${transactionId ? ` · Transaction ${transactionId}` : ''}\n${marker ? `${marker}\n` : ''}\n`;
+      return createUserMessage({
+        content: [{ type: 'text', text: `${header}${communicationBody(envelope)}` }],
+        source: { kind: 'flow-message', presentation: 'communication', category, run_id: agent.cluster_id, message_id: id,
+          sender_id: senderId, sender_name: senderName, recipient_id: agent.id, recipient_name: recipientName,
+          transaction_id: transactionId, subject, sent_at: at, body_offset: header.length, form: 'notice',
+          summary: headline, display_summary: headline, tone,
+        },
+      });
+    };
+    const messages = deliveries.map(row => {
+      const sender = row.from_agent ? this.store.getAgent(row.from_agent) : null;
+      const senderName = sender ? nameOf(sender) : row.from_agent ? row.from_agent : '主会话用户';
+      return message(row.message_id, row.from_agent, senderName, row.content, row.message_created,
+        `${DELIVERY_MARKER} ${row.message_id} seq ${row.delivery_seq}]]`);
+    });
+    for (const id of inboxIds) {
+      const row = this.store.getInbox(id);
+      if (!row || row.recipient !== agent.id || row.cluster_id !== agent.cluster_id || row.subject === 'message') continue;
+      // Runtime-derived facts name the system; they do not impersonate a role.
+      const payload = jsonRecordOf(row.payload) ?? {};
+      messages.push(message(row.id, null, '系统', { ...payload, category: notificationCategory(row.subject),
+        subject: NOTIFICATION_LABELS[row.subject] ?? row.subject }, row.created, '', row.subject));
+    }
+    return messages;
   }
 
   // ------------------------------------------------- commands / handlers
@@ -6536,6 +6681,8 @@ case 'effects': {
       }
       for (const allocation of this.store.allocationsInSubtree(cluster.id, node.id, { status: 'ACTIVE' })) {
         this.store.updateAllocation(allocation.id, { status: 'RELEASED' });
+        const identity = this.store.getAgent(allocation.agent_id);
+        if (identity) this.store.recordTeamEnd(identity, 'COMPLETED');
         this.store.updateAgent(allocation.agent_id, { status: 'TERMINATED' });
       }
       const summary = this.store.latestSummary(cluster.id, { node_id: node.id });
@@ -6547,6 +6694,7 @@ case 'effects': {
         // identity keeps its status), and the termination is what stops a
         // finished cluster from hosting live identities. Without the abort the
         // turn was simply cut off at shutdown and never counted.
+        this.store.recordTeamEnd(roleAgent, 'COMPLETED');
         this.store.updateAgent(roleAgent.id, { status: 'TERMINATED' });
       }
       this.store.updateNode(node.id, { status: 'COMPLETED' });
@@ -6568,7 +6716,9 @@ case 'effects': {
     for (const allocation of this.store.allocationsInSubtree(clusterId, nodeId, { status: 'ACTIVE' })) {
       if (!nodeIds.has(allocation.node_id)) continue;
       this.store.updateAllocation(allocation.id, { status: 'RELEASED' });
-      this.store.updateAgent(allocation.agent_id, { status: 'TERMINATED', meta: {} });
+      const identity = this.store.getAgent(allocation.agent_id);
+      if (identity) this.store.recordTeamEnd(identity, 'CANCELLED');
+      this.store.updateAgent(allocation.agent_id, { status: 'TERMINATED' });
     }
     for (const agent of this.store.agentsInSubtree(clusterId, nodeId)) {
       if (!nodeIds.has(agent.node_id)) continue;
@@ -6577,6 +6727,7 @@ case 'effects': {
       const turn = this.#activeTurns.get(agent.id);
       if (turn) turn.ac.abort(new Error('subtree cancelled'));
       if (AGENT_TERMINAL.has(agent.status)) continue;
+      this.store.recordTeamEnd(agent, 'CANCELLED');
       this.store.updateAgent(agent.id, { status: 'TERMINATED' });
     }
     for (const id of nodeIds) this.store.updateNode(id, { status: 'CANCELLED' });
@@ -6838,6 +6989,12 @@ async function sessionCarries(persistence: FlowPersistenceSeam, sessionId: strin
         // marker proves receipt. Matching any event's text would accept the
         // sender's tool result for the message it just sent.
         const type = String(event?.type ?? '');
+        if (messageId.startsWith('human:')) {
+          const data=jsonRecordOf(event.data);
+          const sources=/user\/message|user_message/i.test(type)?[data?.source]
+            :type==='agent/inbox/spliced'&&Array.isArray(data?.inserted)?data.inserted.map(message=>jsonRecordOf(message)?.source):[];
+          if(sources.some(value=>{const source=jsonRecordOf(value);return source?.kind==='user'&&source.rpcId===messageId.slice('human:'.length);})) return {state:'FOUND',found:true,scanned};
+        }
         if (!/user\/message|user_message/i.test(type)) continue;
         if (JSON.stringify(event?.data ?? event).includes(marker)) return { state: 'FOUND', found: true, scanned };
       }
@@ -6862,19 +7019,13 @@ async function sessionCarries(persistence: FlowPersistenceSeam, sessionId: strin
  * the message id it just sent, so an id-substring search would treat "I sent it"
  * as "I received it".
  */
-export const DELIVERY_MARKER = '[[flow-delivery';
+export { DELIVERY_MARKER };
 interface DeliveryPromptMessage {
   readonly message_id: string
   readonly delivery_seq: number | null
   readonly from_agent: string | null
   readonly content: unknown
-}
-
-function renderMessages(messages: readonly DeliveryPromptMessage[]): string {
-  return [
-    'Messages from other agents (answer or act on them; do not repeat them back):',
-    ...messages.map(row => `- from ${row.from_agent ?? 'unknown'} ${DELIVERY_MARKER} ${row.message_id} seq ${row.delivery_seq}]]: ${String(row.content).slice(0, 2000)}`),
-  ].join('\n');
+  readonly message_created: number
 }
 
 function safeJson(value: unknown): FlowJsonValue {

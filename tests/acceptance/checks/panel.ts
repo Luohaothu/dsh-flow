@@ -1,853 +1,325 @@
-/**
- * Panel case: verify the shipped browser half against the running host.
- *
- * `live` runs while the host is still up: it drives the real panel in a real
- * Chromium, exercises pause/resume/cancel and the report download, and proves
- * the `/api/flow` route is refused without the host's authentication.
- */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isDeepStrictEqual } from 'node:util';
-import { join } from 'node:path';
-import type { ConsoleMessage, Download, Locator, Page } from 'playwright';
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
-import { asArray, asNumber, asObject, asString, decodeSnapshot, messageOf } from '../context.ts';
-import type { CheckEntry, RunEvent, RunSnapshot } from '../context.ts';
-import { browserExecutablePath, importPlaywright } from '../../../src/host/browser.ts';
-import { openLedger } from '../../../src/host/ledger.ts';
-import type { SqlRow } from '../../../src/host/ledger.ts';
-import type { RunLayout } from '../../../src/host/types.ts';
-import { ClusterStore } from '../../../packages/dsh-flow/src/core/store.ts';
-
-interface PanelReport {
-  readonly cluster_id?: string | null;
-  readonly web_url?: string | null;
-  readonly live_checks?: { readonly checks?: CheckEntry[] } | null;
-  readonly failure?: { readonly message: string } | null;
+/** UX 1.2: real shipped host, human command/composer, provider-owned read-only views. */
+import {mkdirSync,writeFileSync,existsSync} from 'node:fs';
+import {join} from 'node:path';
+import type {Page} from 'playwright';
+import {browserExecutablePath,importPlaywright} from '../../../src/host/browser.ts';
+import {ClusterStore} from '../../../packages/dsh-flow/src/core/store.ts';
+import type {CheckEntry} from '../context.ts';
+import type {RunLayout,DshHostOp} from '../../../src/host/types.ts';
+interface Report {cluster_id?:string|null;web_url?:string|null;live_checks?:{checks?:CheckEntry[]}|null}
+interface Host {waitForWebUrl(timeout?:number):Promise<string>;request(op:DshHostOp,id:string|undefined,payload?:unknown):Promise<unknown>}
+interface Live {report:Report;layout:RunLayout;host:Host;mock?:{release(barrier:string):number}|null}
+const sleep=(page:Page,ms=1700)=>page.waitForTimeout(ms);
+async function submit(page:Page,line:string) {
+  const editor=page.locator('[data-composer-input=true]');
+  await editor.click();await editor.press('Meta+A');await editor.press('Backspace');
+  await editor.pressSequentially(line);await editor.press('Escape');
+  await page.getByRole('button',{name:'发送消息',exact:true}).click();
 }
-
-interface PanelHost {
-  waitForWebUrl(timeoutMs?: number): Promise<string>;
-  request(op: 'read' | 'query', id: string | undefined, payload?: unknown): Promise<unknown>;
+/** The native appearance control persists immediately; wait for its Host ACK. */
+async function setNativeTheme(page:Page,scheme:'light'|'dark') {
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  const choice=page.getByRole('button',{name:scheme==='dark'?'深色':'浅色',exact:true});
+  if(await choice.getAttribute('aria-pressed')!=='true') {
+    const accepted=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/settings/mutate'&&response.request().postData()?.includes('ui-theme')===true&&response.request().postData()?.includes(`\"${scheme}\"`)===true);
+    await choice.click();
+    const response=await accepted;const body=await response.json();
+    if(!response.ok()||body.result?.ok!==true)throw new Error(`Native ${scheme} theme preference was refused: ${JSON.stringify(body)}`);
+  }
+  await page.waitForFunction(expected=>document.documentElement.style.colorScheme===expected,scheme);
+  await page.getByRole('button',{name:'关闭',exact:true}).last().click();
+  await page.waitForFunction(expected=>document.documentElement.style.colorScheme===expected,scheme);
 }
-interface PanelLiveContext {
-  readonly report: PanelReport;
-  readonly layout: Pick<RunLayout, 'root' | 'data' | 'artifacts'>;
-  readonly host: PanelHost;
-  readonly mock?: { release(barrier: string): number } | null;
+function binding(layout:RunLayout) {const store=new ClusterStore(join(layout.data,'cluster.sqlite'));try{return store.all('SELECT * FROM team_runs ORDER BY rowid');}finally{store.close();}}
+function sessionId(value:unknown):string {if(value&&typeof value==='object'&&typeof Reflect.get(value,'session_id')==='string')return Reflect.get(value,'session_id');throw new Error('Native fixture did not return a session');}
+function addReader(layout:RunLayout,runId:string,id:string,nativeSession:string,title:string,parent?:string) {
+  const store=new ClusterStore(join(layout.data,'cluster.sqlite'));try{const lead=store.listAgents(runId,{role:'orchestrator'})[0]!;store.insertAgent({id,cluster_id:runId,node_id:lead.node_id,role:'worker',session_id:nativeSession,status:'TERMINATED',meta:{parent_agent_id:parent??lead.id,display_name:title,responsibility:'原生持久化阅读验收记录；不代表模型执行'}});store.recordTeamEnd(store.getAgent(id)!,'COMPLETED');store.appendEvent(runId,'ux-read-fixture',{id});}finally{store.close();}
 }
-
-interface PanelRunContext {
-  readonly report: Pick<PanelReport, 'cluster_id' | 'live_checks' | 'failure'>;
-  readonly layout: Pick<RunLayout, 'data'>;
-  readonly events: readonly RunEvent[];
+async function readingAnchor(reader:import('playwright').Locator) {return reader.evaluate(element=>{const row=Array.from(element.querySelectorAll<HTMLElement>('[data-chat-anchor-key]:not([hidden]):not([hidden] *)')).find(row=>row.offsetTop+row.offsetHeight>element.scrollTop);return {id:row?.dataset.chatAnchorKey,offset:row?row.offsetTop-element.scrollTop:0,top:element.scrollTop};});}
+/** A declared ledger fixture exercises read projection, not simulated model execution. */
+function seedNodes(layout:RunLayout,runId:string,count:number) {
+  const store=new ClusterStore(join(layout.data,'cluster.sqlite'));
+  try {store.tx(()=>{
+    const lead=store.listAgents(runId,{role:'orchestrator'})[0]!;
+    const existing=Number(store.get("SELECT COUNT(*) AS count FROM agents WHERE cluster_id=? AND id NOT LIKE 'ux-fixture-%'",runId)?.count??0);
+    for(let index=0;index<count-existing;index++) {
+      const id=`ux-fixture-${index.toString().padStart(4,'0')}`;
+      if(store.getAgent(id))continue;
+      const parent=index===0||index>=10?lead.id:`ux-fixture-${(index-1).toString().padStart(4,'0')}`;
+      store.insertAgent({id,cluster_id:runId,node_id:lead.node_id,role:'worker',session_id:`ux-missing-session-${index}`,status:'TERMINATED',meta:{parent_agent_id:parent,title:'历史代理名称'.repeat(16),responsibility:'只读压力数据；不代表模型执行吞吐'}});
+      store.recordTeamEnd(store.getAgent(id)!,'COMPLETED');
+    }
+    store.appendEvent(runId,'ux-view-fixture',{count,description:'Persisted observation fixture, not execution throughput evidence'});
+  });} finally {store.close();}
 }
-
-
-
-
-
-
-interface ProbeResponse {
-  readonly status: number | null;
-  readonly body: unknown;
-  readonly error: string | null;
-}
-
-interface ProbeState {
-  readonly cursor: number | null;
-  readonly cluster: SqlRow | undefined;
-  readonly status: string | null;
-}
-
-function sqlNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'bigint' && value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(value);
-  return null;
-}
-
-function readProbeState(layout: Pick<RunLayout, 'data'>, clusterId: string): ProbeState {
-  const ledger = openLedger(join(layout.data, 'cluster.sqlite'));
+export async function live({report,layout,host,mock}:Live) {
+  const checks:CheckEntry[]=[];
+  const push=(name:string,passed:boolean,evidence:unknown)=>checks.push({name,passed,evidence:typeof evidence==='string'?evidence:JSON.stringify(evidence)});
+  const artifacts=join(layout.artifacts,'team-ui');mkdirSync(artifacts,{recursive:true});
+  const url=report.web_url??await host.waitForWebUrl(60000);
+  const unauth=await fetch(new URL('/api/flow/teamRuns',url),{method:'POST',headers:{'content-type':'application/json'},body:'{"args":{"sessionId":"unowned"}}'});
+  push('authenticated-observer-route',unauth.status===401||unauth.status===403,`unauthenticated response ${unauth.status}`);
+  const playwright=await importPlaywright();if(!playwright)return {checks:[...checks,{name:'native-browser',passed:false,evidence:'Playwright unavailable'}]};
+  const executablePath=browserExecutablePath();
+  const browser=await playwright.chromium.launch({headless:true,...(executablePath?{executablePath}:{}),args:['--no-sandbox']});
+  let page:Page|undefined;
   try {
-    const cursorRow = ledger.get(
-      'SELECT COALESCE(MAX(seq),0) AS cursor FROM events WHERE cluster_id=?', clusterId);
-    const cluster = ledger.get('SELECT * FROM clusters WHERE id=?', clusterId);
-    const status = cluster?.status;
-    return {
-      cursor: sqlNumber(cursorRow?.cursor),
-      cluster,
-      status: typeof status === 'string' ? status : null,
-    };
-  } finally {
-    ledger.close();
-  }
-}
-
-function queryPayload(value: unknown, expectedWhat: string): Record<string, unknown> | null {
-  const record = asObject(value);
-  if (!record) return null;
-  if ('what' in record || 'data' in record) {
-    return record.what === expectedWhat ? asObject(record.data) : null;
-  }
-  return record;
-}
-function remoteSuccess(value: unknown): Extract<RemoteResult<unknown>, { ok: true }> | null {
-  const result = asObject(asObject(value)?.result);
-  return result?.ok === true && 'value' in result ? { ok: true, value: result.value } : null;
-}
-
-function remoteFailureCode(value: unknown): string | null {
-  const result = asObject(asObject(value)?.result);
-  return result?.ok === false ? asString(asObject(result.error)?.code) : null;
-}
-
-
-export async function live({ report, layout, host, mock = null }: PanelLiveContext) {
-  const checks: CheckEntry[] = [];
-  const push = (name: string, passed: boolean | null | undefined, evidence: string): void => {
-    checks.push({ name, passed: passed === null || passed === undefined ? null : Boolean(passed), evidence: String(evidence).slice(0, 2500) });
-  };
-
-  const artifacts = join(layout.artifacts, 'panel');
-  const clusterId = report.cluster_id ?? '';
-  const fixtureId = `paneltree-${clusterId}`;
-
-  // The cluster is still running here; the panel checks drive it through
-  // pause, resume and cancel before it can reach a terminal state on its own.
-  const url = report.web_url ?? (await host.waitForWebUrl(60_000));
-  push('host-served-web-url', Boolean(url), `url ${url ?? 'not observed'}`);
-
-  const apiUrl = new URL('/api/flow/list', url);
-  const unauthenticated = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ args: {} }),
-  });
-  push('unauthenticated-flow-route-refused', unauthenticated.status === 401 || unauthenticated.status === 403,
-    `POST /api/flow/list without the host token returned ${unauthenticated.status}`);
-
-  const playwright = await importPlaywright();
-  if (!playwright) {
-    push('browser-available', false, 'playwright not resolvable');
-    return { checks, blocked: ['browser-available'] };
-  }
-  const executablePath = browserExecutablePath();
-  const browser = await playwright.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    // A function handed to `page.evaluate` is serialized into the page as source,
-    // and the TS loader rewrites named functions with its own `__name` helper —
-    // which lives in this module, not in the browser. Without it the probe dies
-    // with `ReferenceError: __name is not defined` before making a single
-    // request, which is a false MECHANISM failure rather than a finding. Defined
-    // per context so every page this check opens has it.
-    await context.addInitScript('window.__name = function (target, value) { try { Object.defineProperty(target, "name", { value: value, configurable: true }); } catch (error) {} return target; };');
-    let page: Page = await context.newPage();
-    const consoleErrors: string[] = [];
-    page.on('console', (message: ConsoleMessage) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
-    page.on('pageerror', (error: Error) => consoleErrors.push(error.message));
-    // The app holds an open event stream, so `networkidle` never settles.
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForTimeout(3000);
-
-    // The shipped app opens with an internal-testing notice that covers the
-    // frame; acknowledge it before driving the panel.
-    const notice = page.getByRole('button', { name: /^continue$/i }).first();
-    if (await notice.isVisible().catch(() => false)) {
-      await notice.click().catch(() => {});
-      await page.waitForTimeout(800);
+    const context=await browser.newContext({viewport:{width:1600,height:1100},reducedMotion:'reduce'});
+    await context.addInitScript('window.__name=(value)=>value');
+    page=await context.newPage();const errors:string[]=[];page.on('pageerror',error=>{errors.push(error.message);writeFileSync(join(artifacts,'client-errors.json'),JSON.stringify(errors,null,2));});
+    const consoleErrors:string[]=[];page.on('console',message=>{consoleErrors.push(`${message.type()}: ${message.text()}`);writeFileSync(join(artifacts,'client-console.json'),JSON.stringify(consoleErrors,null,2));});
+    const replies:unknown[]=[];page.on('response',async response=>{if(new URL(response.url()).pathname.startsWith('/api/flow/')){replies.push({path:new URL(response.url()).pathname,status:response.status(),body:await response.json().catch(()=>null)});writeFileSync(join(artifacts,'observer-responses.json'),JSON.stringify(replies,null,2));}});
+    const modules:unknown[]=[];page.on('response',async response=>{if(response.request().resourceType()==='script'){const body=await response.text().catch(()=>'');modules.push({path:new URL(response.url()).pathname,bytes:body.length,flow:body.includes('dsh-flow-team-ui'),presentation:body.includes('registerViewPresentation')});writeFileSync(join(artifacts,'client-modules.json'),JSON.stringify(modules,null,2));}});
+    await page.goto(url,{waitUntil:'domcontentloaded'});await sleep(page,4000);
+    const notice=page.getByRole('button',{name:/^continue$|我已了解|继续/i}).first();if(await notice.isVisible().catch(()=>false))await notice.click();
+    // This hermetic profile has no remembered workspace. Register the real case
+    // directory over the host's public API, then choose it in its native picker.
+    if(await page.getByRole('button',{name:'选择工作区',exact:true}).isVisible().catch(()=>false)) {
+      const registered=await page.evaluate(async path=>{
+        const response=await fetch('/api/workspace/create',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:crypto.randomUUID(),method:'workspace/create',payload:{args:{request:{path}}}})});
+        return {status:response.status,body:await response.json()};
+      },layout.workspace);
+      push('native-workspace-registration',registered.status===200,registered);
+      await page.getByRole('button',{name:'选择工作区',exact:true}).click();
+      await page.getByRole('menuitem',{name:/workspace/}).first().click();
     }
-
-    const panelEntry = page.getByRole('button', { name: /cluster/i }).first();
-    const entryVisible = await panelEntry.isVisible().catch(() => false);
-    push('sidebar-entry-present', entryVisible, `sidebar Cluster entry visible: ${entryVisible}`);
-    if (entryVisible) await panelEntry.click().catch(() => {});
-    await page.waitForTimeout(2000);
-
-    const clusterPrefix = report.cluster_id?.slice(0, 8) ?? 'never';
-    push('panel-heading', (await page.getByRole('heading', { name: /hierarchical agent cluster/i }).count()) >= 1,
-      'the panel heading is a real heading element');
-    push('cluster-listed', (await page.locator('.dsh-flow-list button.is-selected').count()) >= 1
-      && ((await page.locator('.dsh-flow-list button.is-selected').first().textContent()) ?? '').includes(clusterPrefix),
-      `the selected cluster row shows ${clusterPrefix}`);
-
-    // The summary is a set of DOM nodes, not a sentence: assert the values the
-    // host reported, by element.
-    const stats = await statMap(page);
-    push('summary-stats-rendered', Object.keys(stats).length >= 8, JSON.stringify(stats).slice(0, 400));
-    push('summary-reports-the-event-cursor', Number(stats['Event cursor'] ?? 0) > 0,
-      `event cursor stat: ${stats['Event cursor']}`);
-
-    // Exercise pause and resume while the cluster is still live; cancel after reconnect.
-    const pause = page.getByRole('button', { name: /^pause$/i }).first();
-    await pause.click().catch(() => {});
-    const pausedSeen = await waitForClusterStatus(page, /^PAUSED$/i, 20_000);
-    push('pause-from-panel', pausedSeen === 'PAUSED', `cluster status element reported PAUSED: ${pausedSeen}`);
-    const resume = page.getByRole('button', { name: /^resume$/i }).first();
-    await resume.click().catch(() => {});
-    const resumedSeen = await waitForClusterStatus(page, /^(RUNNING|BLOCKED|COMPLETED)$/i, 20_000);
-    push('resume-from-panel', resumedSeen !== null && /^(RUNNING|BLOCKED|COMPLETED)$/i.test(resumedSeen), `cluster status after resume: ${resumedSeen}`);
-
-    // The tree is lazy: nothing is rendered until a level is asked for.
-    const nodesBefore = await page.locator('.dsh-flow-tree .dsh-flow-node').count();
-    const loadRoot = page.locator('.dsh-flow-load').first();
-    push('tree-is-lazy', nodesBefore === 0 && (await loadRoot.isVisible().catch(() => false)),
-      `${nodesBefore} tree rows before expanding; a Load root control is present`);
-    await loadRoot.click().catch(() => {});
-    await page.waitForTimeout(800);
-    const rootRows = await page.locator('.dsh-flow-tree .dsh-flow-node').count();
-    push('tree-expands-a-level', rootRows >= 1, `${rootRows} tree rows after loading the root level`);
-
-    // Selecting a node loads that node's transactions, and opening one shows
-    // the plan audit, the validation evidence and the recorded result.
-    const nodeButton = page.locator('.dsh-flow-tree .dsh-flow-node').first();
-    await nodeButton.click().catch(() => {});
-    await page.waitForTimeout(800);
-    const tabButtons = page.locator('.dsh-flow-tabs button');
-    push('tabs-rendered', (await tabButtons.count()) >= 5, `${await tabButtons.count()} tabs`);
-    await page.getByRole('button', { name: /^transactions$/i }).first().click().catch(() => {});
-    await page.waitForTimeout(1500);
-    const txButtons = page.locator('.dsh-flow-tx');
-    const txCount = await txButtons.count();
-    push('transactions-listed', txCount >= 1, `${txCount} transaction rows in the transactions tab`);
-    const txHeading = (await page.getByRole('heading', { name: /^Transactions \(/ }).first().textContent().catch(() => '')) ?? '';
-    push('transactions-total-matches-listed-rows', /^Transactions \(1 of 1\)$/.test(txHeading),
-      `transaction tab heading: ${txHeading}`);
-    if (txCount >= 1) await txButtons.first().click().catch(() => {});
-
-    // Section 18, communication and context are real views with real rows.
-    await page.getByRole('button', { name: /^health$/i }).first().click().catch(() => {});
-    await page.waitForTimeout(800);
-    const healthText = (await page.locator('.dsh-flow-panel').textContent().catch(() => '')) ?? '';
-    push('health-view-renders', /transaction_coverage/.test(healthText) && /Measured signals/i.test(healthText),
-      healthText.slice(-400));
-    await page.getByRole('button', { name: /^communication$/i }).first().click().catch(() => {});
-    await page.waitForTimeout(800);
-    const commText = (await page.locator('.dsh-flow-panel').textContent().catch(() => '')) ?? '';
-    push('communication-view-renders', /Message deliveries/i.test(commText), commText.slice(-200));
-    await page.getByRole('button', { name: /^context$/i }).first().click().catch(() => {});
-    await page.waitForTimeout(800);
-    const ctxText = (await page.locator('.dsh-flow-panel').textContent().catch(() => '')) ?? '';
-    push('context-view-renders', /Context pressure/i.test(ctxText) && /Latest summary/i.test(ctxText), ctxText.slice(-200));
-    const contextEvidence: SqlRow | undefined = (() => {
-      const ledger = openLedger(join(layout.data, 'cluster.sqlite'));
-      try {
-        return ledger.get(
-          `SELECT seq, json_extract(data,'$.agent_id') AS agent_id, json_extract(data,'$.before') AS before,
-                  json_extract(data,'$.after') AS after
-             FROM events WHERE cluster_id=? AND type='context-step' ORDER BY seq DESC LIMIT 1`, clusterId);
-      } finally {
-        ledger.close();
-      }
-    })();
-    const contextSeq = sqlNumber(contextEvidence?.seq);
-    const contextAgentId = asString(contextEvidence?.agent_id);
-    if (contextSeq !== null && contextAgentId !== null) {
-      await page.getByRole('combobox', { name: 'Context agent' }).selectOption(contextAgentId).catch(() => {});
-      await page.waitForFunction((seq: number) => [...document.querySelectorAll('.dsh-flow-context-steps li')]
-        .some(row => row.textContent?.startsWith(`#${seq} step `)), contextSeq, { timeout: 15_000 }).catch(() => {});
-    }
-    const contextRow = contextSeq !== null
-      ? await page.locator('.dsh-flow-context-steps li').filter({ hasText: `#${contextSeq} step ` }).first().textContent().catch(() => null)
-      : null;
-    push('context-step-matches-durable-agent',
-      Boolean(contextEvidence && contextAgentId && contextRow?.includes(`${String(contextEvidence.before)} → ${String(contextEvidence.after)}`)),
-      `${contextAgentId ?? 'no durable context step'}: ${contextRow ?? 'no matching context row in DOM'}`);
-    await page.getByRole('button', { name: /^resources$/i }).first().click().catch(() => {});
-    await page.waitForTimeout(800);
-    const resourceText = (await page.locator('.dsh-flow-panel').textContent().catch(() => '')) ?? '';
-    push('resources-view-renders', /Budgets \(/.test(resourceText) && /api_cost/.test(resourceText), resourceText.slice(-300));
-
-    const eventsRendered = await page.locator('.dsh-flow-events li').count();
-    push('events-stream-rendered', eventsRendered > 0, `${eventsRendered} event rows`);
-
-    // The event cursor is real: it tracks the cluster's durable event log. It
-    // does not have to grow on demand — this case cancels the cluster, and a
-    // cancelled cluster produces almost no further events — so the requirement is
-    // that the page converges to the log's own latest sequence.
-    let durableLatest: number | null;
-    try {
-      const ledger = openLedger(join(layout.data, 'cluster.sqlite'));
-      try {
-        durableLatest = sqlNumber(ledger.get(
-          'SELECT COALESCE(MAX(seq),0) AS m FROM events WHERE cluster_id=?', clusterId)?.m);
-      } finally {
-        ledger.close();
-      }
-    } catch {
-      durableLatest = null;
-    }
-    const cursorBefore = Number((await statMap(page))['Event cursor'] ?? 0);
-    await page.getByRole('button', { name: /^tree$/i }).first().click().catch(() => {});
-    const cursorAfter = await waitForCursor(page, durableLatest ?? cursorBefore, 30_000);
-    const caughtUp = durableLatest === null ? cursorAfter >= cursorBefore : cursorAfter >= durableLatest;
-    push('event-cursor-advances', caughtUp,
-      `cursor ${cursorBefore} → ${cursorAfter}; the cluster's durable log has ${durableLatest ?? 'unknown'} events`);
-
-    // Snapshot the console *before* the refusal probe: a deliberately refused
-    // fetch logs its own 404, and those five are the probe working, not a
-    // defect in the panel.
-    const consoleErrorsBeforeProbe = consoleErrors.length;
-
-    // The operations that drive the host itself must not be reachable from a
-    // page, authenticated or not. The probe first establishes which of the two
-    // it is, so a 401 is never mistaken for the whitelist working.
-    const probeStateBefore = readProbeState(layout, clusterId);
-    const probe = await page.evaluate(async () => {
-      const ask = async (path: string, body: object): Promise<ProbeResponse> => {
-        try {
-          const response = await fetch(path, {
-            method: 'POST', credentials: 'include',
-            headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-          });
-          const parsed: unknown = await response.json().catch(() => null);
-          return { status: response.status, body: parsed, error: null };
-        } catch (error: unknown) {
-          return { status: null, body: null, error: error instanceof Error ? error.message : String(error) };
-        }
-      };
-      const remoteCall = (method: string, args: Record<string, unknown>): Promise<ProbeResponse> =>
-        ask(`/api/flow/${method}`, {
-          type: 'client-request', rpcId: crypto.randomUUID(),
-          method: `flow/${method}`, payload: { args },
-        });
-      const listed = await remoteCall('list', { request: {} });
-      const ops = {
-        single: await remoteCall('single', {}),
-        settle: await remoteCall('settle', {}),
-        tick: await remoteCall('tick', {}),
-        recover: await remoteCall('recover', {}),
-        dispose: await remoteCall('dispose', {}),
-      };
-      const strict = {
-        extra: await remoteCall('list', { request: {}, unexpected: true }),
-        wrong: await remoteCall('read', { id: 42, request: {} }),
-        nestedExtra: await remoteCall('list', { request: { unexpected: true } }),
-      };
-      return { listed, ops, strict };
+    await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
+    await page.route('**/api/commands/list',async route=>{const response=await route.fetch();const body=await response.json();if(body.result?.ok&&Array.isArray(body.result.value))body.result.value=body.result.value.filter((item:{name:string})=>item.name!=='agent-team');await route.fulfill({response,json:body});});
+    await page.reload({waitUntil:'domcontentloaded'});await sleep(page,3500);
+    let ordinaryRequests=0;const countOrdinary=(request:import('playwright').Request)=>{if(request.url().includes('/api/session/prompt'))ordinaryRequests++;};page.on('request',countOrdinary);
+    await submit(page,'/agent-team 暂未启用验收');await sleep(page);
+    push('A01-unavailable-command-refused',await page.getByRole('button',{name:'打开插件管理',exact:true}).isVisible()&&await page.locator('[data-composer-input=true]').innerText()==='/agent-team 暂未启用验收'&&ordinaryRequests===0&&binding(layout).length===0,'Native command provider refuses an absent command capability before ordinary submission, retaining the draft and plugin management action');
+    await page.getByRole('button',{name:'打开插件管理',exact:true}).click();await page.getByText('dsh-flow',{exact:true}).first().waitFor();
+    push('A01-plugin-management-navigation',await page.getByText('dsh-flow',{exact:true}).first().isVisible(),'Public layout action opens the native plugin manager');
+    await page.unroute('**/api/commands/list');page.off('request',countOrdinary);
+    // Reload starts a fresh authoritative directory after the unavailable-catalog fixture.
+    await page.reload({waitUntil:'domcontentloaded'});await sleep(page,3500);
+    await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
+    await page.route('**/api/commands/execute',async route=>{const request=route.request().postDataJSON();await route.fulfill({json:{type:'server-response',rpcId:request.rpcId,result:{ok:true}}});});
+    await submit(page,'/agent-team 停用时目录尚未刷新');await sleep(page,300);
+    push('A01-stale-catalog-refused',await page.getByRole('dialog',{name:'dsh-flow 尚未启用',exact:true}).isVisible()&&await page.locator('[data-composer-input=true]').innerText()==='/agent-team 停用时目录尚未刷新'&&binding(layout).length===0,'An absent execution admission after a cached catalog still refuses and offers plugin management');
+    await page.getByRole('button',{name:'关闭启用提示',exact:true}).click();await page.unroute('**/api/commands/execute');
+    await submit(page,'/agent-team');await sleep(page);
+    push('A02-empty-command-preserves-input',await page.locator('[data-composer-input=true]').innerText()==='/agent-team'&&binding(layout).length===0,await page.locator('body').innerText());
+    // Drop the acknowledgment after real server execution, then retry the retained intent.
+    let dropped=false;
+    await page.route('**/api/commands/execute',async route=>{if(dropped){await route.continue();return;}dropped=true;await route.fetch();await route.abort('failed');});
+    const objective='UX native：验证只读观察和自然语言答复';
+    await submit(page,`/agent-team ${objective}`);await sleep(page);
+    const pending=await page.locator('[data-composer-input=true]').innerText();const first=binding(layout);
+    await page.unroute('**/api/commands/execute');await submit(page,`/agent-team ${objective}`);await sleep(page);
+    const entries=binding(layout);const runId=String(entries[0]?.run_id??'');
+    push('A03-lost-ack-retry-deduplicates',dropped&&pending.includes(objective)&&first.length===1&&entries.length===1,{before:first,after:entries,inputPreserved:pending.includes(objective)});
+    await page.locator('[data-chat-turn]').first().waitFor({timeout:30000});
+    const mainText=await page.locator('[data-conversation-scroll]').innerText();
+    push('F01-default-coordinator-context',await page.getByRole('tab',{name:'对话',exact:true}).count()===1&&mainText.includes(objective)&&!mainText.includes('暂时无法读取对话')&&await page.locator('[data-composer-input=true]').isVisible(),mainText);
+    // The official Chat and composer share the host's single width axis.
+    const widthGeometry=async()=>({
+      body:await page!.locator('[data-chat-turn]').first().boundingBox(),
+      editor:await page!.locator('[data-composer-input=true]').boundingBox(),
+      left:await page!.locator('[data-width-handle=left]').boundingBox(),
+      right:await page!.locator('[data-width-handle=right]').boundingBox(),
     });
-    const probeStateAfter = readProbeState(layout, clusterId);
-    let readAfter: RunSnapshot | null = null;
-    let readAfterError: string | null = null;
-    try {
-      readAfter = decodeSnapshot(await host.request('read', clusterId, { include_events: false }));
-    } catch (error: unknown) {
-      readAfterError = messageOf(error);
-    }
-    const readAfterWorks = readAfter?.cluster.id === clusterId;
-    const cursorUnchanged = probeStateBefore.cursor !== null
-      && probeStateBefore.cursor === probeStateAfter.cursor;
-    const statusUnchanged = probeStateBefore.status !== null
-      && probeStateBefore.status === probeStateAfter.status;
-    const clusterRowUnchanged = probeStateBefore.cluster !== undefined
-      && probeStateAfter.cluster !== undefined
-      && isDeepStrictEqual(probeStateBefore.cluster, probeStateAfter.cluster);
-    const authenticated = probe.listed.status === 200 && remoteSuccess(probe.listed.body) !== null;
-    const refused = Object.values(probe.ops).filter(result => result.status !== null && result.status >= 400);
-    push('internal-ops-refused',
-      authenticated && refused.length === 5 && cursorUnchanged && statusUnchanged && clusterRowUnchanged && readAfterWorks,
-      `page-authenticated=${authenticated}; statuses=${JSON.stringify(Object.fromEntries(Object.entries(probe.ops).map(([method, result]) => [method, result.status])))}; event cursor ${probeStateBefore.cursor} → ${probeStateAfter.cursor}; cluster status ${probeStateBefore.status} → ${probeStateAfter.status}; cluster row unchanged=${clusterRowUnchanged}; read-after works=${readAfterWorks}${readAfterError ? ` (${readAfterError})` : ''}`);
-    if (authenticated) {
-      const unknown = Object.values(probe.ops).filter(result => result.status === 404);
-      push('internal-ops-refused-with-unknown-op', unknown.length === 5,
-        `an authenticated page gets 404 for all five undeclared Remote methods: ${unknown.length}/5`);
-    } else {
-      push('internal-ops-refused-with-unknown-op', false,
-        `the page could not authenticate to the Remote route (list returned ${probe.listed.status}); authenticated probes are required`);
-    }
-    // Verification §5 requires extra named RPC arguments and wrong types to be
-    // refused. The generated z.object DTO codec strips nested unknown fields;
-    // recursive DTO strictness is generator-owned, not an application gate.
-    push('strict-remote-wire-arguments-refused',
-      authenticated && remoteFailureCode(probe.strict.extra.body) === 'gateway/arguments-invalid'
-        && remoteFailureCode(probe.strict.wrong.body) === 'gateway/input-invalid',
-      JSON.stringify(Object.fromEntries(Object.entries(probe.strict).map(([name, result]) =>
-        [name, { status: result.status, code: remoteFailureCode(result.body) }]))));
-    push('generated-nested-dto-extra-field-policy', null,
-      `observed only, not a claim of recursive strictness: ${JSON.stringify({
-        status: probe.strict.nestedExtra.status,
-        code: remoteFailureCode(probe.strict.nestedExtra.body),
-        accepted: remoteSuccess(probe.strict.nestedExtra.body) !== null,
-      })}`);
-
-    const legacyProbe = await page.evaluate(async () => {
-      const ask = async (body: object): Promise<ProbeResponse> => {
-        try {
-          const response = await fetch('/api/flow', {
-            method: 'POST', credentials: 'include',
-            headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-          });
-          const parsed: unknown = await response.json().catch(() => null);
-          return { status: response.status, body: parsed, error: null };
-        } catch (error: unknown) {
-          return { status: null, body: null, error: error instanceof Error ? error.message : String(error) };
-        }
+    const widthBefore=await widthGeometry();
+    if(widthBefore.left&&widthBefore.right&&widthBefore.left.width>0&&widthBefore.right.width>0) {
+      const dragWidth=async(box:NonNullable<typeof widthBefore.left>,dx:number)=>{
+        await page!.mouse.move(box.x+box.width/2,box.y+120);await page!.mouse.down();
+        await page!.mouse.move(box.x+box.width/2+dx,box.y+120,{steps:8});await page!.mouse.up();
       };
-      return {
-        opOnly: await ask({ op: 'list' }),
-        legacyShape: await ask({ op: 'list', id: null, payload: {} }),
-      };
-    });
-    const legacyRefused = [legacyProbe.opOnly, legacyProbe.legacyShape]
-      .every(result => result.status !== null && result.status >= 400);
-    push('legacy-op-envelope-refused', legacyRefused,
-      `POST /api/flow old envelopes returned ${legacyProbe.opOnly.status} and ${legacyProbe.legacyShape.status}`);
-
-    await screenshot(page, artifacts, 'panel.png');
-    // The downloaded report names the cluster it really came from.
-    const download: Download | null = await Promise.all([
-      page.waitForEvent('download', { timeout: 20_000 }).catch((): null => null),
-      page.getByRole('button', { name: /download report/i }).first().click().catch(() => {}),
-    ]).then(([event]) => event);
-    if (download) {
-      const target = join(artifacts, 'panel-report.json');
-      await download.saveAs(target).catch(() => {});
-      let matches = false;
-      let detail = `downloaded ${target}`;
-      try {
-        const parsed: unknown = JSON.parse(readFileSync(target, 'utf8'));
-        const cluster = asObject(asObject(parsed)?.cluster);
-        const downloadedId = asString(cluster?.id);
-        matches = downloadedId === clusterId;
-        detail = `report cluster ${downloadedId ?? 'unknown'} vs running ${clusterId}`;
-      } catch (error: unknown) {
-        detail = `could not read the download: ${messageOf(error)}`;
-      }
-      push('report-download-matches-cluster', matches, detail);
-    } else {
-      push('report-download-matches-cluster', false, 'no download event observed');
+      await dragWidth(widthBefore.left,24);const narrow=await widthGeometry();
+      if(narrow.right)await dragWidth(narrow.right,24);const restored=await widthGeometry();
+      const sync=(a:typeof widthBefore,b:typeof widthBefore,direction:number)=>Boolean(a.body&&a.editor&&b.body&&b.editor&&
+        (b.body.width-a.body.width)*direction>1&&Math.abs((b.body.width-a.body.width)-(b.editor.width-a.editor.width))<1);
+      push('F07-native-main-width-body-and-composer',sync(widthBefore,narrow,-1)&&sync(narrow,restored,1)&&
+        Boolean(restored.body&&restored.left&&restored.right&&restored.left.x+restored.left.width<restored.body.x&&restored.right.x>restored.body.x+restored.body.width)&&
+        await page.locator('[data-width-handle]').count()===2,{before:widthBefore,narrow,restored});
+    } else push('F07-native-main-width-body-and-composer',false,widthBefore);
+    const header=page.getByRole('button',{name:/^智能体团队/});await header.waitFor({timeout:30000});
+    push('A01-A35-unique-native-entry',await header.count()===1&&await page.getByRole('tab',{name:'智能体',exact:true}).count()===1&&await page.getByRole('button',{name:/^Cluster$/i}).count()===0,await page.locator('body').innerText());
+    await header.focus();await header.press('Enter');await page.getByRole('tree',{name:'智能体派生树'}).waitFor();await page.keyboard.press('Escape');
+    push('A04-keyboard-return-focus',await header.evaluate(element=>element===document.activeElement),'Enter opened the native menu; Escape restored focus');
+    await header.hover();await sleep(page,300);await page.getByRole('tree',{name:'智能体派生树'}).hover();await sleep(page,400);
+    push('A05-hover-popup-retained',await page.getByRole('tree',{name:'智能体派生树'}).isVisible(),'Trigger-to-popup pointer traversal');
+    await page.getByRole('button',{name:'查看智能体',exact:true}).click();await page.locator('.flow-content').waitFor();
+    await page.getByText('请确认使用当前工作区',{exact:false}).first().waitFor({timeout:30000});
+    const waitingBefore=binding(layout);
+    await page.getByRole('button',{name:'前往主会话答复',exact:true}).first().click();await sleep(page,200);
+    push('A10-answer-in-main-focus',await page.locator('[data-composer-input=true]').evaluate(element=>element===document.activeElement)&&binding(layout).length===waitingBefore.length,'Readonly navigation focuses ordinary composer, without sending or creating a run');
+    await submit(page,'NATIVE-ORDINARY: 使用当前工作区');await sleep(page,2200);
+    const answerStore=new ClusterStore(join(layout.data,'cluster.sqlite'));
+    try{push('A10-ordinary-reply-confirmed',Boolean(answerStore.get("SELECT id FROM messages WHERE cluster_id=? AND id LIKE 'main:%'",runId))&&Boolean(answerStore.get("SELECT seq FROM events WHERE cluster_id=? AND type='turn-start' AND seq>(SELECT MAX(seq) FROM events WHERE cluster_id=? AND type='team-waiting-user')",runId,runId)),'Ordinary main input entered the durable inbox and a later authoritative turn started');}finally{answerStore.close();}
+    await page.getByRole('tab',{name:'智能体',exact:true}).click();await sleep(page,300);
+    const nativeContent=page.locator('.flow-content');
+    await nativeContent.locator('.flow-node[data-role=orchestrator]').click();
+    const nativeReader = nativeContent.getByLabel('只读对话',{exact:true});
+    await nativeReader.getByRole('button',{name:/用时 /}).first().click();
+    await nativeReader.getByText('已调用工具',{exact:true}).first().click();
+    await nativeReader.getByText(/^flow_transaction.*request_user$/).first().click();
+    await page.screenshot({path:join(artifacts,'tool-arguments.png'),fullPage:true});
+    writeFileSync(join(artifacts,'tool-arguments.txt'),await nativeReader.innerText());
+    push('A08-native-tool-arguments',await nativeContent.getByLabel('只读对话',{exact:true}).innerText().then(text=>text.includes('输入')&&text.includes('"action": "request_user"')&&text.includes('请确认使用当前工作区')),'The real flow_transaction request_user action exposes its original argsRaw in a native read-only disclosure');
+    push('A07-native-depth',await nativeContent.locator('.flow-information').innerText().then(text=>text.includes('第 1 层')),'Information displays the actual derivation level');await page.keyboard.press('Escape');
+    const canvasBefore=await nativeContent.locator('.flow-graph').boundingBox();
+    await nativeContent.locator('.flow-node[data-role=orchestrator]').click();
+    const canvasAfter=await nativeContent.locator('.flow-graph').boundingBox();
+    const contentBox=await nativeContent.boundingBox();
+    push('F02-canvas-fills-tab-with-floating-details',Boolean(canvasBefore&&canvasAfter&&contentBox&&Math.abs(canvasBefore.height-contentBox.height)<2&&Math.abs(canvasAfter.width-canvasBefore.width)<2&&Math.abs(canvasAfter.height-canvasBefore.height)<2),{canvasBefore,canvasAfter,contentBox});
+    await page.keyboard.press('Escape');
+    const graph=nativeContent.locator('.flow-graph');const graphBox=await graph.boundingBox();
+    const scale=async()=>Number((await nativeContent.locator('.flow-graph-world').evaluate(element=>(element as HTMLElement).style.transform)).match(/scale\(([^)]+)\)/)?.[1]);
+    const initialScale=await scale();const initialViewport=await page.evaluate(()=>window.visualViewport?.scale);
+    if(graphBox){await page.mouse.move(graphBox.x+graphBox.width-100,graphBox.y+graphBox.height/2);await page.keyboard.down('Control');await page.mouse.wheel(0,-100);await sleep(page,100);const enlarged=await scale();await page.mouse.wheel(0,100);await page.keyboard.up('Control');await sleep(page,100);push('F03-unfocused-canvas-pinch-both-directions',enlarged>initialScale&&Math.abs((await scale())-initialScale)<.001&&(await page.evaluate(()=>window.visualViewport?.scale))===initialViewport,{initialScale,enlarged,after:await scale(),viewport:initialViewport});}
+    const nativeA=sessionId(await host.request('observation-fixture',undefined,{workspace:layout.workspace,count:120,prefix:'native-A'}));
+    const nativeB=sessionId(await host.request('observation-fixture',undefined,{workspace:layout.workspace,count:4,prefix:'native-B'}));
+    addReader(layout,runId,'ux-reader-A',nativeA,'原生记录 A');addReader(layout,runId,'ux-reader-B',nativeB,'原生记录 B','ux-reader-A');await sleep(page);
+    await page.screenshot({path:join(artifacts,'topology.png'),fullPage:true});
+    const content=page.locator('.flow-content');
+    await page.getByRole('button',{name:/^原生记录 A，/}).click();await sleep(page);
+    push('A08-provider-readonly-inspector',await content.getByLabel('只读对话',{exact:true}).count()===1&&await content.getByRole('button',{name:/^(发送|暂停|继续执行|结束|重新派发)$/}).count()===0&&await content.getByRole('textbox').count()===0,await content.innerText());
+    push('S07-no-composer-in-observation',await page.locator('[data-composer-input=true]').isVisible().catch(()=>false)===false,'Provider readOnly view policy hides composer; main chat restores it');
+    const panels=await page.locator('.flow-dock [data-dockkit-pane]:not([data-dockkit-content])').count();
+    writeFileSync(join(artifacts,'wide-layout.json'),JSON.stringify(await content.evaluate(element=>Array.from(element.querySelectorAll('[data-dockkit-pane],.flow-reader,.flow-scroll,.flow-dock')).map(row=>({tag:row.className,pane:row.getAttribute('data-dockkit-pane'),content:row.getAttribute('data-dockkit-content'),rect:row.getBoundingClientRect().toJSON(),scrollHeight:row.scrollHeight,clientHeight:row.clientHeight,display:getComputedStyle(row).display,overflow:getComputedStyle(row).overflow}))),null,2));
+    await page.screenshot({path:join(artifacts,'wide-details.png'),fullPage:true});
+    const dockBackground=await content.locator('.flow-dock').evaluate(element=>getComputedStyle(element).backgroundColor);
+    push('F06-floating-details-have-opaque-theme-background',dockBackground!=='rgba(0, 0, 0, 0)'&&dockBackground!=='transparent',dockBackground);
+    const bounds=await content.getByLabel('只读对话',{exact:true}).boundingBox();
+    push('A23-wide-provider-panels',panels===2&&Boolean(bounds&&bounds.height>100&&bounds.y+bounds.height<=1100),{panels,conversation:bounds,width:await content.evaluate(element=>element.clientWidth)});
+    const divider=await page.locator('.flow-dock [data-dockkit-divider]').first().boundingBox();
+    if(divider&&bounds){await page.mouse.move(divider.x,divider.y+divider.height/2);await page.mouse.down();await page.mouse.move(divider.x+50,divider.y+divider.height/2);await page.mouse.up();await sleep(page,100);const resized=await content.getByLabel('只读对话',{exact:true}).boundingBox();push('A32-native-dock-resize',Boolean(resized&&Math.abs(resized.width-bounds.width)>10),{before:bounds,after:resized});}
+    const selected=await page.locator('.flow-node[aria-pressed=true]').getAttribute('aria-label');
+    const reader=content.getByLabel('只读对话',{exact:true}).locator('[data-conversation-scroll]');await reader.evaluate(element=>{element.scrollTop=0;});
+    const top=await reader.evaluate(element=>element.scrollTop);
+    await page.getByRole('button',{name:'打开完整会话',exact:true}).first().click();await page.getByRole('tab',{name:'轨迹',exact:true}).click();push('S07-native-trajectory',await content.count()===0&&await page.locator('.flow-session-record').isVisible(),'Native Agent Session exposes trajectory and recycled-history policy');await page.getByRole('button',{name:'主会话',exact:true}).click();await sleep(page,300);
+    push('A09-full-session-return',await page.locator('.flow-node[aria-pressed=true]').getAttribute('aria-label')===selected&&Math.abs((await reader.evaluate(element=>element.scrollTop))-top)<8,'Selection and reading anchor survive full view');
+    const beforeHistory=await readingAnchor(reader);
+    await content.getByRole('button',{name:'加载更早',exact:true}).click();await sleep(page,400);
+    const afterHistory=await reader.evaluate((element,id)=>{const row=Array.from(element.querySelectorAll<HTMLElement>('[data-chat-anchor-key]:not([hidden]):not([hidden] *)')).find(row=>row.dataset.chatAnchorKey===id);return {id:row?.dataset.chatAnchorKey,offset:row?row.offsetTop-element.scrollTop:0,top:element.scrollTop};},beforeHistory.id);
+    push('A12-native-history-anchor',beforeHistory.id===afterHistory.id&&Math.abs(beforeHistory.offset-afterHistory.offset)<8,{beforeHistory,afterHistory,meaning:'The previously visible message stays at its original offset; newly prepended content may fill space above it'});
+    await page.route('**/api/session/page',route=>route.abort('failed'));
+    await content.getByRole('button',{name:'加载更早',exact:true}).click();await sleep(page,400);
+    const historyFailure=await content.getByLabel('只读对话',{exact:true}).innerText();
+    push('A28-history-failure-is-local',/历史加载失败|暂时无法读取更早的消息/.test(historyFailure)&&historyFailure.includes('native-A-')&&await content.getByLabel('原生记录 A 信息').isVisible(),'The provider paging error leaves loaded messages and information available');
+    await page.unroute('**/api/session/page');await content.getByRole('button',{name:'加载更早',exact:true}).click();await sleep(page,400);
+    await reader.evaluate(element=>element.scrollTop=100);const olderAnchor=await readingAnchor(reader);
+    await page.getByRole('button',{name:'打开完整会话',exact:true}).first().click();await page.getByRole('button',{name:'主会话',exact:true}).click();
+    let returnedAnchor=await readingAnchor(reader);
+    for(let attempt=0;attempt<20&&(returnedAnchor.id!==olderAnchor.id||Math.abs(returnedAnchor.offset-olderAnchor.offset)>=8);attempt++){await sleep(page,250);returnedAnchor=await readingAnchor(reader);}
+    push('A12-older-full-return',olderAnchor.id===returnedAnchor.id&&Math.abs(olderAnchor.offset-returnedAnchor.offset)<8,{before:olderAnchor,after:returnedAnchor,meaning:'loadThrough restores an anchor older than the opening page'});
+    await reader.evaluate(element=>element.scrollTop=100);const reading=await readingAnchor(reader);
+    await host.request('observation-fixture',undefined,{session_id:nativeA,count:1,prefix:'native-A-new'});await sleep(page,400);
+    push('A11-native-unread-reading',await content.getByRole('button',{name:'回到底部',exact:true}).isVisible()&&(await readingAnchor(reader)).id===reading.id,'Public Session live update retained the visible native message identity');
+    await content.getByRole('button',{name:'回到底部',exact:true}).click();
+    await page.keyboard.press('Escape');await page.getByRole('button',{name:/^原生记录 B，/}).click();await page.getByRole('button',{name:/^原生记录 A，/}).click();await page.keyboard.press('Escape');await page.getByRole('button',{name:/^原生记录 B，/}).click();await sleep(page,400);
+    push('A06-A07-native-parent-and-selection',await content.getByLabel('只读对话',{exact:true}).innerText().then(text=>text.includes('native-B')&&!text.includes('native-A'))&&await content.getByLabel('原生记录 B 信息').innerText().then(text=>text.includes('原生记录 A')),'True parent relationship and both details belong to final selected ID');
+    await page.keyboard.press('Escape');
+    const cold=sessionId(await host.request('observation-fixture',undefined,{workspace:layout.workspace,cold:true,count:2,prefix:'native-cold'}));
+    const coldBefore=await host.request('observation-fixture',undefined,{session_id:cold,inspect:true});
+    writeFileSync(join(artifacts,'cold-history-diagnostic.json'),JSON.stringify(await host.request('observation-fixture',undefined,{session_id:cold,inspect:true,read:true}),null,2));
+    addReader(layout,runId,'ux-reader-cold',cold,'冷历史记录');await sleep(page);
+    await content.getByRole('button',{name:/^冷历史记录，/}).click();await content.getByLabel('只读对话',{exact:true}).getByText(/native-cold/).first().waitFor();
+    const coldAfter=await host.request('observation-fixture',undefined,{session_id:cold,inspect:true});
+    push('F04-cold-history-never-promotes-agent',JSON.stringify(coldBefore)===JSON.stringify(coldAfter)&&JSON.stringify(coldAfter).includes('"agent_active":false'),{before:coldBefore,after:coldAfter});
+    await context.setOffline(true);await sleep(page,2500);await context.setOffline(false);await sleep(page,3500);
+    const coldReconnected=await host.request('observation-fixture',undefined,{session_id:cold,inspect:true});
+    push('F04-cold-history-reconnect-remains-observation',JSON.stringify(coldBefore)===JSON.stringify(coldReconnected)&&await content.getByLabel('只读对话',{exact:true}).innerText().then(text=>text.includes('native-cold')),{before:coldBefore,after:coldReconnected});
+    await page.keyboard.press('Escape');push('A29-details-escape',await content.getByLabel('只读对话',{exact:true}).count()===0,'Escape closes the current inspector');
+    await page.getByRole('button',{name:/^原生记录 A，/}).click();await sleep(page,300);
+    push('S08-simple-view-controls',JSON.stringify(await content.locator('.flow-toolbar button').allTextContents())===JSON.stringify(['拓扑图','列表'])&&await content.getByRole('textbox').count()===0&&await content.locator('.flow-filters,.flow-summary').count()===0,'Only the topology/list switch remains above the canvas');
+    const roleColours=await content.locator('.flow-node').evaluateAll(nodes=>nodes.map(node=>({role:node.getAttribute('data-role'),colour:getComputedStyle(node).backgroundColor})));
+    push('S08-authoritative-role-colours',new Set(roleColours.map(node=>node.role)).size===4&&new Set(roleColours.map(node=>node.colour)).size===4,roleColours);
+    await context.setOffline(true);await sleep(page,2500);push('A19-stale-indication',await content.innerText().then(text=>text.includes('上次数据')),'Offline retains last coherent snapshot');
+    await context.setOffline(false);await sleep(page,3500);push('A19-reconnect-selection',await page.locator('.flow-node[aria-pressed=true]').getAttribute('aria-label')===selected,'Reconnect retains stable selection');
+    await page.setViewportSize({width:1080,height:1000});await sleep(page,400);await page.screenshot({path:join(artifacts,'compact.png'),fullPage:true});
+    push('A23-compact-provider-tabs',await page.locator('.flow-dock [data-dockkit-pane]:not([data-dockkit-content])').count()===1,'One details container carries conversation/information tabs');
+    await page.setViewportSize({width:390,height:844});await sleep(page,400);await content.getByRole('button',{name:'返回团队',exact:true}).click().catch(()=>{});await page.screenshot({path:join(artifacts,'mobile.png'),fullPage:true});
+    push('A23-mobile-list',await page.getByRole('list',{name:'智能体层级列表'}).isVisible(),'Actual content container switches to list');
+    const mobileControls=await content.locator('.flow-controls').boundingBox(),firstMobileRow=await content.getByRole('listitem').first().boundingBox();
+    push('F06-mobile-controls-do-not-cover-list',Boolean(mobileControls&&firstMobileRow&&firstMobileRow.y>=mobileControls.y+mobileControls.height&&firstMobileRow.y+firstMobileRow.height<=844),{controls:mobileControls,row:firstMobileRow});
+    await page.setViewportSize({width:1600,height:1100});await sleep(page,400);
+    const canvas=await content.getByLabel('拓扑画布，拖动空白处平移，使用工具栏缩放').boundingBox();
+    if(canvas){await page.mouse.move(canvas.x+canvas.width-60,canvas.y+60);await page.mouse.down();await page.mouse.move(canvas.x+canvas.width-90,canvas.y+90);await page.mouse.up();}
+    const transform=await content.locator('.flow-graph-world').evaluate(element=>(element as HTMLElement).style.transform);
+    // Explicit fixtures test 50/200/1000 identities through the real Remote and component tree.
+    for(const count of [50,200,1000]) {
+      seedNodes(layout,runId,count);await sleep(page);
+      if(count===50)push('A21-new-node-keeps-pan',await content.locator('.flow-graph-world').evaluate(element=>(element as HTMLElement).style.transform)===transform&&await content.locator('.flow-node').count()===count,'Provider snapshot adds nodes without changing the manually positioned canvas');
+      await content.getByRole('button',{name:'列表',exact:true}).click();
+      while(await content.getByRole('button',{name:/^显示更多代理/}).count())await content.getByRole('button',{name:/^显示更多代理/}).click();
+      const hits=await page.getByRole('listitem').count();
+      push(`A30-${count}-native-projection`,hits===count,{count,visibleIdentities:hits,fixture:'durable read projection; no execution throughput claim'});
     }
-
-    // Closing the page must not cancel its cluster. Reopen a new tab in the
-    // authenticated browser context and resume from the durable event cursor.
-    const cursorBeforeClose = Number((await statMap(page))['Event cursor'] ?? 0);
-    await page.close();
-    const afterClose = decodeSnapshot(await host.request('read', clusterId, { include_events: false }));
-    push('page-close-does-not-cancel-cluster', afterClose !== null && Boolean(afterClose.cluster.status) && afterClose.cluster.status !== 'CANCELLED',
-      `host cluster status after closing the tab: ${afterClose?.cluster.status ?? 'unknown'}`);
-    page = await context.newPage();
-    page.on('console', (message: ConsoleMessage) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
-    page.on('pageerror', (error: Error) => consoleErrors.push(error.message));
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForTimeout(2500);
-    const noticeAgain = page.getByRole('button', { name: /^continue$/i }).first();
-    if (await noticeAgain.isVisible().catch(() => false)) {
-      await noticeAgain.click().catch(() => {});
-      await page.waitForTimeout(800);
+    await page.screenshot({path:join(artifacts,'1000-list.png'),fullPage:true});
+    // Retire only the declared pressure projection before asking the mock main
+    // Agent to create more teams. Large tool-output spill handling is outside
+    // this UI fixture; the 1000-identity screenshot and checks are retained.
+    const pressureStore=new ClusterStore(join(layout.data,'cluster.sqlite'));
+    try{pressureStore.tx(()=>{pressureStore.run("DELETE FROM team_observations WHERE run_id=? AND agent_id LIKE 'ux-fixture-%'",runId);pressureStore.run("DELETE FROM agents WHERE cluster_id=? AND id LIKE 'ux-fixture-%'",runId);pressureStore.appendEvent(runId,'ux-view-fixture-removed',{prefix:'ux-fixture-',reason:'pressure projection complete'});});}finally{pressureStore.close();}
+    await page.getByRole('tab',{name:'对话',exact:true}).click();await page.locator('[data-composer-input=true]').waitFor();
+    await header.click();await page.getByRole('tree',{name:'智能体派生树'}).getByRole('button',{name:'查看 原生记录 A 对话',exact:true}).click();
+    await page.getByRole('button',{name:'主会话',exact:true}).click();
+    push('A09-header-origin-return',await page.locator('[data-composer-input=true]').isVisible(),'Header full-session navigation returns to its original chat view');
+    for(const expected of [2,3]) {
+      await submit(page,`/agent-team ${objective}`);
+      for(let attempt=0;attempt<30&&binding(layout).length<expected;attempt++)await sleep(page,500);
+      await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
     }
-    const entryAgain = page.getByRole('button', { name: /cluster/i }).first();
-    if (await entryAgain.isVisible().catch(() => false)) await entryAgain.click().catch(() => {});
-    await page.waitForTimeout(2500);
-    push('reconnect-after-close', new RegExp(clusterPrefix, 'i').test((await page.textContent('body')) ?? ''),
-      `cluster ${clusterPrefix} still visible after opening a new tab`);
-    const cursorAfterClose = await waitForCursor(page, cursorBeforeClose, 20_000);
-    push('cursor-continues-after-close', cursorAfterClose >= cursorBeforeClose,
-      `${cursorBeforeClose} before closing, ${cursorAfterClose} after reopening`);
-
-    const cancel = page.getByRole('button', { name: /^cancel$/i }).first();
-    await cancel.click().catch(() => {});
-    // The closeout request the scenario held is released *after* the click: the
-    // cancel has to land on a cluster that is genuinely mid-turn, not on one the
-    // fixture quietly finished first. A cancelled cluster fences that turn, so
-    // the held request ends as a client-side disconnect — the tested fault.
-    const released = mock?.release('panel-hold') ?? 0;
-    push('fixture-held-closeout-until-cancel', released > 0 || !mock, `${released} held closeout request(s) released after the cancel click`);
-    const cancelledSeen = await waitForClusterStatus(page, /^CANCELLED$/i, 30_000);
-    push('cancel-from-panel', cancelledSeen === 'CANCELLED', `cluster status after cancel: ${cancelledSeen}`);
-    // Reopen the transaction after cancellation. The independent Auditor may
-    // still have a PENDING validation review when the user cancels the cluster.
-    await page.getByRole('button', { name: /^transactions$/i }).first().click().catch(() => {});
-    const finalTx = page.locator('.dsh-flow-tx').first();
-    await finalTx.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    if (txCount >= 1) await finalTx.click().catch(() => {});
-    await page.waitForFunction(() => {
-      const text = document.querySelector('.dsh-flow-detail')?.textContent ?? '';
-      return /validation:\s*\{"checks":/.test(text) && /result:\s*\{/.test(text)
-        && /audit plan rev\d+ (?:PENDING|APPROVED|REJECTED)/.test(text)
-        && /audit validation rev\d+ (?:PENDING|APPROVED|REJECTED)/.test(text);
-    }, undefined, { timeout: 15_000 }).catch(() => {});
-    const finalDetail = (await page.locator('.dsh-flow-detail').first().textContent().catch(() => '')) ?? '';
-    push('transaction-detail-shows-evidence',
-      /validation:\s*\{"checks":/.test(finalDetail) && /result:\s*\{/.test(finalDetail)
-        && /audit plan rev\d+ (?:PENDING|APPROVED|REJECTED)/.test(finalDetail)
-        && /audit validation rev\d+ (?:PENDING|APPROVED|REJECTED)/.test(finalDetail),
-      finalDetail.slice(-1200));
-    await screenshot(page, artifacts, 'panel-audit-detail.png');
-
-    // A paused, separately identified store fixture tests the real host query
-    // and browser path without adding model work to the acceptance cluster.
-    const fixture = new ClusterStore(join(layout.data, 'cluster.sqlite'));
-    const rootId = `${fixtureId}-root`;
-    const fixtureChildId = `${fixtureId}-child-000`;
-    const fixtureTxId = `${fixtureId}-tx-000`;
-    let fixtureLastEventSeq: number | null = null;
-    try {
-      fixture.tx(() => {
-        fixture.createCluster({
-          id: fixtureId, objective: 'Panel pagination fixture',
-          workspace: layout.root, capabilities: [],
-          limits: { max_children: 128, max_depth: 2, max_active_agents: 1 },
-        }, {});
-        fixture.updateCluster(fixtureId, { status: 'PAUSED' });
-        fixture.insertNode({
-          id: rootId, cluster_id: fixtureId, kind: 'management', depth: 0,
-          status: 'PAUSED', path: '0', max_children: 121,
-        });
-        for (let index = 0; index < 121; index += 1) {
-          fixture.insertNode({
-            id: `${fixtureId}-child-${String(index).padStart(3, '0')}`,
-            cluster_id: fixtureId, parent_id: rootId, kind: 'worker',
-            depth: 1, status: 'PAUSED', path: `0.${index}`, max_children: 0,
-          });
-        }
-        for (let index = 0; index < 51; index += 1) {
-          fixture.insertTransaction({
-            id: `${fixtureId}-tx-${String(index).padStart(3, '0')}`,
-            cluster_id: fixtureId, node_id: fixtureChildId, owner_management_id: rootId,
-            objective: `Panel transaction page ${index}`, acceptance_criteria: ['fixture is visible'],
-            capabilities: [], status: 'DRAFT',
-          });
-        }
-        for (let index = 0; index < 230; index += 1) {
-          fixtureLastEventSeq = fixture.appendEvent(fixtureId, 'panel-fixture-event', { index }).seq;
-        }
-      });
-    } finally {
-      fixture.close();
-    }
-    if (fixtureLastEventSeq === null) throw new Error('panel fixture did not append an event');
-    const lastFixtureEventSeq = fixtureLastEventSeq;
-    const fixturePageReply = await host.request('query', fixtureId, {
-      what: 'nodes', params: { parent_id: rootId, limit: 50 },
-    });
-    const fixturePage = queryPayload(fixturePageReply, 'nodes');
-    const fixtureItems = asArray(fixturePage?.items);
-    const fixtureTotal = asNumber(fixturePage?.total);
-    push('large-tree-fixture-is-separate', fixtureTotal === 121 && fixtureItems?.length === 50,
-      `${fixtureId}: ${fixtureItems?.length ?? 'unknown'} of ${fixtureTotal ?? 'unknown'} direct children`);
-    const fixtureButton = page.getByRole('button', { name: /^paneltre/i }).first();
-    await fixtureButton.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
-    await fixtureButton.click().catch(() => {});
-    const fixtureCursor = await waitForCursor(page, lastFixtureEventSeq, 30_000);
-    const latestFixtureEvent = (await page.locator('.dsh-flow-events li').allTextContents())
-      .some((text: string) => text.includes(`#${lastFixtureEventSeq} panel-fixture-event`));
-    push('event-cursor-crosses-two-pages-and-global-id-gap',
-      fixtureCursor >= lastFixtureEventSeq && latestFixtureEvent,
-      `230 isolated events; durable last seq ${lastFixtureEventSeq}, DOM cursor ${fixtureCursor}, latest event visible ${latestFixtureEvent}`);
-    await page.getByRole('button', { name: /^tree$/i }).first().click().catch(() => {});
-    const fixtureRowsBefore = await page.locator('.dsh-flow-tree .dsh-flow-node').count();
-    const fixtureRoot = page.locator('.dsh-flow-load').first();
-    await fixtureRoot.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    if (await fixtureRoot.isVisible().catch(() => false)) await fixtureRoot.click().catch(() => {});
-    const fixtureRootRow = page.locator('.dsh-flow-tree > li > button.dsh-flow-node').first();
-    await fixtureRootRow.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    if (await fixtureRootRow.isVisible().catch(() => false)) await fixtureRootRow.click().catch(() => {});
-    const childRows = page.locator('.dsh-flow-tree > li > ul > li > button.dsh-flow-node');
-    const secondPage = page.getByRole('button', { name: /^Load more children \(50\/121\)$/ }).first();
-    await secondPage.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    const firstCount = await childRows.count();
-    if (await secondPage.isVisible().catch(() => false)) await secondPage.click().catch(() => {});
-    const thirdPage = page.getByRole('button', { name: /^Load more children \(100\/121\)$/ }).first();
-    await thirdPage.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    const secondCount = await childRows.count();
-    if (await thirdPage.isVisible().catch(() => false)) await thirdPage.click().catch(() => {});
-    await page.waitForFunction(() => document.querySelectorAll('.dsh-flow-tree > li > ul > li > button.dsh-flow-node').length === 121,
-      undefined, { timeout: 10_000 }).catch(() => {});
-    const finalCount = await childRows.count();
-    const finalChildVisible = (await childRows.filter({ hasText: /\b0\.120\b/ }).count()) === 1;
-    push('large-tree-lazy-child-pagination',
-      fixtureRowsBefore === 0 && firstCount === 50 && secondCount === 100 && finalCount === 121
-        && finalChildVisible && (await page.getByRole('button', { name: /^Load more children/ }).count()) === 0,
-      `before ${fixtureRowsBefore}; children ${firstCount} → ${secondCount} → ${finalCount}; final child 0.120: ${finalChildVisible}`);
-    await childRows.last().scrollIntoViewIfNeeded().catch(() => {});
-    await screenshot(page, artifacts, 'panel-large-tree.png');
-    const nodePageReply = await host.request('query', fixtureId, {
-      what: 'node', params: { id: fixtureChildId, limit: 50 },
-    });
-    const nodePage = queryPayload(nodePageReply, 'node');
-    const nodeTransactions = asObject(nodePage?.transactions);
-    const nodeTransactionItems = asArray(nodeTransactions?.items);
-    const nodeTransactionTotal = asNumber(nodeTransactions?.total);
-    const nodeTransactionOffset = asNumber(nodeTransactions?.next_offset);
-    push('node-transactions-have-true-page-total',
-      nodeTransactionItems?.length === 50 && nodeTransactionTotal === 51 && nodeTransactionOffset === 50,
-      `child node transactions ${nodeTransactionItems?.length ?? 'unknown'} of ${nodeTransactionTotal ?? 'unknown'}, next ${nodeTransactionOffset ?? 'none'}`);
-    await childRows.first().click().catch(() => {});
-    const nodeMore = page.getByRole('button', { name: /^load more \(50\/51\)$/i }).first();
-    await nodeMore.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    if (await nodeMore.isVisible().catch(() => false)) await nodeMore.click().catch(() => {});
-    const nodeRows = page.locator('.dsh-flow-tree > li > ul > li:first-child ul li button.dsh-flow-node');
-    await page.waitForFunction(() => document.querySelectorAll('.dsh-flow-tree > li > ul > li:first-child ul li button.dsh-flow-node').length === 51,
-      undefined, { timeout: 10_000 }).catch(() => {});
-    push('node-transactions-load-all-pages', await nodeRows.count() === 51,
-      `${await nodeRows.count()} of 51 node transaction rows visible after load more`);
-
-    await page.getByRole('button', { name: /^transactions$/i }).first().click().catch(() => {});
-    const fixtureTxRow = page.locator('.dsh-flow-tx').first();
-    await fixtureTxRow.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-    const beforeStatus = await fixtureTxRow.textContent().catch(() => '');
-    const updater = new ClusterStore(join(layout.data, 'cluster.sqlite'));
-    try {
-      updater.updateTransaction(fixtureTxId, { status: 'READY' });
-    } finally {
-      updater.close();
-    }
-    await page.waitForFunction(() => document.querySelector('.dsh-flow-tx')?.textContent?.startsWith('READY'),
-      undefined, { timeout: 15_000 }).catch(() => {});
-    const afterStatus = await fixtureTxRow.textContent().catch(() => '');
-    push('visible-transaction-list-refreshes-without-tab-switch',
-      Boolean(beforeStatus?.startsWith('DRAFT') && afterStatus?.startsWith('READY')),
-      `fixture row remained on transactions tab: ${beforeStatus} → ${afterStatus}`);
-    await screenshot(page, artifacts, 'panel-live-transactions.png');
-    // Invoke the generated seven-method surface through its real HTTP carrier.
-    const methods = await page.evaluate(async ({ id, createdId }) => {
-      const call = async (method: string, args: Record<string, unknown>): Promise<ProbeResponse> => {
-        try {
-          const response = await fetch(`/api/flow/${method}`, {
-            method: 'POST', credentials: 'include',
-            headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-              type: 'client-request', rpcId: crypto.randomUUID(),
-              method: `flow/${method}`, payload: { args },
-            }),
-          });
-          const body: unknown = await response.json();
-          return { status: response.status, body, error: null };
-        } catch (error: unknown) {
-          return { status: null, body: null, error: error instanceof Error ? error.message : String(error) };
-        }
-      };
-      const start = await call('start', { request: {
-        id: createdId, objective: 'Panel Remote surface fixture', capabilities: [],
-        budget: { tokens: 1 },
-      } });
-      const control = await call('control', { id: createdId, action: 'pause' });
-      const results = {
-        start, control,
-        list: await call('list', { request: {} }),
-        read: await call('read', { id, request: {} }),
-        events: await call('events', { id, request: { since: 0, limit: 200 } }),
-        query: await call('query', { id, what: 'nodes', params: { parent_id: null, limit: 50, offset: 0 } }),
-        report: await call('report', { id }),
-      };
-      await call('control', { id: createdId, action: 'cancel' });
-      return results;
-    }, { id: fixtureId, createdId: `${fixtureId}-remote` });
-    push('seven-public-remote-methods-succeed',
-      Object.values(methods).every(result => result.status === 200 && remoteSuccess(result.body) !== null),
-      JSON.stringify(Object.fromEntries(Object.entries(methods).map(([name, result]) =>
-        [name, { status: result.status, ok: remoteSuccess(result.body) !== null, error: result.error }]))));
-
-    // Refreshing an expanded tree must retain all loaded child pages.
-    await page.getByRole('button', { name: /^tree$/i }).first().click();
-    await page.waitForTimeout(3500);
-    push('expanded-child-pages-survive-refresh', await childRows.count() === 121,
-      `${await childRows.count()} of 121 expanded children after a polling refresh`);
-
-    // Hold a real, already-produced response, then change selection before
-    // delivering it. This tests the mounted component, not its source text.
-    const switchGate = Promise.withResolvers<void>();
-    const switchReady = Promise.withResolvers<void>();
-    let switchCaptured = false;
-    await page.route('**/api/flow/read', async route => {
-      const payload: unknown = route.request().postDataJSON();
-      const args = asObject(asObject(asObject(payload)?.payload)?.args);
-      if (switchCaptured || args?.id !== fixtureId) return route.continue();
-      switchCaptured = true;
-      const response = await route.fetch();
-      switchReady.resolve();
-      await switchGate.promise;
-      await route.fulfill({ response }).catch(() => {});
-    });
-    const switchProduced = await Promise.race([
-      switchReady.promise.then(() => true), page.waitForTimeout(10_000).then(() => false),
-    ]);
-    await page.locator('.dsh-flow-list button').filter({ hasText: clusterPrefix }).first().click();
-    switchGate.resolve();
-    await page.waitForTimeout(500);
-    const switchLateStatus = (await page.locator('.dsh-flow-status').first().textContent().catch(() => null))?.trim() ?? null;
-    const switchSettledStatus = await waitForClusterStatus(page, /^CANCELLED$/i, 15_000);
-    push('cluster-switch-fences-late-response',
-      switchProduced && (await page.locator('.dsh-flow-list button.is-selected').innerText()).includes(clusterPrefix)
-        && switchLateStatus !== 'PAUSED' && switchSettledStatus === 'CANCELLED',
-      `held fixture response=${switchCaptured}; immediate status=${switchLateStatus}; selected original settles to ${switchSettledStatus}`);
-    await page.unroute('**/api/flow/read');
-    await fixtureButton.click();
-    await waitForClusterStatus(page, /^PAUSED$/i, 15_000);
-
-    const resetGate = Promise.withResolvers<void>();
-    const resetReady = Promise.withResolvers<void>();
-    let resetCaptured = false;
-    await page.route('**/api/flow/read', async route => {
-      const payload: unknown = route.request().postDataJSON();
-      const args = asObject(asObject(asObject(payload)?.payload)?.args);
-      if (resetCaptured || args?.id !== fixtureId) return route.continue();
-      resetCaptured = true;
-      const response = await route.fetch();
-      resetReady.resolve();
-      await resetGate.promise;
-      await route.fulfill({ response }).catch(() => {});
-    });
-    const resetProduced = await Promise.race([
-      resetReady.promise.then(() => true), page.waitForTimeout(10_000).then(() => false),
-    ]);
-    const resetStore = new ClusterStore(join(layout.data, 'cluster.sqlite'));
-    try {
-      resetStore.updateCluster(fixtureId, { status: 'CANCELLED' });
-    } finally {
-      resetStore.close();
-    }
-    // Real browser network events drive the connection owner's generation
-    // replacement and its connection/reset notification without reloading UI.
-    await page.evaluate(() => window.dispatchEvent(new Event('offline')));
-    await page.waitForTimeout(500);
-    await page.evaluate(() => window.dispatchEvent(new Event('online')));
-    await waitForClusterStatus(page, /^CANCELLED$/i, 30_000);
-    resetGate.resolve();
-    await page.waitForTimeout(1500);
-    const resetStatus = (await page.locator('.dsh-flow-status').first().innerText()).trim();
-    push('connection-reset-fences-late-response',
-      resetProduced && resetStatus === 'CANCELLED',
-      `held pre-reset PAUSED response=${resetCaptured}; post-reset durable CANCELLED status remains rendered=${resetStatus}`);
-    await page.unroute('**/api/flow/read');
-    await screenshot(page, artifacts, 'panel-generation-fences.png');
-    // Creation itself is exercised through the shipped form. A one-token
-    // start-only fixture prevents unrelated model work in this browser check.
-    const uiObjective = `Panel form start fixture ${clusterId}`;
-    await page.getByLabel('Objective', { exact: true }).fill(uiObjective);
-    await page.getByLabel('Workspace', { exact: true }).fill(layout.root);
-    await page.getByLabel('Capabilities', { exact: true }).fill('');
-    await page.getByLabel('Budget override (JSON)', { exact: true }).fill('{"tokens":1}');
-    const createdResponsePromise = page.waitForResponse(response =>
-      new URL(response.url()).pathname === '/api/flow/start' && response.request().method() === 'POST',
-    { timeout: 15_000 });
-    await page.getByRole('button', { name: /^start$/i }).click();
-    const createdResponse = await createdResponsePromise;
-    const createdBody: unknown = await createdResponse.json();
-    const createdResult = remoteSuccess(createdBody);
-    const uiSnapshot = decodeSnapshot(createdResult?.value);
-    const uiCreatedId = asString(uiSnapshot?.cluster.id);
-    // The unchanged panel displays cluster identity, not cluster objective.
-    // Plan §4.6 preserves its DOM/text; Verification §6 requires actual start
-    // and selection. Prove the submitted objective in persistence and the new
-    // selection in the real DOM instead of inventing an objective label.
-    const uiPrefix = uiCreatedId?.slice(0, 8) ?? 'invalid-created-cluster';
-    const selectedRow = page.locator('.dsh-flow-grid .dsh-flow-list button.is-selected')
-      .filter({ hasText: uiPrefix }).first();
-    const selectedVisible = await selectedRow.waitFor({ state: 'visible', timeout: 15_000 })
-      .then(() => true, () => false);
-    const clusterStat = page.locator('.dsh-flow-summary .dsh-flow-stat')
-      .filter({ has: page.locator('span', { hasText: /^Cluster$/ }) }).locator('strong');
-    await page.waitForFunction(prefix => [...document.querySelectorAll('.dsh-flow-stat')]
-      .some(stat => stat.querySelector('span')?.textContent === 'Cluster'
-        && stat.querySelector('strong')?.textContent === prefix), uiPrefix, { timeout: 15_000 });
-    const persisted = uiCreatedId === null ? null : asObject(await host.request('read', uiCreatedId, { include_events: false }));
-    const persistedObjective = asString(asObject(persisted?.cluster)?.objective);
-    const selectedDOM = selectedVisible ? await selectedRow.evaluate(node => node.outerHTML) : null;
-    const summaryDOM = await clusterStat.evaluate(node => node.outerHTML);
-    writeFileSync(join(artifacts, 'panel-start-form.dom.html'), await page.locator('.dsh-flow-panel').innerHTML());
-    push('start-from-panel-form',
-      createdResponse.status() === 200 && uiCreatedId !== null && persistedObjective === uiObjective && selectedVisible,
-      JSON.stringify({ cluster: uiCreatedId, persistedObjective, selectedDOM, summaryDOM }));
-    await page.getByRole('button', { name: /^cancel$/i }).first().click();
-    await waitForClusterStatus(page, /^CANCELLED$/i, 15_000);
-    await screenshot(page, artifacts, 'panel-start-form.png');
-    push('no-console-errors', consoleErrorsBeforeProbe === 0,
-      consoleErrorsBeforeProbe === 0
-        ? 'no console errors before the deliberate refusal probe'
-        : consoleErrors.slice(0, 4).join(' | '));
-    const probeErrors = consoleErrors.slice(consoleErrorsBeforeProbe);
-    push('probe-errors-are-only-the-refusals', probeErrors.every(text => /api\/flow/.test(text) || /404/.test(text)),
-      `${probeErrors.length} console errors after the probe: ${probeErrors.slice(0, 3).join(' | ') || 'none'}`);
-  } finally {
-    await browser.close();
-  }
-  return { checks };
+    const multiple=binding(layout);const newer=multiple.slice(1).map(row=>String(row.run_id));
+    for(const id of newer)await host.request('control',id,{action:'pause'});
+    await page.getByRole('tab',{name:'智能体',exact:true}).click();await sleep(page,300);
+    const latestRun=newer.at(-1)!;
+    push('A31-current-run-isolated',await content.locator('.flow-node').count()===3&&!await content.innerText().then(text=>text.includes('ux-reader-A')), 'The current run never reuses a previous run selection or reader');
+    await page.route('**/api/flow/teamRead',async route=>{if(JSON.stringify(route.request().postDataJSON()).includes(latestRun))await route.abort('failed');else await route.continue();});await sleep(page);
+    push('A28-unavailable-run-navigation',await page.getByRole('tab',{name:'对话',exact:true}).isVisible()&&await content.getByRole('button',{name:'重试连接',exact:true}).isVisible(),'An unavailable snapshot preserves native main navigation');
+    await page.unroute('**/api/flow/teamRead');await content.getByRole('button',{name:'重试连接',exact:true}).click();await sleep(page);
+    push('A03-A31-three-intentional-runs',multiple.length===3,'Acknowledged identical objectives create separate runs');
+    await page.getByRole('tab',{name:'对话',exact:true}).click();await sleep(page);
+    push('F05-main-is-native-owner-dialog',await page.locator('.flow-main-conversation').count()===0&&await page.locator('[data-composer-input=true]').isVisible()&&await page.locator('[data-chat-turn]').count()>0,'Inspecting agents never substitutes background logs for human dialogue');
+    await page.getByRole('tab',{name:'智能体',exact:true}).click();await sleep(page,300);
+    for(const id of newer)await host.request('control',id,{action:'cancel'});
+    await setNativeTheme(page,'dark');
+    await page.screenshot({path:join(artifacts,'dark-team.png'),fullPage:true});
+    const dark=await content.evaluate(element=>getComputedStyle(element).color);
+    await setNativeTheme(page,'light');
+    const light=await content.evaluate(element=>getComputedStyle(element).color);
+    push('A22-A33-native-theme-motion',dark!==light&&await content.evaluate(element=>element.getAnimations({subtree:true}).every(animation=>animation.playState!=='running')),{dark,light,systemReducedMotion:true});
+    await page.getByRole('tab',{name:'对话',exact:true}).click();
+    await page.getByRole('button',{name:'插件',exact:true}).click();await sleep(page);
+    await page.getByText('dsh-flow',{exact:true}).first().click();await sleep(page,600);
+    await page.locator('.flow-settings').waitFor();
+    const field=page.getByLabel('默认团队视图',{exact:true});await field.selectOption('list');await page.getByLabel('已结束节点',{exact:true}).selectOption('collapse');
+    const displayFields=[];for(const name of ['默认团队视图','已结束节点','动态效果','用量显示','对话自动跟随'])displayFields.push(await page.getByLabel(name,{exact:true}).count());
+    push('S02-five-display-fields',displayFields.every(count=>count===1),'Five display fields remain distinct from team execution defaults');
+    await page.getByRole('button',{name:'保存',exact:true}).click();await sleep(page,200);
+    push('A24-save-display-only',await page.evaluate(()=>JSON.parse(localStorage.getItem('dsh-flow:display:v1')??'{}').view)==='list','Explicit save persisted display preferences');
+    await page.getByRole('button',{name:'恢复默认',exact:true}).click();await page.getByRole('button',{name:'取消更改',exact:true}).click();
+    push('A26-defaults-cancel',await field.inputValue()==='list','Cancel restored the saved value');
+    await field.selectOption('graph');await page.getByRole('button',{name:'返回会话',exact:true}).click();await page.getByRole('dialog',{name:'有未保存的更改'}).waitFor();
+    push('A25-three-leave-choices',await page.getByRole('button',{name:'保存并离开',exact:true}).count()===1&&await page.getByRole('button',{name:'放弃更改',exact:true}).count()===1&&await page.getByRole('button',{name:'继续编辑',exact:true}).count()>=1,'Provider modal guards public workspace navigation');
+    await page.getByRole('button',{name:'继续编辑',exact:true}).first().click();
+    await page.evaluate(()=>{const original=Storage.prototype.setItem;Object.assign(window,{__uxStorageWrite:original});Storage.prototype.setItem=function(key,value){if(key==='dsh-flow:display:v1')throw new DOMException('Fixture quota exceeded','QuotaExceededError');original.call(this,key,value);};});
+    await page.getByRole('button',{name:'保存',exact:true}).click();await sleep(page,100);
+    push('A25-save-failure-retains-draft',await field.inputValue()==='graph'&&await page.locator('.flow-settings').innerText().then(text=>text.includes('未能保存显示设置'))&&await page.getByRole('button',{name:'保存',exact:true}).isEnabled()&&await page.evaluate(()=>JSON.parse(localStorage.getItem('dsh-flow:display:v1')??'{}').view)==='list','A real browser storage failure leaves the saved display and editable draft intact with an enabled retry action');
+    await page.getByRole('button',{name:'返回会话',exact:true}).click();await page.getByRole('button',{name:'保存并离开',exact:true}).click();await sleep(page,100);
+    push('A25-failed-save-stays',await page.getByRole('dialog',{name:'有未保存的更改'}).isVisible(),'Navigation waited for the actual failed save');
+    await page.getByRole('button',{name:'继续编辑',exact:true}).first().click();
+    await page.evaluate(()=>{Storage.prototype.setItem=Reflect.get(window,'__uxStorageWrite');});await page.screenshot({path:join(artifacts,'settings.png'),fullPage:true});
+    await page.getByRole('button',{name:'取消更改',exact:true}).click();await page.getByRole('button',{name:'返回会话',exact:true}).click();
+    await header.click();const tree=page.getByRole('tree',{name:'智能体派生树'});
+    push('A24-header-ended-preference',await tree.getByRole('button',{name:'查看 原生记录 A 对话',exact:true}).count()===0&&await page.getByRole('dialog',{name:'智能体团队',exact:true}).getByRole('button',{name:/已结束 .* 个 · 展开/}).isVisible(),'Saved collapse preference hides ended identities while preserving live ancestors and the expansion entry');
+    await page.getByRole('dialog',{name:'智能体团队',exact:true}).getByRole('button',{name:/已结束 .* 个 · 展开/}).click();
+    push('A24-header-ended-expand',await tree.locator('[data-tree-id="ux-reader-A"]').isVisible(),'Header expansion reveals the original historical identity of the remaining active run');await page.keyboard.press('Escape');
+    await host.request('control',runId,{action:'cancel'});await sleep(page);
+    await page.getByRole('tab',{name:'智能体',exact:true}).click();await sleep(page,300);
+    push('A16-A27-terminal-history',await header.innerText().then(text=>text.includes('已取消'))&&await page.locator('.flow-content').isVisible(),'Cancellation preserves the native team view and terminal header');
+    await page.screenshot({path:join(artifacts,'terminal.png'),fullPage:true});
+    push('no-client-exceptions',errors.length===0,errors);
+  } catch(error) {push('native-ui-sequence',false,String(error));if(page){writeFileSync(join(artifacts,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(artifacts,'failure.png'),fullPage:true});}}
+  finally {mock?.release('panel-hold');await browser.close();}
+  writeFileSync(join(artifacts,'checks.json'),JSON.stringify(checks,null,2));return {checks};
 }
-
-export async function run({ report, layout }: PanelRunContext) {
-  const checks: CheckEntry[] = [...(report.live_checks?.checks ?? [])];
-  const push = (name: string, passed: boolean | null | undefined, evidence: string): void => {
-    checks.push({
-      name, passed: passed === null || passed === undefined ? null : Boolean(passed), evidence: String(evidence).slice(0, 2500),
-    });
-  };
-  const dbPath = join(layout.data, 'cluster.sqlite');
-  const dbPresent = existsSync(dbPath);
-  push('cluster-database-present', dbPresent, `${dbPath} ${dbPresent ? 'exists' : 'does not exist'}`);
-  push('cluster-id-resolved', Boolean(report.cluster_id),
-    report.cluster_id ? `report.cluster_id = ${report.cluster_id}` : `report.cluster_id is null${report.failure ? `; start failed: ${report.failure.message}` : ''}`);
-  if (dbPresent && report.cluster_id) {
-    const ledger = openLedger(dbPath);
-    try {
-      const recorded = ledger.all('SELECT type FROM events WHERE cluster_id=?', report.cluster_id)
-        .map(row => row.type)
-        .filter((type): type is string => typeof type === 'string');
-      push('control-operations-recorded', recorded.includes('cluster-pause') || recorded.includes('cluster-cancel'),
-        `control events: ${['cluster-pause', 'cluster-resume', 'cluster-cancel'].filter(type => recorded.includes(type)).join(', ') || 'none'}`);
-      const acceptedRow = ledger.get("SELECT COUNT(*) AS c FROM transactions WHERE cluster_id=? AND status='ACCEPTED'", report.cluster_id);
-      const accepted = sqlNumber(acceptedRow?.c) ?? 0;
-      push('work-reached-acceptance', accepted >= 1 || report.live_checks?.checks?.some(entry => entry.name === 'cancel-from-panel' && entry.passed),
-        `${accepted} accepted transactions`);
-    } finally {
-      ledger.close();
-    }
-  }
-
-  const cancelled = (report.live_checks?.checks ?? []).find(entry => entry.name === 'cancel-from-panel');
-  const failed = checks.filter(entry => entry.passed === false);
-  const mechanismFailed = failed.some(entry => [
-    'unauthenticated-flow-route-refused', 'cluster-database-present',
-    'internal-ops-refused', 'internal-ops-refused-with-unknown-op', 'legacy-op-envelope-refused',
-  ].includes(entry.name));
-  return {
-    checks,
-    // A panel that was cancelled on purpose is a pass for the two work checks.
-    scenario_status: failed.filter(entry => !(cancelled?.passed && ['work-reached-acceptance'].includes(entry.name))).length === 0 ? 'PASSED' : 'FAILED',
-    failure_class: failed.length === 0 ? null : mechanismFailed ? 'MECHANISM' : 'MODEL_OUTPUT',
-  };
-}
-
-
-/** The summary statistics, keyed by label, read from real DOM nodes. */
-async function statMap(page: Page): Promise<Record<string, string | undefined>> {
-  const nodes: Locator[] = await page.locator('.dsh-flow-stat').all().catch(() => []);
-  const out: Record<string, string | undefined> = {};
-  for (const node of nodes) {
-    const label = (await node.locator('span').first().textContent().catch(() => ''))?.trim();
-    const value = (await node.locator('strong').first().textContent().catch(() => ''))?.trim();
-    if (label) out[label] = value;
-  }
-  return out;
-}
-
-/** Wait for the cluster status element to match, returning what it showed. */
-async function waitForClusterStatus(page: Page, pattern: RegExp, timeoutMs: number): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const text = await page.locator('.dsh-flow-status').first().textContent().catch(() => null);
-    if (text && pattern.test(text.trim())) return text.trim();
-    if (Date.now() > deadline) return text?.trim() ?? null;
-    await page.waitForTimeout(250);
-  }
-}
-
-/** Wait for the reported event cursor to pass a value. */
-async function waitForCursor(page: Page, previous: number, timeoutMs: number): Promise<number> {
-  const deadline = Date.now() + timeoutMs;
-  let latest = previous;
-  for (;;) {
-    latest = Number((await statMap(page))['Event cursor'] ?? 0);
-    // "Reached" is a value, not an increase: the target is the cluster's own
-    // latest sequence, which a settled cluster never moves past.
-    if (latest >= previous || Date.now() > deadline) return latest;
-    await page.waitForTimeout(500);
-  }
-}
-
-async function screenshot(page: Page, dir: string, name: string): Promise<void> {
-  try {
-    mkdirSync(dir, { recursive: true });
-    await page.screenshot({ path: join(dir, name), fullPage: true });
-  } catch {
-    /* evidence only */
-  }
+export async function run({report,layout}:{report:Report;layout:RunLayout}) {
+  const checks=[...(report.live_checks?.checks??[])];
+  checks.push({name:'durable-ledger',passed:existsSync(join(layout.data,'cluster.sqlite')),evidence:'Original execution and new main-conversation run remain persisted'});
+  const failed=checks.some(check=>check.passed===false);
+  return {checks,scenario_status:failed?'FAILED':'PASSED',failure_class:failed?'MECHANISM':null};
 }

@@ -1,0 +1,53 @@
+diff --git a/lib/client.js b/lib/client.js
+index ba9b6c231c2eed8a5dfc88fd1911bac7f928cd4d..ee68b5fed2b47baef07e6b3351372ba5019a6f86 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -459,10 +459,18 @@ window.__ModuleLoader__.load({
+ 				this.panelInfo = panelInfo;
+ 			}
+ 			/** Select a global panel or return to the Conversation. */
++			navigationGuards = new Set();
++			addNavigationGuard(guard) { this.navigationGuards.add(guard); return () => this.navigationGuards.delete(guard); }
++			requestNavigation(commit) {
++				for (const guard of [...this.navigationGuards]) if (guard(commit)) return;
++				commit();
++			}
+ 			selectPanel(panelId) {
+ 				if (panelId !== null && !this.hasMainPanel(panelId)) throw new Error(`layout.selectPanel: main panel "${panelId}" is not registered`);
+-				this.navigation.abort();
+-				this.panels.selectPanel(panelId);
++				this.requestNavigation(() => {
++					this.navigation.abort();
++					this.panels.selectPanel(panelId);
++				});
+ 			}
+ 			/** @returns the new pending navigation's cancellation signal. */
+ 			beginNavigation() {
+diff --git a/lib/types/client/service.d.ts b/lib/types/client/service.d.ts
+index a998dc6a811a4ddb458e243dab17fd2981afa32a..a561e11d5b957eef06092602d167ecdc3cb22401 100644
+--- a/lib/types/client/service.d.ts
++++ b/lib/types/client/service.d.ts
+@@ -22,6 +22,11 @@ export interface PanelInfo {
+ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>;
+ /** Panel navigation and geometry actions exposed through ctx.layout. */
+ export interface ILayout {
++    /** Register a provider-owned leave guard. Return true when it retains the commit callback. */
++    addNavigationGuard(guard: (commit: () => void) => boolean): () => void;
++    /** Ask the active leave guards before committing a navigation. */
++    requestNavigation(commit: () => void): void;
++
+     /** Selected central panel from the same root store used by `usePanelInfo`. */
+     readonly panelInfo: HostObservable<PanelInfo>;
+     /**
+@@ -50,6 +55,11 @@ export interface ILayout {
+ }
+ /** Cross-plugin panel-action face (ctx.layout). */
+ export declare class LayoutController implements ILayout {
++    /** Register a provider-owned leave guard. Return true when it retains the commit callback. */
++    addNavigationGuard(guard: (commit: () => void) => boolean): () => void;
++    /** Ask the active leave guards before committing a navigation. */
++    requestNavigation(commit: () => void): void;
++
+     private readonly panels;
+     private readonly hasMainPanel;
+     readonly panelInfo: HostObservable<PanelInfo>;

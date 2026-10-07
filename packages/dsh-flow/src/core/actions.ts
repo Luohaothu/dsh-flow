@@ -179,7 +179,7 @@ interface ClusterRuntimePort {
     clusterId: string, recipient: string | null | undefined,
     message: { subject: string; payload: JsonValue; dedupeKey?: string | null },
   ): unknown
-  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>): Record<FlowManagementRole, string>
+  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>, parentAgentId?: string | null): Record<FlowManagementRole, string>
   grantAgentBudget(clusterId: string, node: NodeRecord, nodeBudget: BudgetRecord, agent: AgentRecord, role: FlowAgentRole): void
   grantBudget(parentBudget: BudgetRecord, childBudget: BudgetRecord, amounts: Record<string, unknown>): unknown
   reclaimIdleRoleGrants(cluster: string | ClusterRecord, nodeBudgetId: string): unknown
@@ -196,7 +196,7 @@ interface ClusterRuntimePort {
   settledDependencies(tx: TransactionRecord): boolean
   sessionOffsetOf(sessionId: string): number | null
   usageWatermark(clusterId: string): number | null
-  setLlmConcurrency(limit: number): void
+  setLlmConcurrency(limit: number,clusterId?:string): void
   noteCorrectionBudgetStop?(
     clusterId: string,
     stop: { nodeId: string | null; transactionId: string | null; used: number; maxCorrections: number },
@@ -516,7 +516,13 @@ function releaseAllocation(rt: ClusterRuntimePort, cluster: ClusterRecord, alloc
   if (!current || current.status !== 'ACTIVE') return { deduped: true };
   rt.store.updateAllocation(current.id, { status: 'RELEASED' });
   const agent = rt.store.getAgent(current.agent_id);
-  if (agent && !AGENT_TERMINAL.has(agent.status)) rt.store.updateAgent(agent.id, { status: 'TERMINATED' });
+  if (agent && !AGENT_TERMINAL.has(agent.status)) {
+    const transaction=current.transaction_id ? rt.store.getTransaction(current.transaction_id) : undefined;
+    if (transaction && ['SUBMITTED','VALIDATING','ACCEPTED'].includes(transaction.status)) rt.store.recordTeamEnd(agent,'COMPLETED');
+    else if(transaction?.status==='FAILED')rt.store.recordTeamEnd(agent,'FAILED');
+    else if(transaction?.status==='CANCELLED')rt.store.recordTeamEnd(agent,'CANCELLED');
+    rt.store.updateAgent(agent.id, { status: 'TERMINATED' });
+  }
   const nodeBudget = rt.store.budgetForScope(cluster.id, 'node', current.node_id);
   if (nodeBudget) reclaimCapacity(rt.store, nodeBudget.id, { agents: 1 });
   reclaimUnusedAgentGrant(rt, cluster.id, current.agent_id, nodeBudget);
@@ -630,6 +636,16 @@ export type ActionName = keyof typeof HANDLERS;
 
 export const HANDLERS = {
   // ------------------------------------------------------------ orchestrator
+  request_user(rt, cluster, actor, params) {
+    const node = assertDomain(rt, cluster, actor, actor.node_id);
+    const identity = actor.agent_id ? rt.store.getAgent(actor.agent_id) : null;
+    if (!identity) fail('request_user requires an Orchestrator identity',403);
+    if (typeof params.question !== 'string' || !params.question.trim()) fail('params.question is required');
+    rt.store.updateAgent(identity.id,{meta:{...identity.meta,ui_state:'waiting_user',status_reason:params.question.trim(),waiting_since:rt.store.now()}});
+    rt.store.appendEvent(cluster.id,'team-waiting-user',{agent_id:identity.id,node_id:node.id,question:params.question.trim()});
+    return {agent_id:identity.id,waiting_user:true};
+  },
+
   create_transaction(rt, cluster, actor, params) {
     if (typeof params.objective !== 'string' || !params.objective.trim()) fail('params.objective is required');
     const node = assertDomain(rt, cluster, actor, actor.node_id ?? params.node_id);
@@ -1150,7 +1166,7 @@ export const HANDLERS = {
       rt.grantBudget(parentBudget, nodeBudget, grant);
     }
     const budgets = new Map([[node.id, nodeBudget]]);
-    const roles = rt.ensureRoles(cluster.id, node, budgets);
+    const roles = rt.ensureRoles(cluster.id, node, budgets, actor.agent_id);
 
     // A delegation chain descends one level at a time: the fixture's depth
     // budget decreases on every spawn and stops when it reaches zero.
@@ -1311,7 +1327,7 @@ export const HANDLERS = {
     if (maxLlm !== undefined) {
       if (typeof maxLlm !== 'number' || !Number.isInteger(maxLlm) || maxLlm < 1 || maxLlm > 64) fail('Invalid max_llm_concurrency');
       limits.max_llm_concurrency = clamp('max_llm_concurrency', maxLlm);
-      rt.setLlmConcurrency(limits.max_llm_concurrency);
+      rt.setLlmConcurrency(limits.max_llm_concurrency,cluster.id);
     }
     rt.store.updateCluster(cluster.id, { limits });
     rt.store.appendEvent(cluster.id, 'concurrency-set', { limits });
@@ -1434,7 +1450,7 @@ export const HANDLERS = {
     const replacement = rt.store.insertAgent({
       id: randomUUID(), cluster_id: cluster.id, node_id: oldAgent.node_id, role: oldAgent.role,
       session_id: randomUUID(), status: 'READY', capabilities: jsonValue(oldAgent.capabilities, 'agent.capabilities'), cwd: cluster.workspace,
-      meta: jsonValue({ ...oldAgent.meta, replaced: oldAgent.id }, 'agent.meta'),
+      meta: jsonValue({ ...oldAgent.meta, parent_agent_id:actor.agent_id, replaced: oldAgent.id }, 'agent.meta'),
     }) ?? fail('Failed to create agent', 500);
     const nodeBudget = rt.store.budgetForScope(cluster.id, 'node', allocation.node_id);
     if (nodeBudget) {

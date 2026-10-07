@@ -1,6 +1,6 @@
 # 查询与可观测性
 
-可观测性组件根据持久状态和回执生成视图，帮助开发者查明：谁正在执行什么工作、为什么不能继续、预算用在何处，以及哪个版本的结果已被正式接受。面板展示这些记录，不另行维护状态或调度工作。
+可观测性组件根据持久状态和回执生成视图，帮助开发者查明：谁正在执行什么工作、为什么不能继续、预算用在何处，以及哪个版本的结果已被正式接受。新团队视图只读取这些记录；所有任务指令在所属主会话中下达。旧 Cluster 面板已废止。
 
 ## 主要入口
 
@@ -11,8 +11,8 @@
 | `events` | 读取指定事件序号 `seq` 之后的增量事件 |
 | `report` | 汇总拓扑、任务单元、审查、用量、回执和通信指标 |
 | `web.ts` | 提供七个标准远程接口方法 |
-| `client/operations.ts` | 解包远程调用结果、按 `what` 收窄类型、为已展开的列表加载分页 |
-| `client/panel.tsx` | 展示管理树、任务单元详情、通信、预算和上下文，并提供控制交互 |
+| `core/team.ts` / `client/observer.ts` | 按主会话归属读取一致快照，隔离运行、去重和重连 |
+| `client/team-view.tsx` / `reader.tsx` | 提供方标签内只读拓扑、列表、会话、通信和显示偏好 |
 
 ## 面向用户与面向角色的视图
 
@@ -48,4 +48,4 @@
 
 没有实测样本或可靠观测手段时，应将结论保留为未知。创建了 1000 个身份、单元测试通过或静态报告包含相关字段，都不足以证明千级智能体实际执行成功。
 
-源码：[cluster.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/cluster.ts)、[operations.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/client/operations.ts)、[types.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/types.ts)。
+源码：[cluster.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/cluster.ts)、[observer.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/client/observer.ts)、[types.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/types.ts)。

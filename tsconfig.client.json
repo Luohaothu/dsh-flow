@@ -1,16 +1,18 @@
 {
   // Client aggregate: the browser-facing half of this repository's type graph.
-  // It holds only the type-level fixtures, because every browser behaviour this
+  // It holds type-level fixtures and observation-only reader regressions; every browser behaviour this
   // plugin ships lives inside the plugin's own Client leaf. Client and Host
   // Cordis Context merges must never meet in one program, so the fixtures here
   // import `dsh-flow/remote` and `dsh-flow/types` and never the Host entry.
   "extends": "./tsconfig.base.client.json",
   "compilerOptions": {
     "noEmit": true,
-    "rewriteRelativeImportExtensions": false
+    "rewriteRelativeImportExtensions": false,
+    "types": ["node"]
   },
   "include": [
-    "tests/types/*.client.ts"
+    "tests/types/*.client.ts",
+    "tests/unit/reader-source.test.ts"
   ],
   "references": [
     { "path": "./packages/dsh-flow/tsconfig.client.json" }

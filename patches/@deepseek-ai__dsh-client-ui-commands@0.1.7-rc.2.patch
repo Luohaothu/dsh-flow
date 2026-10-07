@@ -1,0 +1,115 @@
+diff --git a/lib/client.js b/lib/client.js
+index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627ae5aa5c70 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -722,6 +722,7 @@ window.__ModuleLoader__.load({
+ 				"remote.commands"
+ 			];
+ 			directory;
++			unavailable = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(new Set());
+ 			live = {
+ 				contributions: /* @__PURE__ */ new Map(),
+ 				decorations: /* @__PURE__ */ new Map(),
+@@ -961,6 +962,13 @@ window.__ModuleLoader__.load({
+ 				}
+ 				await this.directory.ensureReady(session.sessionId, signal);
+ 				const desc = this.directory.resolve(session.sessionId, typedName);
++				// Reserved plugin command: absence must never downgrade execution intent to a prompt.
++				if (typedName === "agent-team") {
++					const next = new Set(this.unavailable.getSnapshot());
++					if (desc === void 0) next.add(session.sessionId); else next.delete(session.sessionId);
++					this.unavailable.set(next);
++					if (desc === void 0) throw new Error("dsh-flow 尚未启用，请打开插件管理并启用或安装 dsh-flow");
++				}
+ 				if (desc === void 0) return void 0;
+ 				const name = desc.name;
+ 				const canonical = `/${name}${trimmed.slice(token.length)}`;
+@@ -1032,14 +1040,27 @@ window.__ModuleLoader__.load({
+ 			* A refused call throws.
+ 			*/
+ 			async execute(session, line, attachments = []) {
+-				const result = await this.ctx.remote.commands.execute(session.sessionId, line, attachments);
++				const intentKey = `dsh-command-intent:${session.sessionId}`;
++                let submissionId;
++                if (submittedCommandName(line) === "agent-team") {
++                    const saved = sessionStorage.getItem(intentKey);
++                    let pending; try { pending = saved ? JSON.parse(saved) : null; } catch { pending = null; }
++                    submissionId = pending?.line === line ? pending.id : crypto.randomUUID();
++                    sessionStorage.setItem(intentKey, JSON.stringify({line, id:submissionId}));
++                }
++                const result = await this.ctx.remote.commands.execute(session.sessionId, line, attachments, submissionId);
++                if (result.ok && submissionId) sessionStorage.removeItem(intentKey);
+ 				if (!result.ok) throw new Error(`command.execute failed: ${result.error.code}: ${result.error.message}`);
+-				if (result.value === void 0) return {
+-					kind: "error",
+-					text: `unknown or malformed command: ${line}`
+-				};
++				if (result.value === void 0) {
++					if (submittedCommandName(line) === "agent-team") {
++						const next = new Set(this.unavailable.getSnapshot()); next.add(session.sessionId); this.unavailable.set(next);
++						return { kind: "error", text: "dsh-flow 尚未启用，请打开插件管理并启用或安装 dsh-flow" };
++					}
++					return { kind: "error", text: `unknown or malformed command: ${line}` };
++				}
++				this.ctx.get("uiConversation")?.binding(session.sessionId).activate("chat");
+ 				this.notifyExecuted(session.sessionId, submittedCommandName(line), result.value.result);
+-				if (attachments.length > 0 && result.value.result.kind === "error") return {
++				if (result.value.result.kind === "error") return {
+ 					kind: "error",
+ 					text: result.value.result.text
+ 				};
+@@ -1353,6 +1374,12 @@ window.__ModuleLoader__.load({
+ 		* Mount the command service and its per-session popupSelect overlay.
+ 		* @param ctx - client root context.
+ 		*/
++		function UnavailableCommandView({ command, sessionId, layout }) {
++			const unavailable = (0, react.useSyncExternalStore)(fn => command.unavailable.subscribe(fn), () => command.unavailable.getSnapshot());
++			if (!unavailable.has(sessionId)) return null;
++			const close = () => { const next = new Set(command.unavailable.getSnapshot()); next.delete(sessionId); command.unavailable.set(next); };
++			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, { open: true, title: "dsh-flow 尚未启用", closeLabel: "关闭启用提示", onClose: close, children: (0, react_jsx_runtime.jsxs)("div", { children: [(0, react_jsx_runtime.jsx)("p", { children: "请在插件管理中启用或安装 dsh-flow。需求已保留在主会话输入框。" }), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, { onClick: () => { close(); layout.requestNavigation(() => layout.selectPanel("plugins")); }, children: "打开插件管理" })] }) });
++		}
+ 		function apply(ctx) {
+ 			ctx.effect(() => ctx.locale.register(NS, {
+ 				zh,
+@@ -1362,7 +1389,8 @@ window.__ModuleLoader__.load({
+ 			ctx.inject([
+ 				"slots",
+ 				"commandUi",
+-				"sessions"
++				"sessions",
++				"layout"
+ 			], (scope) => {
+ 				const command = scope.commandUi;
+ 				const sessions = scope.get("sessions");
+@@ -1377,6 +1405,7 @@ window.__ModuleLoader__.load({
+ 						return { popup: command.popupFor(actx) };
+ 					}
+ 				}, PopupSelectView));
++				scope.slots.inject("conversation.input.overlay", () => scope.slots.register({ name: "conversation.input.overlay", id: "unavailable-plugin-command", order: 2, inject: sessionId => ({ command, sessionId, layout: scope.layout }) }, UnavailableCommandView));
+ 			});
+ 		}
+ 		//#endregion
+diff --git a/package.json b/package.json
+index c0e21b6fcbf799c804551e1fa678cb2df5d2d72f..95f178cd7065761c7aa68a88007f1c587f3040a0 100644
+--- a/package.json
++++ b/package.json
+@@ -31,7 +31,8 @@
+         "@deepseek-ai/dsh-api-remotes",
+         "@deepseek-ai/dsh-client-locale",
+         "@deepseek-ai/dsh-client-ui-input-trigger",
+-        "@deepseek-ai/dsh-client-ui-conversation"
++        "@deepseek-ai/dsh-client-ui-conversation",
++        "@deepseek-ai/dsh-client-ui-layout"
+       ],
+       "platform": "web"
+     }
+@@ -59,7 +60,8 @@
+     "@deepseek-ai/dsh-session": "0.1.7-rc.2",
+     "@deepseek-ai/dsh-util-values": "0.1.7-rc.2",
+     "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2",
+-    "@deepseek-ai/dsh-client-ui-session": "0.1.7-rc.2"
++    "@deepseek-ai/dsh-client-ui-session": "0.1.7-rc.2",
++    "@deepseek-ai/dsh-client-ui-layout": "0.1.7-rc.2"
+   },
+   "files": [
+     "lib/index.js",

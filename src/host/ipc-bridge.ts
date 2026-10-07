@@ -17,6 +17,9 @@
  * `FLOW_TEST_BRIDGE_RUNTIME_MISMATCH`.
  */
 import type { Context } from '@deepseek-ai/cordis';
+import type {} from '@deepseek-ai/dsh-api-session-controller';
+import { SessionId } from '@deepseek-ai/dsh-session';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
 
 import type { FlowService } from 'dsh-flow';
 import type {
@@ -36,7 +39,7 @@ import type {
 export const name = 'dsh-flow-ipc-bridge';
 
 /** The bridge may only exist where the cluster service is live. */
-export const inject = ['flow'];
+export const inject = ['flow','sessions','agents','sessionPersistence','sessionController'];
 
 /** The extra operations the acceptance runner drives, beyond {@link FlowService}. */
 export interface FlowTestOperations {
@@ -135,7 +138,7 @@ export type IpcOutbound = IpcReady | IpcReply | IpcFailure;
 export function apply(ctx: Context): void {
   if (process.env.FLOW_IPC !== '1' || typeof process.send !== 'function') return;
   const runtime = requireTestRuntime(ctx.flow);
-  ctx.effect(() => install(runtime), 'dsh-flow: acceptance ipc bridge');
+  ctx.effect(() => install(runtime,ctx), 'dsh-flow: acceptance ipc bridge');
 }
 
 /**
@@ -157,7 +160,7 @@ export function requireTestRuntime(service: FlowService): FlowTestRuntime {
 }
 
 /** Install the listener pair and return the disposer that removes both. */
-function install(runtime: FlowTestRuntime): () => void {
+function install(runtime: FlowTestRuntime,ctx:Context): () => void {
   const onDisconnect = (): void => {
     // A killed runner must not leave an orphaned host holding the workspace, the
     // ports and the cluster database. The same drain, awaited, before the
@@ -169,7 +172,7 @@ function install(runtime: FlowTestRuntime): () => void {
   const onMessage = (message: unknown): void => {
     if (!isIpcRequest(message)) return;
     Promise.resolve()
-      .then(() => handle(runtime, message))
+      .then(() => message.op==='observation-fixture'?observationFixture(ctx,message.payload):handle(runtime, message))
       .then(result => send({ flow: true, requestId: message.requestId, ok: true, result }))
       .catch((error: unknown) => send({
         flow: true,
@@ -196,6 +199,35 @@ function isIpcRequest(value: unknown): value is IpcRequest {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return record.flow === true && typeof record.requestId === 'string' && typeof record.op === 'string';
+}
+
+/** Persisted native message fixture, never an execution or throughput claim. */
+async function observationFixture(ctx:Context,payload:Record<string,unknown>|undefined):Promise<unknown> {
+  const id=typeof payload?.session_id==='string'?SessionId(payload.session_id):undefined;
+  if(payload?.inspect===true&&id){
+    let snapshot:unknown;
+    if(payload.read===true){
+      const controller=new AbortController();
+      const iterator=ctx.sessionController.follow({address:{kind:'session',sessionId:id},observationOnly:true},controller.signal)[Symbol.asyncIterator]();
+      try{snapshot=(await iterator.next()).value;}catch(error){snapshot={error:messageOf(error)};}finally{controller.abort();await iterator.return?.();}
+    }
+    return {agent_active:ctx.agents.get(id)!==undefined,session_live:ctx.sessions.get(id)!==undefined,...(snapshot===undefined?{}:{snapshot})};
+  }
+  const options={meta:{cwd:stringField(payload,'workspace')??process.cwd()}};
+  const session=id?ctx.sessions.get(id):payload?.cold===true?ctx.sessions.prepare(undefined,options):ctx.sessions.create(undefined,options);
+  if(!session)throw new Error('Observation fixture session unavailable');
+  const count=typeof payload?.count==='number'?payload.count:1;
+  if(!Number.isSafeInteger(count)||count<1||count>200)throw new Error('Invalid observation fixture count');
+  const prefix=stringField(payload,'prefix')??'native-history';
+  for(let index=0;index<count;index++) {
+    const turn=session.snapshotEvents().filter(event=>event.type==='turn/start').length+1;
+    session.append('turn/start',{turn});
+    session.append('user/message',createUserMessage({source:{kind:'user'},content:[{type:'text',text:`${prefix}-${index}：这是一条由原生 Session API 保存的阅读验收记录。\n${'正文保持独立身份和原始顺序。'.repeat(12)}`}]}),{surfaceOp:'append'});
+    session.append('turn/end',{turn,reason:{kind:'completed'}});
+  }
+  if(payload?.cold===true){const handle=await ctx.sessionPersistence.create(session.header);try{await handle.append(session.snapshotEvents());await handle.flush();}finally{await handle.close();}}
+  else await ctx.sessions.flush(session);
+  return {session_id:session.id,count,kind:'native persisted read fixture'};
 }
 
 /** Send one envelope to the runner, tolerating a channel that already closed. */

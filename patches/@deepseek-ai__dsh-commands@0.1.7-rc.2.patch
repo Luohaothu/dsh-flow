@@ -1,0 +1,88 @@
+diff --git a/lib/index.js b/lib/index.js
+index bc72ae650e3cb6e04bb0244927e8f3cf60609492..4dfe73758296ac108aa879ba1866a48fc17d8e29 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -324,13 +324,15 @@ let CommandRuntime = (() => {
+ 		* @returns the settled execution (result + lifecycle pairing id), or
+ 		*   `undefined` when syntax or name does not resolve.
+ 		*/
+-		async execute(agent, line, submittedAttachments, signal) {
++		async execute(agent, line, submittedAttachments, submissionId, signal) {
++            if (submissionId !== undefined && typeof submissionId !== "string") { signal ??= submissionId; submissionId = undefined; }
++            signal ??= new AbortController().signal;
+ 			const parsed = parseCommand(line);
+ 			if (parsed === void 0) return void 0;
+ 			const command = this.view(agent).get(parsed.name);
+ 			if (command === void 0) return void 0;
+ 			if (signal.aborted) throw abortError(signal);
+-			const commandId = this.mintCommandId();
++			const commandId = submissionId ? CommandId(`cmd-client-${submissionId}`) : this.mintCommandId();
+ 			this.appendLifecycle(agent.session, "command/run", {
+ 				commandId,
+ 				name: parsed.name,
+diff --git a/lib/typert.host.js b/lib/typert.host.js
+index 011c289f2117b1ebb87e8e8a0d835d44c146e542..b54b508f23eb2c25bdb7c5dd652801ea0f7908df 100644
+--- a/lib/typert.host.js
++++ b/lib/typert.host.js
+@@ -89,7 +89,8 @@ export const TYPERT = {
+             create: _deepseek_ai_dsh_commands_commands_execute_parameter_2$schema,
+           },
+         },
+-      ],
++      {name: 'submissionId', wire: 'submissionId', source: 'json', codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
++],
+       cancellation: { parameter: 'signal' },
+       result: {
+         mode: 'strict',
+diff --git a/lib/typert.remote-client.d.ts b/lib/typert.remote-client.d.ts
+index 96ff83ce03e7caabf31135eb92190cdf536ebe67..556c6a5bb5bb3e3477e9faa9d90d492018ac05a5 100644
+--- a/lib/typert.remote-client.d.ts
++++ b/lib/typert.remote-client.d.ts
+@@ -8,18 +8,18 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ 
+ declare module '@deepseek-ai/dsh-typert-protocol' {
+   interface TypertRemoteNamespace$636f6d6d616e6473 {
+-    execute: (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    execute: (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
+     list: (agentId: SessionId) => Promise<RemoteResult<readonly CommandDescriptor[]>>
+   }
+   interface TypertRemoteMap {
+-    'commands/execute': (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    'commands/execute': (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
+     'commands/list': (agentId: SessionId) => Promise<RemoteResult<readonly CommandDescriptor[]>>
+   }
+   interface TypertRemoteNamespaceMap {
+     'commands': TypertRemoteNamespace$636f6d6d616e6473
+   }
+   interface TypertRemoteScopeMap {
+-    'agent:commands/execute': (line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    'agent:commands/execute': (line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
+     'agent:commands/list': () => Promise<RemoteResult<readonly CommandDescriptor[]>>
+   }
+ }
+diff --git a/lib/typert.remote-client.js b/lib/typert.remote-client.js
+index 5f4d14e8f3acf0ef745788c39d1c52861320c9b9..893741c5df889184cf6d89066a569516bd03e061 100644
+--- a/lib/typert.remote-client.js
++++ b/lib/typert.remote-client.js
+@@ -86,7 +86,8 @@ export const TYPERT_REMOTE = {
+             create: _deepseek_ai_dsh_commands_commands_execute_parameter_2$schema,
+           },
+         },
+-      ],
++      {name: 'submissionId', wire: 'submissionId', source: 'json', codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
++],
+       cancellation: { parameter: 'signal' },
+       result: {
+         mode: 'strict',
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+index 0a33a7ad7e2c02f1a20df2d4bf0d13d2dd0083b3..1060b2524136668a20d7fb49287c87b1825e5471 100644
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -140,6 +140,7 @@ export declare class CommandRuntime extends TypertRemoteService {
+      *   `undefined` when syntax or name does not resolve.
+      */
+     execute(agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal): Promise<CommandExecution | undefined>;
++    execute(agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId: string | undefined, signal: AbortSignal): Promise<CommandExecution | undefined>;
+     /** Contained `command/done` error append for a thrown handler or admission failure. */
+     private settleThrown;
+     /** Mint the next pairing id (monotonic; instance-token-prefixed so a resumed log never repeats one). */

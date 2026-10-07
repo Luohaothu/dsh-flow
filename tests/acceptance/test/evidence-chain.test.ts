@@ -53,7 +53,7 @@ test('context gate judges the request after compaction, including its pending pr
     'a rejected step did not send an over-budget request');
 });
 
-test('browser gate rejects launch failures and dashboards without an opened cluster panel', async (t: TestContext) => {
+test('browser gate rejects launch failures and dashboards without an opened plugin manager', async (t: TestContext) => {
   
   
   const { run: checkBrowser } = browserChecks
@@ -71,7 +71,7 @@ test('browser gate rejects launch failures and dashboards without an opened clus
   ] satisfies readonly (readonly [string, Record<string, unknown>])[]) insert.run('browser-cluster', tool, 'SETTLED', tool, JSON.stringify(args),
     JSON.stringify({ isError: true, text: 'Error: Target page, context or browser has been closed' }));
   db.prepare('INSERT INTO transactions VALUES (?, ?)').run('browser-cluster',
-    JSON.stringify({ page_title: 'Hierarchical agent cluster', status: 'blocked' }));
+    JSON.stringify({ page_title: '插件', status: 'blocked' }));
   db.close();
   const verdict = await checkBrowser({
     report: { cluster_id: 'browser-cluster', web_url: url }, layout: { data },
@@ -100,8 +100,8 @@ test('browser gate rejects launch failures and dashboards without an opened clus
     events: [{ type: 'turn-end', data: { role: 'worker', stop_reason: 'completed' } }],
   });
   assert.equal(dashboardOnly.scenario_status, 'FAILED',
-    'a navigation that only displays the Cluster button has not opened the cluster panel');
-  assert.equal(required(dashboardOnly.checks.find(check => check.name === 'cluster-panel-visible')).passed, false);
+    'a navigation that only displays the Cluster button has not opened the plugin manager');
+  assert.equal(required(dashboardOnly.checks.find(check => check.name === 'plugin-manager-visible')).passed, false);
 
   const panel = new DatabaseSync(join(data, 'cluster.sqlite'));
   const addEffect = panel.prepare('INSERT INTO effects VALUES (?, ?, ?, ?, ?, ?)');
@@ -112,9 +112,9 @@ test('browser gate rejects launch failures and dashboards without an opened clus
     JSON.stringify({ element: 'Cluster', ref: 'e30' }), JSON.stringify({ isError: false, text: 'Clicked Cluster' }));
   addEffect.run('browser-cluster', 'mcp__playwright-mcp__browser_snapshot', 'SETTLED', 'panel-snapshot',
     '{}', JSON.stringify({ isError: false,
-      text: '### Page\n- Page Title: DSH Local Build\n### Snapshot\n- heading "Hierarchical agent cluster" [level=2]' }));
+      text: '### Page\n- Page Title: DSH Local Build\n### Snapshot\n- heading "插件" [level=2]' }));
   panel.prepare('UPDATE transactions SET result=?').run(JSON.stringify({
-    page_title: 'DSH Local Build', panel_heading: 'Hierarchical agent cluster',
+    page_title: 'DSH Local Build', panel_heading: '插件',
   }));
   panel.close();
   const opened = await checkBrowser({
@@ -971,4 +971,23 @@ test('an empty real SQLite usage aggregate keeps nullable SUM counters across re
   for (const key of ['total_tokens', 'prompt_tokens', 'completion_tokens', 'cached_tokens', 'reasoning_tokens', 'unknown_requests', 'overshoot']) {
     assert.equal(asObject(ledger.usage)?.[key], null, `${key} is a nullable SQL SUM, not a fabricated zero`);
   }
+});
+
+test('queued usage reservations do not count as concurrent admitted model requests', t => {
+  const layout=createRunLayout(scratch(t),'queued-model-requests');
+  const store=new ClusterStore(join(layout.data,'cluster.sqlite'));
+  store.createCluster({id:'queued',objective:'serialized provider requests',workspace:layout.workspace,capabilities:[],limits:{max_llm_concurrency:1}},{});
+  for(const [id,start,end] of [['first',10,40],['second',20,50]] as const)store.run(
+    "INSERT INTO usage_receipts(request_id,cluster_id,role,kind,provider,model,status,created,settled) VALUES (?,?,'worker','worker','fixture','fixture','SETTLED',?,?)",id,'queued',start,end);
+  store.close();
+  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'legacy interval evidence still detects overlap');
+  const admitted=new ClusterStore(join(layout.data,'cluster.sqlite'));
+  for(const count of [1,0,1,0])admitted.appendEvent('queued','llm-slot',{in_use:count,limit:1});
+  admitted.close();
+  const ledger=readStoneLedger(layout,'queued');
+  assert.equal(ledger.max_llm_inflight,1,'durable permit receipts show sequential admission despite overlapping reservations');
+  assert.equal(ledger.llm_inflight_over_limit,false);
+  const violated=new ClusterStore(join(layout.data,'cluster.sqlite'));
+  violated.appendEvent('queued','llm-slot',{in_use:2,limit:1});violated.close();
+  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'an actual permit violation remains a failure');
 });

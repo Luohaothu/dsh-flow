@@ -11,11 +11,10 @@ import { randomUUID } from 'node:crypto';
 import { ReasoningEffortId, createUserMessage } from '@deepseek-ai/dsh-llm';
 
 import type { Context, Fiber } from '@deepseek-ai/cordis';
-import { scopeOf } from '@deepseek-ai/dsh-scope';
 import type { Agent, AgentHandle, AgentOptions } from '@deepseek-ai/dsh-agent';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { SessionEvent, SessionEventMap, TurnEndReason } from '@deepseek-ai/dsh-session';
-import type { ContentBlock, GenerateOptions, StreamChunk, TextBlock, TokenUsage, ToolCallId } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, GenerateOptions, StreamChunk, TextBlock, TokenUsage, ToolCallId, UserMessage } from '@deepseek-ai/dsh-llm';
 import type { ToolDispatchExecution, ToolExecution, ToolExecutionFailure, ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction';
 import type { TokenMeasurement } from '@deepseek-ai/dsh-token-meter';
@@ -31,6 +30,7 @@ import type { AgentRecord, FlowLogger, FlowModelSelection } from './model.ts';
 import type { FlowAgentRole, FlowCapability, FlowUsageStatus } from '../types.ts';
 import type { ClusterStore } from './store.ts';
 import { CAPABILITY_PACKAGES, CAPABILITY_PACKAGE_CONFIG, CAPABILITY_TOOLS, FORBIDDEN_WORKER_TOOLS } from './protocol.ts';
+import type { FlowCommunicationSource } from '../messages.ts';
 
 const SIDE_EFFECT_TOOLS = new Set([
   'write', 'edit', 'bash', 'job_kill', 'job_output',
@@ -39,15 +39,16 @@ const SIDE_EFFECT_TOOLS = new Set([
   'mcp__playwright-mcp__browser_navigate',
 ]);
 
-/** The message source every cluster prompt carries, registered below. */
+/** Source of subsequent runtime scheduling prompts; the initial task is user input. */
 export const FLOW_SOURCE = { kind: 'flow' } as const;
 
 // The host's message-source vocabulary is merge-extensible: a producer declares
-// its own `kind` in its own module. The flow plugin's prompts are neither the
-// user's nor a system prompt, so they register their own source here.
+// its own `kind` in its own module. Scheduling and communication after the
+// initial task keep their producer identity instead of inventing human input.
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     flow: { kind: 'flow' };
+    'flow-message': FlowCommunicationSource;
   }
 }
 
@@ -235,6 +236,7 @@ export interface ReserveLlmRequestOptions {
   readonly role: FlowAgentRole
   readonly kind: string
   readonly model: string
+  readonly reasoningEffort?: string | undefined
   readonly provider: string
   readonly budgetIds: readonly string[]
   readonly reservationTokens: number
@@ -267,6 +269,8 @@ export interface ReleaseLlmRequestOptions {
 /** Options for {@link mountCapabilityTools}. */
 export interface MountCapabilityOptions {
   readonly capabilities: readonly FlowCapability[]
+  /** The native Agent is the scope key, even across separately installed packages. */
+  readonly scope: Agent
   readonly logger?: FlowLogger | undefined
 }
 
@@ -309,6 +313,8 @@ export interface RunTurnOptions {
   readonly agent: AgentRecord
   readonly role: FlowAgentRole
   readonly prompt: string
+  /** Individually attributed deliveries, admitted in the same native step. */
+  readonly messages?: readonly UserMessage[] | undefined
   readonly systemInstructions?: string | null | undefined
   readonly allowedTools: readonly string[]
   readonly globalTools: readonly string[]
@@ -332,6 +338,17 @@ export interface RunTurnOptions {
 }
 
 // -------------------------------------------------------------------- helpers
+
+/** Session lineage follows recorded creation ownership, never the workspace name. */
+export function nativeSessionParent(store: ClusterStore, agent: AgentRecord): { parentSession?: ReturnType<typeof SessionId> } {
+  const meta = recordOf(agent.meta);
+  const parentId = typeof meta.parent_agent_id === 'string' ? meta.parent_agent_id
+    : typeof meta.allocated_by === 'string' ? meta.allocated_by : null;
+  const parent = parentId ? store.getAgent(parentId)?.session_id : null;
+  const owner = store.get('SELECT main_session_id FROM team_runs WHERE run_id=?', agent.cluster_id)?.main_session_id;
+  const id = parent ?? (typeof owner === 'string' ? owner : null);
+  return id ? { parentSession: SessionId(id) } : {};
+}
 
 /** A plain copy of an already-validated JSON object, or an empty one. */
 function recordOf(value: unknown): Record<string, unknown> {
@@ -766,7 +783,7 @@ export function reserveLlmRequest(store: ClusterStore, options: ReserveLlmReques
     }
     store.insertUsageReceipt({
       request_id: requestId, cluster_id, agent_id, node_id, transaction_id, role, kind,
-      provider, model, status: 'RESERVED', reservation_tokens: reservationTokens, turn_seq, attempt: 1,
+      provider, model, reasoning_effort: options.reasoningEffort ?? null, status: 'RESERVED', reservation_tokens: reservationTokens, turn_seq, attempt: 1,
       // The exact grant that was charged: settlement, release and recovery must
       // all move budget in the same scope the reservation took it from.
       budget_scope_id: budgetIds.length === 1 ? budgetIds[0] ?? null : null,
@@ -955,15 +972,15 @@ const CAPABILITY_PUBLISH_SETTLE_MS = 15_000;
  * @param capabilities - the capability set the turn declared.
  * @param timeoutMs - longest wait before the gaps are treated as final.
  */
-async function awaitCapabilityTools(agentCtx: Context, capabilities: readonly FlowCapability[], timeoutMs: number): Promise<CapabilityToolGap[]> {
-  let gaps = missingCapabilityTools(agentCtx, capabilities);
+async function awaitCapabilityTools(agentCtx: Context, capabilities: readonly FlowCapability[], scope: Agent, timeoutMs: number): Promise<CapabilityToolGap[]> {
+  let gaps = missingCapabilityTools(agentCtx, capabilities, scope);
   if (gaps.length === 0) return gaps;
   const deadline = Date.now() + timeoutMs;
   while (gaps.length > 0 && Date.now() < deadline) {
     // The provider's own mount is asynchronous and offers no completion signal
     // through this seam, so the wait is a bounded poll of the resolved view.
     await new Promise(resolve => setTimeout(resolve, 100));
-    gaps = missingCapabilityTools(agentCtx, capabilities);
+    gaps = missingCapabilityTools(agentCtx, capabilities, scope);
   }
   return gaps;
 }
@@ -977,7 +994,7 @@ async function awaitCapabilityTools(agentCtx: Context, capabilities: readonly Fl
  * import cannot express it: which packages a turn needs depends on the
  * capability set its allocation carries.
  */
-export async function mountCapabilityTools(agentCtx: Context, { capabilities, logger }: MountCapabilityOptions): Promise<MountedCapabilities> {
+export async function mountCapabilityTools(agentCtx: Context, { capabilities, scope, logger }: MountCapabilityOptions): Promise<MountedCapabilities> {
   const packages = new Set<string>();
   for (const capability of capabilities ?? []) {
     for (const packageName of CAPABILITY_PACKAGES[capability] ?? []) packages.add(packageName);
@@ -998,12 +1015,12 @@ export async function mountCapabilityTools(agentCtx: Context, { capabilities, lo
     // worth waiting for the fiber to settle. The wait is bounded because a
     // capability this host can never activate is a gap to report, not a reason
     // to hold a turn open.
-    if (missingCapabilityTools(agentCtx, capabilities).length > 0) {
+    if (missingCapabilityTools(agentCtx, capabilities, scope).length > 0) {
       await settleCapabilityFiber(fiber, CAPABILITY_MOUNT_SETTLE_MS);
     }
   }
   if (packages.size && !mounted.length) logger?.warn?.('no capability tool package mounted');
-  const missing = missingCapabilityTools(agentCtx, capabilities);
+  const missing = missingCapabilityTools(agentCtx, capabilities, scope);
   return { mounted, missing };
 }
 
@@ -1012,7 +1029,7 @@ export async function mountCapabilityTools(agentCtx: Context, { capabilities, lo
  * silently dropped: a declaration without the tool behind it would fake
  * support for the capability.
  */
-export function missingCapabilityTools(agentCtx: Context, capabilities: readonly FlowCapability[], scope = scopeOf(agentCtx)): CapabilityToolGap[] {
+export function missingCapabilityTools(agentCtx: Context, capabilities: readonly FlowCapability[], scope: Agent): CapabilityToolGap[] {
   const missing: CapabilityToolGap[] = [];
   // The tool registry is ONE service with scope-keyed layers, and `get(name)`
   // without a scope reads the *global* layer only — which never holds a tool
@@ -1071,7 +1088,7 @@ export function installToolPolicy(agentCtx: Context, { role, allowedTools, globa
  */
 export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<TurnOutcome> {
   const {
-    agent, role, prompt, systemInstructions = null, allowedTools, globalTools, capabilities = [], resume, cwd, model, signal, logger,
+    agent, role, prompt, messages = [], systemInstructions = null, allowedTools, globalTools, capabilities = [], resume, cwd, model, signal, logger,
     transactionId = null, budgetIds, modelAccounting = true, turnSeq, flow, contextLimits = {}, forceCompact = false,
     onAgentReady, onAdmitted, onFlushed, setup: setupScope,
   } = options;
@@ -1088,6 +1105,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   // Set only once the prompt has really been handed to the native session, so
   // delivery acks can be gated on it.
   let admitted = false;
+  let taskPrompt: UserMessage | null = null;
   const agentOptions: AgentOptions = {
     ...(model.provider === undefined ? {} : { provider: model.provider }),
     ...(model.model === undefined ? {} : { model: model.model }),
@@ -1109,7 +1127,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   // check share it, so a turn pays for at most one compaction request.
   const turnState: TurnContextState = { compacted: false, compactedAt: null };
   const rejections = new Map<string, StepRejection>();
-  const setup = async (agentCtx: Context): Promise<void> => {
+  const setup = async (agentCtx: Context, nativeAgent: Agent): Promise<void> => {
     if (systemInstructions !== null) {
       // The agent scope is recreated on resume, while the native Session keeps
       // its system head. Registering identical instructions here retains them
@@ -1124,7 +1142,18 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     }
     await setupScope?.(agentCtx);
     scopeCtx = agentCtx;
-    const mounted = await mountCapabilityTools(agentCtx, { capabilities, logger });
+    // The native Inbox claims next-step injections before the waking prompt.
+    // Keep the task first in model history while preserving each claim/source.
+    agentCtx.on('agent/pre-step', async (_payload, next) => {
+      const decision = await next();
+      if (decision.kind !== 'enter' || taskPrompt === null) return decision;
+      const index = decision.messages.findIndex(message => message.id === taskPrompt?.id);
+      if (index <= 0) return decision;
+      const ordered = [...decision.messages];
+      const [task] = ordered.splice(index, 1);
+      return { ...decision, messages: [task!, ...ordered] };
+    });
+    const mounted = await mountCapabilityTools(agentCtx, { capabilities, scope: nativeAgent, logger });
     if (mounted.missing.length) {
       // Recorded, not fatal: the packages this turn mounted are not the whole
       // answer. The set is judged after the Agent is published, where a profile
@@ -1141,11 +1170,11 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   };
 
   let handle: AgentHandle;
+  let resumeSession = resume;
   try {
     // The authoritative answer is the session store; `turns > 0` is only the
     // fallback for a host without persistence. Keep the probe inside cleanup:
     // cancellation or a probe failure must release the session listener too.
-    let resumeSession = resume;
     if (typeof flow.sessionExists === 'function') {
       const exists = await flow.sessionExists(agent.session_id);
       if (exists !== null) resumeSession = exists;
@@ -1155,7 +1184,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
       ? await ctx.agents.resume({ resumeSessionId: SessionId(agent.session_id), agentOptions, setup })
       : await ctx.agents.create({
         sessionId: SessionId(agent.session_id),
-        ...(cwd ? { meta: { cwd } } : {}),
+        meta: { ...(cwd ? { cwd } : {}), ...nativeSessionParent(flow.store, agent) },
         agentOptions,
         setup,
       });
@@ -1184,7 +1213,7 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     // request. Judging it here rather than in the setup callback is what lets a
     // profile register a capability's tools at publication time.
     if (scopeCtx) {
-      const gaps = await awaitCapabilityTools(scopeCtx, capabilities, CAPABILITY_PUBLISH_SETTLE_MS);
+      const gaps = await awaitCapabilityTools(scopeCtx, capabilities, live, CAPABILITY_PUBLISH_SETTLE_MS);
       if (gaps.length > 0) {
         missingReport.push(...gaps);
         throw Object.assign(new Error(`Capability tools unavailable: ${gaps.map(entry => `${entry.capability}→${entry.tool}`).join(', ')}`), {
@@ -1202,7 +1231,16 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     // Native cancel() only aborts existing activity. A subsequent followup()
     // wakes a fresh turn, so cancellation during preparation must stop here.
     signal?.throwIfAborted();
-    live.followup(createUserMessage({ content: [{ type: 'text', text: prompt }], source: FLOW_SOURCE }));
+    // Session existence alone does not prove the initial task was admitted:
+    // creation can be persisted before its first step. Read the native message
+    // projection; small host fixtures may only expose create/resume identity.
+    const hasPriorPrompt = typeof live.session.deriveMessages === 'function'
+      ? live.session.deriveMessages().some(message => message.role === 'user') : resumeSession;
+    taskPrompt = createUserMessage({ content: [{ type: 'text', text: prompt }], source: hasPriorPrompt ? FLOW_SOURCE : { kind: 'user' } });
+    // Inject communication at the next step, then wake exactly one turn. Native
+    // followup prompts each own a turn, so batching those would multiply turns.
+    for (const input of messages) live.send(input, 'next-step', false);
+    live.followup(taskPrompt);
     admitted = true;
     onAdmitted?.();
     await live.whenIdle();
@@ -1405,7 +1443,7 @@ function installRequestAccounting(agentCtx: Context, { agent, role, transactionI
     };
     const reserve = (budgetIdsForAttempt: readonly string[] = selectChain()): LlmRequestReservation => reserveLlmRequest(store, {
       cluster_id: agent.cluster_id, agent_id: agent.id, node_id: agent.node_id,
-      transaction_id: transactionId, role, kind, model: options.model, provider: options.provider,
+      transaction_id: transactionId, role, kind, model: options.model, provider: options.provider, reasoningEffort: options.reasoningEffort,
       budgetIds: budgetIdsForAttempt, reservationTokens, turn_seq: agent.turns ?? 0,
       maxRequests: flow.workerRequestAllowance?.(agent) ?? null,
       // Compaction uses its earmarked pool first, with the owning node as

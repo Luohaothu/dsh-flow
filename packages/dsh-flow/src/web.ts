@@ -22,6 +22,9 @@ import type { Context } from '@deepseek-ai/cordis';
 import { Remote, bindTypertRemote } from '@deepseek-ai/dsh-typert-protocol';
 
 import type {
+  FlowTeamRun,
+  FlowAgentSession,
+  FlowTeamSnapshot,
   FlowControlAction,
   FlowEventQuery,
   FlowEventsResult,
@@ -61,13 +64,33 @@ export class FlowRemote extends Service {
     super(ctx, 'flowRemote');
   }
 
+  /** List the owning conversation's current and historical runs. */
+  @Remote
+  teamRuns(sessionId: string, signal: AbortSignal): readonly FlowTeamRun[] {
+    signal.throwIfAborted();
+    return this.ctx.flow.teamRuns(sessionId);
+  }
+
+  /** Native Session relation and current continuation policy; observation only. */
+  @Remote
+  agentSession(sessionId: string, signal: AbortSignal): FlowAgentSession | null {
+    signal.throwIfAborted();
+    return this.ctx.flow.agentSession(sessionId);
+  }
+
+  /** Read a transactionally consistent observing snapshot. */
+  @Remote
+  teamRead(sessionId: string, runId: string, signal: AbortSignal): FlowTeamSnapshot {
+    signal.throwIfAborted();
+    return this.ctx.flow.teamRead(sessionId, runId);
+  }
+
   /**
    * Start one cluster.
    * @param request - objective plus overrides; omitted fields come from configuration.
    * @param signal - carrier cancellation.
    * @returns the new cluster's initial snapshot.
    */
-  @Remote
   start(request: FlowStartRequest, signal: AbortSignal): FlowSnapshot {
     signal.throwIfAborted();
     return this.ctx.flow.start(request);
@@ -118,7 +141,6 @@ export class FlowRemote extends Service {
    * @param signal - carrier cancellation.
    * @returns the snapshot after the transition.
    */
-  @Remote
   control(id: string, action: FlowControlAction, signal: AbortSignal): FlowSnapshot {
     signal.throwIfAborted();
     return this.ctx.flow.control(id, action);

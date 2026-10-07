@@ -204,7 +204,7 @@ test('the inbox is real work: an event becomes an action and is consumed by the 
   assert.equal(queued.some(row => row.subject === 'plan-audit-requested'), true);
 
   runtime.enableScheduling();
-  const held = await runtime.acquireLlmSlot();
+  const held = await runtime.acquireLlmSlot(clusterId);
   await runtime.tick();
   held();
   const consumed = runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'CONSUMED' });
@@ -247,7 +247,7 @@ test('stale work, anomalies and load are published to the roles that own them', 
 
   // Saturation is a load signal for the Allocator.
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const held = await runtime.acquireLlmSlot();
+  const held = await runtime.acquireLlmSlot(clusterId);
   await runtime.tick();
   held();
   const load = runtime.store.listInbox(clusterId, { recipient: allocator.agent_id, status: null }).filter(row => row.subject === 'load-changed');

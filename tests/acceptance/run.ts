@@ -441,7 +441,7 @@ async function runOnce({ args, caseDef, mode, runId }: { args: RunArgs; caseDef:
   const baselineArgs: BeforeCheckContext = { caseDef, mode, layout, workspace, report, args };
   if (checksModule?.before) report.baseline = await checksModule.before(baselineArgs);
 
-  ensureProfile(layout.home, profile, { bundles: WEB_PROFILE_BUNDLES });
+  ensureProfile(layout.home, profile, { bundles: caseDef.id==='panel'?[...WEB_PROFILE_BUNDLES,'dsh-flow']:WEB_PROFILE_BUNDLES });
   // Chromium's SingletonSocket uses a Unix-domain pathname with a hard
   // length cap. Keep the actual scratch files under this isolated run, but
   // expose a short, per-run TMPDIR alias to the browser-capable host.
@@ -1699,8 +1699,12 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
       }
       return peak;
     };
+    // Reservations begin before permit admission and can remain unsettled
+    // after cancellation. The scheduler's permit receipts record actual
+    // concurrent admissions; older ledgers fall back to request intervals.
+    const permits=all("SELECT json_extract(data,'$.in_use') AS in_use FROM events WHERE cluster_id=? AND type='llm-slot'",cluster).map(row=>asNumber(row.in_use)).filter((value):value is number=>value!==null);
     const receipts = all('SELECT created, settled FROM usage_receipts WHERE cluster_id=?', cluster);
-    parsed.max_llm_inflight = receipts.length ? maxOverlap(receipts) : null;
+    parsed.max_llm_inflight = permits.length?Math.max(...permits):receipts.length?maxOverlap(receipts):null;
     const turnEvents = all("SELECT type,data,at FROM events WHERE cluster_id=? AND type IN ('turn-start','turn-end') ORDER BY seq", cluster);
     const openTurns = new Map<string, number>();
     const turnIntervals: { created: number; settled: number }[] = [];

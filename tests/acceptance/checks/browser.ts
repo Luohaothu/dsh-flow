@@ -62,7 +62,7 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
   const clickedAt = navigatedAt < 0 ? -1 : browserEffects.findIndex((row, index) => index > navigatedAt
     && row.ok && row.tool.endsWith('browser_click'));
   const panelSnapshot = clickedAt < 0 ? null : browserEffects.slice(clickedAt + 1).find(row => row.ok
-    && row.tool.endsWith('browser_snapshot') && /heading "Hierarchical agent cluster"/i.test(row.text));
+    && row.tool.endsWith('browser_snapshot') && /heading "插件"/i.test(row.text));
   push('browser-tools-mounted', browserEffects.length > 0,
     `${browserEffects.length} browser tool calls recorded: ${tools.join(', ') || 'none'}${missing.length ? ` (${missing.length} turns reported unmounted capability tools)` : ''}`);
   push('browser-navigate-called', Boolean(navigation), navigation
@@ -71,9 +71,9 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
     ? 'native browser snapshot returned page content' : `no successful browser snapshot; calls: ${tools.join(', ') || 'none'}`);
   push('browser-click-called', clickedAt >= 0,
     clickedAt >= 0 ? 'browser clicked a control after authenticating' : 'no successful click after navigation');
-  push('cluster-panel-visible', Boolean(panelSnapshot),
-    panelSnapshot ? 'native post-click snapshot contains the Hierarchical agent cluster heading'
-      : 'no successful post-click snapshot contains the cluster panel heading');
+  push('plugin-manager-visible', Boolean(panelSnapshot),
+    panelSnapshot ? 'native post-click snapshot contains the 插件 heading'
+      : 'no successful post-click snapshot contains the plugin manager heading');
   push('browser-effects-settled', browserEffects.length > 0 && browserEffects.every(row => row.status === 'SETTLED'),
     JSON.stringify(browserEffects.map(row => ({ tool: row.tool, status: row.status, isError: row.body?.isError ?? null }))));
 
@@ -88,7 +88,7 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
   const title = panelSnapshot?.text?.match(/^-\s*Page Title:\s*(.+)$/im)?.[1]?.trim() ?? null;
   const named = Boolean(navigation && title && results.some(row => {
     const result = String(row.result).toLowerCase();
-    return result.includes(title.toLowerCase()) && result.includes('hierarchical agent cluster');
+    return result.includes(title.toLowerCase()) && result.includes('插件');
   }));
   push('result-names-the-page', named,
     title ? `native snapshot title ${JSON.stringify(title)}; result ${String(results[0]?.result ?? '').slice(0, 200)}` : 'no native page title observed');
@@ -97,7 +97,7 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
   ledger.close();
 
   const failed = checks.filter(entry => entry.passed === false);
-  const environmentFailed = browserEffects.some(row => row.body?.isError && /Socket path too long|Target page, context or browser has been closed|Executable doesn't exist/.test(row.text ?? ''))
+  const environmentFailed = browserEffects.some(row => row.body?.isError && /Socket (?:directory )?path (?:is )?too long|Target page, context or browser has been closed|Executable doesn't exist/i.test(row.text ?? ''))
     || failed.some(entry => entry.name === 'browser-tools-mounted');
   const mechanismFailed = failed.some(entry => entry.name === 'cluster-database-present');
   return {

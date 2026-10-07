@@ -9,16 +9,21 @@ packages/dsh-flow/
   src/
     index.ts               插件装配、恢复及服务发布
     config.ts              配置解析与启动参数合并
-    service.ts             ctx.flow 的七个公共操作
+    service.ts             集群操作与主会话团队绑定
     types.ts               宿主端、远程接口、浏览器端共享的传输类型
     validation.ts          输入校验
     errors.ts              公共错误构造
-    tools.ts               用户侧 flow_start/read/control
+    command.ts             /agent-team 与原生主会话指令
+    tools.ts               可选旧程序化消费者，标准组合不加载
     web.ts                 标准远程接口服务
     client.ts              浏览器端装配
     client/
-      operations.ts        远程调用、分页和结果类型收窄
-      panel.tsx            原生面板
+      observer.ts          主会话归属、快照一致性与重连
+      team-view.tsx        团队内容、树、拓扑与只读联动
+      reader.tsx           完整原生 Conversation 观察与保留释放
+      agent-session.ts     完整子会话导航与面包屑
+      surfaces.tsx         官方停靠容器装配
+      settings.tsx         显示偏好草稿与导航守卫
     core/
       protocol.ts          角色权限、动作、状态、能力映射
       model.ts             内部对象类型与组件接口
@@ -26,6 +31,7 @@ packages/dsh-flow/
       actions.ts           任务单元、分配和审查动作处理
       role-tools.ts        智能体作用域内的模型工具
       runtime.ts           一轮原生智能体执行与请求、工具钩子
+      team.ts              同一版本团队投影与等待/回收语义
       store.ts             SQLite 状态、事件和回执
       budget.ts            预算预留、结算、调拨与汇总
       communication.ts     消息、群组、黑板及订阅
@@ -41,8 +47,8 @@ packages/typert-protocol/   工作区内的远程接口协议装配
 
 ```mermaid
 flowchart TD
-    UserTools["用户工具 tools.ts"] --> Service["公共接口定义 service.ts"]
-    Panel["panel.tsx"] --> Client["operations.ts<br/>生成的远程接口客户端"]
+    UserTools["主会话 command.ts"] --> Service["公共接口定义 service.ts"]
+    Panel["team-view.tsx"] --> Client["observer.ts<br/>生成的远程接口客户端"]
     Client --> Remote["web.ts：远程接口 flow"]
     Remote --> Service
     Service --> Cluster["cluster.ts：控制平面"]
@@ -71,7 +77,7 @@ flowchart TD
 | 重启后怎样判断命令、消息和副作用是否发生 | `core/store.ts`、`core/cluster.ts` 的恢复路径 | [持久化与恢复](/development/components/persistence) |
 | 预算为什么不足，如何合法调拨 | `core/budget.ts`、`core/runtime.ts` | [预算账本](/development/components/budget) |
 | 跨子树通信和黑板更新如何工作 | `core/communication.ts` | [通信与共享黑板](/development/components/communication) |
-| 面板看到的状态来自哪里 | `core/cluster.ts` 的 `queryCluster`、`report`；`client/operations.ts` | [查询与可观测性](/development/components/observability) |
+| 团队视图的状态来自哪里 | `core/team.ts` 的 `readTeam`；`client/observer.ts` | [查询与可观测性](/development/components/observability) |
 
 ## 修改接口时的边界
 

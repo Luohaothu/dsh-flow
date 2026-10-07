@@ -1,0 +1,11 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -596,7 +596,6 @@ class V4Relationships {
+ 	}
+ 	foldSurface(event) {
+ 		if (!SURFACE_TYPES.has(event.type)) return;
+-		if (event.type === "system/message" && this.surface.length > 0 && this.protectedHead === void 0) throw new SessionFormatError("system/message requires a protected first surface head");
+ 		if (event["surfaceOp"] === "append") {
+ 			if (event.type === "system/message" && this.surface.length === 0) this.protectedHead = event.seq;
+ 			this.surface.push(event.seq);

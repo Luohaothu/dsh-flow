@@ -1,16 +1,16 @@
 # dsh-flow
 
-A hierarchical agent cluster for the [DeepSeek Harness](../deepseek-harness): one
+A hierarchical agent cluster for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): one
 management tree of three-role management nodes, durable transactions with an
-independent audit gate, restart recovery, layered budgets, and a native panel.
+independent audit gate, restart recovery, layered budgets, and native read-only team observation.
 
 Everything runs through the host's own machinery — `ctx.agents` for every turn,
 `ctx.sessions` for durability, the host tool pipeline for tool calls, and the
-standard Remote face (`ctx.remote.flow`) for the panel. There is no second agent
+standard read-only Remote face (`ctx.remote.flow`) for observation. There is no second agent
 loop and no plugin-owned HTTP route.
 
 The whole repository is native TypeScript. `packages/dsh-flow` is the one
-published package; its Host half (`src/index.ts`, `src/tools.ts`, `src/web.ts`,
+published package; its Host half (`src/index.ts`, `src/command.ts`, `src/tools.ts`, `src/web.ts`,
 `src/core/**`) and its Client half (`src/client.ts`, `src/client/**`) are
 separate `tsc` programs, and the browser bundle is built from the Client program
 with the generated Remote contribution inlined.
@@ -33,15 +33,15 @@ pnpm run docs:preview  # preview the production build
 |---|---|
 | `packages/dsh-flow/src/index.ts` | Cordis plugin: configuration, the single teardown effect, recovery before `ctx.provide('flow', …)` |
 | `packages/dsh-flow/src/config.ts` | `Config` schema, deployment resolution, and `resolveStartRequest` — the only copy of the interactive envelope |
-| `packages/dsh-flow/src/service.ts` | The public `ctx.flow` contract: seven operations, nothing else |
-| `packages/dsh-flow/src/tools.ts` | The three user tools (`flow_start` / `flow_read` / `flow_control`), mounted by the cluster preset |
+| `packages/dsh-flow/src/service.ts` | The public `ctx.flow` contract: cluster operations and main-session team bindings |
+| `packages/dsh-flow/src/tools.ts` | Legacy programmatic consumer (excluded from the standard bundle) |
 | `packages/dsh-flow/src/web.ts` | The standard Remote face: seven `@Remote` methods over `ctx.flow` |
 | `packages/dsh-flow/src/types.ts` | The wire vocabulary shared by Host, Remote and browser |
 | `packages/dsh-flow/src/validation.ts` | Shared input validators; the Client bundle imports these too |
 | `packages/dsh-flow/src/errors.ts` | One failure vocabulary: `fail()` throws `RemoteError('flow/rejected', …)` with the business status in `details.status` |
-| `packages/dsh-flow/src/client.ts` | Client assembly: mounts the generated contribution, then the panel |
-| `packages/dsh-flow/src/client/operations.ts` | Panel data operations over `ctx.remote.flow`, with tagged-query narrowing |
-| `packages/dsh-flow/src/client/panel.tsx` | The panel (`sidebar.panellist` + a `main` key) |
+| `packages/dsh-flow/src/client.ts` | Client assembly: mounts the generated contribution, then provider-owned team views |
+| `packages/dsh-flow/src/client/observer.ts` | Main-session-owned coherent observing snapshots |
+| `packages/dsh-flow/src/client/team-view.tsx` | Provider-created team header, conversation view and read-only inspectors |
 | `packages/dsh-flow/src/core/store.ts` | SQLite state: one writer, `state + command receipt + events` in one transaction, injected clock, schema-versioned |
 | `packages/dsh-flow/src/core/protocol.ts` | Roles, actions, statuses, capability → host-tool mapping |
 | `packages/dsh-flow/src/core/budget.ts` | `limit / reserved / spent` ledger per scope, transfers of unused unreserved capacity, absolute wall deadlines |
@@ -118,81 +118,38 @@ file use the latter alongside the settled write receipt.
 
 ## Running it
 
-### Cluster mode (集群模式)
+### 智能体团队
 
-The bundle inserts a **集群模式** entry into the composer's mode menu, beside the
-shipped ones (标准模式 / 最小模式 / …). A preset is a *composition* — choosing it
-decides which tools and prompt the session's agent runs with — which is what
-"mode" means in this harness: there is no separate named-mode registry.
+在主会话输入 `/agent-team <自然语言需求>` 加载 skill。主 Agent 评估任务、生成参数并调用 `agent_team_create`，再通过 `agent_team_read` 检查和轮询实际状态。空需求保留输入并给出提示；相同启动意图与参数重试会复用已有团队。后续要求通过主 Agent 的 `message/control` 工具发出，终态通过 `finalize` 收尾并保留历史。
 
-```yaml
-# cordis.patch.yml, this plugin's bundle patch
-- insert:
-    - id: preset-cluster
-      name: '@deepseek-ai/dsh-agent-preset'
-      config:
-        id: cluster
-        name: 集群模式
-        order: 3
-        plugins: [tool-flow, persona, compaction, tool-ask-user, tool-todo]
-```
+顶栏只有一个“智能体团队”入口；“智能体”视图提供拓扑、层级列表和只读检查器。顶栏点击代理或检查器点击“打开完整会话”，通过宿主导航进入代理的完整原生 Session，支持对话、轨迹和历史。未回收且团队未结束的代理保留原生输入框；回收后显示历史记录说明。不同主会话的团队与历史分别保存。
 
-`tool-flow` (`dsh-flow/tools`) is mounted **inside the preset**, not at the root: a
-normal Session in the same profile must not see a cluster command surface it cannot
-use. A deployment that wants the tools in its root layer adds the same Consumer
-itself.
+子会话的原生 prompt/cancel 接口由 `sessionController.registerSessionDriver` 交给 Flow，冷会话的输入进入持久队列，活动轮次使用其已有原生收件箱。查看历史不会启动普通 Agent；角色、模型、预算和权限保持由 Flow 管理。原生导航支持 `openSession(id, {allowUnlisted:true, observationOnly:true})`，面包屑通过有选择器的 `conversation.session.header.lineage` 槽位接入。相关宿主接口补充收录在 `patches/`；子会话当前支持文本输入，附件由主会话提供。
 
-In that mode the agent's job is to **run the cluster**, not to do the work itself.
-Its persona says the user's request is a cluster objective; the `flow_*` host tools
-start, read and steer that cluster (`flow_start`, `flow_read`, `flow_control`), and
-the cluster's own Workers keep the file/shell capabilities the cluster grants them —
-so the task is still executed with real tools, on the cluster's management tree,
-under its own Auditor gates.
+插件管理中的标准 `dsh-flow` 卡片提供独立“显示设置”页。七项偏好只影响显示；保存失败保留草稿，离开前可保存、放弃或继续编辑。
 
-The tools hold no defaults of their own. `flow_start` forwards the request to
-`ctx.flow.start`, which merges it per field: `schema default < deployment
-configuration < this request`. An omitted `workspace`, `capabilities`, `budget` or
-`limits` comes from the resolved configuration (`defaultBudget`/`defaultLimits` in
-`packages/dsh-flow/src/config.ts`, the one copy of the interactive envelope); an
-explicitly empty `capabilities` list stays empty, and an explicitly illegal value is
-refused rather than replaced. A cluster started with `budget: {}` therefore still
-gets the other five dimensions, while `budget: { tokens: 100_000 }` keeps 100000 —
-identically for a local caller, a model tool call and a Remote caller.
+当前宿主基线是 `0.1.7-rc.2`，需要应用 `pnpm-workspace.yaml` 中的提供方接口补丁；它们增加顶栏导航和设置离开钩子，未修改私有 DOM。请使用本仓库的冻结安装与启动脚本运行。普通未打补丁的同版本 npm 宿主尚不包含这些接口。详细接口依据与验收见 [UX 实现记录](docs/plans/ux-implementation.md)。
 
 ### Installing it into a DSH instance
 
-The standard path is the CLI; the bundle's own `cordis.patch.yml` then supplies the
-control plane, the Remote face and the 集群模式 preset:
+Use the patched workspace launcher and a separate DSH profile. The bundle supplies
+the control plane, observing Remote face and `/agent-team` command. The
+[installation guide](docs/design/development/setup.md) contains the complete
+isolated-profile, package-installation and model-configuration sequence.
 
 ```bash
+pnpm install --frozen-lockfile
 pnpm run build
 pnpm --dir packages/dsh-flow pack --pack-destination /tmp
-dsh plugin --profile flow add /tmp/dsh-flow-0.1.0.tgz
-dsh --profile flow --dump-config
+# With the isolated DSH_HOME from the installation guide:
+node --import tsx src/host/dsh-launch.ts plugin --profile web add /tmp/dsh-flow-0.1.0.tgz
+node --import tsx src/host/dsh-launch.ts --profile web --patch examples/instance.patch.yml --dump-config
 ```
 
-For development against a local checkout, mount the package directory instead:
-
-```bash
-mkdir -p ~/.dsh/profiles/flow/node_modules
-ln -sfn "$PWD/packages/dsh-flow" ~/.dsh/profiles/flow/node_modules/dsh-flow
-cat > ~/.dsh/profiles/flow/package.json <<'JSON'
-{ "name": "dsh-profile-flow", "private": true,
-  "dependencies": { "dsh-flow": "link:." },
-  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-flow"] } } }
-JSON
-
-node src/host/dsh-launch.ts --profile flow --patch examples/instance.patch.yml \
-  --host 127.0.0.1 --port 8791 --no-open
-# → prints the authenticated URL (dsh web: http://127.0.0.1:8791/?token=…)
-```
-
-`examples/instance.patch.yml` carries the deployment policy (model route, sandbox,
-compaction) plus an explicit `dsh-flow` configuration override; it must not insert
-`dsh-flow` a second time. `examples/cluster.patch.yml` is the *acceptance* overlay —
-its profile does not depend on the package, so there it inserts the control plane,
-the Remote face and the preset explicitly, and it is the only place the runner's
-`FLOW_*` variables are turned into configuration.
+`examples/instance.patch.yml` overrides an already installed standard bundle.
+`examples/cluster.patch.yml` inserts the services for execution-only acceptance
+profiles. Use each with its stated installation prerequisite. Both interpret the
+runner's `FLOW_*` deployment variables; the production core does not read them.
 
 The launcher resolves `@deepseek-ai/dsh` from the installed dependencies. Point it at
 another installation with `DSH_INSTALL_PATH` if needed.
@@ -400,25 +357,9 @@ and is what that identity's turns measure against. The provider's own window and
 the deployment's input cap are the hard sending ceiling and are never raised by
 an override.
 
-There is deliberately no second cluster control port and no separate token, and no
-plugin-owned HTTP route. The panel talks to the host through the standard Remote
-face — `ctx.remote.flow`, carried by the host's Connection/Gateway over
-`POST /api/flow/<method>` with the generated `{args:{…}}` envelope — and the
-model-facing tools call `ctx.flow` in-process. The two entry points are the same
-seven operations, resolved through the same defaults.
+The observer uses generated `ctx.remote.flow.teamRuns` and `teamRead` calls over the authenticated host Gateway. Startup and control are absent from the Remote descriptor. Programmatic ledger reads (`list`, `read`, `events`, `query`, `report`) remain available for diagnostics; execution tools run inside the main Agent's ordinary pipeline and assert ownership before changing state.
 
-The panel queries each management level on expansion. Child and root pages
-carry `total`/`next_offset`, so a node with more than 50 children can be
-expanded completely without rendering the whole tree at once. Transaction
-detail shows the saved result, validation checks and evidence, and both
-pending and decided plan/validation audits; an independent audit may still be
-pending if the user cancels the cluster. Closing or reopening the browser
-does not cancel a cluster, and the event view resumes from its durable cursor.
-The Remote face exposes exactly seven methods (`start`, `list`, `read`, `events`,
-`control`, `query`, `report`). Internal host operations such as `dispose`,
-`recover`, `settle`, `tick` and `single` are not declared on it at all: an
-authenticated browser cannot close the database or abort every turn, and those
-operations remain reachable only through the development IPC bridge.
+The observing snapshot keeps identity, parentage, execution state, released resources, message delivery and budget scopes separate. Missing usage stays unknown; zero and estimates have separate presentations. A reconnect fetches a coherent snapshot, and stale responses cannot replace the selected run.
 
 IPC recovery requires an idle runtime. It returns a 409 conflict without
 changing state while a turn or scheduling pass is active; it does not abort

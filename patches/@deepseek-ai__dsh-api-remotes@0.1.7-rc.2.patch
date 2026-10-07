@@ -1,0 +1,16 @@
+diff --git a/lib/client.js b/lib/client.js
+index abec6c7cdbdf04885a1445ce168ac95e7c731968..ac82c3750e362d836e19acde64b759c65045818c 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -4529,8 +4529,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
+ 							typeSymbol: "@deepseek-ai/dsh-commands#commands/execute:submittedAttachments",
+ 							create: _deepseek_ai_dsh_commands_commands_execute_parameter_2$schema
+ 						}
+-					}
+-				],
++					},
++				{name: 'submissionId', wire: 'submissionId', source: 'json', codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => string().min(1).max(128).optional()}},
++],
+ 				cancellation: { parameter: "signal" },
+ 				result: {
+ 					mode: "strict",

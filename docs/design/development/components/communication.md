@@ -19,13 +19,51 @@
 
 | 动作 `action` | `params` 中的主要字段 |
 |---|---|
-| `send` / `multicast` | `agent`、`group` 或 `node` 指定接收者；`content`；可选 `message_id` |
+| `send` / `multicast` | `agent`、`group` 或 `node` 指定接收者；`category`、`content`；可选 `transaction_id`、`message_id` |
 | `group` | `operation: create/join/leave/close`；`name` 或 `id`；可选 `members` |
 | `publish` | `key`、`value`；可选 `expected_revision` |
 | `query` | `key` 或 `prefix`，返回 `entries` 和 `cursor` |
 | `subscribe` | `operation: add/remove`；`key` 或 `prefix`；移除时可给 `id` |
 
 `multicast` 通过 `group` 或 `node` 查出接收者，不接受任意 `recipients` 数组。当前一次最多 64 个接收者；跨集群或已处于 `TERMINATED` 状态的接收者会被拒绝。
+
+## 消息类别与会话呈现
+
+创建子 Agent 时的首条任务使用原生 `user` 来源，按普通 user prompt 显示。后续 Agent 通信使用 `flow-message` 来源，每条独立进入接收方会话，采用 A 方式：默认收起为单行摘要，点击后原位展开类别、发送方 → 接收方、时间、关联任务与完整正文。长摘要省略显示，完整主题保留在展开区。
+
+系统事件的计数与通过状态来自结构化事件记录，不从模型正文猜测。例如单条派发事件显示“派发 1 个任务”，计划通过事件显示“计划审查通过”；请求审查不会显示通过图标。Agent 自发通信显示其主题，未提供主题时使用类别名称，正文与证据保持完整。
+
+| `category` | 显示名称 | 用途 |
+|---|---|---|
+| `task_instruction` | 任务指令 | 派发补充要求、调整目标或约束 |
+| `progress_update` | 进度反馈 | 汇报执行进度与当前状态 |
+| `result_report` | 结果反馈 | 提交产物、结论与证据引用 |
+| `review_feedback` | 审查意见 | 评审发现、验收意见与纠正要求 |
+| `collaboration_request` | 协作请求 | 请求接口说明、依赖信息或协助 |
+| `blocker_report` | 阻塞与升级 | 报告障碍、请求上级决策 |
+| `resource_coordination` | 资源协调 | 协商预算、执行容量与上下文资源 |
+| `discussion` | 普通讨论 | 其他信息交换；旧消息缺省类别 |
+
+发送方明确选择类别，系统不按正文猜测。系统自动通知按事件生产方映射类别，发送方显示为“系统”。兼容旧调用：未传 `category` 时归为 `discussion`；未知类别被拒绝。`transaction_id` 如提供，必须属于当前集群。类别与关联任务保存在不可变消息内容中，修改类别后复用同一个 `message_id` 会被拒绝。
+
+```json
+{
+  "action": "send",
+  "params": {
+    "agent": "agent-reviewer",
+    "category": "result_report",
+    "transaction_id": "tx-interface",
+    "content": {
+      "subject": "接口检查完成",
+      "text": "检查通过，证据见 artifacts/interface-report.md。"
+    }
+  }
+}
+```
+
+后续通信通过原生 `Agent.send(message, 'next-step', false)` 入队，再由调度提示调用 `followup` 唤醒一次执行。首步保留任务在前、通信随后，避免每条通信各启动一轮。Chat 提供方通过公开的 `source.presentation: communication` 提示生成独立节点，插件使用 `conversation.chat.node` 的 `communication` 键贡献渲染器；通信不被收入执行过程的折叠分组。后续调度摘要仍使用 `flow` 来源。
+
+## 黑板参数示例
 
 ```json
 {

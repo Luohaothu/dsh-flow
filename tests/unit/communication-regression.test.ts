@@ -14,6 +14,7 @@ import type {
 } from '../../packages/dsh-flow/src/core/communication.ts';
 import type { ClusterRecord } from '../../packages/dsh-flow/src/core/model.ts';
 import { rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
+import { COMMUNICATION_CATEGORIES, communicationBody, communicationContent } from '../../packages/dsh-flow/src/messages.ts';
 
 /** Narrow fixture reads that the test knows must exist. */
 function must<T>(value: T | null | undefined, label: string): T {
@@ -84,6 +85,49 @@ test('communication owns atomic delivery and notification persistence', t => {
   assert.equal(store.getMessage('rollback'), null);
   assert.equal(store.pendingDeliveries('receiver').length, 0);
   assert.equal(store.counter('recipient:receiver'), 0);
+});
+
+test('eight explicit categories survive delivery and cannot change during a retry', t => {
+  const { store, call } = fixture(t);
+  for (const category of COMMUNICATION_CATEGORIES) {
+    const message_id = `classified-${category}`;
+    const params = { agent: 'receiver', message_id, category, content: { subject: 'evidence', text: 'full result', evidence: ['report.md'] } };
+    call('send', params);
+    assert.equal(communicationContent(store.getMessage(message_id)?.content).category, category);
+    assert.equal(sendOf(call('send', params)).deduped, true);
+    const changed = category === 'discussion' ? 'review_feedback' : 'discussion';
+    assert.throws(() => call('send', { ...params, category: changed }), error => rejectionStatus(error) === 409);
+  }
+  assert.equal(store.pendingDeliveries('receiver').length, 8);
+  assert.throws(() => call('send', { agent: 'receiver', category: 'invented', content: 'invalid' }), /Unknown communication category/);
+  assert.throws(() => call('send', { agent: 'receiver', category: null, content: 'invalid' }), /Unknown communication category/);
+  assert.throws(() => call('send', { agent: 'receiver', category: 'result_report', content: { category: 'discussion', text: 'conflict' } }), /Conflicting communication categories/);
+  assert.equal(store.pendingDeliveries('receiver').length, 8, 'invalid categories leave no delivery');
+});
+
+test('associated transactions are fenced to the cluster and part of the immutable envelope', t => {
+  const { store, call } = fixture(t);
+  for (const [id, cluster_id] of [['local-tx', 'cluster-a'], ['other-local', 'cluster-a'], ['foreign-tx', 'cluster-b']]) {
+    store.insertTransaction({ id: id!, cluster_id: cluster_id!, node_id: 'node-a', owner_management_id: 'node-a', objective: id!, status: 'DRAFT' });
+  }
+  const params = { agent: 'receiver', message_id: 'associated', category: 'result_report', transaction_id: 'local-tx', content: 'report' };
+  call('send', params);
+  assert.equal(communicationContent(store.getMessage('associated')?.content).transaction_id, 'local-tx');
+  assert.throws(() => call('send', { ...params, transaction_id: 'other-local' }), error => rejectionStatus(error) === 409);
+  assert.throws(() => call('send', { ...params, message_id: 'foreign', transaction_id: 'foreign-tx' }), /must belong to this cluster/);
+  assert.throws(() => call('send', { ...params, message_id: 'null-transaction', transaction_id: null }), /must belong to this cluster/);
+  assert.throws(() => call('send', { ...params, message_id: 'conflict', content: { text: 'report', transaction_id: 'other-local' } }), /Conflicting communication transactions/);
+  assert.equal(store.pendingDeliveries('receiver').length, 1);
+});
+
+test('structured communication evidence remains readable alongside the complete body', () => {
+  const text = 'Long result. '.repeat(300);
+  const rendered = communicationBody({ category: 'result_report', transaction_id: 'tx', subject: 'report', text,
+    evidence: ['report.md'], metrics: { passed: 12 } });
+  assert.ok(rendered.startsWith(text));
+  const evidence = JSON.parse(rendered.split('```json\n')[1]!.split('\n```')[0]!);
+  assert.deepEqual(evidence, { evidence: ['report.md'], metrics: { passed: 12 } });
+  assert.ok(communicationBody({ text: 123 }).includes('"text": 123'), 'non-prose JSON is not silently lost');
 });
 
 test('repaired recipients receive notification through the same delivery path', t => {

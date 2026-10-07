@@ -236,6 +236,14 @@ export interface FlowStartRequest {
   readonly acceptance_criteria?: readonly string[]
 }
 
+/** The main Agent's recorded assessment and self-contained execution request. */
+export interface FlowTeamCreateRequest extends Omit<FlowStartRequest, 'id' | 'initial_transactions'> {
+  readonly assessment: {
+    readonly complexity: 'simple' | 'moderate' | 'complex'
+    readonly rationale: string
+  }
+}
+
 // -------------------------------------------------------------- projections
 
 /** A management-tree node as a list carries it: topology, not full scope. */
@@ -1147,3 +1155,100 @@ export type FlowQueryResult =
   | { readonly what: 'health'; readonly data: FlowClusterHealthQueryData }
   | { readonly what: 'summary'; readonly data: FlowClusterSummaryQueryData }
   | { readonly what: 'blackboard'; readonly data: FlowClusterBlackboardQueryData }
+
+/** Execution and resource state are separate in every observing view. */
+export type FlowTeamState = 'pending' | 'ready' | 'running' | 'waiting_user' | 'waiting_agent' | 'paused' | 'blocked' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+/** One measurement; absence and explicit zero have different meanings. */
+export interface FlowTeamMetric {
+  readonly value: number | null
+  readonly unit: string
+  readonly scope: 'self' | 'descendants' | 'unknown'
+  readonly estimated: boolean
+}
+/** Provider-reported allowance. Different dimensions are never added together. */
+export interface FlowTeamAllowance {
+  readonly id: string
+  readonly name: string
+  readonly unit: string
+  readonly scope_id: string
+  readonly shared: boolean
+  readonly total: number | null
+  readonly used: number | null
+  readonly remaining: number | null
+}
+/** One stable identity in the agent derivation tree. */
+export interface FlowTeamAgent {
+  readonly id: string
+  readonly run_id: string
+  readonly role: FlowAgentRole
+  readonly parent_id: string | null
+  readonly session_id: string
+  readonly name: string
+  readonly responsibility: string
+  readonly state: FlowTeamState
+  readonly raw_state: string
+  readonly reason: string | null
+  readonly waiting_for: string | null
+  readonly waiting_since: number | null
+  readonly recycled: boolean
+  readonly created: number
+  readonly ended: number | null
+  readonly version: number
+  readonly tokens: FlowTeamMetric
+  /** Latest recorded request model, or the resolved route before the first request. */
+  readonly model: string | null
+  /** Reasoning effort from the same actual request, when recorded. */
+  readonly reasoning_effort: string | null
+  readonly allowances: readonly FlowTeamAllowance[]
+  readonly context_used: number | null
+  readonly context_limit: number | null
+  readonly compacted_at: number | null
+}
+/** Purpose of one communication, independent of its direct/multicast transport. */
+export type FlowCommunicationCategory = 'task_instruction' | 'progress_update' | 'result_report' | 'review_feedback'
+  | 'collaboration_request' | 'blocker_report' | 'resource_coordination' | 'discussion';
+
+/** A durable directional delivery, independent of either endpoint's execution. */
+export interface FlowTeamCommunication {
+  readonly id: string
+  readonly run_id: string
+  readonly sender_id: string | null
+  readonly recipient_id: string
+  readonly at: number
+  readonly category: FlowCommunicationCategory
+  readonly transaction_id: string | null
+  readonly content: FlowJsonValue
+  readonly delivery_state: string
+  readonly version: number
+}
+/** Main-session-owned run. No frontend inference determines completion. */
+export interface FlowTeamRun {
+  readonly id: string
+  readonly main_session_id: string
+  readonly name: string
+  readonly state: FlowTeamState
+  readonly raw_state: string
+  readonly reason: string | null
+  readonly created: number
+  readonly ended: number | null
+  readonly updated: number
+  readonly version: number
+  readonly result: FlowJsonValue | null
+  readonly launch_id?: string
+  readonly finalized_at?: number | null
+}
+/** One transactionally consistent snapshot, including retained terminal identities. */
+export interface FlowTeamSnapshot {
+  readonly run: FlowTeamRun
+  readonly agents: readonly FlowTeamAgent[]
+  readonly communications: readonly FlowTeamCommunication[]
+  readonly tokens: FlowTeamMetric
+}
+
+/** Native session navigation and interaction policy for an exact Flow Agent. */
+export interface FlowAgentSession {
+  readonly run: FlowTeamRun
+  readonly agent: FlowTeamAgent
+  readonly can_message: boolean
+  readonly message_block_reason: string | null
+}

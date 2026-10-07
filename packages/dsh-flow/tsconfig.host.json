@@ -13,12 +13,17 @@
   "files": [
     "src/index.ts",
     "src/config.ts",
+    "src/identity.ts",
+    "src/messages.ts",
     "src/errors.ts",
     "src/service.ts",
     "src/tools.ts",
     "src/types.ts",
     "src/validation.ts",
     "src/web.ts",
+    "src/command.ts",
+    "src/team-tools.ts",
+    "src/main-model.ts",
     "src/core/actions.ts",
     "src/core/budget.ts",
     "src/core/cluster.ts",
@@ -28,6 +33,7 @@
     "src/core/role-tools.ts",
     "src/core/runtime.ts",
     "src/core/scope.ts",
-    "src/core/store.ts"
+    "src/core/store.ts",
+    "src/core/team.ts"
   ]
 }

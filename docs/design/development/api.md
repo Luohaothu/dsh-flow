@@ -1,6 +1,6 @@
 # API 手册
 
-系统提供三类调用入口：宿主端与浏览器端使用的集群 API、用户会话中的三个工具，以及集群内部智能体的角色工具。这些入口共用控制平面，但调用权限、参数和返回数据的结构各不相同。
+系统提供宿主程序化服务、主会话命令与执行工具、浏览器只读观察接口，以及团队内部智能体的角色工具。这些入口共用控制平面，但调用权限、参数和返回数据的结构各不相同。
 
 本页描述当前已开放的接口。[设计动作索引](/development/action-catalog)另行列出设计层面的完整动作及其含义，其中的概念参数不能直接当作实际工具参数。
 
@@ -10,6 +10,13 @@
 
 | 宿主端方法 | 参数 | 返回 |
 |---|---|---|
+| `startTeam(sessionId, intentId, objective, workspace?)` | 主会话、稳定提交意图、需求与工作区 | `FlowSnapshot` |
+| `createTeam(sessionId, launchId, request, model?)` | 主会话、启动意图、评估与启动参数 | `FlowTeamSnapshot`，相同意图与参数幂等 |
+| `teamStartDefaults()` | 当前部署 | 生效的工作区、能力、预算与限制 |
+| `finalizeTeam(sessionId, runId)` | 所属主会话、终态运行 | `FlowTeamSnapshot`，回收资源并保留历史 |
+| `teamReply(sessionId, messageId, content, runId?)` | 主会话工具调用身份、正文与目标运行 | `void`，幂等进入团队收件箱 |
+| `teamRuns(sessionId)` | 所属主会话 | `readonly FlowTeamRun[]` |
+| `teamRead(sessionId, runId)` | 主会话与运行 ID；验证归属 | `FlowTeamSnapshot` |
 | `start(request)` | `FlowStartRequest` | `FlowSnapshot` |
 | `list(request)` | `{status?, limit?, offset?}` | `{clusters}` |
 | `read(id, request)` | 集群标识；`FlowReadQuery` | `FlowSnapshot` |
@@ -73,7 +80,7 @@ for (const event of page.events) {
 
 ## 远程接口：ctx.remote.flow
 
-`web.ts` 通过远程接口机制（Remote）提供相同的七个操作，其中查询方法名为 **`query`**，对应宿主端的 `queryCluster`。浏览器通过生成的 `ctx.remote.flow` 客户端调用这些方法，插件不应另行创建自有 HTTP 路由。
+`web.ts` 提供只读远程接口。团队视图使用 `teamRuns(sessionId)` 与 `teamRead(sessionId, runId)`，诊断读取保留 `list`、`read`、`events`、`query`、`report`。远程描述不公开 `start`、`control`；启动只通过人类提交的 `/agent-team` 命令，后续执行只通过主会话。查询方法 **`query`** 对应宿主端的 `queryCluster`。浏览器通过生成的 `ctx.remote.flow` 客户端调用这些方法，插件不应另行创建自有 HTTP 路由。
 
 ```ts
 const result = await ctx.remote.flow.query(clusterId, 'nodes', {
@@ -118,25 +125,25 @@ const roots = result.value.data.items;
 
 角色工具 `flow_query` 使用相同的查询名，但读取范围由调用身份决定，返回的信息也更精简。它直接返回该分支数据，不使用公共 API 的外层 `{what, data}`；例如 `{what:'transaction', params:{id:'...'}}` 读取结果中的 `transaction`、`result` 和 `validation`。执行智能体不能借 `full` 扩大权限；需要历史详情时，应按审查、纠正问题或副作用回执的标识分别查询。
 
-## 用户工具
+## 主会话命令与执行工具
 
-`dsh-flow/tools` 为选用集群预设的用户会话注册三个工具，用于调用公共服务。它们与集群内部的管理角色工具分开。
+人类在宿主原生输入框提交 `/agent-team <需求>`，加载用户显式调用的 `agent-team` skill。命令登记 `flow/team-launch` 意图，并通过原生 `followup` 提交普通 user prompt；此时尚未创建团队。宿主 skill provider 在模型请求前注入 skill 指令。主 Agent 根据完整主会话评估任务，整理执行所需上下文和验收标准，再调用创建工具。空需求保留输入并返回错误。
 
-| 工具 | 参数 | 输出内容 |
-|---|---|---|
-| `flow_start` | `objective`；可选 `workspace`、`capabilities`、`budget`、`limits`、`initial_transactions`、`acceptance_criteria` | JSON 文本：`cluster_id`、`status`、`counts` |
-| `flow_read` | `id`；可选 `include_events`、`event_limit`、`since` | JSON 文本快照 |
-| `flow_control` | `id`、`action: pause/resume/cancel` | JSON 文本：集群标识、动作 `action`、状态 `status`、计数 `counts` |
+| 主会话工具 | 行为 |
+|---|---|
+| `agent_team_create {launch_id, objective, assessment, acceptance_criteria, workspace?, capabilities?, budget?, limits?}` | 校验当前主会话的启动意图，记录复杂度与依据，按字段继承部署默认值，返回真实启动状态和生效参数 |
+| `agent_team_read {run_id?, launch_id?, after_version?, wait_ms?, transaction_id?}` | 创建前读取启动意图和默认参数；创建后读取真实状态、事务结果和通信；transaction_id 读取独立审查详情。等待上限 30 秒，支持取消 |
+| `agent_team_message {run_id?, text}` | 主 Agent 整理用户追加要求或问题答复，再通过可见工具调用投递。进度提问不自动转发 |
+| `agent_team_control {run_id?, action}` | 处理用户明确的 pause / resume / cancel 指令，返回实际状态 |
+| `agent_team_finalize {run_id}` | completed / failed / cancelled 后收尾；拒绝活跃团队与仍在退出的轮次，保留会话、审查、通信和结果 |
 
-```json
-{
-  "id": "<flow_start 返回的 cluster_id>",
-  "include_events": true,
-  "event_limit": 30
-}
-```
+工具从原生执行上下文取得主会话身份，内部团队 Agent 不能调用这些主会话工具。所有读取和操作校验运行归属。同一 launch_id 的相同创建参数返回已有团队；更换参数会拒绝，不会启动第二个团队。命令确认丢失时复用原始请求消息；模型创建确认丢失时先 read，再以原参数重试。
 
-上例是 `flow_read` 参数。用户工具不提供 `flow_audit`，也不提供直接调用内部运行时的入口。
+skill 每个主会话轮次最多进行三次有等待上限的 read。重要终态、受阻或等待用户的通知只唤醒主 Agent，实际报告先经过 read；通知不会代替 Agent 创建、转发指令或收尾。
+
+read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘要为空不表示没有事务交付。初始列表最多 32 个事务，truncated 明示截断，单个事务可通过 transaction_id 读取完整结果和审查。skill 在缺乏用户额度约束或实测依据时继承默认预算，给管理、审查和收尾保留资源。
+
+`dsh-flow/tools` 仍可被宿主程序显式加载为旧程序化消费者，包含 `flow_start`、`flow_read`、`flow_control`。标准插件组合不加载它，也不提供旧集群模式预设或界面入口。
 
 ## 角色工具
 
@@ -144,7 +151,7 @@ const roots = result.value.data.items;
 
 | 角色 | 命令工具 | 当前动作 |
 |---|---|---|
-| 编排智能体 | `flow_transaction` | `create_transaction`、`decompose`、`set_dependency`、`set_priority`、`dispatch`、`adjust_transaction`、`validate`、`accept_result`、`reject_result`、`aggregate`、`escalate`、`finish_cluster`、`pause_transaction`、`resume_transaction`、`cancel_transaction` |
+| 编排智能体 | `flow_transaction` | `create_transaction`、`decompose`、`set_dependency`、`set_priority`、`dispatch`、`adjust_transaction`、`validate`、`accept_result`、`reject_result`、`aggregate`、`escalate`、`request_user`、`finish_cluster`、`pause_transaction`、`resume_transaction`、`cancel_transaction` |
 | 资源分配智能体 | `flow_allocation` | `allocate_agent`、`spawn_agent`、`spawn_management_node`、`release_agent`、`allocate_budget`、`rebalance_budget`、`set_concurrency`、`scale_out`、`scale_in`、`select_model`、`evaluate_allocation`、`replace_agent`、`reassign_agent`、`reparent`、`checkpoint`、`restore`、`resolve_effect`、`set_context_budget` |
 | 审计智能体 | `flow_audit` | `inspect_plan`、`inspect_validation`、`request_correction`、`request_replan`、`request_revalidation`、`verify_correction`、`escalate`、`notify`、`recommend`、`evaluate_health` |
 | 执行智能体 | `flow_transaction` | 仅 `submit_result` |

@@ -38,7 +38,7 @@ import type {
   ToolRunContext,
 } from '@deepseek-ai/dsh-tools';
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm';
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, TextBlock } from '@deepseek-ai/dsh-llm';
 import { isFlowJsonValue } from '../../packages/dsh-flow/src/validation.ts';
 
 /** The logger surface the runtime consumes; the default is silent. */
@@ -124,9 +124,7 @@ export interface FakeToolScope {
 }
 
 /** The chat message a scripted turn was woken with. */
-export interface FakePrompt {
-  readonly content?: readonly { readonly type?: string; readonly text?: string }[]
-}
+export type FakePrompt = Omit<UserMessage, 'content'> & { readonly content: readonly TextBlock[] };
 
 /** The scripted live agent instance one scheduled turn drives. */
 export interface FakeAgent {
@@ -134,7 +132,8 @@ export interface FakeAgent {
   readonly session: Session
   readonly ctx: Context
   cancel(reason?: unknown): void
-  followup(message: FakePrompt): void
+  followup(message: UserMessage): void
+  send(message: UserMessage, target: 'next-turn' | 'next-step', wakeup: boolean): void
   whenIdle(): Promise<void>
 }
 
@@ -180,6 +179,7 @@ export interface FakeTurn {
   cancelled: boolean
   blocked: boolean
   prompt: FakePrompt | undefined
+  readonly inputs: UserMessage[]
   readonly live: FakeAgent
   stopReason: string | undefined
   stopDetail: { kind: string; message: string; code: string | null; info: unknown } | undefined
@@ -341,6 +341,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
     cancelled = false;
     blocked = false;
     prompt: FakePrompt | undefined;
+    readonly inputs: UserMessage[] = [];
     #live: FakeAgent | undefined;
     get live(): FakeAgent {
       if (!this.#live) throw new Error('agent not initialized');
@@ -559,7 +560,16 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
           // from `whenIdle` with an aborted reason instead of waiting forever.
           onCancel?.();
         },
-        followup(message) { turn.prompt = message; turn.admitted = true; },
+        send(message, _target, wakeup) {
+          turn.inputs.push(message);
+          turn.prompt ??= { ...message, content: message.content.filter(block => block.type === 'text') };
+          if (wakeup) turn.admitted = true;
+        },
+        followup(message) {
+          turn.inputs.unshift(message);
+          turn.prompt = { ...message, content: message.content.filter(block => block.type === 'text') };
+          turn.admitted = true;
+        },
         async whenIdle() {
           await Promise.race([Promise.resolve().then(() => state.script?.(turn, live)), cancelled]);
           const reason: TurnEndReason = turn.cancelled

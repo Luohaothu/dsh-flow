@@ -1,0 +1,70 @@
+diff --git a/lib/client.js b/lib/client.js
+index 76cd7932738b2c53ebbe64f6ac30989e69fa561b..8a43ca180293f2ba971b6721d0907b31df832d22 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -816,8 +816,8 @@ window.__ModuleLoader__.load({
+ 					return this.sessions.create({ workspaceId });
+ 				}
+ 			}
+-			openSession(target) {
+-				this.replaceMain(target, this.lifetime.signal, "reveal");
++			openSession(target, options) {
++				this.replaceMain(target, this.lifetime.signal, "reveal", undefined, options);
+ 			}
+ 			async openWorkspace(workspaceId, beforeOpen) {
+ 				const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal]);
+@@ -959,15 +959,21 @@ window.__ModuleLoader__.load({
+ 				return true;
+ 			}
+ 			clearMain() {
++				this.ctx.layout.requestNavigation(() => this.commitClearMain());
++			}
++			commitClearMain() {
+ 				const previous = this.mainReference;
+ 				this.mainReference = void 0;
+ 				this.selection.set({});
+ 				previous?.release();
+ 				this.ctx.layout.selectPanel(null);
+ 			}
+-			replaceMain(target, signal, panel, beforeOpen) {
++			replaceMain(target, signal, panel, beforeOpen, options) {
++				this.ctx.layout.requestNavigation(() => this.commitMain(target, signal, panel, beforeOpen, options));
++			}
++			commitMain(target, signal, panel, beforeOpen, options) {
+ 				signal.throwIfAborted();
+-				const reference = this.sessions.retain(target, { source: "mainView" });
++				const reference = this.sessions.retain(target, { ...options, source: "mainView" });
+ 				try {
+ 					signal.throwIfAborted();
+ 					beforeOpen?.(reference.sessionId);
+diff --git a/lib/types/client/navigation.d.ts b/lib/types/client/navigation.d.ts
+index 9afabc29f3e91343ffab343e7886715bc528a619..6e1adaf28e564df24cde857633c1f9b8911f7e5a 100644
+--- a/lib/types/client/navigation.d.ts
++++ b/lib/types/client/navigation.d.ts
+@@ -1,7 +1,7 @@
+ /** Workspace archive and directory UI capability. */
+ import { Service, type Context } from '@deepseek-ai/cordis';
+ import type { ClientRemote, DirectoryListing, RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client';
+-import type { ISessions, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client';
++import type { ISessions, SessionTarget, SessionRetainOptions } from '@deepseek-ai/dsh-api-session-controller/client';
+ import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client';
+ import type { SessionId } from '@deepseek-ai/dsh-session/types';
+ import type { RowToast } from './contract/slots.ts';
+@@ -12,7 +12,7 @@ export interface UiWorkspace {
+      * Select a Session and show its Conversation as one UI navigation action.
+      * @param target - known Session identity or durable direct-parent subagent address to display.
+      */
+-    openSession(target: SessionTarget): void;
++    openSession(target: SessionTarget, options?: Pick<SessionRetainOptions, "allowUnlisted" | "observationOnly">): void;
+     /**
+      * Connect a Workspace and open its Session unless a later navigation supersedes it.
+      * @param workspaceId - target Workspace.
+@@ -123,7 +123,7 @@ declare class UiWorkspaceService extends Service implements UiWorkspace {
+     connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>;
+     private reuseOrCreateBlank;
+     private reuseBlank;
+-    openSession(target: SessionTarget): void;
++    openSession(target: SessionTarget, options?: Pick<SessionRetainOptions, "allowUnlisted" | "observationOnly">): void;
+     openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void>;
+     forkSession(sessionId: SessionId): Promise<void>;
+     startSession(workspaceId?: WorkspaceId): void;

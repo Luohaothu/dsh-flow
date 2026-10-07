@@ -1,0 +1,485 @@
+diff --git a/lib/client.js b/lib/client.js
+index 3622a98f843e49c11e1ade653346a77bb2111a4d..30b2e1660da2f3d3448b7470324a26f9a31f8980 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -421,6 +421,7 @@ window.__ModuleLoader__.load({
+ 				});
+ 				this.remote = remote;
+ 				this.address = address;
++                this.observationOnly = options.observationOnly === true;
+ 			}
+ 			/** @inheritdoc */
+ 			async *follow(request, signal) {
+@@ -428,6 +429,7 @@ window.__ModuleLoader__.load({
+ 				for await (const frame of this.remote.session.follow({
+ 					address: this.address,
+ 					assistantStream: true,
++                    ...(this.observationOnly ? { observationOnly: true } : {}),
+ 					...this.repairRequest(request)
+ 				}, signal)) {
+ 					if (frame.type === "snapshot") {
+@@ -1578,10 +1580,12 @@ window.__ModuleLoader__.load({
+ 			openState = "cold";
+ 			openError = null;
+ 			openPromise = null;
++            observationOnly = false;
+ 			/** Bumped by stream replacement to invalidate an in-flight doOpen. Stale
+ 			*  passes drop all writes once the generation moves on. */
+ 			openGeneration = 0;
+ 			loadingOlder = false;
++            historyError = null;
+ 			/** Shared low-water target of the running jump loop; null when no jump is paging. */
+ 			jumpTargetSeq = null;
+ 			/** The running jump loop's completion, shared by retargeting callers. */
+@@ -1854,10 +1858,11 @@ window.__ModuleLoader__.load({
+ 				};
+ 			}
+ 			/** First open: pull the tail page (idempotent — in-flight/already-open returns the existing promise). */
+-			open() {
++			open(options = {}) {
+ 				if (this.openState === "open") return Promise.resolve();
+ 				if (this.openPromise !== null) return this.openPromise;
+-				const promise = this.doOpen(this.openGeneration).finally(() => {
++				this.observationOnly = options.observationOnly ?? this.observationOnly;
++                const promise = this.doOpen(this.openGeneration, this.observationOnly).finally(() => {
+ 					if (this.openPromise === promise) this.openPromise = null;
+ 				});
+ 				this.openPromise = promise;
+@@ -1868,7 +1873,9 @@ window.__ModuleLoader__.load({
+ 				if (this.openState !== "open" || !this.hasMore || this.loadingOlder) return;
+ 				const events = this.events;
+ 				if (events === void 0) return;
+-				this.loadingOlder = true;
++				const generation = this.openGeneration;
++				this.historyError = null;
++                this.loadingOlder = true;
+ 				this.notifier.markDirty();
+ 				try {
+ 					await events.prepend({
+@@ -1876,8 +1883,9 @@ window.__ModuleLoader__.load({
+ 						...HISTORY_PAGE_OPTIONS
+ 					});
+ 				} catch (error) {
+-					if (!(0, _deepseek_ai_dsh_api_gateway_client.isRemoteFailure)(error)) console.error("[session-controller] loadOlder failed:", error);
++					if (generation === this.openGeneration && this.events === events) this.historyError = {message: error instanceof Error ? error.message : String(error)};
+ 				} finally {
++                    if (generation !== this.openGeneration || this.events !== events) return;
+ 					this.loadingOlder = false;
+ 					this.notifier.markDirty();
+ 				}
+@@ -1899,7 +1907,8 @@ window.__ModuleLoader__.load({
+ 				};
+ 				this.pendingHistory = pending;
+ 				this.jumpTargetSeq = seq;
+-				this.loadingOlder = true;
++				this.historyError = null;
++                this.loadingOlder = true;
+ 				this.notifier.markDirty();
+ 				const generation = this.openGeneration;
+ 				this.jumpPromise = (async () => {
+@@ -1914,8 +1923,9 @@ window.__ModuleLoader__.load({
+ 							if (pending.beforeSeq >= before) return;
+ 						}
+ 					} catch (error) {
+-						if (!(0, _deepseek_ai_dsh_api_gateway_client.isRemoteFailure)(error)) console.error("[session-controller] loadThrough failed:", error);
++						if (generation === this.openGeneration && this.events === events) this.historyError = {message: error instanceof Error ? error.message : String(error)};
+ 					} finally {
++                        if (generation !== this.openGeneration || this.events !== events) return;
+ 						this.jumpTargetSeq = null;
+ 						this.jumpPromise = null;
+ 						this.pendingHistory = null;
+@@ -1940,7 +1950,7 @@ window.__ModuleLoader__.load({
+ 				this.openError = null;
+ 				this.baseSeq = SessionLogOffset(0);
+ 				this.notifier.markDirty();
+-				await this.open();
++				await this.open({observationOnly: this.observationOnly});
+ 			}
+ 			/**
+ 			* uSES subscription entry.
+@@ -2036,11 +2046,17 @@ window.__ModuleLoader__.load({
+ 				await events?.dispose();
+ 			}
+ 			/** @param generation - openGeneration at launch; stale passes cannot publish after replacement. */
+-			async doOpen(generation) {
++			async doOpen(generation, observationOnly = false) {
++                this.historyError = null;
++                this.loadingOlder = false;
++                this.jumpTargetSeq = null;
++                this.jumpPromise = null;
++                this.pendingHistory = null;
+ 				this.openState = "loading";
+ 				this.openError = null;
+ 				this.notifier.markDirty();
+ 				const events = new SessionEventStream(this.remote, this.sessionAddress(), {
++                    observationOnly,
+ 					publish: (change) => {
+ 						if (generation !== this.openGeneration || this.events !== events) return;
+ 						this.acceptEventChange(change);
+@@ -2288,6 +2304,7 @@ window.__ModuleLoader__.load({
+ 					openError: this.openError,
+ 					hasMore: this.hasMore,
+ 					loadingOlder: this.loadingOlder,
++                    historyError: this.historyError,
+ 					promptError: this.promptError,
+ 					blank: this.blankBit,
+ 					lastAgentError: this.lastAgentError,
+@@ -2379,10 +2396,10 @@ window.__ModuleLoader__.load({
+ 			* @param target - known identity or durable direct-parent address.
+ 			* @returns the resolved identity with its explicit or catalog-derived history route installed.
+ 			*/
+-			resolveTarget(target) {
++			resolveTarget(target, allowUnlisted = false) {
+ 				const id = typeof target === "string" ? target : target.childSessionId;
+ 				const address = typeof target === "string" ? this.subagentAddress(id) : target;
+-				if (typeof target === "string" && !this.sessions.has(id) && !this.summaries.some((summary) => summary.sessionId === id) && address === void 0) throw new Error(`sessions.retain: unknown session ${id}`);
++				if (!allowUnlisted && typeof target === "string" && !this.sessions.has(id) && !this.summaries.some((summary) => summary.sessionId === id) && address === void 0) throw new Error(`sessions.retain: unknown session ${id}`);
+ 				if (address !== void 0) this.addresses.set(id, address);
+ 				this.sessions.get(id)?.configureSubagent(address, address === void 0 ? void 0 : this.agentAvailable(address.parentSessionId));
+ 				return id;
+@@ -3195,10 +3212,10 @@ window.__ModuleLoader__.load({
+ 				const { source, signal } = options;
+ 				signal?.throwIfAborted();
+ 				if (this.closed) throw new Error("Session Controller is disposed");
+-				const id = this.manager.resolveTarget(target);
++				const id = this.manager.resolveTarget(target, options.allowUnlisted === true);
+ 				const reference = this.retainScope(id, source);
+ 				try {
+-					reference.attachOpening(this.manager.get(id).open(), signal);
++					reference.attachOpening(this.manager.get(id).open({observationOnly: options.observationOnly === true}), signal);
+ 					return reference;
+ 				} catch (error) {
+ 					reference.release();
+diff --git a/lib/index.js b/lib/index.js
+index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425cc1e4952a 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -217,6 +217,7 @@ var ApiSessionAgentController = class {
+ 		return this.resolve(observation.header.id, observation);
+ 	}
+ 	async resolve(sessionId, observation) {
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) return {error: apiSessionSubagentOwnershipError(sessionId)};
+ 		const live = this.liveAgent(sessionId);
+ 		if (live !== void 0) return live;
+ 		const attached = this.ctx.sessions.get(sessionId);
+@@ -1518,7 +1519,7 @@ var SessionHistoryController = class {
+ 					} : projectionBlock(source.projections),
+ 					...assistantStream === void 0 ? {} : { assistantStream }
+ 				};
+-				if (address.kind === "session" && source.source === "prepared") {
++				if (request.observationOnly !== true && address.kind === "session" && source.source === "prepared") {
+ 					const promotion = source.retain();
+ 					try {
+ 						this.promote(promotion);
+@@ -1805,7 +1806,8 @@ const imageLimitsSchema = z$1.object({
+ * @returns the original or advanced metadata value.
+ */
+ function applySessionListMetadata(state, event) {
+-	const blank = state.blank && event.type !== "turn/start";
++	const blank = state.blank && event.type !== "turn/start" && event.type !== "command/run"
++		&& !(event.type === "user/message" && event.data.source.kind === "user");
+ 	const lastPromptAt = event.type === "user/message" && event.data.source.kind === "user" ? event.time : state.lastPromptAt;
+ 	return blank === state.blank && lastPromptAt === state.lastPromptAt ? state : {
+ 		blank,
+@@ -1831,9 +1833,11 @@ function truncateUnicodeCodePoints(value, maximum) {
+ /** Owns list projection registration, bounded cold summaries, and authorized search. */
+ var ApiSessionList = class {
+ 	ctx;
++	resolveOrigin;
+ 	/** @param ctx - Host context carrying Session, query, persistence, and projection services. */
+-	constructor(ctx) {
++	constructor(ctx, resolveOrigin = () => void 0) {
+ 		this.ctx = ctx;
++		this.resolveOrigin = resolveOrigin;
+ 		ctx.sessionProjections.register({
+ 			key: "sessionListMetadata",
+ 			stateSchema: sessionListMetadataSchema,
+@@ -1846,7 +1850,7 @@ var ApiSessionList = class {
+ 				viewSchema: sessionListMetadataSchema,
+ 				view: (state) => state
+ 			},
+-			stateVersion: 1
++			stateVersion: 2
+ 		});
+ 		ctx.inject(["attachments"], (attachmentCtx) => {
+ 			ctx.sessionProjections.register({
+@@ -1877,6 +1881,7 @@ var ApiSessionList = class {
+ 			running: this.ctx.agents.get(session.id)?.status === "running",
+ 			blank: metadata?.blank ?? session.seq === 0,
+ 			...listFields(session.header),
++			...this.originFields(session.header),
+ 			...projections === void 0 ? {} : { projections }
+ 		};
+ 	}
+@@ -1904,6 +1909,10 @@ var ApiSessionList = class {
+ 		items.sort((left, right) => right.updatedAt - left.updatedAt);
+ 		return items;
+ 	}
++	originFields(header) {
++		const origin = header.origin ?? this.resolveOrigin(header.id);
++		return origin === void 0 ? {} : { origin };
++	}
+ 	summarizeCold(header) {
+ 		const projections = this.projectionsFor(header, void 0);
+ 		const metadata = projections?.values.sessionListMetadata;
+@@ -1914,6 +1923,7 @@ var ApiSessionList = class {
+ 			running: false,
+ 			blank: metadata?.blank ?? false,
+ 			...listFields(header),
++			...this.originFields(header),
+ 			...projections === void 0 ? {} : { projections }
+ 		};
+ 	}
+@@ -1931,7 +1941,7 @@ var ApiSessionList = class {
+ 		try {
+ 			const visible = await provider.listSessions(signal);
+ 			signal.throwIfAborted();
+-			const visibleIds = new Set(visible.filter((record) => record.header.cwd !== void 0).map((record) => record.header.id));
++			const visibleIds = new Set(visible.filter((record) => record.header.cwd !== void 0 && this.originFields(record.header).origin !== "subagent").map((record) => record.header.id));
+ 			if (visibleIds.size === 0) return {
+ 				items: [],
+ 				hasMore: false
+@@ -2832,6 +2842,8 @@ let SessionController = (() => {
+ 		controlState;
+ 		history;
+ 		listState;
++		sessionOriginResolvers = new Set();
++		sessionDrivers = new Set();
+ 		openPath;
+ 		fileApplications;
+ 		openFileApplication;
+@@ -2860,7 +2872,12 @@ let SessionController = (() => {
+ 			this.history = new SessionHistoryController(ctx, (observation) => {
+ 				this.promote(observation);
+ 			});
+-			this.listState = new ApiSessionList(ctx);
++			this.listState = new ApiSessionList(ctx, id => {
++				for (const resolve of this.sessionOriginResolvers) {
++					const origin = resolve(id);
++					if (origin !== void 0) return origin;
++				}
++			});
+ 			this.fileApplications = internals.fileApplications ?? nativeFileApplications;
+ 			this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication;
+ 			this.openPath = internals.openPath ?? openNativeAssociatedPath;
+@@ -2898,6 +2915,7 @@ let SessionController = (() => {
+ 		}
+ 		promote(observation) {
+ 			const sessionId = observation.header.id;
++			if (this.sessionDriver(sessionId)) { observation[Symbol.dispose](); return; }
+ 			const task = (async () => {
+ 				const env_1 = {
+ 					stack: [],
+@@ -2927,7 +2945,24 @@ let SessionController = (() => {
+ 		* @param sessionId - Session identity whose Agent owns the operation.
+ 		* @returns the live Agent or the stable Session-domain failure.
+ 		*/
++		/** Register presentation classification for externally owned legacy sessions. */
++		registerSessionOrigin(resolve) {
++			this.sessionOriginResolvers.add(resolve);
++			return () => this.sessionOriginResolvers.delete(resolve);
++		}
++
++		/** Register a plugin-owned Session driver without replacing native views or transport. */
++		registerSessionDriver(driver) {
++			this.sessionDrivers.add(driver);
++			return () => this.sessionDrivers.delete(driver);
++		}
++		sessionDriver(sessionId) {
++			const owners = [...this.sessionDrivers].filter(driver => driver.owns(sessionId));
++			if (owners.length > 1) throw new RemoteError("session/agent-busy", "multiple Session drivers claim this identity", {});
++			return owners[0];
++		}
+ 		resolveAgent(sessionId) {
++			if (this.sessionDriver(sessionId)) return Promise.resolve({error: apiSessionSubagentOwnershipError(sessionId)});
+ 			return this.agents.resolveAgent(sessionId);
+ 		}
+ 		/**
+@@ -3095,7 +3130,8 @@ let SessionController = (() => {
+ 		*/
+ 		prompt(request, signal) {
+ 			signal.throwIfAborted();
+-			return this.commands.prompt(request);
++			const driver = this.sessionDriver(request.sessionId);
++			return driver ? driver.prompt(request, signal) : this.commands.prompt(request);
+ 		}
+ 		/**
+ 		* Read one image proven reachable from the addressed Session log.
+@@ -3111,6 +3147,7 @@ let SessionController = (() => {
+ 		* @returns acknowledgement that the queue mutation was applied.
+ 		*/
+ 		updateQueue(request) {
++			if (this.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
+ 			return this.commands.updateQueue(request);
+ 		}
+ 		/**
+@@ -3119,7 +3156,8 @@ let SessionController = (() => {
+ 		* @returns acknowledgement that cancellation was requested.
+ 		*/
+ 		cancel(request) {
+-			return this.commands.cancel(request);
++			const driver = this.sessionDriver(request.sessionId);
++			return driver ? driver.cancel(request) : this.commands.cancel(request);
+ 		}
+ 		/**
+ 		* Read one cold-safe, message-aligned Session history page.
+diff --git a/lib/typert.host.js b/lib/typert.host.js
+index 3ee71e354830818730179abc4156af7ce6dab771..245bac3a2865c44685b5d821ea7748508c06d2e0 100644
+--- a/lib/typert.host.js
++++ b/lib/typert.host.js
+@@ -182,6 +182,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
+   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+ })]).readonly(),
+   'assistantStream': z.literal(true).readonly().optional(),
++  'observationOnly': z.literal(true).readonly().optional(),
+   'maxMessages': z.number().readonly().optional(),
+   'turnWindow': z.object({
+   'minMessages': z.number().readonly(),
+@@ -2002,7 +2003,7 @@ export const TYPERT = {
+           },
+           {
+             "name": "SessionFollowRequest",
+-            "declaration": "export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {\n    readonly address: SessionAddress;\n    readonly assistantStream?: true;\n}"
++            "declaration": "export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {\n    readonly address: SessionAddress;\n    readonly assistantStream?: true;\n    readonly observationOnly?: true;\n}"
+           },
+           {
+             "name": "SessionForkRequest",
+diff --git a/lib/typert.remote-client.js b/lib/typert.remote-client.js
+index 2a0d24d50bec997146bd019da0faaf07d22fc791..286141801b7f62fd931029c93a85bd47822fbe12 100644
+--- a/lib/typert.remote-client.js
++++ b/lib/typert.remote-client.js
+@@ -182,6 +182,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
+   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+ })]).readonly(),
+   'assistantStream': z.literal(true).readonly().optional(),
++  'observationOnly': z.literal(true).readonly().optional(),
+   'maxMessages': z.number().readonly().optional(),
+   'turnWindow': z.object({
+   'minMessages': z.number().readonly(),
+diff --git a/lib/types/client/contract/sessions.d.ts b/lib/types/client/contract/sessions.d.ts
+index 6eddfb2215fc78493e364b65d813b62025a5118e..26ff0180013af4b71557a9e6730eb83210de159d 100644
+--- a/lib/types/client/contract/sessions.d.ts
++++ b/lib/types/client/contract/sessions.d.ts
+@@ -30,6 +30,12 @@ export interface SessionReference extends Disposable {
+ }
+ /** Consumer identity and optional cancellation of one acquisition waiter. */
+ export interface SessionRetainOptions {
++    /** Read an independently persisted Session omitted from the navigation catalog.
++     * Only relaxes local catalog preflight; host history authorization still applies.
++     * Does not create, resume, or drive an Agent. */
++    readonly allowUnlisted?: boolean;
++    /** Cold history subscriptions must not promote a prepared Session into an Agent. */
++    readonly observationOnly?: true;
+     readonly source: SessionReferenceSource;
+     readonly signal?: AbortSignal | undefined;
+ }
+diff --git a/lib/types/client/contract/snapshot.d.ts b/lib/types/client/contract/snapshot.d.ts
+index 012c45a3f79c113016b7dffc1a7e30583e3b18fd..9226ff492e5d68f68261e56bc16bdfa7aecf35c2 100644
+--- a/lib/types/client/contract/snapshot.d.ts
++++ b/lib/types/client/contract/snapshot.d.ts
+@@ -70,6 +70,8 @@ export interface SessionSnapshot {
+     readonly openError: RemoteFailure | null;
+     readonly hasMore: boolean;
+     readonly loadingOlder: boolean;
++    /** Public paging failure; cleared by the next history load, independent of initial open. */
++    readonly historyError: {readonly message:string} | null;
+     readonly promptError: PromptError | null;
+     readonly blank: boolean;
+     readonly lastAgentError: string | null;
+diff --git a/lib/types/client/sessions/manager.d.ts b/lib/types/client/sessions/manager.d.ts
+index 6075c6afa9d1d43245509fa9e5f334ee20d4afff..ad0331705a936dc8d6884cfd7af04519f0544df3 100644
+--- a/lib/types/client/sessions/manager.d.ts
++++ b/lib/types/client/sessions/manager.d.ts
+@@ -83,7 +83,7 @@ export declare class SessionManager {
+      * @param target - known identity or durable direct-parent address.
+      * @returns the resolved identity with its explicit or catalog-derived history route installed.
+      */
+-    resolveTarget(target: SessionTarget): SessionId;
++    resolveTarget(target: SessionTarget, allowUnlisted?: boolean): SessionId;
+     /**
+      * Resolve an address for breadcrumb navigation without retaining transport authority.
+      * @param sessionId - possible child id in an already-loaded catalog.
+diff --git a/lib/types/client/sessions/session.d.ts b/lib/types/client/sessions/session.d.ts
+index 73c66fadb1bb6068c136667d7afaf4afbffc7b7f..33979d9cd560835bb4b6da923c22fd72d64228dd 100644
+--- a/lib/types/client/sessions/session.d.ts
++++ b/lib/types/client/sessions/session.d.ts
+@@ -48,6 +48,7 @@ export declare class Session implements SessionFace {
+     private openState;
+     private openError;
+     private openPromise;
++    private observationOnly;
+     /** Bumped by stream replacement to invalidate an in-flight doOpen. Stale
+      *  passes drop all writes once the generation moves on. */
+     private openGeneration;
+@@ -191,7 +192,7 @@ export declare class Session implements SessionFace {
+         matched: boolean;
+     }>>;
+     /** First open: pull the tail page (idempotent — in-flight/already-open returns the existing promise). */
+-    open(): Promise<void>;
++    open(options?: {observationOnly?: boolean}): Promise<void>;
+     /** Prepend one Turn-aligned page: at least 50 messages and two Turn starts, capped at 500 messages. */
+     loadOlder(): Promise<void>;
+     /** Jump loader: page backwards until the window covers seq (see ISession.loadThrough). */
+diff --git a/lib/types/client/transport.d.ts b/lib/types/client/transport.d.ts
+index d322ee775cb93d320c2a29ede1638696f5d59b21..f452cae9965a0031280d57321617a22aabfe2e64 100644
+--- a/lib/types/client/transport.d.ts
++++ b/lib/types/client/transport.d.ts
+@@ -43,6 +43,8 @@ export interface SessionControlStreamOptions {
+ }
+ /** Domain sinks used by one addressed Session event journal. */
+ export interface SessionEventStreamOptions {
++    /** Keep reconnecting follow subscriptions non-activating. */
++    readonly observationOnly?: boolean;
+     /** Apply one complete event-window change. */
+     readonly publish: (change: SessionJournalChange) => void;
+     /** Observe a retryable carrier loss before reconnection. */
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+index 58e6dd4ea6314f4b4037ef652aa4356196f6c999..51ab999e3e6af697f35160089426139dd8d81b2e 100644
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -24,6 +24,12 @@ export interface Config {
+     readonly nativeOpen?: boolean;
+ }
+ /** Host integrations replaceable by direct unit tests. */
++/** A plugin owns execution; native Session history, Chat, trajectory and input remain reusable. */
++export interface SessionDriver {
++    owns(sessionId: SessionId): boolean;
++    prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>;
++    cancel(request: SessionCancelRequest): SessionCancelValue;
++}
+ export interface SessionControllerInternals {
+     /** Native default-application handoff. */
+     readonly openPath?: (path: string, signal: AbortSignal) => Promise<void>;
+@@ -58,12 +64,19 @@ export declare class SessionController extends TypertRemoteService {
+      */
+     constructor(ctx: Context, config: Config, internals?: SessionControllerInternals);
+     private promote;
++    private sessionDrivers;
++    /** Register an execution owner; dispose with the owning plugin. */
++    registerSessionDriver(driver: SessionDriver): () => void;
++    /** Resolve an external execution owner without materializing an Agent. */
++    sessionDriver(sessionId: SessionId): SessionDriver | undefined;
+     /**
+      * Resolve or resume one ordinary Session for another Host API domain.
+      * @param sessionId - Session identity whose Agent owns the operation.
+      * @returns the live Agent or the stable Session-domain failure.
+      */
+     resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>;
++    /** Classify plugin-owned legacy sessions in live and cold list summaries without rewriting history. Dispose with the registering plugin. */
++    registerSessionOrigin(resolve: (sessionId: SessionId) => 'subagent' | undefined): () => void;
+     /**
+      * Inspect one attached or persisted Session without activating its Agent.
+      * @param sessionId - durable Session identity.
+diff --git a/lib/types/types.d.ts b/lib/types/types.d.ts
+index 1ce67e417fb35bf7ec474878d80c271a1473d8c3..9b05689811cb7c2f3514a6708b2a6a91dc729ffa 100644
+--- a/lib/types/types.d.ts
++++ b/lib/types/types.d.ts
+@@ -457,6 +457,8 @@ export interface SessionPageRequest {
+ }
+ /** One live event request for a durable Session address. */
+ export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {
++    /** Observe persisted and live history without activating an ordinary Agent. */
++    readonly observationOnly?: true;
+     readonly address: SessionAddress;
+     /** Include process-local assistant presentation frames for the Web client. */
+     readonly assistantStream?: true;

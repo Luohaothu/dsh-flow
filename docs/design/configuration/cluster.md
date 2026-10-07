@@ -5,12 +5,12 @@ description: 启动请求、部署默认值、预算和运行限制的实际优�
 
 # 集群配置参数
 
-部署配置设定集群的默认行为，`start` 请求指定本次任务的目标，并按需覆盖默认值。本地 `ctx.flow.start`、用户工具 `flow_start` 和远程接口 `start` 最终调用同一个解析函数，因此使用同一套默认值。
+部署配置设定集群的默认行为，宿主程序化 `ctx.flow.start` 请求可覆盖本次启动参数。用户通过主会话 `/agent-team` 启动，使用部署默认值并绑定主会话；浏览器观察接口不公开启动或控制方法。
 
 ## 配置优先级
 
 ```text
-配置规则默认值 → 部署 defaultBudget / defaultLimits → 本次 start 覆盖
+配置规则默认值 → 部署 defaultBudget / defaultLimits → 插件设置保存的默认值 → 本次 start 覆盖
 ```
 
 `budget` 和 `limits` 按字段合并。例如，`budget: { tokens: 100000 }` 只替换 `tokens`，其余五个预算维度保留部署值；`budget: {}` 则保留完整默认预算。显式传入的非法值会被拒绝，不会被替换为默认值。
@@ -47,7 +47,7 @@ description: 启动请求、部署默认值、预算和运行限制的实际优�
 | `acceptance_criteria` | 根任务单元的验收条件列表 |
 | `initial_transactions` | 可选的固定任务单元计划，主要用于可复现基线；一般任务由编排智能体规划 |
 
-模型提供方、模型、计时器和数据库目录均属于部署设置，不在启动请求中配置。调用示例与返回类型见 [API 接口](/development/api)。
+插件设置支持团队的默认层数、子代理数、代理总数、运行时间、Token 与请求预算、派发模式及模型选项。设置经官方配置表单保存，新团队启动时保存快照；已有团队保持原预算和限制。`defaultDispatchMode` 为 `parallel`（默认）或 `serial`；串行默认同时运行一个代理、一个模型请求。`defaultModel` 为 `{ provider, model }`，省略或 `null` 时跟随主会话；`defaultReasoningEffort` 默认 `inherit`，也可选 `off / low / medium / high`。`maxTokens` 控制每次模型最大输出，任务代理另受 `worker_max_tokens` 限制。计时器和数据库目录属于部署设置，不在启动请求中配置。调用示例与返回类型见 [API 接口](/development/api)。
 
 ## 默认根预算
 

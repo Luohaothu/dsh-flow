@@ -57,7 +57,7 @@ export const ROLES: readonly FlowAgentRole[] = [...MANAGEMENT_ROLES, WORKER_ROLE
 /** Orchestrator: transaction/decomposition/validation authority inside its domain. */
 export const ORCHESTRATOR_ACTIONS = [
   'create_transaction', 'decompose', 'set_dependency', 'set_priority', 'dispatch', 'adjust_transaction',
-  'validate', 'accept_result', 'reject_result', 'aggregate', 'escalate', 'finish_cluster',
+  'validate', 'accept_result', 'reject_result', 'aggregate', 'escalate', 'finish_cluster', 'request_user',
   // Transaction-scoped lifecycle control: the cluster-level `pause`/`resume`/
   // `cancel` are the operator's whole-cluster switch, these are the
   // Orchestrator's inside its own domain.

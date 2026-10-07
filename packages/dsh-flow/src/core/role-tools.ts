@@ -25,6 +25,7 @@ import type { FlowAgentRole } from '../types.ts';
 import type { ClusterRuntime } from './cluster.ts';
 import { ROLE_TOOL, commandIdFor } from './protocol.ts';
 import { COMMUNICATION_ACTIONS } from './communication.ts';
+import { COMMUNICATION_CATEGORIES } from '../messages.ts';
 
 /** What each role command does, in the model's own terms. */
 const ROLE_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -97,10 +98,10 @@ function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolNam
 function registerCommunicationTool(agentCtx: Context, runtime: ClusterRuntime): void {
   agentCtx.tools.register(defineTool({
     name: 'flow_communicate',
-    description: 'Cluster communication: send/multicast messages to any agent in the cluster, manage groups, and read or publish blackboard keys.',
+    description: `Cluster communication: send/multicast messages to any agent in the cluster, manage groups, and read or publish blackboard keys. For send/multicast, explicitly choose category: ${COMMUNICATION_CATEGORIES.join(', ')}. Use result_report for outputs/evidence, review_feedback for audit decisions/corrections, progress_update for interim progress, task_instruction for revised requirements/rework, collaboration_request for questions/dependencies, blocker_report for failures/escalation, resource_coordination for budgets/models/tools, discussion for other conversation.`,
     parameters: {
       action: { type: 'string', required: true, enum: [...COMMUNICATION_ACTIONS] },
-      params: { type: 'json', description: 'send/multicast: {agent|group|node, content}; group: {operation, name|id, members}; publish: {key, value, expected_revision}; query: {key|prefix}; subscribe: {operation, key|prefix, id}.' },
+      params: { type: 'json', description: 'send/multicast: {agent|group|node, category, content, transaction_id?}; group: {operation, name|id, members}; publish: {key, value, expected_revision}; query: {key|prefix}; subscribe: {operation, key|prefix, id}.' },
     },
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     async execute(args, exec) {

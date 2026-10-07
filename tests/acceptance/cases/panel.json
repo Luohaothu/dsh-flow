@@ -1,6 +1,6 @@
 {
-  "title": "Native panel and authenticated host route",
-  "objective": "Produce one short result through this cluster: submit a result that states the cluster's objective verbatim. The panel checks drive pause, resume, cancel and the report download from the browser.",
+  "title": "Main-conversation agent team observation and authenticated host route",
+  "objective": "Produce one short result through the team. The browser verifies main-conversation ownership, read-only structure and conversation details, communication records and display preferences.",
   "capabilities": [
     "fs_read"
   ],
@@ -27,7 +27,7 @@
     "kind": "empty"
   },
   "patches": [
-    "examples/cluster.patch.yml"
+    "examples/instance.patch.yml"
   ],
   "initial_transactions": [
     {
@@ -41,7 +41,7 @@
   ],
   "live_first": true,
   "acceptance_criteria": [
-    "The panel can pause, resume and cancel this cluster",
-    "The report downloads from the panel"
+    "The native team view is read-only and belongs to its main conversation",
+    "The standard plugin page saves display preferences"
   ]
 }

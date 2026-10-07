@@ -1,0 +1,20 @@
+diff --git a/lib/client.js b/lib/client.js
+index a452ef2408543d62ea1e0133a2a0206008951eed..e04a71676f4824f0a979c0666e0791ac70896ba1 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -962,7 +962,14 @@ window.__ModuleLoader__.load({
+ 			});
+ 			ctx.slots.inject("conversation.session.header.lineage", () => ctx.slots.register({
+ 				name: "conversation.session.header.lineage",
+-				locale: NS,
++                select: owner => {
++                    const binding=ctx.sessions.binding(owner.lineageSessionId);
++                    const address=binding?.session.getSnapshot().subagent?.address;
++                    if(address?.childSessionId===owner.lineageSessionId)return true;
++                    const state=ctx.sessions.list.getSnapshot();
++                    return Object.values(state.projectionsBySession).some(snapshot=>snapshot.values.subagentCatalog?.some(entry=>entry.id===owner.lineageSessionId))?true:null;
++                },
++                locale: NS,
+ 				inject: catalogActions
+ 			}, SubagentHeaderLineage));
+ 			ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({

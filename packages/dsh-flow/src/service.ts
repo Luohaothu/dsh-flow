@@ -2,7 +2,7 @@
  * The `ctx.flow` public contract.
  *
  * This is the surface other plugins are allowed to program against: the seven
- * cluster operations, and nothing else. The store, the scheduler, the ticker,
+ * cluster operations and main-session team bindings. The store, the scheduler, the ticker,
  * recovery and disposal stay on the deep `ClusterRuntime` module — a consumer
  * cannot reach them through this type, and the published package does not
  * export the runtime class at all.
@@ -13,8 +13,13 @@
  * inside the runtime; that one is not part of this contract.
  */
 import type {} from '@deepseek-ai/cordis';
+import type { FlowModelSelection, FlowStartDefaults } from './core/model.ts';
 
 import type {
+  FlowTeamRun,
+  FlowAgentSession,
+  FlowTeamSnapshot,
+  FlowTeamCreateRequest,
   FlowControlAction,
   FlowEventQuery,
   FlowEventsResult,
@@ -38,6 +43,28 @@ declare module '@deepseek-ai/cordis' {
 
 /** The cluster operations a deployment may call. */
 export interface FlowService {
+  /** Main-Agent creation, with durable assessment and parameter-safe retries. */
+  createTeam(sessionId: string, launchId: string, request: FlowTeamCreateRequest, model?: FlowModelSelection): FlowTeamSnapshot
+  /** Effective deployment defaults for the main Agent's launch assessment. */
+  teamStartDefaults(): FlowStartDefaults | undefined
+  /** Internal execution sessions cannot operate the main-conversation tools. */
+  isTeamAgentSession(sessionId: string): boolean
+  agentSession(sessionId: string): FlowAgentSession | null
+  promptAgent(sessionId: string, requestId: string, text: string, clientTimeZone?: string, mode?: 'queue' | 'steer'): void
+  interruptAgent(sessionId: string): void
+  /** Release terminal execution resources while retaining all evidence and history. */
+  finalizeTeam(sessionId: string, runId: string): FlowTeamSnapshot
+  /** Start a deduplicated main-session command intent. */
+  startTeam(sessionId: string, intentId: string, objective: string, workspace?: string,model?:FlowModelSelection): FlowSnapshot
+  /** Ordinary instructions are accepted only through the main-session path. */
+  teamSelectModel(sessionId:string,model:FlowModelSelection):void
+  teamReply(sessionId: string, messageId: string, content: string, runId?: string): void
+  /** Runs are isolated by their owning main session. */
+  teamRuns(sessionId: string): readonly FlowTeamRun[]
+  /** Durable main owners, including idle/cold sessions; Host notification delivery only. */
+  teamOwners(): readonly string[]
+  /** One coherent read-only snapshot. */
+  teamRead(sessionId: string, runId: string): FlowTeamSnapshot
   /**
    * Create and start one cluster.
    * @param request - the objective plus whatever the caller overrides; every omitted field comes from the resolved deployment configuration.

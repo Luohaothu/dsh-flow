@@ -1,0 +1,310 @@
+diff --git a/lib/client.js b/lib/client.js
+index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3d667966b 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -3027,6 +3027,21 @@ window.__ModuleLoader__.load({
+ 		/** Root service owning Conversation registries and per-Session bindings. */
+ 		var UiConversation = class extends _deepseek_ai_cordis.Service {
+ 			sessions;
++            presentations = new Map();
++            presentationListeners = new Set();
++            registerViewPresentation(id, value) {
++                if (this.presentations.has(id)) throw new Error(`view presentation already registered: ${id}`);
++                return this.ctx.effect(() => {
++                    const notify = () => { for (const listener of this.presentationListeners) listener(); };
++                    this.presentations.set(id, value);
++                    const stop = value.availableSessions?.subscribe(notify);
++                    notify();
++                    return () => { stop?.(); this.presentations.delete(id); notify(); };
++                }, `ui-conversation: view presentation ${id}`);
++            }
++            viewPresentation(id) { return this.presentations.get(id); }
++            subscribeViewPresentation(listener) { this.presentationListeners.add(listener); return () => this.presentationListeners.delete(listener); }
++
+ 			/** Registry of event matchers and target snapshot builders. */
+ 			events;
+ 			/** Registry of target View definitions. */
+@@ -15718,7 +15733,7 @@ window.__ModuleLoader__.load({
+ 		}
+ 		//#endregion
+ 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css.mjs
+-		const css$4 = ".wSkVaW_root{background:var(--dsw-alias-bg-base);flex-direction:column;min-width:0;height:100%;display:flex;position:relative}.wSkVaW_header{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:none;grid-template-columns:auto minmax(0,1fr);min-height:76px;padding:10px 28px 0 20px;display:grid}.wSkVaW_header:where(:not(:has(.wSkVaW_tabs))){min-height:0;padding-bottom:10px}.wSkVaW_headerBlank{border-bottom:none;min-height:0;padding-bottom:0}.wSkVaW_headerBlank .wSkVaW_headerCorner{margin-left:auto}html:not([data-platform=darwin]) .wSkVaW_headerSessionless{padding-top:0}html:not([data-platform=darwin]) .wSkVaW_headerSessionless .wSkVaW_titleRow{min-height:0}[data-platform=darwin] .wSkVaW_headerLeading,[data-platform=darwin] .wSkVaW_headerActions,[data-platform=darwin] .wSkVaW_headerUtilities,[data-platform=darwin] .wSkVaW_headerCorner{-webkit-app-region:no-drag}.wSkVaW_titleRow{min-height:30px;grid-column:2;align-items:center;gap:0;padding-inline-start:max(0px, calc(var(--dsh-frame-leading-clearance,0px) - 20px));display:flex;container-type:inline-size}.wSkVaW_titleCluster{flex:1;align-items:center;gap:10px;min-width:0;display:flex}.wSkVaW_headerLeading{flex:none;grid-area:1/1;align-items:center;gap:8px;display:flex}.wSkVaW_crumbs{white-space:nowrap;align-items:center;gap:4px;min-width:0;display:flex;overflow:hidden}.wSkVaW_crumbSeg{align-items:center;gap:4px;min-width:0;display:inline-flex}.wSkVaW_crumbSep{color:var(--dsw-alias-label-caption);font-size:14px;line-height:20px}.wSkVaW_crumb{border-radius:var(--dsw-radius-md);max-width:220px;color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;cursor:pointer;background:0 0;border:none;padding:4px 8px;font-size:14px;line-height:20px;display:inline-block;overflow:hidden}.wSkVaW_crumbSubagent{font-size:12px;line-height:18px}button.wSkVaW_crumb:hover{background:var(--dsw-alias-interactive-bg-hover)}.wSkVaW_crumbCurrent{color:var(--dsw-alias-label-primary);cursor:default;font-weight:500}.wSkVaW_headerActions{flex:none;align-items:center;gap:8px;display:flex}.wSkVaW_headerUtilities{flex:none;align-items:center;gap:8px;margin-left:20px;display:flex}.wSkVaW_headerUtilities:empty{display:none}.wSkVaW_headerCorner{flex:none;align-items:center;margin-left:8px;margin-right:-16px;display:flex}.wSkVaW_headerCorner:empty{display:none}.wSkVaW_tabs{z-index:1;grid-column:1/-1;gap:36px;margin-top:10px;padding-left:8px;display:flex;position:relative}.wSkVaW_tab{color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;padding:0 0 9px;font-size:13px;font-weight:500;line-height:16px;position:relative}.wSkVaW_tab:after{content:\"\";background:0 0;border-radius:2px;height:2px;position:absolute;bottom:-1px;left:0;right:0}.wSkVaW_tabActive{color:var(--dsw-alias-state-business-primary)}.wSkVaW_tabActive:after{background:var(--dsw-alias-state-business-primary)}.wSkVaW_viewArea{flex-direction:column;flex:1;min-height:0;display:flex}.wSkVaW_widthHandle{z-index:0;width:min(10px, calc((100% - var(--dsh-chat-content-width)) / 2 - 24px - 24px));cursor:col-resize;position:absolute;top:0;bottom:0}.wSkVaW_widthHandle[data-side=left]{right:calc(50% + var(--dsh-chat-content-width) / 2 + 24px)}.wSkVaW_widthHandle[data-side=right]{left:calc(50% + var(--dsh-chat-content-width) / 2 + 24px)}.wSkVaW_widthHandle:after{content:\"\";background:linear-gradient(to bottom, transparent calc(var(--dsh-width-handle-pointer-y,50%) - 36px), var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y,50%) - 8px), var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y,50%) + 8px), transparent calc(var(--dsh-width-handle-pointer-y,50%) + 36px));opacity:0;pointer-events:none;border-radius:2px;width:2px;position:absolute;top:0;bottom:0}.wSkVaW_widthHandle[data-side=left]:after{right:4px}.wSkVaW_widthHandle[data-side=right]:after{left:4px}.wSkVaW_widthHandle:hover:after,.wSkVaW_widthHandle[data-dragging]:after{opacity:1}.wSkVaW_widthHandle[data-dragging]{z-index:8}.wSkVaW_root:has([data-conversation-composer-overlay]) .wSkVaW_widthHandle{display:none}.wSkVaW_composerStack{--dsh-composer-stack-gap:6px;gap:var(--dsh-composer-stack-gap);flex-direction:column;display:flex}.wSkVaW_composerSeat{--dsh-composer-text-max-height:336px;flex-direction:column;flex:none;display:flex}.wSkVaW_root[data-phase=active]{overflow:hidden}.wSkVaW_root[data-phase=active] .wSkVaW_header{flex:none}.wSkVaW_body{--dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px, calc(var(--dsh-conversation-column-width,0px) * .64), 920px));--dsh-composer-card-max-width:calc(var(--dsh-chat-content-width) + 32px);--dsh-composer-side-clearance:16px;--dsh-composer-dock-inset:8px;flex-direction:column;flex:1;min-height:0;display:flex;position:relative}.wSkVaW_embeddedBody{--dsh-chat-content-width:min(calc(100% - 32px), 920px);--dsh-composer-card-max-width:min(calc(100% - 16px), 952px);--dsh-composer-side-clearance:8px;--dsh-composer-dock-inset:8px;overflow:hidden}.wSkVaW_scrollBody{scrollbar-gutter:stable;flex-direction:column;flex:1;min-height:0;margin-right:2px;display:flex;overflow-y:auto}.wSkVaW_scrollBody::-webkit-scrollbar-track{margin:2px}.wSkVaW_root[data-phase=active] .wSkVaW_viewArea,.wSkVaW_embeddedBody[data-content-phase=active] .wSkVaW_viewArea{flex:1 0 auto;min-height:auto}.wSkVaW_root[data-phase=active] .wSkVaW_composerSeat,.wSkVaW_embeddedBody[data-content-phase=active] .wSkVaW_composerSeat{z-index:7;background:linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px, var(--dsw-alias-bg-base) 36px);position:sticky;bottom:0}.wSkVaW_root[data-phase=active] .wSkVaW_composerSeat:has([data-trigger-menu]){z-index:9}.wSkVaW_scrollBody:has([data-conversation-composer-overlay]){scrollbar-gutter:auto;position:relative;overflow:hidden auto}.wSkVaW_scrollBody:has([data-conversation-composer-overlay])>[data-slot=conversation\\.session]>.wSkVaW_viewArea{flex:1 1 0;min-height:0;overflow:hidden}.wSkVaW_scrollBody:has([data-conversation-composer-overlay])>.wSkVaW_composerSeat{right:var(--dsh-scrollbar-width);position:absolute;bottom:0;left:0}.wSkVaW_composerHero{width:min(calc(var(--dsh-composer-card-max-width) + 2 * var(--dsh-composer-side-clearance)), 100%);z-index:1;align-self:center;gap:8px;padding-bottom:32px}.wSkVaW_heroWorkspaceRow{align-items:center;gap:2px;min-width:0;margin-top:4px;padding:0 16px 0 20px;display:flex}.wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody,.wSkVaW_embeddedBody[data-content-phase=hero] .wSkVaW_scrollBody{justify-content:center;overflow-y:auto}.wSkVaW_root[data-phase=settling] .wSkVaW_composerSeat,.wSkVaW_embeddedBody[data-content-phase=settling] .wSkVaW_composerSeat{visibility:hidden}";
++		const css$4 = ".wSkVaW_scrollBody:has(>[data-slot]>[data-contained-view]){overflow:hidden}.wSkVaW_scrollBody:has(>[data-slot]>[data-contained-view])>[data-slot]{flex:1;min-height:0;display:flex;flex-direction:column}.wSkVaW_scrollBody:has(>[data-slot]>[data-readonly-view])>.wSkVaW_composerSeat{display:none}.wSkVaW_root{background:var(--dsw-alias-bg-base);flex-direction:column;min-width:0;height:100%;display:flex;position:relative}.wSkVaW_header{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:none;grid-template-columns:auto minmax(0,1fr);min-height:76px;padding:10px 28px 0 20px;display:grid}.wSkVaW_header:where(:not(:has(.wSkVaW_tabs))){min-height:0;padding-bottom:10px}.wSkVaW_headerBlank{border-bottom:none;min-height:0;padding-bottom:0}.wSkVaW_headerBlank .wSkVaW_headerCorner{margin-left:auto}html:not([data-platform=darwin]) .wSkVaW_headerSessionless{padding-top:0}html:not([data-platform=darwin]) .wSkVaW_headerSessionless .wSkVaW_titleRow{min-height:0}[data-platform=darwin] .wSkVaW_headerLeading,[data-platform=darwin] .wSkVaW_headerActions,[data-platform=darwin] .wSkVaW_headerUtilities,[data-platform=darwin] .wSkVaW_headerCorner{-webkit-app-region:no-drag}.wSkVaW_titleRow{min-height:30px;grid-column:2;align-items:center;gap:0;padding-inline-start:max(0px, calc(var(--dsh-frame-leading-clearance,0px) - 20px));display:flex;container-type:inline-size}.wSkVaW_titleCluster{flex:1;align-items:center;gap:10px;min-width:0;display:flex}.wSkVaW_headerLeading{flex:none;grid-area:1/1;align-items:center;gap:8px;display:flex}.wSkVaW_crumbs{white-space:nowrap;align-items:center;gap:4px;min-width:0;display:flex;overflow:hidden}.wSkVaW_crumbSeg{align-items:center;gap:4px;min-width:0;display:inline-flex}.wSkVaW_crumbSep{color:var(--dsw-alias-label-caption);font-size:14px;line-height:20px}.wSkVaW_crumb{border-radius:var(--dsw-radius-md);max-width:220px;color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;cursor:pointer;background:0 0;border:none;padding:4px 8px;font-size:14px;line-height:20px;display:inline-block;overflow:hidden}.wSkVaW_crumbSubagent{font-size:12px;line-height:18px}button.wSkVaW_crumb:hover{background:var(--dsw-alias-interactive-bg-hover)}.wSkVaW_crumbCurrent{color:var(--dsw-alias-label-primary);cursor:default;font-weight:500}.wSkVaW_headerActions{flex:none;align-items:center;gap:8px;display:flex}.wSkVaW_headerUtilities{flex:none;align-items:center;gap:8px;margin-left:20px;display:flex}.wSkVaW_headerUtilities:empty{display:none}.wSkVaW_headerCorner{flex:none;align-items:center;margin-left:8px;margin-right:-16px;display:flex}.wSkVaW_headerCorner:empty{display:none}.wSkVaW_tabs{z-index:1;grid-column:1/-1;gap:36px;margin-top:10px;padding-left:8px;display:flex;position:relative}.wSkVaW_tab{color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;padding:0 0 9px;font-size:13px;font-weight:500;line-height:16px;position:relative}.wSkVaW_tab:after{content:\"\";background:0 0;border-radius:2px;height:2px;position:absolute;bottom:-1px;left:0;right:0}.wSkVaW_tabActive{color:var(--dsw-alias-state-business-primary)}.wSkVaW_tabActive:after{background:var(--dsw-alias-state-business-primary)}.wSkVaW_viewArea{flex-direction:column;flex:1;min-height:0;display:flex}.wSkVaW_widthHandle{z-index:0;width:min(10px, calc((100% - var(--dsh-chat-content-width)) / 2 - 24px - 24px));cursor:col-resize;position:absolute;top:0;bottom:0}.wSkVaW_widthHandle[data-side=left]{right:calc(50% + var(--dsh-chat-content-width) / 2 + 24px)}.wSkVaW_widthHandle[data-side=right]{left:calc(50% + var(--dsh-chat-content-width) / 2 + 24px)}.wSkVaW_widthHandle:after{content:\"\";background:linear-gradient(to bottom, transparent calc(var(--dsh-width-handle-pointer-y,50%) - 36px), var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y,50%) - 8px), var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y,50%) + 8px), transparent calc(var(--dsh-width-handle-pointer-y,50%) + 36px));opacity:0;pointer-events:none;border-radius:2px;width:2px;position:absolute;top:0;bottom:0}.wSkVaW_widthHandle[data-side=left]:after{right:4px}.wSkVaW_widthHandle[data-side=right]:after{left:4px}.wSkVaW_widthHandle:hover:after,.wSkVaW_widthHandle[data-dragging]:after{opacity:1}.wSkVaW_widthHandle[data-dragging]{z-index:8}.wSkVaW_root:has([data-conversation-composer-overlay]) .wSkVaW_widthHandle{display:none}.wSkVaW_composerStack{--dsh-composer-stack-gap:6px;gap:var(--dsh-composer-stack-gap);flex-direction:column;display:flex}.wSkVaW_composerSeat{--dsh-composer-text-max-height:336px;flex-direction:column;flex:none;display:flex}.wSkVaW_root[data-phase=active]{overflow:hidden}.wSkVaW_root[data-phase=active] .wSkVaW_header{flex:none}.wSkVaW_body{--dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px, calc(var(--dsh-conversation-column-width,0px) * .64), 920px));--dsh-composer-card-max-width:calc(var(--dsh-chat-content-width) + 32px);--dsh-composer-side-clearance:16px;--dsh-composer-dock-inset:8px;flex-direction:column;flex:1;min-height:0;display:flex;position:relative}.wSkVaW_embeddedBody{--dsh-chat-content-width:min(calc(100% - 32px), 920px);--dsh-composer-card-max-width:min(calc(100% - 16px), 952px);--dsh-composer-side-clearance:8px;--dsh-composer-dock-inset:8px;overflow:hidden}.wSkVaW_scrollBody{scrollbar-gutter:stable;flex-direction:column;flex:1;min-height:0;margin-right:2px;display:flex;overflow-y:auto}.wSkVaW_scrollBody::-webkit-scrollbar-track{margin:2px}.wSkVaW_root[data-phase=active] .wSkVaW_viewArea,.wSkVaW_embeddedBody[data-content-phase=active] .wSkVaW_viewArea{flex:1 0 auto;min-height:auto}.wSkVaW_root[data-phase=active] .wSkVaW_composerSeat,.wSkVaW_embeddedBody[data-content-phase=active] .wSkVaW_composerSeat{z-index:7;background:linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px, var(--dsw-alias-bg-base) 36px);position:sticky;bottom:0}.wSkVaW_root[data-phase=active] .wSkVaW_composerSeat:has([data-trigger-menu]){z-index:9}.wSkVaW_scrollBody:has([data-conversation-composer-overlay]){scrollbar-gutter:auto;position:relative;overflow:hidden auto}.wSkVaW_scrollBody:has([data-conversation-composer-overlay])>[data-slot=conversation\\.session]>.wSkVaW_viewArea{flex:1 1 0;min-height:0;overflow:hidden}.wSkVaW_scrollBody:has([data-conversation-composer-overlay])>.wSkVaW_composerSeat{right:var(--dsh-scrollbar-width);position:absolute;bottom:0;left:0}.wSkVaW_composerHero{width:min(calc(var(--dsh-composer-card-max-width) + 2 * var(--dsh-composer-side-clearance)), 100%);z-index:1;align-self:center;gap:8px;padding-bottom:32px}.wSkVaW_heroWorkspaceRow{align-items:center;gap:2px;min-width:0;margin-top:4px;padding:0 16px 0 20px;display:flex}.wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody,.wSkVaW_embeddedBody[data-content-phase=hero] .wSkVaW_scrollBody{justify-content:center;overflow-y:auto}.wSkVaW_root[data-phase=settling] .wSkVaW_composerSeat,.wSkVaW_embeddedBody[data-content-phase=settling] .wSkVaW_composerSeat{visibility:hidden}";
+ 		const tagId$4 = "@deepseek-ai/dsh-client-ui-conversation/ConversationRoot.module.css";
+ 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$4) + "]") === null) {
+ 			const tag = document.createElement("style");
+@@ -16259,7 +16274,7 @@ window.__ModuleLoader__.load({
+ 				children: [(0, react_jsx_runtime.jsxs)("div", {
+ 					className: ConversationRoot_module_css_default.scrollBody,
+ 					"data-conversation-scroll": "",
+-					children: [sessionId === void 0 ? null : (0, react_jsx_runtime.jsx)(Views, {}), composerSeat]
++					children: [sessionId === void 0 ? null : props.readOnly ? renderSlot("conversation.session", {view:"chat",readOnly:true,initialFollow:props.initialFollow}) : (0, react_jsx_runtime.jsx)(Views, {}), props.readOnly ? null : composerSeat]
+ 				}), (0, react_jsx_runtime.jsx)(WidthControls, {
+ 					container: body,
+ 					phase
+@@ -16305,7 +16320,7 @@ window.__ModuleLoader__.load({
+ 		* @returns the selected View, Chat fallback, or undefined when neither is registered.
+ 		*/
+ 		function resolveActiveView(tabs, selectedId) {
+-			return (selectedId === null ? void 0 : tabs.find((view) => view.id === selectedId)) ?? tabs.find((view) => view.id === "chat");
++			return (selectedId === null ? void 0 : tabs.find((view) => view.id === selectedId || view.replaces === selectedId)) ?? tabs.find((view) => view.id === "chat" || view.replaces === "chat");
+ 		}
+ 		//#endregion
+ 		//#region lib/types/client/skeleton/DefaultConversationViews.js
+@@ -16315,7 +16330,7 @@ window.__ModuleLoader__.load({
+ 		* @param props - Strict Session input/store, view ledger, and render shares.
+ 		* @returns the active view area, or null while the Session remains blank.
+ 		*/
+-		function DefaultConversationViews({ view, useSession, useConversation, useConversationViews, useInput, inputActions, useStore, actions, renderSlot, bindDraftMirror, openView, useInspectCall }) {
++		function DefaultConversationViews({ readOnly = false, initialFollow = true, view, useSession, useConversation, useConversationViews, useInput, inputActions, useStore, actions, renderSlot, bindDraftMirror, openView, useInspectCall }) {
+ 			const tabs = useConversationViews((value) => value);
+ 			const inspectCall = useInspectCall((value) => value);
+ 			const active = resolveActiveView(tabs, useStore((s) => s.view));
+@@ -16325,17 +16340,22 @@ window.__ModuleLoader__.load({
+ 			const storedDraft = useStore((s) => s.draft);
+ 			const viewRequest = useStore((s) => s.viewRequest ?? null);
+ 			(0, react.useEffect)(() => {
++				if (readOnly) return;
+ 				if (inputState.draft === "" && storedDraft !== "") inputActions.setDraft(storedDraft);
+ 				const unmirror = bindDraftMirror(actions.setDraft);
+ 				return () => {
+ 					unmirror();
+ 				};
+-			}, [inputActions]);
++			}, [inputActions, readOnly]);
+ 			if (session.blank && conversationPhase(session, conversation) === "blank") return null;
+ 			const viewId = view ?? active?.id;
+ 			return (0, react_jsx_runtime.jsx)("div", {
+ 				className: ConversationRoot_module_css_default.viewArea,
++                "data-contained-view": active?.contained || undefined,
++                "data-readonly-view": readOnly || active?.readOnly || undefined,
++                style: active?.contained ? {flex:"1 1 0",minHeight:0,overflow:"hidden"} : undefined,
+ 				children: viewId !== void 0 && renderSlot("conversation.view", {
++                    readOnly, initialFollow,
+ 					inspectCall,
+ 					viewRequest,
+ 					openView,
+@@ -16376,7 +16396,7 @@ window.__ModuleLoader__.load({
+ 		* @param props - Strict Session store, view ledger, navigation, render, and locale shares.
+ 		* @returns Session navigation controls, with title and tabs after conversation starts.
+ 		*/
+-		function ConversationSessionHeader({ sessionId, hideChrome, useSessions, useConversationViews, useStore, renderSlot, open, selectView, t }) {
++		function ConversationSessionHeader({ sessionId, hideChrome, useSessions, useConversationViews, useStore, renderSlot, renderSlotChain, open, selectView, t }) {
+ 			const tabs = useConversationViews((value) => value);
+ 			const active = resolveActiveView(tabs, useStore((s) => s.view));
+ 			const ancestry = useSessions((s) => deriveAncestry(s, sessionId), equalBreadcrumbs);
+@@ -16414,7 +16434,7 @@ window.__ModuleLoader__.load({
+ 								children: [index > 0 && (0, react_jsx_runtime.jsx)("span", {
+ 									className: ConversationRoot_module_css_default.crumbSep,
+ 									children: "/"
+-								}), lineage ? summary.subagent ? renderSlot("conversation.session.header.lineage", lineageOwner, { fallback: title }) : (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [title, renderSlot("conversation.session.header.lineage", lineageOwner, { fallback: null })] }) : title]
++								}), lineage ? summary.subagent ? renderSlotChain("conversation.session.header.lineage", lineageOwner, { fallback: title }) : (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [title, renderSlotChain("conversation.session.header.lineage", lineageOwner, { fallback: null })] }) : title]
+ 							}, summary.id);
+ 						}), ancestry.length === 0 && (0, react_jsx_runtime.jsx)("span", {
+ 							className: ConversationRoot_module_css_default.crumbCurrent,
+@@ -16422,11 +16442,11 @@ window.__ModuleLoader__.load({
+ 						})]
+ 					}), (0, react_jsx_runtime.jsx)("div", {
+ 						className: ConversationRoot_module_css_default.headerActions,
+-						children: renderSlot("conversation.session.header.actions", {})
++						children: renderSlot("conversation.session.header.actions", { selectView, currentView: active?.id })
+ 					})]
+ 				}), (0, react_jsx_runtime.jsx)("div", {
+ 					className: ConversationRoot_module_css_default.headerUtilities,
+-					children: renderSlot("conversation.session.header.utilities", {})
++					children: renderSlot("conversation.session.header.utilities", { selectView, currentView: active?.id })
+ 				})] }), (0, react_jsx_runtime.jsx)("div", {
+ 					className: ConversationRoot_module_css_default.headerCorner,
+ 					"data-conversation-header-corner": "",
+@@ -17892,27 +17912,44 @@ window.__ModuleLoader__.load({
+ 					}
+ 				})
+ 			}, EnterBehaviorRow));
+-			const viewTabs = () => {
++			const viewTabs = (sessionId) => {
+ 				const tabs = [];
++                const replacements = new Set();
++                if (sessionId !== undefined) for (const candidate of slots.entries("conversation.view")) {
++                    const value = uiConversation.viewPresentation(candidate.options.id);
++                    if (value?.replaces && (!value.availableSessions || value.availableSessions.getSnapshot().has(sessionId))) replacements.add(value.replaces);
++                }
+ 				for (const entry of slots.entries("conversation.view")) {
+ 					/* v8 ignore next -- list registration validates id at load. */
+-					if (entry.options.id === void 0) continue;
++					if (entry.options.id === void 0 || replacements.has(entry.options.id)) continue;
++                    const presentation = uiConversation.viewPresentation(entry.options.id);
++                    if (sessionId !== undefined && presentation?.availableSessions && !presentation.availableSessions.getSnapshot().has(sessionId)) continue;
+ 					if (!ctx.configForms.developerTools.enabled.getSnapshot() && entry.options.id === "trajectory") continue;
+ 					tabs.push({
+ 						id: entry.options.id,
++                        contained: presentation?.layout === "contained",
++                        readOnly: presentation?.readOnly === true,
++                        replaces: presentation?.replaces,
+ 						label: (0, _deepseek_ai_dsh_client_ui_slots.resolveSlotLabel)(entry.options.label) ?? entry.options.id
+ 					});
+ 				}
+ 				return tabs;
+ 			};
+ 			const activateView = (sessionId, preferred) => {
+-				const active = resolveActiveView(viewTabs(), preferred);
++				const active = resolveActiveView(viewTabs(sessionId), preferred);
+ 				if (active !== void 0) uiConversation.binding(sessionId).activate(active.id);
+ 			};
+ 			const restoreView = (sessionId) => {
+ 				activateView(sessionId, readConversationViewPreference(sessionId));
+ 			};
+ 			const conversationViews = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(viewTabs());
++            const scopedViewStores = new Map();
++            const sessionViewStore = (sessionId) => {
++                let source = scopedViewStores.get(sessionId);
++                if (!source) { source = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(viewTabs(sessionId)); scopedViewStores.set(sessionId, source); }
++                return source;
++            };
++
+ 			const bindings = /* @__PURE__ */ new Set();
+ 			const trackedBindings = /* @__PURE__ */ new WeakSet();
+ 			const trackBinding = (binding) => {
+@@ -17930,14 +17967,21 @@ window.__ModuleLoader__.load({
+ 					const candidate = next.at(index);
+ 					return candidate !== void 0 && tab.id === candidate.id && tab.label === candidate.label;
+ 				}))) conversationViews.set(next);
+-				for (const binding of bindings) restoreView(binding.sessionId);
++				for (const [sessionId, source] of scopedViewStores) {
++                    const next = viewTabs(sessionId), current = source.getSnapshot();
++                    if (JSON.stringify(next) !== JSON.stringify(current)) source.set(next);
++                }
++                for (const binding of bindings) restoreView(binding.sessionId);
+ 			};
+ 			ctx.effect(() => {
+-				const disposeViews = slots.subscribe("conversation.view", refreshViews);
++				const disposePresentations = uiConversation.subscribeViewPresentation(refreshViews);
++                const disposeViews = slots.subscribe("conversation.view", refreshViews);
+ 				const disposeLocale = ctx.locale.subscribe(refreshViews);
+ 				const disposeDeveloperTools = ctx.configForms.developerTools.enabled.subscribe(refreshViews);
+ 				return () => {
+ 					disposeDeveloperTools();
++                    disposePresentations();
++                    scopedViewStores.clear();
+ 					disposeLocale();
+ 					disposeViews();
+ 				};
+@@ -18138,7 +18182,7 @@ window.__ModuleLoader__.load({
+ 				store: conversationStore,
+ 				inject: (sessionId, actions) => {
+ 					const openView = (view, focus) => {
+-						if (!viewTabs().some((tab) => tab.id === view)) return;
++						if (!viewTabs(sessionId).some((tab) => tab.id === view || tab.replaces === view)) return;
+ 						activateView(sessionId, view);
+ 						actions.openView(view, focus);
+ 					};
+@@ -18149,7 +18193,7 @@ window.__ModuleLoader__.load({
+ 					};
+ 					return {
+ 						hooks: {
+-							conversationViews,
++                            conversationViews: sessionViewStore(sessionId),
+ 							inspectCall: {
+ 								getSnapshot: () => inspectionTarget() === void 0 ? void 0 : inspectCall,
+ 								subscribe: (listener) => {
+@@ -18185,7 +18229,7 @@ window.__ModuleLoader__.load({
+ 				locale: NS,
+ 				children: {
+ 					"conversation.session.header.lineage": {
+-						kind: "single",
++						kind: "chain",
+ 						scope: "session"
+ 					},
+ 					"conversation.session.header.actions": {
+@@ -18203,7 +18247,7 @@ window.__ModuleLoader__.load({
+ 				},
+ 				store: conversationStore,
+ 				inject: (sessionId, actions) => ({
+-					hooks: { conversationViews },
++					hooks: { conversationViews: sessionViewStore(sessionId) },
+ 					open: (id) => {
+ 						workspaceNavigation.openSession(id);
+ 					},
+diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
+index 74f584630dd4130c51c61008369c9a86137d263f..f6d52c85d0e668908c8c432f5052cf191f9876b2 100644
+--- a/lib/types/client/contract/slots.d.ts
++++ b/lib/types/client/contract/slots.d.ts
+@@ -129,6 +129,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+             scope: 'session';
+             owner: {
+                 view?: string;
++                readOnly?: boolean;
++                initialFollow?: boolean;
+             };
+         };
+         /** Resident navigation container, including when no Session is selected. */
+@@ -147,7 +149,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+         };
+         /** Optional replacement for one Session breadcrumb title. */
+         'conversation.session.header.lineage': {
+-            kind: 'single';
++            kind: 'chain';
+             scope: 'session';
+             owner: ConversationHeaderLineageOwnerProps;
+         };
+@@ -353,6 +355,10 @@ export interface HeroAgentPresetOwnerProps {
+ }
+ /** Header actions derive their state from standard Session props. */
+ export interface ConversationHeaderActionOwnerProps {
++    /** Active provider-owned View; allows an observation drill-down to return here. */
++    readonly currentView: string | undefined;
++    /** Provider-owned navigation to a registered Conversation View. */
++    selectView: (view: string) => void;
+     /** Marker field: entries receive no owner-specific values. */
+     children?: never;
+ }
+@@ -382,6 +388,10 @@ export interface InputZone {
+ }
+ /** Conversation View entries obtain their data from registered standard hooks. */
+ export interface ConvViewOwnerProps {
++    /** Reuse the full view without Session mutation actions. */
++    readonly readOnly?: boolean;
++    /** Initial bottom-follow preference when no saved reading position exists. */
++    readonly initialFollow?: boolean;
+     /** Open a tool call's inspector when an inspection target is available. */
+     inspectCall: ((callId: string) => void) | undefined;
+     /** Focus request addressed to the selected View. */
+@@ -507,6 +517,9 @@ export interface HeroBrandMarkOwnerProps {
+ export type ConversationSlotProps = PropsRuntime<'main.conversation'> & PropsRenderSlots<'conversation.header'> & PropsRenderFactories;
+ /** Inputs shared by main and embedded Conversation content occurrences. */
+ export interface ConversationContentInputProps {
++    /** Embed the native transcript without a composer or draft persistence. */
++    readonly readOnly?: boolean;
++    readonly initialFollow?: boolean;
+     variant: 'main' | 'embedded';
+     phase: 'settling' | 'hero' | 'active';
+     hero: boolean;
+diff --git a/lib/types/client/contract/views.d.ts b/lib/types/client/contract/views.d.ts
+index f67b7880c3c2ca8d07bc519039608c2967e94e5b..41c57e3e6a375a54b76ab88aeaacd147ce7b593a 100644
+--- a/lib/types/client/contract/views.d.ts
++++ b/lib/types/client/contract/views.d.ts
+@@ -6,6 +6,10 @@
+ export interface ViewTab {
+     id: string;
+     label: string;
++    contained?: boolean;
++    readOnly?: boolean;
++    /** Available session-scoped replacement for another view. */
++    replaces?: string;
+ }
+ /** One-shot focus request addressed to a Conversation View. */
+ export interface ConversationViewRequest {
+diff --git a/lib/types/client/conversation/assembly.d.ts b/lib/types/client/conversation/assembly.d.ts
+index 9a81a8abad090bae88b8ca9435631eeef81bcbb7..3ba3415ff70d390046b73e23a374d9a00a748668 100644
+--- a/lib/types/client/conversation/assembly.d.ts
++++ b/lib/types/client/conversation/assembly.d.ts
+@@ -36,6 +36,10 @@ export interface ConversationBinding {
+ /** Root service owning Conversation registries and per-Session bindings. */
+ export declare class UiConversation extends Service {
+     private readonly sessions;
++    /** Provider-owned per-session visibility, contained layout and read-only composer policy. */
++    registerViewPresentation(id: string, value: {availableSessions?: ObservableSnapshot<ReadonlySet<string>>; layout?: 'contained' | 'scroll'; readOnly?: boolean; replaces?: string}): () => void;
++    viewPresentation(id: string): {availableSessions?: ObservableSnapshot<ReadonlySet<string>>; layout?: 'contained' | 'scroll'; readOnly?: boolean; replaces?: string} | undefined;
++    subscribeViewPresentation(listener: () => void): () => void;
+     /** Registry of event matchers and target snapshot builders. */
+     readonly events: ConversationEventRegistry;
+     /** Registry of target View definitions. */

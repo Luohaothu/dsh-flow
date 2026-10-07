@@ -73,6 +73,7 @@ export interface TurnIdentity {
  * stays reachable through the index signature.
  */
 export interface NodeScope {
+  readonly team_model?: FlowModelSelection
   readonly transaction_id?: string | null
   readonly objective?: string
   readonly root?: boolean
@@ -376,6 +377,7 @@ export interface UsageReceiptRecord {
   readonly kind: string
   readonly provider: string | null
   readonly model: string | null
+  readonly reasoning_effort: string | null
   readonly status: FlowUsageStatus
   readonly reservation_tokens: number
   readonly prompt_tokens: number | null
@@ -524,6 +526,14 @@ export interface FlowStartDefaults {
   readonly capabilities: readonly FlowCapability[]
   readonly budget: FlowBudget
   readonly limits: FlowLimits
+}
+
+/** Captured at admission and persisted in the root scope, including across restarts. */
+export interface FlowExecutionDefaults {
+  readonly start: FlowStartDefaults
+  readonly model: FlowModelSelection | null
+  readonly options: FlowModelSelection
+  readonly dispatchMode: 'parallel' | 'serial'
 }
 
 /** A partial start request as it arrives from a boundary, before resolution. */
@@ -707,6 +717,7 @@ export interface FlowRuntimeConfig {
   readonly logger?: FlowLogger
   readonly autoTick?: boolean
   readonly startDefaults?: FlowStartDefaults
+  readonly executionDefaults?: (() => FlowExecutionDefaults) | undefined
 }
 
 /** The runtime configuration after defaults are applied. */
@@ -724,6 +735,7 @@ export interface ResolvedRuntimeConfig {
   readonly routes: Record<string, readonly string[]>
   readonly autoTick: boolean
   readonly startDefaults: FlowStartDefaults | undefined
+  readonly executionDefaults: (() => FlowExecutionDefaults) | undefined
 }
 
 // ------------------------------------------------------------------- actions

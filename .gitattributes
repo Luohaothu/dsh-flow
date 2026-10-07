@@ -1,0 +1,3 @@
+# Unified-diff context includes a leading space before upstream tabs and empty
+# lines. Preserve those bytes; regular source files retain whitespace checks.
+patches/*.patch -whitespace

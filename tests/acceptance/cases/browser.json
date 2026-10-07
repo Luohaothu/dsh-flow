@@ -1,6 +1,6 @@
 {
   "title": "Browser capability smoke through a complete profile assembly",
-  "objective": "Use the browser tools to navigate to the host's authenticated page ({{webUrl}}), click the Cluster button in Global panels, and take a new snapshot showing the Hierarchical agent cluster heading. Submit a result naming the page title and panel heading you actually saw and the browser tools you called. The page is served by this same host, not the public internet.",
+  "objective": "Use the browser tools to navigate to the host's authenticated page ({{webUrl}}), click the Plugins button in the host sidebar, and take a new snapshot showing the 插件 heading. Submit a result naming the page title and panel heading you actually saw and the browser tools you called. The page is served by this same host, not the public internet.",
   "capabilities": [
     "fs_read",
     "browser"
@@ -34,11 +34,11 @@
   "initial_transactions": [
     {
       "id": "browser-tx",
-      "objective": "Navigate to {{webUrl}}, click the Cluster button in Global panels, take a browser snapshot after the click, and submit the observed page title and Hierarchical agent cluster heading with evidence from the tool responses.",
-      "expected_output": "The actual page title and opened Cluster panel heading with browser navigation, click and post-click snapshot evidence.",
+      "objective": "Navigate to {{webUrl}}, click the Plugins button in the host sidebar, take a browser snapshot after the click, and submit the observed page title and 插件 heading with evidence from the tool responses.",
+      "expected_output": "The actual page title and opened native plugin manager heading with browser navigation, click and post-click snapshot evidence.",
       "acceptance_criteria": [
         "The result names a page title that the post-click snapshot really contains",
-        "The native post-click snapshot contains the Hierarchical agent cluster heading",
+        "The native post-click snapshot contains the 插件 heading",
         "The recorded tool calls include browser_navigate, browser_click and browser_snapshot"
       ]
     }

@@ -593,7 +593,7 @@ test('communication validates every multicast target before delivering anything'
   const sent = sendOf(store.tx(() => communicate(store, cluster, actor, 'multicast', { agent: 'a2', content: 'hello' })));
   assert.deepEqual(sent.recipients, [{ recipient: b.id, delivery_seq: 1 }]);
   assert.equal(store.pendingDeliveries('a2').length, 1);
-  assert.equal(must(store.pendingDeliveries('a2')[0], 'delivery').content, JSON.stringify({ text: 'hello' }));
+  assert.equal(must(store.pendingDeliveries('a2')[0], 'delivery').content, JSON.stringify({ text: 'hello', category: 'discussion' }));
 
   assert.throws(() => communicate(store, cluster, actor, 'multicast', { agent: ['a1'] }, {}), /Invalid recipient/);
   const before = store.getMessage(sent.message_id);

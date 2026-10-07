@@ -5,9 +5,11 @@ description: 从源码安装依赖、构建并测试 dsh-flow，在独立 DSH �
 
 # 开发环境搭建
 
-本页面向需要修改源码、验证改动或调试插件集成的开发者。完成以下步骤后，你将得到一个使用独立数据目录的 DSH 实例，可以验证插件安装、配置合并、网页面板和真实模型执行。
+本页面向需要修改源码、验证改动或调试插件集成的开发者。完成以下步骤后，你将得到一个使用独立数据目录的 DSH 实例，可以验证插件安装、配置合并、智能体观察视图和真实模型执行。
 
 安装、构建和模拟测试均不需要模型服务；提交目标并运行集群时，才需要接入可用的模型。日常使用集群的操作流程见[快速上手](/quick-start)。
+
+当前 `0.1.7-rc.2` 基线需要本仓库冻结安装中的提供方接口补丁。启动时使用仓库的 `dsh-launch.ts`；普通同版本 npm 宿主尚未包含这些扩展。
 
 ## 1. 安装开发依赖
 
@@ -40,7 +42,7 @@ pnpm run test:mock
 
 ## 3. 安装到独立调试实例
 
-以下示例创建临时 DSH 数据目录，并在内置 `web` 配置方案（profile）中安装插件，以加载网页界面和集群面板所需的宿主组件。请在同一终端执行后续步骤，保留这两个变量。
+以下示例创建临时 DSH 数据目录，并在内置 `web` 配置方案（profile）中安装插件，以加载网页界面和团队视图所需的宿主组件。请在同一终端执行后续步骤，保留这两个变量。
 
 ```bash
 FLOW_DEMO_HOME="$(mktemp -d "${TMPDIR:-/tmp}/dsh-flow-home.XXXXXX")"
@@ -52,13 +54,15 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
   plugin --profile web add "$FLOW_DEMO_PACKAGE/dsh-flow-0.1.0.tgz"
 ```
 
-`pack` 会通过 `prepack` 再次构建。插件安装后，包自带的 `cordis.patch.yml` 会配置集群服务、远程接口与“集群模式”预设。启动脚本直接调用已安装 DSH 的 `runCli()`，可兼容未实现 `import.meta.main` 的部分 Node 版本。
+`pack` 会通过 `prepack` 再次构建。插件安装后，包自带的 `cordis.patch.yml` 会配置集群服务、只读远程接口与 `/agent-team` 命令。启动脚本直接调用已安装 DSH 的 `runCli()`，可兼容未实现 `import.meta.main` 的部分 Node 版本。
 
 这里安装的是打包产物。修改源码后，需要重新构建、打包并安装，调试实例才会使用修改后的插件；只编辑源码不会自动更新已安装的包。
 
 ## 4. 检查模型与覆盖配置
 
 [instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。请按实际部署修改模型提供方、模型名称、服务地址和上下文上限；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
+
+通过 `/agent-team` 启动时，团队继承主会话当前选中的模型；主会话后续选择同步给该会话未结束的团队。示例中的固定模型用于底层程序化启动的默认路由。若团队受阻且提示模型服务连接失败，先核对主会话选中服务是否可连接。
 
 先检查合并后的配置，此步骤不会加载服务或运行模型：
 
@@ -81,7 +85,7 @@ node --import tsx src/host/dsh-launch.ts \
 
 打开终端打印的带访问令牌的 URL。示例使用独立数据目录，启动后没有待恢复的旧集群；不提交目标就不会创建新的集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
 
-模型服务准备好后，在新会话中选择 **集群模式**，提交包含目标、工作目录、预期产物和验收条件的任务。会话通过 `flow_start` 创建集群，通过 `flow_read` 查看任务单元和证据，通过 `flow_control` 暂停、恢复或取消集群。执行智能体提交产物后，还必须通过业务验收和独立复核，任务单元才会被正式接受。
+模型服务准备好后，在主会话输入 `/agent-team <需求>`，说明目标、预期产物和验收条件。后续指令通过主会话下达，“智能体”视图只读。执行智能体提交产物后，还必须通过业务验收和独立复核，任务单元才会被正式接受。
 
 联调时可按以下顺序定位问题：
 

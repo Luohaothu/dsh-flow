@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { isJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values';
 
 import { fail } from '../errors.ts';
+import { communicationCategory, communicationContent, isCommunicationCategory } from '../messages.ts';
 import type { FlowAgentRole } from '../types.ts';
 import type { BlackboardRecord, ClusterRecord, GroupRecord, SubscriptionRecord } from './model.ts';
 import { AGENT_TERMINAL } from './protocol.ts';
@@ -162,7 +163,18 @@ function deliverable(
   params: Record<string, unknown>,
 ): { recipients: string[]; content: JsonValue } {
   const recipients = resolveRecipients(store, clusterId, actor, params);
-  const content = normalizeContent(params.content);
+  const raw = normalizeContent(params.content);
+  const envelope = communicationContent(raw);
+  const category = params.category !== undefined ? params.category : envelope.category !== undefined ? envelope.category : 'discussion';
+  if (!isCommunicationCategory(category)) fail(`Unknown communication category: ${String(category)}`);
+  if (params.category !== undefined && envelope.category !== undefined && params.category !== envelope.category) fail('Conflicting communication categories');
+  const transactionId = params.transaction_id !== undefined ? params.transaction_id : envelope.transaction_id;
+  if (params.transaction_id !== undefined && envelope.transaction_id !== undefined && params.transaction_id !== envelope.transaction_id) fail('Conflicting communication transactions');
+  if (transactionId !== undefined) {
+    const transaction = typeof transactionId === 'string' ? store.getTransaction(transactionId) : null;
+    if (!transaction || transaction.cluster_id !== clusterId) fail('Communication transaction must belong to this cluster', 404);
+  }
+  const content = jsonValue({ ...envelope, category, ...(transactionId === undefined ? {} : { transaction_id: transactionId }) }, 'message content');
   return { recipients, content };
 }
 
@@ -210,7 +222,7 @@ function applyCommunication(
         || existing.from_agent !== (actor.agent_id ?? null)
         || existing.from_node !== (actor.node_id ?? null)
         || existing.kind !== kind
-        || !isDeepStrictEqual(storedJson(existing.content, 'stored message content'), content))) {
+        || !isDeepStrictEqual({ category: 'discussion', ...communicationContent(storedJson(existing.content, 'stored message content')) }, content))) {
         fail('message_id conflicts with an existing message', 409);
       }
       if (!existing) store.insertMessage({
@@ -224,7 +236,7 @@ function applyCommunication(
         delivered.push({ recipient, delivery_seq: store.insertRecipient(id, recipient) });
         notify?.(recipient, { kind: 'message', message_id: id, from: actor.agent_id });
       }
-      if (!existing) store.appendEvent(clusterId, 'message', { message_id: id, from: actor.agent_id, recipients, kind: action });
+      if (!existing) store.appendEvent(clusterId, 'message', { message_id: id, from: actor.agent_id, recipients, kind: action, category: communicationCategory(content) });
       return { message_id: id, deduped: !!existing, recipients: delivered };
     }
 

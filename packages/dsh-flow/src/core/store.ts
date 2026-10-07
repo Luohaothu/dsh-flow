@@ -607,6 +607,7 @@ interface UsageReceiptInsert {
   readonly kind: string
   readonly provider?: string | null | undefined
   readonly model?: string | null | undefined
+  readonly reasoning_effort?: string | null | undefined
   readonly status: FlowUsageStatus
   readonly reservation_tokens?: number | undefined
   readonly prompt_tokens?: number | null | undefined
@@ -807,6 +808,13 @@ CREATE TABLE IF NOT EXISTS clusters(
   capabilities TEXT NOT NULL, limits TEXT NOT NULL, budget TEXT NOT NULL,
   spec TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
   created INTEGER NOT NULL, updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS team_runs(
+  run_id TEXT PRIMARY KEY REFERENCES clusters(id), main_session_id TEXT NOT NULL,
+  intent_id TEXT NOT NULL, UNIQUE(main_session_id,intent_id));
+CREATE INDEX IF NOT EXISTS team_runs_session ON team_runs(main_session_id);
+CREATE TABLE IF NOT EXISTS team_observations(
+  run_id TEXT NOT NULL REFERENCES clusters(id), agent_id TEXT NOT NULL,
+  ended INTEGER, state TEXT, PRIMARY KEY(run_id,agent_id));
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, parent_id TEXT, kind TEXT NOT NULL,
   depth INTEGER NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -1005,6 +1013,7 @@ export class ClusterStore {
       ['transactions', 'result_staged_agent', 'TEXT'],
       ['allocations', 'write_scope_canonical', "TEXT NOT NULL DEFAULT '[]'"],
       ['usage_receipts', 'budget_scope_id', 'TEXT'],
+      ['usage_receipts', 'reasoning_effort', 'TEXT'],
       ['issues', 'reviewed_revision', 'INTEGER'],
       ['clusters', 'declared_limits', 'TEXT'],
       // A checkpoint records the *native* session offset separately from the
@@ -1511,7 +1520,20 @@ export class ClusterStore {
     return numOf(this.get(`SELECT COUNT(*) AS c FROM agents WHERE ${where.join(' AND ')}`, ...args)?.c, 'agents.count');
   }
 
+  /** Execution evidence survives resource release and retains its original end time. */
+  recordTeamEnd(agent: AgentRecord, state: 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN'): void {
+    this.run(`INSERT INTO team_observations(run_id,agent_id,ended,state) VALUES(?,?,?,?)
+      ON CONFLICT(run_id,agent_id) DO UPDATE SET state=CASE WHEN state='UNKNOWN' THEN excluded.state ELSE state END`,
+      agent.cluster_id, agent.id, this.now(), state);
+  }
+
   updateAgent(id: string, patch: AgentPatch): AgentRecord | null {
+    if (patch.status && ['COMPLETED', 'FAILED', 'TERMINATED'].includes(patch.status)) {
+      const previous = this.getAgent(id);
+      if (previous) this.recordTeamEnd(previous, patch.status === 'TERMINATED'
+        ? (previous.status === 'COMPLETED' || previous.status === 'FAILED' ? previous.status : 'UNKNOWN')
+        : patch.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED');
+    }
     const sets: string[] = [];
     const args: BindValue[] = [];
     for (const [key, column] of AGENT_COLUMNS) {
@@ -2111,6 +2133,10 @@ export class ClusterStore {
     return one(this.get('SELECT * FROM inbox WHERE id=?', id), decodeInbox);
   }
 
+  getInbox(id: string): InboxRecord | null {
+    return one(this.get('SELECT * FROM inbox WHERE id=?', id), decodeInbox);
+  }
+
   listInbox(
     clusterId: string,
     { recipient, status = 'PENDING', limit, priority = null }: {
@@ -2263,14 +2289,14 @@ export class ClusterStore {
   insertUsageReceipt(receipt: UsageReceiptInsert): UsageReceiptRecord | null {
     this.run(
       `INSERT INTO usage_receipts(request_id,cluster_id,agent_id,node_id,transaction_id,role,kind,provider,model,status,
-        reservation_tokens,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,total_tokens,overshoot,turn_seq,attempt,note,budget_scope_id,created,settled)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        reservation_tokens,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,total_tokens,overshoot,turn_seq,attempt,note,budget_scope_id,created,settled,reasoning_effort)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       receipt.request_id, receipt.cluster_id, receipt.agent_id ?? null, receipt.node_id ?? null,
       receipt.transaction_id ?? null, receipt.role, receipt.kind, receipt.provider ?? null, receipt.model ?? null,
       receipt.status, receipt.reservation_tokens ?? 0, receipt.prompt_tokens ?? null, receipt.completion_tokens ?? null,
       receipt.cached_tokens ?? null, receipt.reasoning_tokens ?? null, receipt.total_tokens ?? null,
       receipt.overshoot ?? 0, receipt.turn_seq ?? null, receipt.attempt ?? 1, receipt.note ?? null,
-      receipt.budget_scope_id ?? null, this.now(), null,
+      receipt.budget_scope_id ?? null, this.now(), null, receipt.reasoning_effort ?? null,
     );
     return one(this.get('SELECT * FROM usage_receipts WHERE request_id=?', receipt.request_id), decodeUsageReceipt);
   }
@@ -3265,6 +3291,7 @@ function decodeUsageReceipt(row: Row): UsageReceiptRecord {
     kind: textOf(row.kind, 'usage_receipts.kind'),
     provider: textOrNull(row.provider, 'usage_receipts.provider'),
     model: textOrNull(row.model, 'usage_receipts.model'),
+    reasoning_effort: textOrNull(row.reasoning_effort, 'usage_receipts.reasoning_effort'),
     status: oneOf(row.status, USAGE_STATUSES, 'usage_receipts.status'),
     reservation_tokens: numOf(row.reservation_tokens, 'usage_receipts.reservation_tokens'),
     prompt_tokens: numOrNull(row.prompt_tokens, 'usage_receipts.prompt_tokens'),

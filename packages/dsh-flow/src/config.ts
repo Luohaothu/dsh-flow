@@ -21,6 +21,7 @@
 import { resolve } from 'node:path';
 
 import Schema from '@deepseek-ai/schemastery';
+import type { Volatile } from '@deepseek-ai/cordis';
 
 import type {
   FlowBudget,
@@ -79,6 +80,10 @@ export interface Config {
   readonly reasoningEffort?: string | null
   /** Maximum output tokens per model request. */
   readonly maxTokens?: number | null
+  /** New teams follow the main conversation unless an explicit route is saved. */
+  readonly defaultModel?: { provider: string; model: string } | null
+  readonly defaultReasoningEffort?: 'inherit' | 'off' | 'low' | 'medium' | 'high' | null
+  readonly defaultDispatchMode?: 'parallel' | 'serial' | null
   /** Per-role context pressure thresholds. */
   readonly context?: ConfigContext | null
   /** Scheduler tick interval. */
@@ -116,8 +121,11 @@ export interface ResolvedConfig {
   readonly workspace: string
   readonly provider: string
   readonly model: string
-  readonly reasoningEffort?: string | undefined
-  readonly maxTokens: number
+  readonly reasoningEffort: string | undefined
+  readonly maxTokens: Volatile<number>
+  readonly defaultModel: Volatile<{ provider: string; model: string } | null>
+  readonly defaultReasoningEffort: Volatile<'inherit' | 'off' | 'low' | 'medium' | 'high'>
+  readonly defaultDispatchMode: Volatile<'parallel' | 'serial'>
   readonly context: FlowContextLimits
   readonly tickMs: number
   readonly staleMs: number
@@ -126,8 +134,8 @@ export interface ResolvedConfig {
   readonly leaseTtlMs: number
   readonly disposeTimeoutMs: number
   readonly defaultCapabilities: FlowCapability[]
-  readonly defaultBudget: FlowBudget
-  readonly defaultLimits: FlowLimits
+  readonly defaultBudget: Volatile<FlowBudget>
+  readonly defaultLimits: Volatile<FlowLimits>
 }
 
 /**
@@ -206,7 +214,10 @@ export const Config: Schema<Config, ResolvedConfig> = Schema.object({
   provider: Schema.string().required(),
   model: Schema.string().required(),
   reasoningEffort: Schema.union([Schema.string(), Schema.const(undefined)]),
-  maxTokens: Schema.number().step(1).min(1).max(2 ** 31).default(4096),
+  maxTokens: Schema.number().step(1).min(1).max(2 ** 31).default(4096).volatile(),
+  defaultModel: Schema.union([Schema.object({ provider: Schema.string().required(), model: Schema.string().required() }), Schema.const(null)]).default(null).volatile(),
+  defaultReasoningEffort: Schema.union(['inherit', 'off', 'low', 'medium', 'high']).default('inherit').volatile(),
+  defaultDispatchMode: Schema.union(['parallel', 'serial']).default('parallel').volatile(),
   context: Schema.object({
     role: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.role),
     worker: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.worker),
@@ -227,8 +238,8 @@ export const Config: Schema<Config, ResolvedConfig> = Schema.object({
   leaseTtlMs: Schema.number().step(1).min(1).default(60_000),
   disposeTimeoutMs: Schema.number().step(1).min(1).default(5_000),
   defaultCapabilities: Schema.array(Schema.union(CAPABILITY_NAMES)).default(['fs_read', 'fs_write']),
-  defaultBudget: budgetSchema.default({ ...INTERACTIVE_BUDGET }),
-  defaultLimits: limitsSchema.default({ ...INTERACTIVE_LIMITS }),
+  defaultBudget: budgetSchema.default({ ...INTERACTIVE_BUDGET }).volatile(),
+  defaultLimits: limitsSchema.default({ ...INTERACTIVE_LIMITS }).volatile(),
 });
 
 /**
@@ -250,6 +261,8 @@ export interface ResolvedDeployment {
 
 /** The subset of resolved settings the runtime constructor consumes. */
 export interface RuntimeSettings {
+  /** Read the live Config references once for each start; existing runs use their persisted snapshot. */
+  readonly executionDefaults: () => import('./core/model.ts').FlowExecutionDefaults
   readonly model: {
     readonly provider: string
     readonly model: string
@@ -300,8 +313,8 @@ export function resolveConfig(
   }
 
   const defaultCapabilities = validateCapabilities([...config.defaultCapabilities], 'defaultCapabilities');
-  const defaultBudget = completeBudget(config.defaultBudget, 'defaultBudget');
-  const defaultLimits = completeLimits(config.defaultLimits, 'defaultLimits');
+  const defaultBudget = completeBudget(config.defaultBudget.get(), 'defaultBudget');
+  const defaultLimits = completeLimits(config.defaultLimits.get(), 'defaultLimits');
 
   if (config.reasoningEffort !== undefined) {
     textField(config.reasoningEffort, 'reasoningEffort', 128);
@@ -315,11 +328,25 @@ export function resolveConfig(
     workspace,
     startDefaults: { workspace, capabilities: defaultCapabilities, budget: defaultBudget, limits: defaultLimits },
     runtime: {
+      executionDefaults: () => {
+        const budget = completeBudget(config.defaultBudget.get(), 'defaultBudget');
+        const limits = completeLimits(config.defaultLimits.get(), 'defaultLimits');
+        const serial = config.defaultDispatchMode.get() === 'serial';
+        const route = config.defaultModel.get() ?? null;
+        const effort = config.defaultReasoningEffort.get();
+        return {
+          start: { workspace, capabilities: defaultCapabilities, budget: serial ? { ...budget, max_active_agents: 1 } : budget,
+            limits: serial ? { ...limits, max_active_agents: 1, max_llm_concurrency: 1 } : limits },
+          model: route === null ? null : { provider: textField(route.provider, 'defaultModel.provider', 512), model: textField(route.model, 'defaultModel.model', 512) },
+          options: { maxTokens: config.maxTokens.get(), ...(effort === 'inherit' ? {} : { reasoningEffort: effort }) },
+          dispatchMode: serial ? 'serial' : 'parallel',
+        };
+      },
       model: {
         provider,
         model,
         reasoningEffort: config.reasoningEffort,
-        maxTokens: integer(config.maxTokens, 1, 2 ** 31, 'maxTokens'),
+        maxTokens: integer(config.maxTokens.get(), 1, 2 ** 31, 'maxTokens'),
       },
       context,
       tickMs: integer(config.tickMs, 1, 2 ** 31, 'tickMs'),

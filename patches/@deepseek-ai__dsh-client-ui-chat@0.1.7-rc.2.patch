@@ -1,0 +1,191 @@
+diff --git a/lib/client.js b/lib/client.js
+index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f070db069 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -1527,6 +1527,7 @@ window.__ModuleLoader__.load({
+ 			"user",
+ 			"steering",
+ 			"turn-trigger",
++			"communication",
+ 			"turn-process",
+ 			"turn-error",
+ 			"turn-max-tokens",
+@@ -1665,7 +1666,7 @@ window.__ModuleLoader__.load({
+ 		* Policy reads select this seat's own conclusion, so a mode change re-renders
+ 		* only seats whose visibility actually changes.
+ 		*/
+-		const ChatNodeSeat = (0, react.memo)(function ChatNodeSeat({ nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t }) {
++		const ChatNodeSeat = (0, react.memo)(function ChatNodeSeat({ readOnly = false, nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t }) {
+ 			const node = useChatNode(nodeKey);
+ 			const routedNode = node;
+ 			const turn = turnOf$1(routedNode);
+@@ -1725,6 +1726,7 @@ window.__ModuleLoader__.load({
+ 				disclosureReset
+ 			]);
+ 			const owner = (0, react.useMemo)(() => node === void 0 ? null : {
++				readOnly,
+ 				...groupPart === void 0 ? {} : { groupPart },
+ 				cwd,
+ 				openFile,
+@@ -1737,6 +1739,7 @@ window.__ModuleLoader__.load({
+ 				turnProcess
+ 			}, [
+ 				node,
++				readOnly,
+ 				groupPart,
+ 				cwd,
+ 				openFile,
+@@ -5040,7 +5043,7 @@ window.__ModuleLoader__.load({
+ 		* The chat view slot entry: pure component over the composed props; each
+ 		* ordered business Node crosses the keyed renderer seat.
+ 		*/
+-		function ChatView({ useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot, sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions, usePresentation, useProjection, t }) {
++		function ChatView({ readOnly = false, initialFollow = true, useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot, sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions, usePresentation, useProjection, t }) {
+ 			const order = useChat((s) => s.order);
+ 			const groupedEntries = useConversation((snapshot) => snapshot.views.grouped("chat")?.entries);
+ 			const entries = (0, react.useMemo)(() => groupedEntries ?? order.map((key) => ({
+@@ -5128,6 +5131,12 @@ window.__ModuleLoader__.load({
+ 			const lastKey = order.at(-1) ?? null;
+ 			const latestSteering = pendingInputs.findLast((item) => "source" in item);
+ 			const steeringId = latestSteering?.source.kind === "user" && "rpcId" in latestSteering.source ? latestSteering.source.rpcId : latestSteering?.id ?? null;
++            const initialAnchor = (0, react.useRef)(order[0] ?? "");
++            initialAnchor.current = order[0] ?? "";
++            const readingStore = (0, react.useMemo)(() => ({
++                save: position => chatScroll.save(position),
++                read: () => chatScroll.read() ?? (initialFollow ? null : {anchorKey:initialAnchor.current,anchorTop:0,scrollTop:0})
++            }), [chatScroll, initialFollow]);
+ 			const scroll = useChatScroll({
+ 				ready: openState === "open",
+ 				order,
+@@ -5136,7 +5145,7 @@ window.__ModuleLoader__.load({
+ 				running,
+ 				loadingOlder,
+ 				hasMore,
+-				chatScroll,
++				chatScroll: readingStore,
+ 				loadOlder,
+ 				loadThrough,
+ 				lastIsUser: lastKey !== null && nodeStore.get(lastKey)?.kind === "user",
+@@ -5190,6 +5199,7 @@ window.__ModuleLoader__.load({
+ 										openFile: requestOpenFile,
+ 										fileImages,
+ 										children: (0, react_jsx_runtime.jsx)(ChatNodeList, {
++											readOnly,
+ 											entries,
+ 											pendingInputs,
+ 											lastInputTurn,
+@@ -6054,12 +6064,12 @@ window.__ModuleLoader__.load({
+ 		//#endregion
+ 		//#region lib/types/client/chat/CommandNodeView.js
+ 		/** Ordinary command lifecycle renderer with command-name keyed specialization. */
+-		const CommandNodeView = (0, react.memo)(function CommandNodeView({ node, renderSlot, t }) {
++		const CommandNodeView = (0, react.memo)(function CommandNodeView({ readOnly = false, node, renderSlot, t }) {
+ 			const command = node.data;
+ 			const owner = (0, react.useMemo)(() => ({ node: command }), [command]);
+ 			return (0, react_jsx_runtime.jsx)("div", {
+ 				className: ChatView_module_css_default.callRow,
+-				children: renderSlot("conversation.chat.commandview", owner, {
++				children: readOnly ? (0, react_jsx_runtime.jsx)(GenericCommandCard, {...owner,t}) : renderSlot("conversation.chat.commandview", owner, {
+ 					entryKey: command.name ?? "",
+ 					fallback: (0, react_jsx_runtime.jsx)(GenericCommandCard, {
+ 						...owner,
+@@ -6496,7 +6506,7 @@ window.__ModuleLoader__.load({
+ 			}
+ 		}
+ 		/** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
+-		const TurnTailNodeView = (0, react.memo)(function TurnTailNodeView({ node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage }) {
++		const TurnTailNodeView = (0, react.memo)(function TurnTailNodeView({ readOnly = false, node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage }) {
+ 			const detailed = usePerformanceUsage((mode) => mode) === "detailed";
+ 			const data = node.data;
+ 			const hasLaterChatNode = useChat((snapshot) => (lastContent(snapshot, data.turn, true)?.anchorSeq ?? -1) > (data.closing?.finalNode.seq ?? data.seq));
+@@ -6509,7 +6519,7 @@ window.__ModuleLoader__.load({
+ 			const turn = node.location.kind === "turn" || node.location.kind === "step" ? node.location.turn : void 0;
+ 			if (turn === void 0) return null;
+ 			const closing = data.closing;
+-			const tail = renderSlot("conversation.chat.turnTail", {
++			const tail = readOnly ? null : renderSlot("conversation.chat.turnTail", {
+ 				turn,
+ 				seq: closing?.finalNode.seq ?? data.seq,
+ 				openFile
+@@ -6520,16 +6530,16 @@ window.__ModuleLoader__.load({
+ 				children: tail
+ 			});
+ 			const messageId = closing.finalNode.messageId;
+-			const assistantActions = messageId === void 0 ? null : renderSlot("conversation.chat.assistant-actions", { messageId });
++			const assistantActions = readOnly || messageId === void 0 ? null : renderSlot("conversation.chat.assistant-actions", { messageId });
+ 			return (0, react_jsx_runtime.jsxs)("div", {
+ 				className: TurnTailNodeView_module_css_default.root,
+ 				"data-turn-tail": data.turn,
+ 				"data-actions-reveal": endsWithResponse ? "always" : "hover",
+-				children: [tail, (0, react_jsx_runtime.jsx)(MessageIconActions, {
++				children: [readOnly ? null : tail, (0, react_jsx_runtime.jsx)(MessageIconActions, {
+ 					text: assistantText(closing.blocks),
+ 					time: closing.time,
+ 					clock: "end",
+-					onBranch: () => {
++					onBranch: readOnly ? void 0 : () => {
+ 						forkAt(data.seq);
+ 					},
+ 					branchUnavailable: data.branchUnavailable || hasLaterChatNode,
+@@ -8784,7 +8794,7 @@ window.__ModuleLoader__.load({
+ 		const chatViewDefinition = {
+ 			target: "chat",
+ 			create: () => new ChatSnapshotBuilder(),
+-			isActive: (snapshot) => snapshot.order.some((key) => snapshot.nodes.get(key)?.kind !== "command")
++			isActive: (snapshot) => snapshot.order.length > 0
+ 		};
+ 		/**
+ 		* Register the incremental Chat target builder.
+@@ -9234,7 +9244,7 @@ window.__ModuleLoader__.load({
+ 			update: (context) => context.state,
+ 			buildViewNode: (context) => {
+ 				if (context.state === void 0) return null;
+-				return chatNode(context, context.state.kind === "context" && context.start?.event.type === "user/message" && context.state.waking === true ? "turn-trigger" : context.state.kind, context.state.seq, context.state);
++				return chatNode(context, context.state.kind === "context" && context.state.source?.presentation === "communication" ? "communication" : context.state.kind === "context" && context.start?.event.type === "user/message" && context.state.waking === true ? "turn-trigger" : context.state.kind, context.state.seq, context.state);
+ 			}
+ 		};
+ 		/** Developer history uses the input-message lifecycle and context presentation. */
+@@ -10566,6 +10576,7 @@ window.__ModuleLoader__.load({
+ 			"user",
+ 			"steering",
+ 			"turn-trigger",
++			"communication",
+ 			"model-retry",
+ 			"turn-error",
+ 			"turn-max-tokens",
+@@ -12408,6 +12419,9 @@ window.__ModuleLoader__.load({
+ 			ctx.slots.inject("conversation.approval.detail", () => ctx.slots.register({ name: "conversation.approval.detail" }, ApprovalCommand));
+ 		}
+ 		//#endregion
++
++
++
+ 		exports.EMPTY_CHAT_SNAPSHOT = EMPTY_CHAT_SNAPSHOT;
+ 		exports.apply = apply;
+ 		exports.inject = inject;
+diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
+index a3f4a4246318a741b3049c2de50bed1cb41bd981..7b8e27602f857bff1e0c82c8ef17191ff9154b83 100644
+--- a/lib/types/client/contract/slots.d.ts
++++ b/lib/types/client/contract/slots.d.ts
+@@ -123,6 +123,8 @@ export interface ChatNodeInjected {
+ }
+ /** Stable owner currency delivered to a keyed Chat renderer. */
+ export interface ChatNodeOwnerProps {
++    /** Observation view: suppress actions that alter the viewed Session. */
++    readonly readOnly?: boolean;
+     /** Renderer-owned Node portion selected by the grouping Definition. */
+     groupPart?: string;
+     cwd?: string | undefined;
+diff --git a/lib/types/client/conversation-nodes/message.d.ts b/lib/types/client/conversation-nodes/message.d.ts
+index f289a5c8edd3a35e6072ddc7ed94f9101aee80b0..60060ecb40dbf69ee63665d410ab6c9d626af931 100644
+--- a/lib/types/client/conversation-nodes/message.d.ts
++++ b/lib/types/client/conversation-nodes/message.d.ts
+@@ -25,6 +25,8 @@ declare module '../contract/chat-nodes.ts' {
+         context: ContextMessageNode;
+         /** Non-human input that starts a Turn. */
+         'turn-trigger': ContextMessageNode;
++        /** Producer-declared communication kept outside process disclosures. */
++        communication: ContextMessageNode;
+     }
+ }
+ /** User, steering, and injected-context message classification Definition. */

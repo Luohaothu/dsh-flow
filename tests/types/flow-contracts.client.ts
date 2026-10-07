@@ -14,7 +14,6 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-api-gateway/client';
 import type {} from 'dsh-flow/remote';
 
-import type { FlowStartRequest } from 'dsh-flow/types';
 
 declare const ctx: Context;
 
@@ -23,12 +22,10 @@ declare const ctx: Context;
  * @returns what a legal caller observes.
  */
 export async function legalClientUsage(): Promise<{ status: string | undefined; nodes: number }> {
-  const request: FlowStartRequest = { objective: 'ship it' };
+  const runs = await ctx.remote.flow.teamRuns('main-session');
+  const status = runs.ok ? runs.value[0]?.state : undefined;
+  await ctx.remote.flow.teamRead('main-session','run');
 
-  const started = await ctx.remote.flow.start(request);
-  const status = started.ok ? started.value.cluster.status : undefined;
-
-  await ctx.remote.flow.control('cluster', 'resume');
   await ctx.remote.flow.read('cluster', { include_events: false });
   await ctx.remote.flow.events('cluster', { since: 0, limit: 200 });
   await ctx.remote.flow.list({ limit: 10 });
@@ -45,10 +42,10 @@ export async function legalClientUsage(): Promise<{ status: string | undefined; 
 // Negative assertions. Each one must keep failing to compile.
 // ---------------------------------------------------------------------------
 
-// @ts-expect-error a budget dimension is a number, never a string
+// @ts-expect-error observers cannot start execution
 export const wrongBudget = ctx.remote.flow.start({ objective: 'x', budget: { tokens: 'many' } });
 
-// @ts-expect-error the control vocabulary is closed: 'stop' is not an action
+// @ts-expect-error observers cannot control execution
 export const wrongControl = ctx.remote.flow.control('cluster', 'stop');
 
 // @ts-expect-error the seven published methods are the whole surface; there is no `settle`

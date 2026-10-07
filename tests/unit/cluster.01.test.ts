@@ -917,7 +917,7 @@ test('one scheduling pass starts several agents before any of them finishes', as
   // Hold the only model slot: no turn can proceed, so every agent this pass
   // starts must still be registered as active afterwards.
   runtime.enableScheduling();
-  const held = await runtime.acquireLlmSlot();
+  const held = await runtime.acquireLlmSlot(clusterId);
   await runtime.tick();
   const active = runtime.activeTurnIds();
   assert.ok(active.length >= 2, `one pass filled more than one slot, saw ${active.length}`);
@@ -1118,8 +1118,8 @@ test('competing drivers cannot exceed the active-turn window together', async t 
   command(runtime, orchestrator, 'dispatch', { transaction_id: second });
 
   runtime.enableScheduling();
-  const held = await runtime.acquireLlmSlot();
-  const heldAgain = await runtime.acquireLlmSlot();
+  const held = await runtime.acquireLlmSlot(clusterId);
+  const heldAgain = await runtime.acquireLlmSlot(clusterId);
   // Three eligible agents, two slots, two drivers racing at once.
   await Promise.all([runtime.tick(), runtime.tick()]);
   const active = runtime.activeTurnIds();

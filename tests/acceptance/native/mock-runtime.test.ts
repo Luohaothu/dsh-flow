@@ -234,9 +234,70 @@ test('N0: a native single Worker sums through a real tool call and answers from 
   assert.ok(file, 'the Worker session must exist on disk');
   const read = readSessionEvents(file);
   assert.equal(read.state, 'READ', `the session must be readable: ${read.reason ?? ''}`);
+  const initial = read.events.find(event => event.type === 'user/message');
+  assert.equal(asObject(asObject(initial?.data)?.source)?.kind, 'user', 'the initial Worker task is a native user prompt');
   const verdict = inspectNativeSumRoundTrip(read.events);
   assert.deepEqual(verdict.verified, true, `native round trip: ${JSON.stringify(verdict)}`);
   assert.equal(String(single.finalText ?? '').trim(), '5', 'the assistant answered with the number the tool returned');
+  assert.equal(mock.errors.length, 0, `fixture errors: ${mock.errors.join('; ')}`);
+});
+
+test('N-communication: classified messages retain full bodies, independent sources and one delivery per recipient', async t => {
+  let sent = false;
+  const body = `Evidence: ${'interface verified; '.repeat(170)}END-OF-EVIDENCE`;
+  const { host, mock, layout } = await harness(t, {
+    name: 'communication',
+    hooks: {
+      orchestrator(request) {
+        if (sent) return null;
+        sent = true;
+        return call('flow_communicate', { action: 'multicast', params: {
+          node: request.classified.nodeId, message_id: 'native-classified-message', category: 'review_feedback',
+          content: { subject: '接口审查意见', text: body },
+        } });
+      },
+    },
+  });
+  const created = decodeStartReply(await host.request('start', undefined, {
+    objective: 'Sum [2,3] and retain incoming review evidence.', workspace: layout.workspace, capabilities: ['fs_read'],
+    limits: { max_children: 2, max_depth: 2, max_agents: 8, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
+    budget: singleBudget,
+    initial_transactions: [{ id: 'communication-sum', objective: 'Sum [2,3] with flow_sum and submit the tool result.' }],
+  }));
+  assert.ok(created);
+  await host.request('settle', created.cluster.id, { timeout_ms: 300_000, poll_ms: 300 }, 420_000);
+  let received = 0;
+  for (const session of sessionsOf(layout, created.cluster.id)) {
+    const inputs = session.events.filter(event => event.type === 'user/message');
+    assert.equal(asObject(asObject(inputs[0]?.data)?.source)?.kind, 'user', `${session.role}: task precedes incoming messages`);
+    assert.equal(inputs.filter(event => asObject(asObject(event.data)?.source)?.kind === 'user').length, 1, `${session.role}: scheduling never fabricates another human prompt`);
+    const review = inputs.filter(event => asObject(asObject(event.data)?.source)?.message_id === 'native-classified-message');
+    if (!review.length) continue;
+    received += 1;
+    assert.equal(review.length, 1, 'retrying scheduler passes do not repeat a delivered message');
+    const data = asObject(review[0]?.data)!;
+    const source = asObject(data.source)!;
+    assert.equal(source.kind, 'flow-message');
+    assert.equal(source.presentation, 'communication');
+    assert.equal(source.category, 'review_feedback');
+    assert.equal(source.display_summary, '接口审查意见');
+    assert.equal(source.tone, 'neutral', 'a review message is not an approval verdict');
+    assert.equal(source.recipient_id, session.id);
+    assert.ok(asString(source.sender_id), 'the Agent sender is attributed');
+    const text = (asArray(data.content) ?? []).map(block => asString(asObject(block)?.text) ?? '').join('');
+    assert.equal(text.slice(Number(source.body_offset)), body, 'long body remains intact');
+    assert.ok(text.includes('[[flow-delivery native-classified-message seq '), 'durable receipt proof is retained');
+    const position = session.events.indexOf(review[0]!);
+    const preceding = session.events.slice(0, position).findLast(event => event.type === 'user/message');
+    assert.ok(['user', 'flow'].includes(String(asObject(asObject(preceding?.data)?.source)?.kind)), 'a task or scheduling prompt shares the same admitted step');
+  }
+  assert.equal(received, 3, 'all three native management roles receive their own copy');
+  const db = openLedger(join(layout.data, 'cluster.sqlite'));
+  try {
+    const deliveries = db.all('SELECT status FROM recipients WHERE message_id=?', 'native-classified-message');
+    assert.equal(deliveries.length, 3);
+    assert.ok(deliveries.every(row => row.status === 'ACKED'), 'delivery is acknowledged after native persistence');
+  } finally { db.close(); }
   assert.equal(mock.errors.length, 0, `fixture errors: ${mock.errors.join('; ')}`);
 });
 
@@ -592,7 +653,7 @@ function txCount(events: readonly SqlRow[], type: string): number {
 }
 
 /** Fixture IPC is deliberately separate from the seven-method Flow service. */
-async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary'): Promise<Record<string, unknown>> {
+async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session'): Promise<Record<string, unknown>> {
   const child = host.child;
   assert.ok(child?.connected, 'the real host child must be connected');
   const requestId = randomUUID();
@@ -631,16 +692,66 @@ async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary'):
   return promise;
 }
 
-test('N-scopes: ordinary and cluster-preset Agents do not inherit cluster role tools', async t => {
+test('N-agent-session: native prompts use the Flow owner, survive retries and retain cold history after recycle',async t=>{
+  const {host,layout,mock}=await harness(t,{name:'agent-session'});
+  const outcome=await observerRequest(host,'agent-session');
+  assert.equal(asObject(outcome.accepted)?.accepted,true);assert.equal(outcome.owned,true);assert.equal(outcome.refused,true);
+  assert.equal(asObject(outcome.run)?.state,'completed');
+  const events=asArray(outcome.events)??[];
+  const human=events.map(asObject).filter(event=>event?.type==='user/message'&&asObject(asObject(event.data)?.source)?.kind==='user')
+    .map(event=>asObject(event?.data)).filter(message=>asArray(message?.content)?.some(part=>asString(asObject(part)?.text)?.includes('NATIVE-AGENT-CONTINUATION')));
+  assert.equal(human.length,1);assert.ok(asObject(human[0]?.source)?.rpcId);
+  assert.equal(asArray(human[0]?.content)?.length,1);assert.ok(!JSON.stringify(human[0]?.content).includes('human_prompt'));
+  const ledger=openLedger(join(layout.data,'cluster.sqlite'));t.after(()=>ledger.close());
+  assert.equal(ledger.all("SELECT id FROM messages WHERE id LIKE 'human:%'").length,2);
+  assert.equal(ledger.all("SELECT recipient FROM recipients WHERE message_id LIKE 'human:%'").length,2);
+  const id=requiredString(outcome.session_id,'selected agent session');
+  assert.ok(mock.requests.some(request=>JSON.stringify(request.body).includes('NATIVE-AGENT-CONTINUATION')));
+  assert.ok(mock.requests.some(request=>JSON.stringify(request.body).includes('NATIVE-ACTIVE-CONTINUATION')));
+  const envelopes=readFileSync(join(layout.logs,'llm-envelopes.jsonl'),'utf8').trim().split('\n').map(line=>asObject(JSON.parse(line)))
+    .filter(row=>row?.session_id===id && row.purpose!=='session-title');
+  assert.ok(envelopes.length);assert.ok(envelopes.every(row=>row?.provider===MOCK_PROVIDER&&row.model===MOCK_MODEL_ID));
+});
+
+test('N-team-launch: the native main Agent loads the skill, creates, reads and finalizes in its own journal', async t => {
+  const {host,layout}=await harness(t,{name:'team-launch',caseId:'team-launch'});
+  const outcome=await observerRequest(host,'team-launch');
+  assert.equal(outcome.cold_reload,true,'native persistence reloads the main conversation');
+  assert.equal(outcome.launch_ignorable,true,'extension metadata is compatible with the static host event catalog');
+  const runs=asArray(outcome.runs);assert.equal(runs?.length,1);
+  const run=asObject(runs![0]);assert.equal(run?.state,'completed');assert.ok(run?.finalized_at);
+  const id=requiredString(outcome.session_id,'main session');
+  const file=findSessionFile(join(layout.home,'sessions'),id);assert.ok(file);
+  const journal=readSessionEvents(file);assert.equal(journal.state,'READ');const events=journal.events;
+  const human=events.findIndex(event=>event.type==='user/message'&&asObject(asObject(event.data)?.source)?.kind==='user');
+  const skill=events.findIndex(event=>event.type==='user/message'&&asObject(asObject(event.data)?.source)?.kind==='skill-invocation'&&asObject(asObject(event.data)?.source)?.name==='agent-team');
+  const create=events.findIndex(event=>event.type==='tool/call'&&asObject(event.data)?.name==='agent_team_create');
+  assert.ok(human>=0&&skill>human&&create>skill,'human request precedes skill and model-requested creation');
+  const names=events.filter(event=>event.type==='tool/call').map(event=>asObject(event.data)?.name);
+  assert.ok(names.includes('agent_team_read'));assert.ok(names.includes('agent_team_finalize'));
+  const created=events[create]!;const args=asObject(JSON.parse(requiredString(asObject(created.data)?.arguments,'create arguments')));
+  assert.equal(asObject(args?.assessment)?.complexity,'simple');
+  const ledger=openLedger(join(layout.data,'cluster.sqlite'));t.after(()=>ledger.close());
+  const runId=requiredString(run?.id,'team run');
+  assert.equal(ledger.all("SELECT seq FROM events WHERE cluster_id=? AND type='team-created'",runId).length,1);
+  assert.equal(ledger.all("SELECT seq FROM events WHERE cluster_id=? AND type='team-finalized'",runId).length,1);
+  assert.ok(ledger.all('SELECT session_id FROM agents WHERE cluster_id=?',runId).every(agent=>agent.session_id!==id));
+});
+
+test('N-scopes: the retired preset is absent and ordinary Agents do not inherit cluster role tools', async t => {
   const { host, layout } = await harness(t, { name: 'scopes' });
   const scopes = await observerRequest(host, 'scopes');
   const ordinaryTools = asArray(scopes.ordinary_tools);
-  const presetTools = asArray(scopes.preset_tools);
+  assert.equal(scopes.preset_removed,true);
   assert.ok(ordinaryTools);
-  assert.ok(presetTools);
+
   assert.deepEqual(ordinaryTools.filter(tool => typeof tool === 'string' && tool.startsWith('flow_')), []);
-  assert.deepEqual(presetTools.filter(tool => typeof tool === 'string' && tool.startsWith('flow_')).sort(),
-    ['flow_control', 'flow_read', 'flow_start']);
+  assert.ok(ordinaryTools.includes('agent_team_read'));
+  assert.ok(ordinaryTools.includes('agent_team_control'));
+  assert.ok(ordinaryTools.includes('agent_team_create'));
+  assert.ok(ordinaryTools.includes('agent_team_message'));
+  assert.ok(ordinaryTools.includes('agent_team_finalize'));
+  assert.equal(ordinaryTools.includes('flow_start'),false);
 
   const created = decodeStartReply(await host.request('start', undefined, {
     objective: 'Sum [2,3] and submit 5 through the native tool.',
@@ -676,6 +787,8 @@ test('N-scopes: ordinary and cluster-preset Agents do not inherit cluster role t
     assert.ok(requests.length > 0, `${role} made an actual provider request`);
     for (const request of requests) {
       const options = asObject(JSON.parse(requiredString(request?.before, `${role} request options`)));
+      // Native user provenance also starts the host's title-only LLM request.
+      if(request?.purpose==='session-title')continue;
       const tools = asArray(options?.tools);
       assert.ok(tools);
       const names = tools.map(tool => asString(asObject(tool)?.name)).filter((name): name is string => name !== null);
