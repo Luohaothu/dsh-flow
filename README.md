@@ -8,8 +8,8 @@ The main Agent manages a team's lifecycle through a skill and tools. Each manage
 
 The Chinese [documentation](docs/design/index.md) covers usage, architecture and development:
 
-- [Quick start](docs/design/quick-start.md) and [advanced usage](docs/design/advanced.md)
-- [DeepSeek step-by-step walkthrough](docs/design/step-by-step.md): official API setup, tool calculation, independent review and file delivery
+- [Quick start](docs/design/quick-start.md): step-by-step task submission, team progress and file delivery using your configured model
+- [Advanced usage](docs/design/advanced.md)
 - [Agent roles](docs/design/agents.md), [hierarchy](docs/design/hierarchy.md), [dispatch](docs/design/dispatch.md) and [communication](docs/design/communication.md)
 - [Development setup](docs/design/development/setup.md) and [code structure](docs/design/development/code-structure.md)
 - [Interface behavior](docs/design/development/interface.md), [API](docs/design/development/api.md) and [provider interfaces](docs/design/development/provider-interfaces.md)

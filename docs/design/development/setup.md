@@ -62,7 +62,7 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
 
 [instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。请按实际部署修改模型提供方、模型名称、服务地址和宿主模型适配器容量；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
 
-使用 DeepSeek 官方 API 时，在实例配置之后追加 [deepseek.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/deepseek.patch.yml)。它将模型路由改为 `deepseek / deepseek-flash`，通过普通 YAML 字符串 `apiKeyEnv: FLOW_MODEL_API_KEY` 指定凭证环境变量名，由宿主在运行时读取值；完整命令与工作区操作见 [DeepSeek 实战步骤](/step-by-step#_2-接入-deepseek-官方-api)。`openai-compatible.patch.yml` 是独立的 Coding Plan 服务示例，服务地址与官方 DeepSeek API 不同。
+这些配置用于准备独立调试实例的宿主模型服务。日常使用时，插件直接使用宿主中已配置好的模型，操作步骤见[快速上手](/quick-start)。
 
 团队默认模型为“跟随主会话”时，创建使用主会话当前选中的模型，后续选择同步给该会话未结束的团队；设置为固定模型时保持团队选择。示例中的 `provider/model` 同时提供底层程序化启动的默认路由。若团队受阻且提示模型服务连接失败，先核对主会话选中服务是否可连接。
 
