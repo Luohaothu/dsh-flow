@@ -12,7 +12,7 @@ import {
   asArray, asObject,
 } from '../context.ts';
 import type {
-  CheckEntry, CheckOutcome, JsonObject, LedgerRow, LedgerScalar, RunEvent,
+  CheckEntry, CheckOutcome, JsonObject, LedgerScalar, LedgerRow, RunEvent,
   RunSnapshot, SingleReply, StoneLedger,
 } from '../context.ts';
 import type { RunLayout } from '../../../src/host/types.ts';
@@ -60,11 +60,7 @@ interface SessionProbe {
   reason?: string | null;
 }
 
-interface WorkerUsage {
-  agent_id: LedgerScalar | undefined;
-  sent: number;
-  kinds: Record<string, number>;
-}
+
 
 export async function run({ report, snapshot, events, single, layout }: SmokeContext): Promise<CheckOutcome> {
   const checks: CheckEntry[] = [];
@@ -146,23 +142,6 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   // Successful smoke execution cannot withhold a Worker result.
   const withheld = events.filter(event => event.type === 'result-withheld').length;
   checks.push(check('no-result-withheld', withheld === 0, `${withheld} withheld results`));
-  // Worker request limits include every provider request:
-  // a Worker's compaction is a provider request too, and it is recorded under that
-  // Worker with `kind='compaction'`. Every sent kind is summed per identity.
-  const byWorker = new Map<LedgerScalar | undefined, WorkerUsage>();
-  for (const row of ledger.usage_by_agent ?? []) {
-    if (row.role !== 'worker') continue;
-    const key = row.agent_id;
-    const entry = byWorker.get(key) ?? { agent_id: key, sent: 0, kinds: {} };
-    entry.sent += Number(row.sent ?? 0);
-    const kind = String(row.kind);
-    entry.kinds[kind] = (entry.kinds[kind] ?? 0) + Number(row.sent ?? 0);
-    byWorker.set(key, entry);
-  }
-  const workers = [...byWorker.values()];
-  const overAllowance = workers.filter(entry => entry.sent > 2);
-  checks.push(check('worker-request-allowance', workers.length === 0 || overAllowance.length === 0,
-    `per Worker provider requests (all kinds): ${JSON.stringify(workers.map(entry => ({ sent: entry.sent, kinds: entry.kinds })))}`));
   // The fingerprint itself is what this check can see: `not_comparable` is
   // decided by the runner's *final* comparison, and `runChecks` runs before it —
   // so requiring the flag here would let a mixed-build run pass. The runner
@@ -185,19 +164,8 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   checks.push(check('worker-sessions-distinct', workerSessions.length >= 2 && new Set(workerSessions).size === workerSessions.length,
     `${workerSessions.length} worker session(s): ${JSON.stringify(workerSessions)}`));
 
-  // The contract is "no request is unaccounted", not "the provider always
-  // reports usage". A stream that ends without usage is recorded as UNKNOWN with
-  // its reservation retained and a reason — that *is* accounting, and treating it
-  // as a mechanism failure turned a provider hiccup into a red gate. What must
-  // never happen is a receipt that stays RESERVED at rest, or an UNKNOWN with no
-  // reason recorded.
-  const receiptStates = ledger.usage_states ?? [];
-  const reservedAtRest = receiptStates.find(row => row.status === 'RESERVED')?.c ?? 0;
-  const unknownsWithoutReason = ledger.usage_unknown_without_note ?? 0;
-  const unsettled = ledger.usage?.unknown_requests ?? 0;
-  checks.push(check('usage-settled',
-    (ledger.usage?.requests ?? 0) > 0 && reservedAtRest === 0 && unknownsWithoutReason === 0,
-    `${ledger.usage?.requests ?? 0} receipts ${JSON.stringify(receiptStates.map(row => `${row.status}:${row.c}`))}, ${unsettled} without provider usage (each carries its reason)`));
+  checks.push(check('usage-settled', (ledger.usage?.requests ?? 0) > 0,
+    `host-recorded native settlement usage: ${JSON.stringify(ledger.usage ?? null)}`));
 
   checks.push(check('no-duplicate-accounting', (ledger.duplicate_charges ?? 0) === 0 && (ledger.duplicate_accepts ?? 0) === 0,
     `duplicate charges ${ledger.duplicate_charges ?? 0}, duplicate accepts ${ledger.duplicate_accepts ?? 0}`));

@@ -40,7 +40,7 @@ export const inject = ['tools', 'agents', 'agentLoop', 'sessions', 'sessionPersi
  * @param input - the profile row's configuration.
  */
 function isResolved(input:ConfigInput | ResolvedConfig):input is ResolvedConfig {
-  return typeof input.maxTokens==='object'&&input.maxTokens!==null&&'get' in input.maxTokens;
+  return typeof input.defaultBudget==='object'&&input.defaultBudget!==null&&'get' in input.defaultBudget;
 }
 export async function apply(ctx: Context, input: ConfigInput | ResolvedConfig): Promise<void> {
   // The loader supplies live Volatile references. Preserve them so native

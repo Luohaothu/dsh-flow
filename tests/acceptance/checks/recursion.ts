@@ -369,7 +369,7 @@ export async function run({ workspace, report, layout, events }: RecursionContex
   push('cross-subtree-traffic', null,
     `not exercised by this case: ${deliveries} durable deliveries, all of them plugin notifications; the communication contract is asserted by the recovery case`);
 
-  const duplicateCharges = ledger.get('SELECT COUNT(*) AS c FROM (SELECT request_id FROM usage_receipts WHERE cluster_id=? GROUP BY request_id HAVING COUNT(*)>1)', clusterId)?.c;
+  const duplicateCharges = ledger.get('SELECT COUNT(*) AS c FROM (SELECT native_session_id,native_seq FROM native_session_events WHERE cluster_id=? GROUP BY native_session_id,native_seq HAVING COUNT(*)>1)', clusterId)?.c;
   const duplicateAccepts = ledger.get("SELECT COUNT(*) AS c FROM (SELECT json_extract(data,'$.transaction_id') AS t FROM events WHERE cluster_id=? AND type='result-accepted' GROUP BY t HAVING COUNT(*)>1)", clusterId)?.c;
   push('no-duplicate-accounting', duplicateCharges === 0 && duplicateAccepts === 0, `charges ${duplicateCharges}, accepts ${duplicateAccepts}`);
 
@@ -470,11 +470,7 @@ export async function run({ workspace, report, layout, events }: RecursionContex
   // even when its artifacts are also missing. A mechanism
   // defect outranks the limit, the limit outranks the model.
   const limitCoded = (report.limit_reached?.blockedOnBudget === true) || beaconCodes.some(code => LIMIT_CODES.includes(code));
-  // A descendant may already be BLOCKED for another reason, preventing a second
-  // node-blocked beacon when its live turn reaches the hard context gate.
-  // The per-step rejection is durable evidence even in that ordering.
-  const mechanismCoded = beaconCodes.includes('CONTEXT_PRESSURE')
-    || events.some(event => event.type === 'context-step' && event.data.decision === 'reject');
+  const mechanismCoded = beaconCodes.some(code => ['SESSION_MISSING','DELIVERY_UNKNOWN','EFFECT_UNCERTAIN','ACCOUNTING_UNCERTAIN','FENCE'].includes(code));
   return {
     checks,
     scenario_status: failed.length === 0 ? 'PASSED' : 'FAILED',

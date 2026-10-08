@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 1. 调用 `agent_team_read`，取得本次请求的 `launch_id`、已有运行和部署默认参数。若该 launch_id 已创建团队，继续读取它。
 2. 根据用户需求和本会话相关上下文评估复杂度（simple / moderate / complex），用一句话解释依据。形成自包含的 objective 和可检查的 acceptance_criteria；把前文中影响执行的约束、交付位置和输入写入 objective。
-3. 调用 `agent_team_create`：传入本次 launch_id、objective、assessment 和 acceptance_criteria。按任务需要选择 capabilities 与运行限制；没有用户明确预算约束或可用实测依据时，省略 budget 并继承部署默认额度。团队的计划、分配、独立审核和最终收尾都会消耗预算，任务本身简单不足以推导控制面的工具或请求额度。仅文本任务可用空 capabilities；文件任务按需使用 fs_read / fs_write；其他能力为 shell / web_fetch / browser。
+3. 调用 `agent_team_create`：传入本次 launch_id、objective、assessment 和 acceptance_criteria。按任务需要选择 capabilities 与工具次数、时间、数量和并发限制；上下文、输出与压缩由 DSH 决定，不能传 Token 或模型请求次数预算；没有用户明确预算约束或可用实测依据时，省略 budget 并继承部署默认额度。团队的计划、分配、独立审核和最终收尾都会消耗工具额度与运行时间，任务本身简单不足以推导控制面的工具额度。仅文本任务可用空 capabilities；文件任务按需使用 fs_read / fs_write；其他能力为 shell / web_fetch / browser。
 4. 用返回的 run_id 调用 `agent_team_read` 检查实际启动状态、角色和参数。只有真实运行存在且状态允许执行时，才向用户报告启动成功。创建返回未知结果时，先按 launch_id 读取已有运行，再用完全相同的参数重试。
 
 ## 跟进

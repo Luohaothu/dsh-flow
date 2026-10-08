@@ -27,8 +27,8 @@ test('first task remains user input on empty resume; later scheduling retains it
   });
   const turn = async (resume: boolean) => runTurn(host.ctx, {
     agent, role: agent.role, prompt: 'initial task or later scheduling', messages: [communication],
-    allowedTools: [], globalTools: [], model: runtime.config.model, resume, modelAccounting: false,
-    budgetIds: [], turnSeq: 1, flow: { store: runtime.store },
+    allowedTools: [], globalTools: [], model: runtime.config.model, resume,
+     turnSeq: 1, flow: { store: runtime.store },
     onAgentReady(live) { live.session.deriveMessages = () => session.deriveMessages(); },
   });
   await turn(true);

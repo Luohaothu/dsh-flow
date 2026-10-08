@@ -1,11 +1,9 @@
 /** Main-conversation ownership and read-only projections over the existing ledger. */
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { SessionId } from '@deepseek-ai/dsh-session';
-import type {} from '@deepseek-ai/dsh-session-projection';
 import type { ClusterRuntime } from './cluster.ts';
 import type { FlowModelSelection } from './model.ts';
-import { prepareModelSelection } from './model-selection.ts';
+import { prepareModelSelection, validateModelSelection } from './model-selection.ts';
 import { budgetView } from './budget.ts';
 import { fail } from '../errors.ts';
 import { agentGivenName, ROLE_LABELS as ROLES } from '../identity.ts';
@@ -17,6 +15,9 @@ import { validateLimits } from './protocol.ts';
 
 /** Validate at the service boundary too; callers cannot bypass the model schema. */
 function createRequest(request: FlowTeamCreateRequest): FlowTeamCreateRequest {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) fail('团队创建参数必须是对象', 400);
+  const allowed = new Set(['objective', 'assessment', 'acceptance_criteria', 'workspace', 'capabilities', 'budget', 'limits']);
+  for (const key of Object.keys(request)) if (!allowed.has(key)) fail(`团队创建参数 ${key} 不受支持`, 400);
   const complexity = request.assessment?.complexity;
   if (!['simple', 'moderate', 'complex'].includes(complexity)) fail('请提供任务复杂度评估', 400);
   const rationale = textField(request.assessment.rationale, 'assessment.rationale', 4096).trim();
@@ -36,6 +37,7 @@ function createRequest(request: FlowTeamCreateRequest): FlowTeamCreateRequest {
 
 export function createTeam(runtime: ClusterRuntime, sessionId: string, launchId: string, input: FlowTeamCreateRequest, model?: FlowModelSelection): FlowTeamSnapshot {
   const request = createRequest(input);
+  const selection = model === undefined ? undefined : validateModelSelection(model);
   return runtime.store.tx(() => {
     const binding = runtime.store.get('SELECT run_id FROM team_runs WHERE main_session_id=? AND intent_id=?', sessionId, launchId);
     if (binding) {
@@ -43,7 +45,7 @@ export function createTeam(runtime: ClusterRuntime, sessionId: string, launchId:
       if (!isDeepStrictEqual(saved && field(json(saved.data), 'request'), request)) fail('同一启动意图的参数已确定，请读取已有团队；新的任务使用新的 /agent-team 请求', 409);
       return readTeam(runtime, sessionId, String(binding.run_id));
     }
-    const run = startTeam(runtime, sessionId, launchId, request.objective, request.workspace, model, request);
+    const run = startTeam(runtime, sessionId, launchId, request.objective, request.workspace, selection, request);
     const metadata = { launch_id: launchId, request };
     if (!isFlowJsonValue(metadata)) fail('启动参数必须是 JSON 数据', 400);
     runtime.store.appendEvent(run.cluster.id, 'team-created', metadata);
@@ -116,6 +118,7 @@ function reasonOf(runtime:ClusterRuntime,runId:string,reason:string|null,code:st
 export function startTeam(runtime: ClusterRuntime, sessionId: string, intentId: string, objective: string, workspace?: string, model?:FlowModelSelection, request?: FlowTeamCreateRequest) {
   if (!sessionId.trim() || !intentId.trim()) fail('主会话与提交标识不能为空', 400);
   if (!objective.trim()) fail('请描述希望团队完成的任务', 400);
+  const selection = model === undefined ? undefined : validateModelSelection(model);
   return runtime.store.tx(() => {
     const existing = runtime.store.get('SELECT run_id FROM team_runs WHERE main_session_id=? AND intent_id=?', sessionId, intentId);
     const id = text(existing?.run_id);
@@ -125,9 +128,9 @@ export function startTeam(runtime: ClusterRuntime, sessionId: string, intentId: 
       return runtime.read(id, { include_events: false });
     }
     const run = runtime.start({ ...request, id: randomUUID(), objective: objective.trim(), ...(workspace ? { workspace } : {}) });
-    if(model?.provider&&model.model) {
+    if(selection?.provider&&selection.model) {
       const root=runtime.store.nodesInSubtree(run.cluster.id,null).find(node=>node.parent_id===null)!;
-      if(root.scope?.team_model_fixed!==true)runtime.store.updateNode(root.id,{scope:{...root.scope,team_model:{...model}}});
+      if(root.scope?.team_model_fixed!==true)runtime.store.updateNode(root.id,{scope:{...root.scope,team_model:selection}});
     }
     runtime.store.run('INSERT INTO team_runs(run_id,main_session_id,intent_id) VALUES(?,?,?)', run.cluster.id, sessionId, intentId);
     runtime.store.appendEvent(run.cluster.id, 'team-bound', { main_session_id: sessionId, intent_id: intentId });
@@ -159,7 +162,7 @@ function runOf(runtime: ClusterRuntime, sessionId: string, runId: string): FlowT
     finalized_at: number(runtime.store.get("SELECT at FROM events WHERE cluster_id=? AND type='team-finalized' ORDER BY seq LIMIT 1", runId)?.at),
   };
 }
-function metric(value: number | null): FlowTeamMetric { return { value, unit: 'Token', scope: 'self', estimated: false }; }
+function metric(value: number | null, completeness: FlowTeamMetric['completeness']): FlowTeamMetric { return { value, unit: 'Token', scope: 'self', estimated: false, completeness }; }
 /** Read in one SQLite transaction, using stable agent ids and authoritative resource records. */
 export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: string): FlowTeamSnapshot {
   return runtime.store.tx(() => {
@@ -173,33 +176,16 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
     }
     const nodes = new Map(store.nodesInSubtree(runId, null).map(node => [node.id, node]));
     const root = [...nodes.values()].find(node => node.parent_id === null);
-    const modelFor = prepareModelSelection(runtime.config.model, root?.scope,
-      store.getCluster(runId)?.limits.worker_max_tokens);
+    const modelFor = prepareModelSelection(runtime.config.model, root?.scope);
     const allowances = store.listBudgets(runId).flatMap(row => {
       const view = budgetView(row);
       if (!view) return [];
       const shared = row.scope_kind !== 'agent';
       const entries: FlowTeamAllowance[] = [
-        { id: `${row.id}:tokens`, name: 'Token 额度', unit: 'Token', scope_id: row.scope_id, shared, total: view.tokens.limit, used: view.tokens.spent, remaining: view.tokens.available },
-        { id: `${row.id}:requests`, name: '模型请求额度', unit: '次', scope_id: row.scope_id, shared, total: view.model_requests.limit, used: view.model_requests.spent, remaining: view.model_requests.available },
         { id: `${row.id}:tools`, name: '工具调用额度', unit: '次', scope_id: row.scope_id, shared, total: view.tool_calls.limit, used: view.tool_calls.spent, remaining: view.tool_calls.available },
       ];
       return [{ row, entries }];
     });
-    const usages = new Map(store.all(`SELECT agent_id,SUM(total_tokens) AS tokens,
-      SUM(CASE WHEN status='UNKNOWN' THEN 1 ELSE 0 END) AS uncertain,
-      SUM(CASE WHEN status='SETTLED' THEN 1 ELSE 0 END) AS settled
-      FROM usage_receipts WHERE cluster_id=? GROUP BY agent_id`, runId).map(row => [text(row.agent_id), row]));
-    const models = new Map(store.all(`SELECT agent_id,model,reasoning_effort FROM usage_receipts
-      WHERE cluster_id=? AND model IS NOT NULL AND model<>'' AND kind<>'compaction' AND status<>'NOT_SENT' ORDER BY created,rowid`, runId)
-      .map(row => [text(row.agent_id),row]));
-    const contexts = new Map(store.all(`SELECT json_extract(data,'$.agent_id') AS agent_id,data FROM events
-      WHERE cluster_id=? AND type='context-step' ORDER BY seq`, runId).map(row => [text(row.agent_id), json(row.data)]));
-    // context-step.compacted_at is the post-compaction token pressure anchor,
-    // not a wall-clock time. Only a recorded native summary proves compaction.
-    const compactions = new Map(store.all(`SELECT json_extract(data,'$.agent_id') AS agent_id,MAX(at) AS at FROM events
-      WHERE cluster_id=? AND type='context-step' AND json_type(data,'$.summary_seq') IN ('integer','real')
-      GROUP BY json_extract(data,'$.agent_id')`, runId).map(row => [text(row.agent_id), number(row.at)]));
     const ended = new Map(store.all('SELECT * FROM team_observations WHERE run_id=?', runId).map(row => [text(row.agent_id), row]));
     const allocations = new Map(store.all('SELECT agent_id,status FROM allocations WHERE cluster_id=? ORDER BY created', runId).map(row => [text(row.agent_id), text(row.status)]));
     const dependencies=store.all(`SELECT t.id,t.owner_management_id,t.status,t.updated,a.agent_id FROM transactions t LEFT JOIN allocations a ON a.transaction_id=t.id AND a.status='ACTIVE' WHERE t.cluster_id=? AND t.status IN ('RUNNING','VALIDATING') ORDER BY t.updated DESC`,runId);
@@ -217,17 +203,12 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
       const collaborator=dependency?.status==='VALIDATING'?identities.find(candidate=>candidate.node_id===agent.node_id&&candidate.role==='auditor'&&candidate.status!=='TERMINATED')?.id:text(dependency?.agent_id);
       const awaitingWork = raw === 'READY' && agent.turns > 0;
       const waiting = reported === 'waiting_user' || reported === 'waiting_agent' ? reported : collaborator?'waiting_agent':null;
-      const context = contexts.get(agent.id) ?? null;
-      const usage = usages.get(agent.id);
-      const tokens = usage && number(usage.uncertain) === 0 && (number(usage.settled) ?? 0) > 0 ? number(usage.tokens) : null;
+      const context = store.latestNativeContext(agent.id);
+      const usage = store.usageSummary(runId, { agentId: agent.id });
       // These edges are recorded by the actual creator, never reconstructed from names or task domains.
       const parent = text(field(meta, 'parent_agent_id')) ?? text(field(meta, 'allocated_by'));
       const relationKnown = Reflect.has(meta, 'parent_agent_id') || Reflect.has(meta, 'allocated_by');
-      const model=models.get(agent.id);
-      const recordedModel = text(model?.model);
-      const selectedModel = recordedModel === null ? modelFor(agent) : null;
-      const session=runtime.ctx.get('sessions')?.get(SessionId(agent.session_id));
-      const lastUsed=session?runtime.ctx.get('sessionProjections')?.stateOf(session,'modelSelection')?.lastUsed:null;
+      const selectedModel = modelFor(agent);
       return {
         id: agent.id, run_id: runId, role:agent.role, parent_id: relationKnown ? parent : `unresolved:${agent.id}`, session_id: agent.session_id,
         name: text(field(meta, 'display_name')) ?? agentGivenName(agent.id),
@@ -237,12 +218,14 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
         waiting_since: number(field(meta, 'waiting_since'))??(collaborator?number(dependency?.updated):null),
         recycled: agent.status === 'TERMINATED' || allocations.get(agent.id) === 'RELEASED',
         created: agent.created, ended: number(observation?.ended), version: run.version,
-        tokens: metric(tokens),
-        model: recordedModel ?? selectedModel?.model ?? null,
-        reasoning_effort: model ? text(model.reasoning_effort) ?? lastUsed?.reasoningEffort ?? null : selectedModel?.reasoningEffort ?? null,
+        tokens: metric(usage.total_tokens, usage.completeness),
+        model: context.model,
+        reasoning_effort: context.reasoning_effort,
+        configured_model: selectedModel.model ?? null,
+        configured_reasoning_effort: selectedModel.reasoningEffort ?? null,
         allowances: allowances.filter(({row}) => row.scope_kind === 'agent' ? row.scope_id === agent.id : row.scope_kind === 'node' && row.scope_id === agent.node_id).flatMap(({entries}) => entries),
-        context_used: number(field(context, 'after')), context_limit: number(field(context, 'context_limit')),
-        compacted_at: compactions.get(agent.id) ?? null,
+        context_used: context.context_used, context_limit: context.context_limit,
+        compacted_at: context.compacted_at,
       };
     });
     const communications = store.all(`SELECT m.*,r.recipient,r.status,r.acked FROM messages m JOIN recipients r ON r.message_id=m.id
@@ -252,11 +235,8 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
       at: number(row.created) ?? 0, content: json(row.content), delivery_state: String(row.status), version: run.version,
       category: communicationCategory(json(row.content)), transaction_id: text(communicationContent(json(row.content)).transaction_id),
     }));
-    const hasUsage = usages.size > 0;
-    const uncertain = [...usages.values()].some(row => (number(row.uncertain) ?? 0) > 0);
-    const hasSettled=[...usages.values()].some(row=>(number(row.settled)??0)>0);
-    const total = hasUsage && hasSettled && !uncertain ? number(store.get("SELECT SUM(total_tokens) AS total FROM usage_receipts WHERE cluster_id=? AND status='SETTLED'", runId)?.total) : null;
-    return { run, agents, communications, tokens: metric(total) };
+    const usage = store.usageSummary(runId);
+    return { run, agents, communications, tokens: metric(usage.total_tokens, usage.completeness) };
   });
 }
 

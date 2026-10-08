@@ -12,8 +12,12 @@ interface Live {report:Report;layout:RunLayout;host:Host;mock?:{release(barrier:
 const sleep=(page:Page,ms=1700)=>page.waitForTimeout(ms);
 async function submit(page:Page,line:string) {
   const editor=page.locator('[data-composer-input=true]');
-  await editor.click();await editor.press('Meta+A');await editor.press('Backspace');
+  // Use the platform's real select-all shortcut; Meta+A leaves the previous
+  // draft in place on Linux and corrupts the next command's launch intent.
+  await editor.click();await editor.press('ControlOrMeta+A');await editor.press('Backspace');
+  await page.waitForFunction(()=>document.querySelector<HTMLElement>('[data-composer-input=true]')?.innerText.trim()==='',undefined,{timeout:3000});
   await editor.pressSequentially(line);await editor.press('Escape');
+  await page.waitForFunction(expected=>document.querySelector<HTMLElement>('[data-composer-input=true]')?.innerText===expected,line,{timeout:3000});
   await page.getByRole('button',{name:'发送消息',exact:true}).click();
 }
 /** The native appearance control persists immediately; wait for its Host ACK. */
@@ -68,7 +72,8 @@ export async function live({report,layout,host,mock}:Live) {
     await context.addInitScript('window.__name=(value)=>value');
     page=await context.newPage();const errors:string[]=[];page.on('pageerror',error=>{errors.push(error.message);writeFileSync(join(artifacts,'client-errors.json'),JSON.stringify(errors,null,2));});
     const consoleErrors:string[]=[];page.on('console',message=>{consoleErrors.push(`${message.type()}: ${message.text()}`);writeFileSync(join(artifacts,'client-console.json'),JSON.stringify(consoleErrors,null,2));});
-    const replies:unknown[]=[];page.on('response',async response=>{if(new URL(response.url()).pathname.startsWith('/api/flow/')){replies.push({path:new URL(response.url()).pathname,status:response.status(),body:await response.json().catch(()=>null)});writeFileSync(join(artifacts,'observer-responses.json'),JSON.stringify(replies,null,2));}});
+    const replies:unknown[]=[];page.on('response',async response=>{const path=new URL(response.url()).pathname;if(path.startsWith('/api/flow/')||path.startsWith('/api/commands/')){replies.push({path,status:response.status(),body:await response.json().catch(()=>null)});writeFileSync(join(artifacts,'observer-responses.json'),JSON.stringify(replies,null,2));}});
+    const commandRequests:unknown[]=[];page.on('request',request=>{if(new URL(request.url()).pathname==='/api/commands/execute'){commandRequests.push(request.postDataJSON());writeFileSync(join(artifacts,'native-command-requests.json'),JSON.stringify(commandRequests,null,2));}});
     const modules:unknown[]=[];page.on('response',async response=>{if(response.request().resourceType()==='script'){const body=await response.text().catch(()=>'');modules.push({path:new URL(response.url()).pathname,bytes:body.length,flow:body.includes('dsh-flow-team-ui'),presentation:body.includes('registerViewPresentation')});writeFileSync(join(artifacts,'client-modules.json'),JSON.stringify(modules,null,2));}});
     await page.goto(url,{waitUntil:'domcontentloaded'});await sleep(page,4000);
     const notice=page.getByRole('button',{name:/^continue$|我已了解|继续/i}).first();if(await notice.isVisible().catch(()=>false))await notice.click();
@@ -95,9 +100,10 @@ export async function live({report,layout,host,mock}:Live) {
     // Reload starts a fresh authoritative directory after the unavailable-catalog fixture.
     await page.reload({waitUntil:'domcontentloaded'});await sleep(page,3500);
     await page.getByRole('button',{name:'发送消息',exact:true}).waitFor();
-    await page.route('**/api/commands/execute',async route=>{const request=route.request().postDataJSON();await route.fulfill({json:{type:'server-response',rpcId:request.rpcId,result:{ok:true}}});});
+    let staleExecutions=0;
+    await page.route('**/api/commands/execute',async route=>{staleExecutions++;const request=route.request().postDataJSON();await route.fulfill({json:{type:'server-response',rpcId:request.rpcId,result:{ok:true}}});});
     await submit(page,'/agent-team 停用时目录尚未刷新');await sleep(page,300);
-    push('stale-catalog-refused',await page.getByRole('dialog',{name:'dsh-flow 尚未启用',exact:true}).isVisible()&&await page.locator('[data-composer-input=true]').innerText()==='/agent-team 停用时目录尚未刷新'&&binding(layout).length===0,'An absent execution admission after a cached catalog still refuses and offers plugin management');
+    push('stale-catalog-refused',staleExecutions===1&&await page.getByRole('dialog',{name:'dsh-flow 尚未启用',exact:true}).isVisible()&&await page.locator('[data-composer-input=true]').innerText()==='/agent-team 停用时目录尚未刷新'&&binding(layout).length===0,{nativeExecutions:staleExecutions,meaning:'An absent execution admission after a cached catalog still refuses and offers plugin management'});
     await page.getByRole('button',{name:'关闭启用提示',exact:true}).click();await page.unroute('**/api/commands/execute');
     await submit(page,'/agent-team');await sleep(page);
     push('empty-command-preserves-input',await page.locator('[data-composer-input=true]').innerText()==='/agent-team'&&binding(layout).length===0,await page.locator('body').innerText());
@@ -109,7 +115,7 @@ export async function live({report,layout,host,mock}:Live) {
     const pending=await page.locator('[data-composer-input=true]').innerText();const first=binding(layout);
     await page.unroute('**/api/commands/execute');await submit(page,`/agent-team ${objective}`);await sleep(page);
     const entries=binding(layout);const runId=String(entries[0]?.run_id??'');
-    push('lost-ack-retry-deduplicates',dropped&&pending.includes(objective)&&first.length===1&&entries.length===1,{before:first,after:entries,inputPreserved:pending.includes(objective)});
+    push('lost-ack-retry-deduplicates',dropped&&pending===`/agent-team ${objective}`&&first.length===1&&entries.length===1&&first[0]?.run_id===entries[0]?.run_id,{before:first,after:entries,inputPreserved:pending===`/agent-team ${objective}`});
     await page.locator('[data-chat-turn]').first().waitFor({timeout:30000});
     const mainText=await page.locator('[data-conversation-scroll]').innerText();
     push('default-coordinator-context',await page.getByRole('tab',{name:'对话',exact:true}).count()===1&&mainText.includes(objective)&&!mainText.includes('暂时无法读取对话')&&await page.locator('[data-composer-input=true]').isVisible(),mainText);
@@ -159,6 +165,22 @@ export async function live({report,layout,host,mock}:Live) {
     writeFileSync(join(artifacts,'tool-arguments.txt'),await nativeReader.innerText());
     push('native-tool-arguments',await nativeContent.getByLabel('只读对话',{exact:true}).innerText().then(text=>text.includes('输入')&&text.includes('"action": "request_user"')&&text.includes('请确认使用当前工作区')),'The real flow_transaction request_user action exposes its original argsRaw in a native read-only disclosure');
     push('native-depth',await nativeContent.locator('.flow-information').innerText().then(text=>text.includes('第 1 层')),'Information displays the actual derivation level');
+    const inspectedId=await nativeContent.locator('.flow-node[data-role=orchestrator]').getAttribute('data-agent-id');
+    const usageStore=new ClusterStore(join(layout.data,'cluster.sqlite'));
+    try {
+      if(!inspectedId)throw new Error('The live native Orchestrator has no observed identity');
+      if(usageStore.getAgent(inspectedId)?.cluster_id!==runId)throw new Error('The observed Orchestrator belongs to a different team than the acknowledged launch');
+      const usage=usageStore.usageSummary(runId,{agentId:inspectedId});
+      const actual=usageStore.latestNativeContext(inspectedId);
+      if(usage.total_tokens!==null)await nativeContent.locator('.flow-information').getByText(`宿主已记录 Token（当前代理自身）：${usage.total_tokens.toLocaleString('zh-CN')}`,{exact:false}).waitFor();
+      const information=await nativeContent.locator('.flow-information').innerText();
+      writeFileSync(join(artifacts,'native-usage-information.json'),JSON.stringify({agent_id:inspectedId,usage,actual,information},null,2));
+      push('native-usage-in-live-ui',usage.requests>0&&usage.total_tokens!==null&&information.includes(`宿主已记录 Token（当前代理自身）：${usage.total_tokens.toLocaleString('zh-CN')}`)&&
+        (usage.completeness!=='incomplete'||information.includes('可能不完整')),{usage,information});
+      push('configured-and-actual-model-in-live-ui',actual.model!==null&&information.includes('当前配置模型：')&&information.includes(`最近实际模型：${actual.model}`),{actual,information});
+      await nativeContent.locator('.flow-information').getByText('宿主已记录 Token（当前代理自身）：',{exact:false}).scrollIntoViewIfNeeded();
+      await page.screenshot({path:join(artifacts,'native-usage.png'),fullPage:true});
+    } finally {usageStore.close();}
     await nativeContent.getByRole('button',{name:'打开完整会话',exact:true}).click();
     const activeComposer=page.locator('[data-composer-input=true]');await activeComposer.waitFor({state:'visible'});
     push('active-native-session-input',await nativeContent.count()===0&&await activeComposer.isEditable()&&await page.getByRole('tab',{name:'对话',exact:true}).isVisible()&&await page.getByRole('tab',{name:'轨迹',exact:true}).isVisible(),'The live Orchestrator opens its complete native Session with editable text input and conversation/trajectory tabs');
@@ -180,6 +202,8 @@ export async function live({report,layout,host,mock}:Live) {
     const content=page.locator('.flow-content');
     await page.getByRole('button',{name:/^原生记录 A，/}).click();await sleep(page);
     push('provider-readonly-inspector',await content.getByLabel('只读对话',{exact:true}).count()===1&&await content.getByRole('button',{name:/^(发送|暂停|继续执行|结束|重新派发)$/}).count()===0&&await content.getByRole('textbox').count()===0,await content.innerText());
+    const unknownInformation=await content.locator('.flow-information').innerText();
+    push('unrecorded-usage-stays-unknown-in-ui',unknownInformation.includes('宿主已记录 Token（当前代理自身）：—')&&unknownInformation.includes('统计完整性未知'),unknownInformation);
     push('no-composer-in-observation',await page.locator('[data-composer-input=true]').isVisible().catch(()=>false)===false,'Provider readOnly view policy hides composer; main chat restores it');
     const panels=await page.locator('.flow-dock [data-dockkit-pane]:not([data-dockkit-content])').count();
     writeFileSync(join(artifacts,'wide-layout.json'),JSON.stringify(await content.evaluate(element=>Array.from(element.querySelectorAll('[data-dockkit-pane],.flow-reader,.flow-scroll,.flow-dock')).map(row=>({tag:row.className,pane:row.getAttribute('data-dockkit-pane'),content:row.getAttribute('data-dockkit-content'),rect:row.getBoundingClientRect().toJSON(),scrollHeight:row.scrollHeight,clientHeight:row.clientHeight,display:getComputedStyle(row).display,overflow:getComputedStyle(row).overflow}))),null,2));
@@ -295,6 +319,10 @@ export async function live({report,layout,host,mock}:Live) {
     await page.getByRole('button',{name:'插件',exact:true}).click();await sleep(page);
     await page.getByText('dsh-flow',{exact:true}).first().click();await sleep(page,600);
     await page.locator('.flow-settings').waitFor();
+    const retiredControls=['团队 Token 总预算','团队模型请求上限','单次最大输出 Token','任务代理最大输出 Token','每个任务代理模型请求上限'];
+    const retiredCounts:number[]=[];for(const label of retiredControls)retiredCounts.push(await page.getByLabel(label,{exact:true}).count());
+    push('resource-settings-clean-contract',retiredCounts.every(count=>count===0)&&await page.getByLabel('团队工具调用上限',{exact:true}).count()===1,{retired:retiredCounts,retained:'tool-call limit'});
+
     const field=page.getByLabel('默认团队视图',{exact:true});await field.selectOption('list');await page.getByLabel('已结束节点',{exact:true}).selectOption('collapse');
     const displayFields=[];for(const name of ['默认团队视图','已结束节点','动态效果','用量显示','对话自动跟随'])displayFields.push(await page.getByLabel(name,{exact:true}).count());
     push('five-display-fields',displayFields.every(count=>count===1),'Five display fields remain distinct from team execution defaults');

@@ -19,7 +19,6 @@ import type {
   FlowBudgetInput,
   FlowCapability,
   FlowClusterStatus,
-  FlowContextLimits,
   FlowDeliveryStatus,
   FlowDispatchStatus,
   FlowEffectStatus,
@@ -33,7 +32,6 @@ import type {
   FlowNodeStatus,
   FlowScopeKind,
   FlowTransactionStatus,
-  FlowUsageStatus,
 } from '../types.ts';
 
 // ------------------------------------------------------------------- actors
@@ -102,17 +100,9 @@ export interface NodeDelegationContract {
   readonly management_levels_remaining?: number
 }
 
-/** One agent's stored meta: its model selection, context budget and provenance. */
-export interface AgentContextBudget {
-  readonly limit: number
-  readonly trigger: number
-  readonly retention: string | null
-}
-
-/** One agent's stored meta: its model selection, context budget and provenance. */
+/** One agent's stored meta: its model selection and provenance. */
 export interface AgentMeta {
   readonly model?: FlowModelSelection
-  readonly context?: AgentContextBudget
   readonly management?: boolean
   readonly transaction_id?: string | null
   readonly allocated_by?: string | null
@@ -277,12 +267,6 @@ export interface BudgetRecord {
   readonly node_id: string | null
   readonly parent_budget_id: string | null
   readonly revision: number
-  readonly tokens_limit: number
-  readonly tokens_reserved: number
-  readonly tokens_spent: number
-  readonly requests_limit: number
-  readonly requests_reserved: number
-  readonly requests_spent: number
   readonly tool_calls_limit: number
   readonly tool_calls_reserved: number
   readonly tool_calls_spent: number
@@ -362,34 +346,6 @@ export interface ToolCallReceiptRecord {
   readonly dispatch_status: FlowDispatchStatus
   readonly result_body: string | null
   readonly error: string | null
-  readonly created: number
-  readonly settled: number | null
-}
-
-/** One model-request receipt row, exactly as stored. */
-export interface UsageReceiptRecord {
-  readonly request_id: string
-  readonly cluster_id: string
-  readonly agent_id: string | null
-  readonly node_id: string | null
-  readonly transaction_id: string | null
-  readonly role: FlowAgentRole
-  readonly kind: string
-  readonly provider: string | null
-  readonly model: string | null
-  readonly reasoning_effort: string | null
-  readonly status: FlowUsageStatus
-  readonly reservation_tokens: number
-  readonly prompt_tokens: number | null
-  readonly completion_tokens: number | null
-  readonly cached_tokens: number | null
-  readonly reasoning_tokens: number | null
-  readonly total_tokens: number | null
-  readonly overshoot: number
-  readonly turn_seq: number | null
-  readonly attempt: number
-  readonly note: string | null
-  readonly budget_scope_id: string | null
   readonly created: number
   readonly settled: number | null
 }
@@ -639,12 +595,6 @@ export interface GroupPatch {
 
 /** Patch keys the budget table accepts: one numeric column per dimension. */
 export interface BudgetPatch {
-  readonly tokens_limit?: number
-  readonly tokens_reserved?: number
-  readonly tokens_spent?: number
-  readonly requests_limit?: number
-  readonly requests_reserved?: number
-  readonly requests_spent?: number
   readonly tool_calls_limit?: number
   readonly tool_calls_reserved?: number
   readonly tool_calls_spent?: number
@@ -666,7 +616,6 @@ export interface FlowModelSelection {
   readonly provider?: string | undefined
   readonly model?: string | undefined
   readonly reasoningEffort?: string | undefined
-  readonly maxTokens?: number | undefined
 }
 
 /** The structural logger the runtime uses; anything louder is the host's business. */
@@ -683,7 +632,6 @@ export interface FlowRuntimeConfig {
   readonly path?: string
   readonly dbPath?: string
   readonly model?: FlowModelSelection
-  readonly context?: FlowContextLimits
   readonly tickMs?: number
   readonly leaseTtlMs?: number
   readonly staleMs?: number
@@ -702,7 +650,6 @@ export interface FlowRuntimeConfig {
 export interface ResolvedRuntimeConfig {
   readonly dataDir: string | undefined
   readonly model: FlowModelSelection
-  readonly context: FlowContextLimits
   readonly tickMs: number
   readonly leaseTtlMs: number
   readonly staleMs: number

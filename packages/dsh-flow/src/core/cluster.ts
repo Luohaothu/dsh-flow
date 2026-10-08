@@ -18,8 +18,9 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { JobId } from '@deepseek-ai/dsh-jobs';
 import type { JobRegistry } from '@deepseek-ai/dsh-jobs';
-import { SessionId } from '@deepseek-ai/dsh-session';
+import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session';
 import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence';
+import type { ProjectionCheckpoint } from '@deepseek-ai/dsh-session-projection';
 export type FlowPersistenceSeam = Pick<SessionPersistence, 'stat' | 'open'>;
 import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 // Type-only: brings the `ctx.tools` service declaration into this program so the
@@ -27,17 +28,17 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import type {} from '@deepseek-ai/dsh-tools';
 import type { ToolDispatchExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 import { registerRoleTools } from './role-tools.ts';
-import { prepareModelSelection } from './model-selection.ts';
+import { prepareModelSelection, validateModelSelection } from './model-selection.ts';
 
 import { ClusterStore, decodeJson } from './store.ts';
 import type { CommandApplyResult } from './store.ts';
 import { fail, messageOf } from '../errors.ts';
-import { integer, isFlowJsonValue, normalizeLimit, objectField, textField, validateCapabilities } from '../validation.ts';
+import { integer, isFlowJsonValue, normalizeLimit, textField, validateCapabilities } from '../validation.ts';
 import {
-  AGENT_TERMINAL, CAPABILITY_PACKAGES, DEFAULT_CONTEXT_LIMITS, DEFAULT_LIMITS, ROLE_TOOL, TRANSACTION_TERMINAL,
+  AGENT_TERMINAL, CAPABILITY_PACKAGES, DEFAULT_LIMITS, ROLE_TOOL, TRANSACTION_TERMINAL,
   authorize, roleAllows, toolsForCapabilities, validateSpec, validateText, MANAGEMENT_ROLES,
 } from './protocol.ts';
-import { resolveStartRequest } from '../config.ts';
+import { rejectRemovedConfig, resolveStartRequest } from '../config.ts';
 import {
   BudgetError, createBudget, dimensionAvailable, effectiveDeadline, evaluateTree,
   reserveChain, rollupBudgets, settleChain, transferBudget,
@@ -45,9 +46,9 @@ import {
 import { communicate } from './communication.ts';
 import type { CommunicationActor, CommunicationResult } from './communication.ts';
 import { checkWriteAccess, canonicalScopeEntry } from './scope.ts';
-import { createToolExecutionHook, runTurn, effectTool, sessionOffset, settleLlmRequest } from './runtime.ts';
+import { createToolExecutionHook, runTurn, effectTool, sessionOffset } from './runtime.ts';
 import type {
-  BudgetBlockFacts, BudgetChainRequest, BudgetRefusalFacts, LedgerAmounts, ToolAdmission, TurnOutcome,
+  BudgetBlockFacts, BudgetRefusalFacts, LedgerAmounts, ToolAdmission, TurnOutcome,
 } from './runtime.ts';
 import { HANDLERS, setTransactionStatus, writeNodeSummary } from './actions.ts';
 import type { ActionName } from './actions.ts';
@@ -73,7 +74,7 @@ import type {
   AgentRecord, AllocationRecord, AuditRecord, BudgetRecord, ClusterRecord,
   DelegationFixtureEntry, FlowActor, FlowAgentActor, FlowCommand, FlowCommandOutcome,
   FlowLogger, FlowModelSelection, FlowRuntimeConfig, FlowUserActor, InboxRecord, IssueRecord, LeaseRecord,
-  MessageFixtureEntry, NodeRecord, ResolvedRuntimeConfig, TransactionRecord, TurnIdentity, UsageReceiptRecord,
+  MessageFixtureEntry, NodeRecord, ResolvedRuntimeConfig, TransactionRecord, TurnIdentity,
 } from './model.ts';
 
 /**
@@ -84,7 +85,7 @@ const INBOX_PRIORITY_SUBJECTS = [
   // Human and peer messages, and the notices that say a role's own work is
   // blocked, ahead of the informational ones.
   'message', 'escalation', 'agent-anomaly', 'transaction-stale', 'result-withheld',
-  'context-pressure', 'context-pressure-notice', 'issue-opened', 'plan-audit-requested',
+  'issue-opened', 'plan-audit-requested',
   'validation-audit-requested', 'result-submitted', 'child-blocked',
 ];
 
@@ -111,8 +112,8 @@ const CLUSTER_EVENTS_SKIP_PROGRESS = new Set([
   // Metering, context management and refusals do not count as state changes.
   // Otherwise a role that only queries or repeats rejected actions could evade
   // the stagnation guard merely by spending requests and tool calls.
-  'context-step', 'llm-slot', 'tool-call-charged', 'tool-call-released', 'tool-call-refused',
-  'usage-reconciled', 'budget-topup', 'budget-refused', 'budget-shortfall', 'budget-grandtotal',
+  'llm-slot', 'tool-call-charged', 'tool-call-released', 'tool-call-refused',
+  'budget-topup', 'budget-refused', 'budget-shortfall', 'budget-grandtotal',
   'agent-anomaly', 'turn-start-failed', 'inbox-reopened', 'delivery-unknown',
   // Stop and fencing events do not establish productive work by a role.
   'node-blocked', 'cluster-blocked', 'agent-blocked', 'lease-fenced',
@@ -128,7 +129,7 @@ const CLUSTER_EVENTS_SKIP_PROGRESS = new Set([
 const CRITICAL_NOTIFICATION_SUBJECTS = new Set([
   'agent-anomaly',
   'child-blocked', 'issue-opened', 'result-withheld', 'delivery-unknown',
-  'escalation', 'context-pressure',
+  'escalation',
   // Addressed messages and subscribed blackboard changes are pending work
   // that must wake their recipient.
   'message', 'blackboard',
@@ -179,8 +180,8 @@ const ROLE_INSTRUCTIONS = {
     '  allocate_agent (all ready work): {"action":"allocate_agent","params":{"limit":8}}',
     '  release_agent: {"action":"release_agent","params":{"allocations":["<allocation id>"]}}',
     '  spawn_management_node: {"action":"spawn_management_node","params":{"transaction_id":"<tx id>","scope":{"objective":"..."},"max_children":4,"spawn_children":<levels this child must still delegate>}}',
-    '  allocate_budget: {"action":"allocate_budget","params":{"scope":{"kind":"agent","id":"<agent id>"},"amounts":{"tokens":200000,"model_requests":40}}}',
-    '  rebalance_budget: {"action":"rebalance_budget","params":{"from":{"kind":"node","id":"<node id>"},"to":{"kind":"node","id":"<node id>"},"amounts":{"model_requests":20}}}',
+    '  allocate_budget: {"action":"allocate_budget","params":{"scope":{"kind":"agent","id":"<agent id>"},"amounts":{"tool_calls":40}}}',
+    '  rebalance_budget: {"action":"rebalance_budget","params":{"from":{"kind":"node","id":"<node id>"},"to":{"kind":"node","id":"<node id>"},"amounts":{"tool_calls":20}}}',
     '  set_concurrency: {"action":"set_concurrency","params":{"max_active_agents":6,"max_llm_concurrency":2}}',
   ].join('\n'),
   auditor: [
@@ -218,8 +219,8 @@ const WORKER_PROMPT_HEADER = [
   'If the work cannot be completed, submit a result that states precisely what blocked you instead of inventing success.',
 ].join('\n');
 
-type LedgerDimension = 'tokens' | 'model_requests' | 'tool_calls';
-const LEDGER_DIMENSIONS: readonly LedgerDimension[] = ['tokens', 'model_requests', 'tool_calls'];
+type LedgerDimension = 'tool_calls';
+const LEDGER_DIMENSIONS: readonly LedgerDimension[] = ['tool_calls'];
 
 function positiveLedgerAmounts(amounts: LedgerAmounts): Record<string, number> {
   const result: Record<string, number> = {};
@@ -232,10 +233,6 @@ function positiveLedgerAmounts(amounts: LedgerAmounts): Record<string, number> {
 
 function budgetDimensionAmounts(row: BudgetRecord, dimension: LedgerDimension): { limit: number; reserved: number; spent: number } {
   switch (dimension) {
-    case 'tokens':
-      return { limit: row.tokens_limit, reserved: row.tokens_reserved, spent: row.tokens_spent };
-    case 'model_requests':
-      return { limit: row.requests_limit, reserved: row.requests_reserved, spent: row.requests_spent };
     case 'tool_calls':
       return { limit: row.tool_calls_limit, reserved: row.tool_calls_reserved, spent: row.tool_calls_spent };
   }
@@ -323,6 +320,10 @@ function summaryOfData(clusterId: string, asOfSeq: number, data: FlowJsonValue):
     }
     return result;
   };
+  const summaryText = (value: unknown, label: string, max: number): string => {
+    if (typeof value !== 'string' || value.length > max) fail(`Invalid ${label}`);
+    return value;
+  };
   return {
     as_of_seq: asOfSeq,
     cluster_id: clusterId,
@@ -340,14 +341,14 @@ function summaryOfData(clusterId: string, asOfSeq: number, data: FlowJsonValue):
     ...(record.conclusions === undefined ? {} : {
       conclusions: entries(record.conclusions).map(entry => ({
         transaction_id: textField(entry.transaction_id, 'summary.conclusion.transaction_id', 128),
-        result: textField(entry.result, 'summary.conclusion.result', 8192),
+        result: summaryText(entry.result, 'summary.conclusion.result', 8192),
       })),
     }),
     ...(record.evidence === undefined ? {} : {
       evidence: entries(record.evidence).map(entry => ({
         transaction_id: textField(entry.transaction_id, 'summary.evidence.transaction_id', 128),
         criterion: textField(entry.criterion, 'summary.evidence.criterion', 4096),
-        evidence: textField(entry.evidence, 'summary.evidence.evidence', 8192),
+        evidence: summaryText(entry.evidence, 'summary.evidence.evidence', 8192),
       })),
     }),
     ...(record.unresolved_questions === undefined ? {} : {
@@ -360,18 +361,14 @@ function summaryOfData(clusterId: string, asOfSeq: number, data: FlowJsonValue):
     ...(resource === null ? {} : {
       resource_state: {
         requests: optionalInteger(resource.requests, 'summary.resource.requests') ?? 0,
-        total_tokens: optionalInteger(resource.total_tokens, 'summary.resource.total_tokens') ?? 0,
-        prompt_tokens: optionalInteger(resource.prompt_tokens, 'summary.resource.prompt_tokens') ?? 0,
-        completion_tokens: optionalInteger(resource.completion_tokens, 'summary.resource.completion_tokens') ?? 0,
-        cached_tokens: optionalInteger(resource.cached_tokens, 'summary.resource.cached_tokens') ?? 0,
-        reasoning_tokens: optionalInteger(resource.reasoning_tokens, 'summary.resource.reasoning_tokens') ?? 0,
-        unknown_requests: optionalInteger(resource.unknown_requests, 'summary.resource.unknown_requests') ?? 0,
-        overshoot: optionalInteger(resource.overshoot, 'summary.resource.overshoot') ?? 0,
-        api_cost: {
-          amount: optionalInteger(jsonRecordOf(resource.api_cost)?.amount, 'summary.resource.amount') ?? 0,
-          currency: textField(jsonRecordOf(resource.api_cost)?.currency ?? 'USD', 'summary.resource.currency', 16),
-          pricing: textField(jsonRecordOf(resource.api_cost)?.pricing ?? 'unpriced', 'summary.resource.pricing', 64),
-        },
+        total_tokens: optionalInteger(resource.total_tokens, 'summary.resource.total_tokens'),
+        prompt_tokens: optionalInteger(resource.prompt_tokens, 'summary.resource.prompt_tokens'),
+        completion_tokens: optionalInteger(resource.completion_tokens, 'summary.resource.completion_tokens'),
+        cached_tokens: optionalInteger(resource.cached_tokens, 'summary.resource.cached_tokens'),
+        cache_read_tokens: optionalInteger(resource.cache_read_tokens, 'summary.resource.cache_read_tokens'),
+        cache_write_tokens: optionalInteger(resource.cache_write_tokens, 'summary.resource.cache_write_tokens'),
+        reasoning_tokens: optionalInteger(resource.reasoning_tokens, 'summary.resource.reasoning_tokens'),
+        completeness: literalOf(resource.completeness ?? 'unknown', ['complete', 'incomplete', 'unknown'] as const, 'summary.resource.completeness'),
       },
     }),
     ...(health === null ? {} : {
@@ -527,8 +524,6 @@ interface BudgetHeadroom {
   readonly scope_kind: 'node' | 'agent'
   readonly scope_id: string
   readonly node_id: string | null
-  readonly tokens: number
-  readonly model_requests: number
   readonly tool_calls: number
 }
 
@@ -721,6 +716,10 @@ export class ClusterRuntime implements FlowService {
   readonly store: ClusterStore;
 
   constructor(ctx: Context, config: FlowRuntimeConfig = {}) {
+    rejectRemovedConfig(config);
+    for (const key of Object.keys(config.model ?? {})) {
+      if (!['provider', 'model', 'reasoningEffort'].includes(key)) fail(`Unknown runtime model field: ${key}`);
+    }
     this.ctx = ctx;
     this.logger = config.logger ?? ctx.logger;
     const model = config.model ?? {};
@@ -732,7 +731,6 @@ export class ClusterRuntime implements FlowService {
     this.config = {
       dataDir: config.dataDir,
       model,
-      context: { ...DEFAULT_CONTEXT_LIMITS, ...(config.context ?? {}) },
       tickMs: config.tickMs ?? 250,
       leaseTtlMs: config.leaseTtlMs ?? 60_000,
       // How long a transaction may sit unchanged before it counts as stale.
@@ -872,8 +870,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       const rootBudget = createBudget(this.store, {
         cluster_id: clusterId, scope_kind: 'root', scope_id: clusterId,
         limit: {
-          tokens: normalized.budget.tokens ?? 0,
-          model_requests: normalized.budget.model_requests ?? 0,
           tool_calls: normalized.budget.tool_calls ?? 0,
           agents: normalized.budget.agents ?? normalized.limits.max_agents,
           max_active_agents: normalized.budget.max_active_agents ?? normalized.limits.max_active_agents,
@@ -900,28 +896,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
       });
       const rootRow = this.store.getBudget(rootBudget.id);
       if (!rootRow) fail('Root budget not found', 500);
-      // Seed the preferred compaction payer before funding the management tree.
-      // The shared payer selector also permits ordinary requests to use this
-      // pool when their own scopes cannot cover the full request.
-      const share = (limit: number, floor: number, fraction: number): number => {
-        if (!Number.isFinite(limit) || limit <= 0) return 0;
-        const bounded = Math.min(Math.max(floor, Math.floor(limit * fraction)), Math.floor(limit * 0.25));
-        return bounded >= Math.min(floor, limit) ? bounded : 0;
-      };
-      // Allocate a tenth of declared tokens and a fifth of requests, with
-      // minimum envelopes capped at a quarter of each root dimension.
-      // These grants are transferred from the root budget, not added to it.
-      const compactionTokens = share(rootRow.tokens_limit, 64_000, 0.10);
-      const compactionRequests = share(rootRow.requests_limit, 4, 0.20);
-      if (compactionTokens > 0 || compactionRequests > 0) {
-        const compactionBudget = createBudget(this.store, {
-          cluster_id: clusterId, scope_kind: 'compaction', scope_id: clusterId,
-          parent_budget_id: rootBudget.id, limit: {}, wall_limit_ms: 0,
-        });
-        this.grantBudget(rootBudget, compactionBudget, { tokens: compactionTokens, model_requests: compactionRequests });
-      }
       this.grantBudget(rootBudget, rootNodeBudget, {
-        tokens: rootRow.tokens_limit, model_requests: rootRow.requests_limit,
         tool_calls: rootRow.tool_calls_limit, agents: rootRow.agents_limit,
         max_active_agents: rootRow.max_active_limit,
       });
@@ -1208,16 +1183,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
   }
 
   async reconcileDeliveries(clusterId: string, { sessionIdFor = (agent: AgentRecord | null) => agent?.session_id } = {}): Promise<DeliveryReconciliation> {
-    // Settle anything still reserved from the previous process before any
-    // scheduling resumes, so held tokens are visible to the first decision.
-    // Only identities that really hold a reservation are visited: the set comes
-    // from the ledger, so a cluster with more identities than one page still
-    // settles every stranded request before scheduling resumes.
-    for (const facts of this.store.agentsWithReservedReceipts(clusterId)) {
-      if (this.#disposed) return { acknowledged: 0, requeued: 0, unknown: 0, persistence: Boolean(this.#persistence) };
-      const cluster = this.store.getCluster(clusterId) ?? fail('Cluster not found', 404);
-      this.reconcileReservations(cluster, facts);
-    }
     let persistence: FlowPersistenceSeam | null = this.#persistence;
     if (!persistence) {
       // Fall back to a direct lookup: `ctx.inject` is the documented path, but
@@ -1350,8 +1315,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
    * Read-only query surface shared by every role and the host API.
    *
    * Two overloads: a host user gets the complete user-shaped answer, while a
-   * cluster role gets the trimmed answer its own domain and context budget
-   * allow. The implementation signature is deliberately the widest — the
+   * cluster role gets the trimmed answer for its own readable domain.
+   * The implementation signature is deliberately the widest — the
    * model-trimmed branches return deliberately lighter projections than the
    * wire types — so callers rely on the overload they matched.
    */
@@ -1556,7 +1521,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           id: row.id, scope_kind: row.scope_kind, scope_id: row.scope_id,
           node_id: row.node_id, parent_budget_id: row.parent_budget_id,
           available: {
-            tokens: row.tokens.available, model_requests: row.model_requests.available,
             tool_calls: row.tool_calls.available, agents: row.agents.available,
             max_active_agents: row.max_active_agents.available,
           },
@@ -1673,18 +1637,19 @@ case 'effects': {
         return { effect: { ...effect, owner_management_id: node?.kind === 'worker' ? node.parent_id : node?.id ?? null } };
       }
       case 'usage': {
-        // Receipts are substantially wider than tree references. A role's
-        // default 100-row page can exceed its entire context budget in one
-        // tool result; the host-facing API retains its requested page size.
+        // Native usage facts are wider than tree references. Keep role-facing
+        // pages concise; the host-facing API retains its requested page size.
         const receiptLimit = actor.role === 'user' ? limit : Math.min(limit, 8);
-        const { items, total } = this.store.usageReceiptsForDomain(clusterId, {
-          ...(actor.role === 'user' ? {} : { scope_node_id: actor.node_id }),
-          ...(typeof params.agent_id === 'string' ? { agent_id: params.agent_id } : {}),
-          ...(typeof params.status === 'string' ? { status: params.status } : {}),
+        const { items, total } = this.store.usageEventsForDomain(clusterId, {
+          ...(actor.role === 'user' ? {} : { nodeIds: [...domain] }),
+          ...(typeof params.agent_id === 'string' ? { agentId: params.agent_id } : {}),
           limit: receiptLimit, offset,
         });
         return {
-          usage: this.store.usageSummary(clusterId, { nodeId: actor.role === 'user' ? null : actor.node_id }),
+          usage: this.store.usageSummary(clusterId, {
+            nodeId: actor.role === 'user' ? null : actor.node_id,
+            ...(typeof params.agent_id === 'string' ? { agentId: params.agent_id } : {}),
+          }),
           ...pageList(items, total),
           limit: receiptLimit,
         };
@@ -1725,21 +1690,16 @@ case 'effects': {
             fail('context transaction is outside this agent\'s domain', 403);
           }
         }
-        const steps = this.store.all(
-          `SELECT e.seq, e.data FROM events e WHERE e.cluster_id=? AND e.type='context-step'
-             AND json_extract(e.data,'$.agent_id')=? ORDER BY e.seq DESC LIMIT 50`, clusterId, agentId);
         const summaryScope = params.transaction_id
           ? { transaction_id: params.transaction_id }
           : { node_id: actor.role === 'user' && contextAgent.role === 'worker'
             ? this.store.getNode(contextAgent.node_id)?.parent_id ?? contextAgent.node_id
             : contextAgent.node_id };
+        const summary = this.store.latestSummary(clusterId, summaryScope);
         return {
           agent_id: agentId,
-          steps: steps.map(row => ({
-            seq: integer(row.seq, 0, 2 ** 53, 'context-step.seq'),
-            ...objectField(decodeJson(row.data), 'context-step.data'),
-          })),
-          summary: this.store.latestSummary(clusterId, summaryScope)?.data ?? null,
+          context: this.store.latestNativeContext(agentId),
+          summary: summary ? summaryOfData(clusterId, summary.as_of_seq, summary.data) : null,
         };
       }
       case 'health': {
@@ -1839,8 +1799,8 @@ case 'effects': {
     const issues = this.store.all('SELECT status, COUNT(*) AS c, SUM(corrections) AS corrections FROM issues WHERE cluster_id=? GROUP BY status', id);
     const effects = this.store.all('SELECT status, COUNT(*) AS c FROM effects WHERE cluster_id=? GROUP BY status', id);
     const subtree = new Map(this.store.subtreeSizes(id).map(row => [row.node_id, Number(row.size)]));
-    const contextByAgent = this.store.latestOrchestratorContext(id)
-      .map(row => ({ agent_id: String(row.agent_id ?? ''), total_tokens: row.tokens === null ? null : Number(row.tokens) }));
+    const contextByAgent = this.store.agentsInSubtree(id, null).filter(agent => agent.role === 'orchestrator')
+      .map(agent => ({ agent_id: agent.id, total_tokens: this.store.latestNativeContext(agent.id).context_used }));
     const traffic = this.store.deliveryTraffic(id);
     const windowMs = 5 * 60_000;
     const txPage = this.store.listTransactions({ cluster_id: id, limit: 200 });
@@ -1965,38 +1925,9 @@ case 'effects': {
     this.store.close();
   }
 
-  /**
-   * Close out the turns that were live at teardown, deterministically: their
-   * leases are fenced and their identity returned to a schedulable state, and a
-   * request that was reserved and never settled is recorded as unknown *without*
-   * handing its token hold back — an unknown-cost send is not free capacity.
-   */
+  /** Fence teardown leases and return unanswered messages to the queue. */
   #drainLiveTurns(live: readonly ActiveTurnEntry[], { unresponsive = true }: { unresponsive?: boolean } = {}): void {
     const leases = live.map(entry => entry.lease).filter((lease): lease is LeaseRecord => lease !== null);
-    // The receipt owns its accounting even if its turn is already gone. Visit
-    // every remaining reservation through the same transition; a status-only
-    // update would strand requests_reserved instead of consuming the attempt.
-    const held = this.store.all("SELECT request_id, cluster_id, reservation_tokens FROM usage_receipts WHERE status='RESERVED'");
-    for (const row of held) {
-      const requestId = textField(row.request_id, 'usage_receipts.request_id', 128);
-      const receiptCluster = textField(row.cluster_id, 'usage_receipts.cluster_id', 128);
-      const reserved = integer(row.reservation_tokens ?? 0, 0, 2 ** 40, 'usage_receipts.reservation_tokens');
-      try {
-        settleLlmRequest(this.store, {
-          cluster_id: receiptCluster,
-          reservation: { request_id: requestId, tokens: reserved },
-          usage: null,
-          status: 'UNKNOWN',
-          note: `the runtime stopped while this request was in flight; ${reserved} tokens stay held`,
-        });
-      } catch (error) {
-        this.logger?.warn?.(error);
-        this.store.tx(() => this.store.settleUsageReceipt(requestId, {
-          status: 'UNKNOWN',
-          note: `the runtime stopped while this request was in flight; ${reserved} tokens stay held`,
-        }));
-      }
-    }
     this.store.tx(() => {
       for (const lease of leases) {
         const current = this.store.getLease(lease.id);
@@ -2124,9 +2055,7 @@ case 'effects': {
           // …and only then decide. If nothing in flight can change capacity — no
           // reservation outstanding and no live turn — a budget stop is final, and
           // waiting on it would consume the whole settle deadline for nothing.
-          const inFlight = Number(this.store.get(
-            "SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND status='RESERVED'", id)?.c ?? 0) > 0
-            || this.#activeTurnCount(id) > 0;
+          const inFlight = this.#activeTurnCount(id) > 0;
           if (!inFlight) return this.read(id, { include_events: false });
         }
       }
@@ -2230,8 +2159,7 @@ case 'effects': {
      * Recheck the recorded envelope against an authorized payer and its deadline.
      */
     /**
-     * Read the failed identity's complete request envelope. Its payer can be
-     * an Agent or compaction pool, independently of the node's own scope.
+     * Read the failed identity's tool-call envelope.
      */
     const envelopeOf = (block: Record<string, SQLOutputValue>) => {
       const data = jsonRecordOf(JSON.parse(textField(block.data, 'event.data', 1 << 20)));
@@ -2245,14 +2173,10 @@ case 'effects': {
         cluster.id, agentId,
       );
       const refused = refusal ? jsonRecordOf(JSON.parse(textField(refusal.data, 'event.data', 1 << 20))) : null;
-      const tokens = Number(recorded?.tokens ?? (refused?.dimension === 'tokens' ? refused?.requested : 0));
-      const modelRequests = Number(recorded?.model_requests ?? (refused?.dimension === 'model_requests' ? refused?.requested : 0));
       const toolCalls = Number(recorded?.tool_calls ?? (refused?.dimension === 'tool_calls' ? refused?.requested : 0));
-      if (![tokens, modelRequests, toolCalls].some(value => Number.isFinite(value) && value > 0)) return null;
+      if (!Number.isFinite(toolCalls) || toolCalls <= 0) return null;
       return {
         agentId,
-        tokens: Number.isFinite(tokens) ? tokens : 0,
-        modelRequests: Number.isFinite(modelRequests) ? modelRequests : 0,
         toolCalls: Number.isFinite(toolCalls) ? toolCalls : 0,
       };
     };
@@ -2261,28 +2185,17 @@ case 'effects': {
      * Settlement can release unused reservations without a transfer event,
      * so current available capacity determines whether the node can resume.
      */
-    const affordable = (envelope: { readonly agentId: string; readonly tokens: number; readonly modelRequests: number; readonly toolCalls: number }) => {
+    const affordable = (envelope: { readonly agentId: string; readonly toolCalls: number }) => {
       const agent = this.store.getAgent(envelope.agentId);
       if (!agent) return false;
-      // Every scope the request could legally be charged to, whichever kind it is:
-      // the chain the runtime builds depends on the request's kind (the pool is
-      // preferred for compactions), and a resume must not miss the pool just because
-      // it does not know what the retried request will be.
-      const candidates = [...new Set([
-        ...this.budgetChainForAgent(agent, { tokens: envelope.tokens, requests: envelope.modelRequests }),
-        this.compactionBudgetId(cluster.id),
-        this.store.budgetForScope(cluster.id, 'agent', agent.id)?.id,
-        this.fundingBudget(cluster, agent)?.id,
-      ].filter((id): id is string => typeof id === 'string'))];
+      const candidates = this.agentBudgetChain(cluster, agent);
       const now = this.timestamp();
       return candidates.some(id => {
         const row = this.store.getBudget(id);
         if (!row) return false;
         const deadline = effectiveDeadline(this.store, row);
         if (deadline !== null && deadline <= now) return false;
-        return dimensionAvailable(row, 'tokens') >= envelope.tokens
-          && dimensionAvailable(row, 'model_requests') >= envelope.modelRequests
-          && dimensionAvailable(row, 'tool_calls') >= envelope.toolCalls;
+        return dimensionAvailable(row, 'tool_calls') >= envelope.toolCalls;
       });
     };
     const repaired = new Set();
@@ -2298,13 +2211,9 @@ case 'effects': {
         // Admission already tried to reclaim this node's idle grants. A sibling
         // may still have held a live lease *then* and released it since. Retry
         // that same in-node transfer at the repair point; never take capacity
-        // from a different subtree or mint quota. In a strict recursion run the
-        // root Allocator finished with 271k free tokens while the root
-        // Orchestrator stayed blocked for a 19k compaction request.
+        // from a different subtree or mint quota.
         const agent = this.store.getAgent(envelope.agentId);
         if (agent) this.topUpBudgetForAgent(agent, {
-          tokens: envelope.tokens,
-          model_requests: envelope.modelRequests,
           tool_calls: envelope.toolCalls,
         });
         if (!affordable(envelope)) continue;
@@ -2333,7 +2242,7 @@ case 'effects': {
     if (clusterCode !== 'BUDGET_EXHAUSTED') return;
     // The cluster reopens for the node whose stop *was* the cluster's stop — the
     // root — and only once that node passed the same tests. A nonblocked node with
-    // tokens somewhere else says nothing about the reason this cluster stopped.
+    // Capacity somewhere else says nothing about why this cluster stopped.
     const clusterBlock = this.store.get(
       "SELECT seq, data FROM events WHERE cluster_id=? AND type='cluster-blocked' ORDER BY seq DESC LIMIT 1", cluster.id);
     const blockData = clusterBlock
@@ -2358,22 +2267,7 @@ case 'effects': {
     // Grants move `limit` down the tree, so the cluster's remaining capacity is
     // the sum over every scope, never the root row alone.
     const rollup = rollupBudgets(this.store, id);
-    const requestsLeft = rollup.model_requests.limit - rollup.model_requests.reserved - rollup.model_requests.spent;
     const toolsLeft = rollup.tool_calls.limit - rollup.tool_calls.reserved - rollup.tool_calls.spent;
-    // The whole cluster's remaining capacity, not one scope's: a node that
-    // still holds tokens while the cluster's total is spent cannot fund a
-    // request, and starting one would only overshoot the declared budget.
-    const tokensLeft = rollup.tokens.limit - rollup.tokens.reserved - rollup.tokens.spent;
-    // Coded reasons: the reader (and the acceptance ledger) classifies a stop
-    // without parsing the sentence that explains it.
-    if (rollup.tokens.limit > 0 && tokensLeft <= 0) {
-      this.blockClusterInternal(id, 'BUDGET: cluster budget exhausted (tokens)', 'BUDGET_EXHAUSTED');
-      return;
-    }
-    if (rollup.model_requests.limit > 0 && requestsLeft <= 0) {
-      this.blockClusterInternal(id, 'BUDGET: cluster budget exhausted (model requests)', 'BUDGET_EXHAUSTED');
-      return;
-    }
     if (rollup.tool_calls.limit > 0 && toolsLeft <= 0) {
       this.blockClusterInternal(id, 'BUDGET: cluster budget exhausted (tool calls)', 'BUDGET_EXHAUSTED');
       return;
@@ -2740,7 +2634,6 @@ case 'effects': {
     }
     // Fund every required dimension before starting the turn. Reclaim or
     // transfer available capacity before classifying a genuine exhaustion.
-    this.ensureTurnFunding(cluster, agent);
     const ac = new AbortController();
     this.#flowCalls.set(agent.id, 0);
     this.#toolCallLog.set(agent.id, []);
@@ -2816,7 +2709,6 @@ case 'effects': {
     const onFlushed = (ok: boolean) => {
       flushedThisTurn = ok !== false;
     };
-    const budgetIds = this.agentBudgetChain(cluster, agent);
     // Deliveries are taken before the prompt is built: they are part of this
     // turn's input, and the prompt must name each message's stable id.
     const policy = this.allowedToolsFor(cluster, role, agent);
@@ -2845,9 +2737,9 @@ case 'effects': {
           allowedTools: policy.allowed, globalTools: policy.global,
           capabilities: policy.capabilities, resume: agent.turns > 0, cwd: cluster.workspace,
           model: this.modelFor(agent), signal: ac.signal, logger: this.logger,
-          budgetIds, turnSeq, flow: this, contextLimits: this.config.context,
+          turnSeq, flow: this,
           setup: agentCtx => this.#setupAgentScope(agentCtx, agent, role),
-          forceCompact: this.#forceCompact.has(agent.id), onAgentReady: bind, onAdmitted, onFlushed,
+          onAgentReady: bind, onAdmitted, onFlushed,
         });
       } catch (cause) {
         error = cause;
@@ -2902,7 +2794,6 @@ case 'effects': {
     }
     // Fund every required dimension before starting the turn. Reclaim or
     // transfer available capacity before classifying a genuine exhaustion.
-    this.ensureTurnFunding(cluster, agent);
     const ac = new AbortController();
     this.#flowCalls.set(agent.id, 0);
     this.#toolCallLog.set(agent.id, []);
@@ -2923,7 +2814,6 @@ case 'effects': {
       const entry = this.#activeTurns.get(agent.id);
       if (entry) {entry.instance = live;this.#injectHumanPrompts(agent);}
     };
-    const budgetIds = this.agentBudgetChain(cluster, agent);
     const policy = this.allowedToolsFor(cluster, 'worker', agent);
     const before = this.progressSeq(id);
     this.store.tx(() => {
@@ -2959,8 +2849,8 @@ case 'effects': {
           messages: this.#communicationMessages(agent, deliveries.messages),
           capabilities: policy.capabilities, resume: agent.turns > 0, cwd: cluster.workspace,
           model: this.modelFor(agent), signal: ac.signal, logger: this.logger,
-          budgetIds, transactionId: tx.id, turnSeq, flow: this, contextLimits: this.config.context,
-          forceCompact: this.#forceCompact.has(agent.id), onAgentReady: bind, onAdmitted, onFlushed,
+          transactionId: tx.id, turnSeq, flow: this,
+          onAgentReady: bind, onAdmitted, onFlushed,
           setup: agentCtx => this.#setupAgentScope(agentCtx, agent, 'worker'),
         });
       } catch (cause) {
@@ -3006,26 +2896,6 @@ case 'effects': {
     }
     this.#releaseLease(cluster.id, agent.id, lease);
     try {
-      // The turn's decisions already happened, so a failed reconciliation
-      // cannot undo them. It can, and must, fence the owner against acting
-      // again until its accounting has a resolvable payer. Always book the
-      // completed turn and its delivery facts below.
-      let accountingUncertain = false;
-      try {
-        accountingUncertain = (this.reconcileReservations(cluster, agent)?.uncertain ?? 0) > 0;
-      } catch (cause) {
-        accountingUncertain = true;
-        this.store.tx(() => this.store.appendEvent(cluster.id, 'accounting-uncertain', {
-          agent_id: agent.id, transaction_id: null, reason: messageOf(cause).slice(0, 300),
-          code: 'ACCOUNTING_UNCERTAIN',
-        }));
-      }
-      if (accountingUncertain) {
-        this.store.tx(() => this.store.updateAgent(agent.id, { status: 'BLOCKED' }));
-        this.blockNodeInternal(cluster.id, agent.node_id,
-          `ACCOUNTING_UNCERTAIN: ${role} cannot attribute the request from its last turn`,
-          'ACCOUNTING_UNCERTAIN');
-      }
       if (deliveries?.length) this.settleDeliveries(cluster.id, agent.id, deliveries, { admitted, durable });
       this.#settleHumanPrompts(cluster.id,agent.id,admitted,durable);
       // A turn that took messages and never made its prompt *durable* did not
@@ -3043,17 +2913,7 @@ case 'effects': {
       this.store.tx(() => {
         const progress = this.progressSeq(cluster.id) !== before;
         const turns = agent.turns + 1;
-        const overflowed = ['CONTEXT_WINDOW_EXCEEDED', 'PI_AI_ERROR'].includes(outcome?.stopDetail?.code ?? '')
-          && /overflow|exceeds the maximum allowed length/i.test(String(outcome?.stopDetail?.message ?? ''));
-        if (overflowed) {
-          // A provider overflow is not the model's stagnation: ask for a forced
-          // compaction before the next turn instead of counting it against it.
-          this.#forceCompact.add(agent.id);
-          this.store.appendEvent(cluster.id, 'context-overflow', { agent_id: agent.id, role, turn: turns });
-        } else if (outcome?.stopReason === 'completed') {
-          this.#forceCompact.delete(agent.id);
-        }
-        const stagnation = progress || overflowed ? 0 : agent.stagnation + 1;
+        const stagnation = progress ? 0 : agent.stagnation + 1;
         // A blocked accounting owner must not be made schedulable again merely
         // because the finisher booked its turn.
         const currentStatus = this.store.getAgent(agent.id)?.status ?? agent.status;
@@ -3070,19 +2930,17 @@ case 'effects': {
           flushed_seq: outcome?.native_seq ?? null,
           events_seq: this.store.latestEventSeq(cluster.id),
           transaction_id: null, transaction_revision: null,
-          inbox_ack_cursor: null, usage_watermark: this.usageWatermark(cluster.id), turn_seq: turns,
-          data: { role, node_id: node?.id ?? null, stop_reason: outcome?.stopReason ?? 'error', model_requests: outcome?.usage?.length ?? 0 },
+          inbox_ack_cursor: null, usage_watermark: this.usageWatermark(agent.session_id), turn_seq: turns,
+          data: { role, node_id: node?.id ?? null, stop_reason: outcome?.stopReason ?? 'error' },
         });
         this.store.appendEvent(cluster.id, 'turn-end', {
           agent_id: agent.id, role, turn: turns,
           tools_used: [...new Set(this.#toolCallLog.get(agent.id) ?? [])].sort(),
           stop_reason: outcome?.stopReason ?? 'error',
           stop_detail: asJsonValue(outcome?.stopDetail ?? null),
-          context: asJsonValue(outcome?.context ?? null),
           progress, error: error ? messageOf(error) : null,
         });
-        if ((error || outcome?.stopReason === 'error')
-          && !this.modelRequestRefusedThisTurn(cluster.id, agent.id, lease, outcome, error)) {
+        if (error || outcome?.stopReason === 'error') {
           this.recordAgentAnomaly({ ...agent, role }, {
             code: errorCode(error) ?? outcome?.stopDetail?.code ?? null,
             message: error ? messageOf(error).slice(0, 200) : (outcome?.stopDetail?.message ?? 'the model request failed'),
@@ -3110,9 +2968,7 @@ case 'effects': {
           const refusedScope = scopeRow ? this.store.getBudget(textField(scopeRow.id, 'budget.id', 256)) : null;
           const starved = named && (!refusedScope || dimensionAvailable(refusedScope, named) <= 0) ? [named] : [];
           const envelope = refused
-            ? { tokens: named === 'tokens' ? Number(refused.requested ?? 0) || 0 : 0,
-              model_requests: named === 'model_requests' ? Number(refused.requested ?? 0) || 0 : 0,
-              tool_calls: named === 'tool_calls' ? Number(refused.requested ?? 0) || 0 : 0 }
+            ? { tool_calls: named === 'tool_calls' ? Number(refused.requested ?? 0) || 0 : 0 }
             : null;
           const reason = starved.length
             ? `${role} could not act: its scope has no ${starved.join(' or ')} left`
@@ -3123,40 +2979,6 @@ case 'effects': {
             starved.length ? `BUDGET: ${reason}` : reason,
             starved.length ? 'BUDGET_EXHAUSTED' : null,
             starved.length ? { agent_id: agent.id, dimension: starved[0] ?? null, requested: asJsonValue(refused?.requested ?? null), envelope } : null);
-        }
-        if (outcome?.context_pressure && !outcome?.context_blocked) {
-          this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, node?.id ?? agent.node_id, 'allocator')?.id, {
-            subject: 'context-pressure-notice', payload: { agent_id: agent.id, tokens: outcome.context?.totalTokens ?? null },
-          });
-        }
-        const refusal = this.contextRefusal(outcome, error, agent);
-        if (refusal) {
-          // A request refused before dispatch is not a model failure: name it
-          // and stop the node instead of spending the turn budget of an identity
-          // that cannot make its next request. The code decides the class — a
-          // refusal the budget caused is a budget stop.
-          this.blockNodeInternal(cluster.id, node?.id ?? agent.node_id,
-            refusal.message.startsWith('BUDGET: ') ? refusal.message : `CONTEXT_PRESSURE: ${refusal.message}`,
-            refusal.code);
-        }
-        if (outcome?.context_blocked) {
-          const unfunded = Boolean(outcome.context?.compaction_unfunded);
-          if (unfunded) {
-            this.recordBudgetRefusal(agent, `compaction refused for lack of budget: ${outcome.context?.compaction_error}`);
-          }
-          const cause = unfunded ? ' (compaction could not be funded)' : '';
-          // The producer knows which stop this is: an unfunded compaction is a
-          // budget stop, and `context_blocked` carries that fact in its own
-          // fields rather than leaving the reader to infer it from the message.
-          const contextCode = outcome.context_code ?? (unfunded ? 'BUDGET_EXHAUSTED' : 'CONTEXT_PRESSURE');
-          this.blockNodeInternal(cluster.id, node?.id ?? agent.node_id,
-            contextCode === 'BUDGET_EXHAUSTED'
-              ? `BUDGET: the session could not be compacted${cause} — ${role} holds ${outcome.context?.totalTokens ?? null} tokens`
-              : `CONTEXT_PRESSURE${cause}: ${role} holds ${outcome.context?.totalTokens ?? null} tokens and compaction did not reduce it`,
-            contextCode);
-          this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, node?.id ?? agent.node_id, 'allocator')?.id, {
-            subject: 'context-pressure', payload: { agent_id: agent.id, tokens: outcome.context?.totalTokens ?? null },
-          });
         }
       });
     } finally {
@@ -3211,24 +3033,7 @@ case 'effects': {
       return;
     }
     this.#releaseLease(cluster.id, agent.id, lease);
-    let accountingBlocked = false;
     try {
-      // Bookkeeping must never stop the turn's result from being published — an
-      // accounting anomaly is recorded and named and the work still lands — with
-      // one exception: a reservation that cannot be attributed to a payer leaves
-      // the turn's own accounting unknown, and a result published from it would
-      // be a claim nothing can be charged to. That case blocks the transaction
-      // and withholds the result.
-      try {
-        const reconciliation = this.reconcileReservations(cluster, agent, { transactionId: tx.id }) ?? {};
-        accountingBlocked = Number(reconciliation.uncertain ?? 0) > 0;
-      } catch (cause) {
-        this.store.tx(() => this.store.appendEvent(cluster.id, 'accounting-uncertain', {
-          agent_id: agent.id, transaction_id: tx.id, reason: messageOf(cause).slice(0, 300),
-          code: errorCode(cause) ?? 'ACCOUNTING_UNCERTAIN',
-        }));
-        accountingBlocked = true;
-      }
       if (deliveries?.length) this.settleDeliveries(cluster.id, agent.id, deliveries, { admitted, durable });
       this.#settleHumanPrompts(cluster.id,agent.id,admitted,durable);
       this.store.tx(() => {
@@ -3286,7 +3091,7 @@ case 'effects': {
             args: asJsonValue(decodeJson(effect.args)), body: asJsonValue(decodeJson(effect.body)),
           }));
         const blocked = current && ['PAUSED', 'BLOCKED', 'CANCELLED'].includes(current.status);
-        const completed = outcome !== null && error === null && outcome.completed === true && leaseValid && !accountingBlocked;
+        const completed = outcome !== null && error === null && outcome.completed === true && leaseValid;
         const stagedForThisTurn = current
           && current.result !== null && current.result !== undefined
           && current.result_staged_epoch === lease.epoch
@@ -3333,27 +3138,16 @@ case 'effects': {
             this.deliverFixtureMessages(cluster, this.store.getTransaction(tx.id));
           } else {
             const stopReason = error ? `exception: ${messageOf(error)}` : outcome?.stopReason ?? 'unknown';
-            if ((error || outcome?.stopReason === 'error')
-              && !this.modelRequestRefusedThisTurn(cluster.id, agent.id, lease, outcome, error)) {
+            if (error || outcome?.stopReason === 'error') {
               this.recordAgentAnomaly({ ...agent, role: 'worker' }, {
                 transaction_id: tx.id,
                 code: errorCode(error) ?? outcome?.stopDetail?.code ?? null,
                 message: error ? messageOf(error).slice(0, 200) : (outcome?.stopDetail?.message ?? 'the model request failed'),
               });
             }
-            // A request the provider would have refused is a context pathology:
-            // the transaction is blocked with its coded reason rather than
-            // retried into the same ceiling.
-            const refusal = this.contextRefusal(outcome, error, agent);
-            const contextBlocked = refusal !== null;
-            const furtherAttempts = !contextBlocked && current.attempts < cluster.limits.max_attempts;
-            if (contextBlocked) {
-              this.blockNodeInternal(cluster.id, allocation.node_id,
-                refusal.message.startsWith('BUDGET: ') ? refusal.message : `CONTEXT_PRESSURE: ${refusal.message}`,
-                refusal.code);
-            }
+            const furtherAttempts = current.attempts < cluster.limits.max_attempts;
             this.store.updateTransaction(tx.id, {
-              status: contextBlocked ? 'BLOCKED' : furtherAttempts ? 'READY' : 'FAILED',
+              status: furtherAttempts ? 'READY' : 'FAILED',
               result: null, result_staged_epoch: null, result_staged_turn: null, result_staged_agent: null,
               result_revision: null, validation: null, __bump_revision: false,
             });
@@ -3361,10 +3155,7 @@ case 'effects': {
               transaction_id: tx.id, agent_id: agent.id, stop_reason: stopReason,
               had_submission: current.result !== null && current.result !== undefined,
               staged_binding_match: staged, attempts: current.attempts,
-              next_status: contextBlocked ? 'BLOCKED' : furtherAttempts ? 'READY' : 'FAILED',
-              // The producer's code, not a hardcoded one: a refusal the budget
-              // caused is a budget stop even on this path.
-              ...(contextBlocked ? { code: refusal.code } : {}),
+              next_status: furtherAttempts ? 'READY' : 'FAILED',
             });
             this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, allocation.node_id, 'orchestrator')?.id, {
               subject: 'result-withheld', payload: { transaction_id: tx.id, stop_reason: stopReason },
@@ -3372,19 +3163,6 @@ case 'effects': {
           }
         } else if (current && current.status === 'RUNNING') {
           this.store.updateTransaction(tx.id, { status: 'BLOCKED' });
-        } else if (accountingBlocked) {
-          // The transaction was blocked by the reconciliation itself: say so in
-          // the turn's own record, and keep the staged result for the human
-          // decision that resolves the accounting. Nothing is published.
-          this.store.appendEvent(cluster.id, 'result-withheld', {
-            transaction_id: tx.id, agent_id: agent.id, stop_reason: 'accounting-uncertain',
-            had_submission: current?.result !== null && current?.result !== undefined,
-            staged_binding_match: staged, attempts: current?.attempts ?? 0,
-            next_status: 'BLOCKED', code: 'ACCOUNTING_UNCERTAIN',
-          });
-          this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, allocation.node_id, 'orchestrator')?.id, {
-            subject: 'result-withheld', payload: { transaction_id: tx.id, stop_reason: 'accounting-uncertain' },
-          });
         }
         if (rejectedRevision) {
           const finished = this.store.getTransaction(tx.id);
@@ -3401,7 +3179,7 @@ case 'effects': {
           flushed_seq: outcome?.native_seq ?? null,
           events_seq: this.store.latestEventSeq(cluster.id), transaction_id: tx.id,
           transaction_revision: current?.revision ?? null, inbox_ack_cursor: null,
-          usage_watermark: this.usageWatermark(cluster.id), turn_seq: turns,
+          usage_watermark: this.usageWatermark(agent.session_id), turn_seq: turns,
           data: { role: 'worker', stop_reason: outcome?.stopReason ?? 'error', tool_calls: outcome?.toolCalls?.length ?? 0 },
         });
         this.store.appendEvent(cluster.id, 'turn-end', {
@@ -3576,9 +3354,8 @@ case 'effects': {
     });
   }
 
-  usageWatermark(clusterId: string): number | null {
-    const rows = this.store.listUsageReceipts(clusterId, { limit: 1 });
-    return rows[0]?.created ?? null;
+  usageWatermark(nativeSessionId: string): number | null {
+    return this.store.nativeUsageCursor(nativeSessionId);
   }
 
   // ---------------------------------------------------------- llm slots
@@ -3590,12 +3367,6 @@ case 'effects': {
     // Raising the cap must let queued work in immediately; lowering it must not
     // admit anything new until the running work drops below the new cap.
     this.#pumpLlmSlots(slots);
-  }
-
-  /** The declared per-Worker model-request allowance, or null when unlimited. */
-  workerRequestAllowance(agent: AgentRecord | null): number | null {
-    if (agent?.role !== 'worker') return null;
-    return Number(this.store.getCluster(agent.cluster_id)?.limits?.worker_model_requests) || null;
   }
 
   /** Identities with a registered, unfinished turn. */
@@ -3624,7 +3395,9 @@ case 'effects': {
    * turns that into one clear instruction instead of an unbounded loop.
    */
   admitFlowCall(agent: { readonly id: string }): number {
-    const limit = DEFAULT_LIMITS.max_tool_calls_per_turn;
+    const clusterId = this.store.getAgent(agent.id)?.cluster_id;
+    const limit = (clusterId ? this.store.getCluster(clusterId)?.limits.max_tool_calls_per_turn : null)
+      ?? DEFAULT_LIMITS.max_tool_calls_per_turn;
     const used = (this.#flowCalls.get(agent.id) ?? 0) + 1;
     this.#flowCalls.set(agent.id, used);
     if (used > limit) {
@@ -3802,7 +3575,7 @@ case 'effects': {
 
   /**
    * A permit receipt: how many permits were held when one was taken. It is the
-   * durable evidence for the "provider requests in flight never exceed the
+   * durable evidence for the "Agent scheduling permits never exceed the
    * concurrency window" invariant, which is otherwise inferred from request
    * intervals that a cancelled request can stretch.
    */
@@ -3871,7 +3644,6 @@ case 'effects': {
       const rootBudget = createBudget(this.store, {
         cluster_id: clusterId, scope_kind: 'root', scope_id: clusterId,
         limit: {
-          tokens: normalized.budget.tokens ?? 0, model_requests: normalized.budget.model_requests ?? 0,
           tool_calls: normalized.budget.tool_calls ?? 0,
           agents: normalized.limits.max_agents, max_active_agents: normalized.limits.max_active_agents,
         },
@@ -3885,11 +3657,9 @@ case 'effects': {
       const nodeBudget = createBudget(this.store, {
         cluster_id: clusterId, scope_kind: 'node', scope_id: node.id, node_id: node.id,
         parent_budget_id: rootBudget.id,
-        limit: {
-          tokens: normalized.budget.tokens ?? 0, model_requests: normalized.budget.model_requests ?? 0,
-          tool_calls: normalized.budget.tool_calls ?? 0,
-        },
+        limit: {},
       });
+      this.grantBudget(rootBudget, nodeBudget, { tool_calls: normalized.budget.tool_calls ?? 0 });
       const agent = this.store.insertAgent({
         id: randomUUID(), cluster_id: clusterId, node_id: node.id, role: 'worker',
         session_id: randomUUID(), status: 'READY', capabilities: normalized.capabilities, cwd: normalized.workspace,
@@ -3917,19 +3687,20 @@ case 'effects': {
       cluster_id: clusterId, agent_id: prepared.agent.id, node_id: prepared.node.id, role: 'worker' as const,
       epoch: lease.epoch, lease_id: lease.id, turn_seq: 1,
     };
-    const budgetIds = this.agentBudgetChain(prepared.cluster, prepared.agent);
     const policy = this.allowedToolsFor(prepared.cluster, 'worker', prepared.agent);
     const allocation = this.store.activeAllocationForTransaction(prepared.tx.id) ?? fail('Allocation not found', 404);
     const prompt = this.#workerPrompt(prepared.cluster, prepared.tx, allocation);
     let outcome: TurnOutcome | null = null;
     let error: unknown = null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('single Agent execution time limit reached')),
+      Math.min(timeoutMs, normalized.budget.wall_time_ms ?? timeoutMs, this.config.maxTurnMs));
     try {
       outcome = await runTurn(this.ctx, {
         agent: prepared.agent, role: 'worker', prompt, allowedTools: policy.allowed,
         globalTools: policy.global, capabilities: policy.capabilities, resume: false,
-        cwd: prepared.cluster.workspace, model: this.modelFor(prepared.agent), signal: undefined,
-        logger: this.logger, budgetIds, transactionId: prepared.tx.id, turnSeq: 1, flow: this,
-        contextLimits: this.config.context,
+        cwd: prepared.cluster.workspace, model: this.modelFor(prepared.agent), signal: controller.signal,
+        logger: this.logger, transactionId: prepared.tx.id, turnSeq: 1, flow: this,
         // The control's tools resolve their actor from the bound instance, the
         // same rule as a cluster turn.
         onAgentReady: live => this.bindTurnIdentity(live, identity),
@@ -3938,6 +3709,7 @@ case 'effects': {
     } catch (cause) {
       error = cause;
     } finally {
+      clearTimeout(timer);
       this.#releaseLease(clusterId, prepared.agent.id, lease);
     }
     const completed = outcome !== null && error === null && outcome.completed === true;
@@ -4001,7 +3773,6 @@ case 'effects': {
       });
       return { ok: false, reason: writeDecision.reason };
     }
-    const budgetIds = this.agentBudgetChain(cluster, agent);
     const argumentsJson = safeJson(exec.arguments);
     // A side effect still in flight from a previous run may not be repeated by
     // guesswork: the identity that would repeat it is blocked until a human
@@ -4010,6 +3781,7 @@ case 'effects': {
     if (uncertain) {
       return { ok: false, reason: `EFFECT_UNCERTAIN: ${uncertain.tool} (call ${uncertain.call_id}) may or may not have executed before the restart; it cannot be repeated without a decision (flow_query what:"effects")` };
     }
+    const budgetIds = this.agentBudgetChain(cluster, agent);
     const reserve = () => this.store.tx(() => {
       reserveChain(this.store, budgetIds, { tool_calls: 1 }, { label: `tool call ${exec.name}` });
         // The receipt and its reservation are written together: a crash between
@@ -4033,9 +3805,7 @@ case 'effects': {
       reserve();
     } catch (error) {
       if (!(error instanceof BudgetError) || error.code !== 'LIMIT_REACHED') throw error;
-      // A grant that ran dry while its node still holds capacity is a
-      // bookkeeping state, not a refusal: the tool-call path tops up the gap
-      // once, exactly like the model-request path.
+      // Transfer the tool-call deficit once from existing node capacity.
       const granted = this.topUpBudgetForAgent(agent, { tool_calls: 1 });
       if (!granted) {
         this.recordBudgetRefusal(agent, `tool call refused: ${error.message}`, {
@@ -4061,41 +3831,6 @@ case 'effects': {
   }
 
   /**
-   * A role's turn needs one request's envelope *before* it starts, not after a
-   * refusal. A node that is dry for one dimension at the moment a turn begins
-   * would otherwise stop the node on budget — the case's mechanism stop — while
-   * the cluster still holds its budget in another branch; the refill is bounded
-   * to a working envelope and moves capacity that already exists.
-   */
-  ensureTurnFunding(cluster: ClusterRecord, agent: AgentRecord): FlowBudgetInput | null {
-    const perTurn = Math.max(16_384, Number(this.config?.context?.role) * 2 || 16_384);
-    const envelope = { tokens: perTurn, model_requests: 2, tool_calls: 4 };
-    try {
-      const agentBudget = this.store.budgetForScope(cluster.id, 'agent', agent.id);
-      const nodeBudget = this.fundingBudget(cluster, agent);
-      if (!agentBudget || !nodeBudget) return null;
-      const nodeRow = this.store.getBudget(nodeBudget.id) ?? fail('Budget not found', 404);
-      const short: Record<string, number> = {};
-      for (const [key, need] of Object.entries(envelope)) {
-        const available = dimensionAvailable(nodeRow, key);
-        if (available < need) short[key] = need - available;
-      }
-      for (const [key, need] of Object.entries(envelope)) {
-        const current = this.store.getBudget(agentBudget.id) ?? fail('Budget not found', 404);
-        const available = dimensionAvailable(current, key);
-        if (available < need) short[key] = Math.max(short[key] ?? 0, need - available);
-      }
-      if (!Object.keys(short).length) return null;
-      return this.topUpBudgetForAgent(agent, short);
-    } catch (error) {
-      this.store.appendEvent(cluster.id, 'budget-preturn-refill-failed', {
-        agent_id: agent.id, error: messageOf(error).slice(0, 400),
-      });
-      return null;
-    }
-  }
-
-  /**
    * An effect whose outcome is unknown, for this identity. `EFFECT_UNCERTAIN`
    * must really stop the owner: a replay of a non-idempotent write is not
    * recoverable, and changing a table's state without blocking the caller is
@@ -4107,27 +3842,6 @@ case 'effects': {
       agent.cluster_id, agent.id);
     const row = uncertain[0];
     return row ? { call_id: textField(row.call_id, 'effect.call_id', 256), tool: textField(row.tool, 'effect.tool', 256) } : null;
-  }
-
-  /**
-   * A refused admission is an accounting stop, not a provider failure. The
-   * native host can wrap its error as UNKNOWN, so match the durable terminal
-   * refusal for this identity *after this lease began* to the error it returned.
-   * A separate transport failure later in the turn remains an anomaly.
-   */
-  modelRequestRefusedThisTurn(clusterId: string, agentId: string, lease: LeaseRecord, outcome: TurnOutcome | null, error: unknown): boolean {
-    const detail = error === null || error === undefined ? outcome?.stopDetail?.message ?? '' : messageOf(error);
-    if (!detail) return false;
-    const refusal = this.store.get(
-      `SELECT data FROM events WHERE cluster_id=? AND type='budget-refused'
-        AND json_extract(data,'$.agent_id')=? AND seq>?
-        AND json_extract(data,'$.reason') LIKE 'model request refused%'
-        ORDER BY seq DESC LIMIT 1`,
-      clusterId, agentId, lease.event_upper_bound);
-    if (!refusal) return false;
-    const reason = jsonRecordOf(decodeJson(refusal.data))?.reason;
-    return errorCode(error) === 'LIMIT_REACHED' || outcome?.stopDetail?.code === 'LIMIT_REACHED'
-      || (typeof reason === 'string' && reason.includes(detail));
   }
 
   /**
@@ -4152,75 +3866,6 @@ case 'effects': {
       if (!receipt || receipt.dispatch_status !== 'ADMITTED') return;
       this.store.settleToolCallReceipt(callId, { dispatch_status: 'DISPATCHED', error: null });
     });
-  }
-
-  /**
-   * A turn that died with a model request still reserved may have sent it.
-   * Charge one attempt if the recorded payer still owns the hold, retain the
-   * unknown token hold, and block the owner if settlement cannot be attributed.
-   */
-  reconcileReservations(cluster: ClusterRecord, agent: AgentRecord, { transactionId = null }: { transactionId?: string | null } = {}): { consumed: number; uncertain: number } {
-    const stale = this.store.usageReceiptsAll(cluster.id, { agent_id: agent.id, status: 'RESERVED' });
-    if (!stale.length) return { consumed: 0, uncertain: 0 };
-    let uncertain = 0;
-    let consumed = 0;
-    const blockUncertain = (receipt: UsageReceiptRecord, reason: unknown): void => {
-      uncertain += 1;
-      this.store.appendEvent(cluster.id, 'accounting-uncertain', {
-        request_id: receipt.request_id, agent_id: agent.id,
-        code: 'ACCOUNTING_UNCERTAIN', reason: String(reason).slice(0, 300),
-      });
-      this.store.updateAgent(agent.id, { status: 'BLOCKED' });
-      const txId = transactionId ?? receipt.transaction_id;
-      if (txId) {
-        const tx = this.store.getTransaction(txId);
-        if (tx && !['ACCEPTED', 'CANCELLED', 'SUPERSEDED', 'FAILED'].includes(tx.status)) {
-          this.store.updateTransaction(txId, { status: 'BLOCKED' });
-        }
-      }
-      this.blockNodeInternal(cluster.id, agent.node_id,
-        `ACCOUNTING_UNCERTAIN: request ${receipt.request_id} cannot be settled; its reservation is kept`,
-        'ACCOUNTING_UNCERTAIN');
-    };
-    this.store.tx(() => {
-      for (const receipt of stale) {
-        const live = this.store.getUsageReceipt(receipt.request_id);
-        if (!live || live.status !== 'RESERVED') continue;
-        // The scope that was charged is the receipt's own recorded scope — the
-        // same rule settlement uses. There is *no* fallback to the identity's
-        // current chain: a receipt whose payer is missing or dangling would then
-        // debit whatever request holds quota there now, which is another
-        // request's reservation, not this one's.
-        const budgetIds = live.budget_scope_id && this.store.getBudget(live.budget_scope_id) ? [live.budget_scope_id] : null;
-        if (!budgetIds) {
-          blockUncertain(live, live.budget_scope_id
-            ? `the recorded payer ${live.budget_scope_id} does not exist; the reservation is kept`
-            : 'the receipt records no payer scope; the reservation is kept');
-          continue;
-        }
-        // A receipt still reserved when its turn ended belongs to a request
-        // that may have been sent: its tokens stay held, only the attempt is
-        // consumed.
-        try {
-          settleChain(this.store, budgetIds, {
-            reservedAmounts: { model_requests: 1 },
-            consumed: { model_requests: 1 },
-          });
-          consumed += 1;
-        } catch (error) {
-          // The payer row exists but no longer owns this attempt's hold. Do
-          // not debit another request, nor publish work from an unpayable turn.
-          blockUncertain(live, messageOf(error));
-          continue;
-        }
-        this.store.settleUsageReceipt(receipt.request_id, {
-          status: 'UNKNOWN',
-          note: `turn ended with the request still reserved; ${receipt.reservation_tokens} tokens retained`,
-        });
-        this.store.appendEvent(cluster.id, 'usage-reconciled', { request_id: receipt.request_id, agent_id: agent.id });
-      }
-    });
-    return { consumed, uncertain };
   }
 
   /**
@@ -4467,19 +4112,10 @@ case 'effects': {
           this.store.now(), cluster.id,
         );
         facts.requeued = this.store.changed();
-        // Return structural identity and concurrency reservations after process
-        // loss. Economic holds remain until their receipt is settled: RESERVED
-        // and UNKNOWN requests still own their tokens and request allowance.
-        // Recompute those counters from receipts instead of clearing them.
+        // Restore structural reservations and still-live tool quota holds.
         this.store.run(
           `UPDATE budgets SET
              agents_reserved=0, max_active_reserved=0,
-             tokens_reserved=COALESCE((
-               SELECT SUM(r.reservation_tokens) FROM usage_receipts r
-                WHERE r.budget_scope_id = budgets.id AND r.status IN ('RESERVED','UNKNOWN')), 0),
-             requests_reserved=COALESCE((
-               SELECT COUNT(*) FROM usage_receipts r
-                WHERE r.budget_scope_id = budgets.id AND r.status='RESERVED'), 0),
              tool_calls_reserved=COALESCE((
                SELECT COUNT(*) FROM tool_call_receipts t
                 WHERE t.budget_scope_id = budgets.id AND t.dispatch_status IN ('ADMITTED','DISPATCHED')), 0),
@@ -4540,6 +4176,7 @@ case 'effects': {
     const recovered = this.recover({ deferScheduling: true });
     const generation = this.#schedulingGeneration;
     const reconciled: ReconciledCluster[] = [];
+    await this.replayNativeUsage();
     let afterId = '';
     for (;;) {
       // Recovery spans awaited session proofs, so disposal can land between two
@@ -4562,6 +4199,53 @@ case 'effects': {
     }
     this.#resumeScheduling(generation);
     return { recovered, reconciled };
+  }
+
+  /** Replay durable host facts even for ended identities, before scheduling resumes. */
+  async replayNativeUsage(): Promise<void> {
+    const persistence = this.#persistence;
+    if (!persistence || this.#disposed) return;
+    const signal = this.#persistenceAbort.signal;
+    let afterId = '';
+    for (;;) {
+      const rows = this.store.all('SELECT id FROM agents WHERE id>? ORDER BY id LIMIT 200', afterId);
+      if (!rows.length) return;
+      for (const row of rows) {
+        const agent = this.store.getAgent(String(row.id));
+        if (!agent || this.#disposed) return;
+        afterId = agent.id;
+        if (await this.sessionExists(agent.session_id) !== true) continue;
+        let handle: SessionHandle | undefined;
+        try {
+          handle = await waitForProof(persistence.open(SessionId(agent.session_id), 'read', { signal }), signal, late => late.close());
+          const projections = this.ctx.get('sessionProjections');
+          let checkpoint: ProjectionCheckpoint = {};
+          for (let offset = 0;;) {
+            const page = await waitForProof(handle.read(offset, 5000, { signal }), signal);
+            if (this.#disposed) return;
+            const events = page.events;
+            if (!events.length) break;
+            const restored = projections?.restore(checkpoint, events, SessionLogOffset(offset), handle.header, handle.inheritedEventCount);
+            if (restored) checkpoint = restored.checkpoint;
+            const pressure = restored?.snapshot.values.contextPressure;
+            this.store.projectNativeUsage({
+              clusterId: agent.cluster_id, nodeId: agent.node_id, agentId: agent.id,
+              role: agent.role, nativeSessionId: agent.session_id, events,
+              transactionId: this.store.activeAllocationForAgent(agent.id)?.transaction_id ?? null,
+              ...(pressure === undefined || restored === undefined ? {} : {
+                contextSnapshot: { nativeSeq: restored.snapshot.asOfSeq, ...pressure },
+              }),
+            });
+            offset += events.length;
+            if (events.length < 5000) break;
+          }
+        } catch (error) {
+          if (!signal.aborted) this.logger?.warn?.(`dsh-flow: host usage replay failed for ${agent.session_id}: ${messageOf(error)}`);
+        } finally {
+          await handle?.close();
+        }
+      }
+    }
   }
 
   /**
@@ -4650,72 +4334,9 @@ case 'effects': {
     this.enableScheduling();
   }
 
-  /** The compaction scope, funded separately from the tree it keeps affordable. */
-  compactionBudgetId(clusterId: string): string | null {
-    const row = this.store.get('SELECT id FROM budgets WHERE cluster_id=? AND scope_kind=? LIMIT 1', clusterId, 'compaction');
-    return row ? textField(row.id, 'budget.id', 128) : null;
-  }
-
-  /**
-   * Select one scope that can cover the entire request. Compaction draws from
-   * its reserved pool first; ordinary turns draw from their management grant
-   * first. Either can fall back to the other's scope when its own grants cannot
-   * pay, so funded capacity does not become stranded.
-   */
-  budgetChainForAgent(agent: AgentRecord, { tokens = 0, requests = 1, kind = 'role' }: BudgetChainRequest = {}): readonly string[] {
-    const cluster = this.store.getCluster(agent.cluster_id) ?? fail('Cluster not found', 404);
-    const agentBudgetId = this.store.budgetForScope(agent.cluster_id, 'agent', agent.id)?.id;
-    const agentBudget = agentBudgetId ? this.store.getBudget(agentBudgetId) : null;
-    const compactionId = this.compactionBudgetId(agent.cluster_id);
-    const pool = compactionId ? this.store.getBudget(compactionId) : null;
-    const management = this.fundingBudget(cluster, agent);
-    const candidates = (kind === 'compaction'
-      ? [pool, management, agentBudget]
-      : [management, agentBudget, pool]).filter((row): row is BudgetRecord => row !== null);
-    const now = this.timestamp();
-    // A scope is payable only when it covers the *whole* reservation in every
-    // dimension the request needs, under a live deadline. Choosing a scope
-    // because it holds *something* strands the request while the rest of the
-    // budget sits elsewhere.
-    const payable = (row: BudgetRecord): boolean => {
-      if (dimensionAvailable(row, 'tokens') < tokens || dimensionAvailable(row, 'model_requests') < requests) return false;
-      const deadline = effectiveDeadline(this.store, row);
-      return deadline === null || deadline > now;
-    };
-    const chosen = candidates.find(payable);
-    if (chosen) return [chosen.id];
-    // Nothing can pay it: name the scope with the most capacity, so the refusal
-    // points at the scope that is really short — and never answer with an empty
-    // chain, which reserves nothing and would send the request for free.
-    if (candidates.length) {
-      const best = candidates.reduce((a, b) => (dimensionAvailable(a, 'tokens') >= dimensionAvailable(b, 'tokens') ? a : b));
-      return [best.id];
-    }
-    const fallback = this.agentBudgetChain(cluster, agent);
-    if (fallback.length) return fallback;
-    const error = Object.assign(new Error(`no budget scope exists for agent ${agent.id}; a request from it cannot be accounted`), {
-      code: 'LIMIT_REACHED',
-      scope: agent.node_id ?? agent.id,
-      dimension: 'model_requests',
-    });
-    throw error;
-  }
-
-  /**
-   * A refused admission is the only durable evidence that a limit was really
-   * hit; proximity to the ceiling is not.
-   */
-  /**
-   * A request that could not be funded anywhere its identity is allowed to draw
-   * on stops the *node* it belongs to, with the coded reason. Retrying it as a
-   * per-turn error burned 49 turns in one recursion run and moved nothing.
-   *
-   * A Worker's own request allowance is deliberately not covered here: that is a
-   * per-task limit, and exhaust it does not mean the node is out of money.
-   */
+  /** Record a tool quota stop with the identity and envelope needed for repair. */
   blockNodeOnBudget(agent: AgentRecord | null, reason: string, facts: BudgetBlockFacts = {}): boolean {
     if (!agent?.cluster_id || !agent.node_id) return false;
-    if (/allowance for this task/.test(String(reason))) return false;
     const node = this.store.getNode(agent.node_id);
     if (!node || node.status === 'BLOCKED') return false;
     // The identity is part of the record: a resume has to know whose envelope was
@@ -4731,16 +4352,6 @@ case 'effects': {
 
   recordBudgetRefusal(agent: AgentRecord | null, reason: string, facts: BudgetRefusalFacts = {}): unknown {
     if (!agent?.cluster_id) return null;
-    // A cluster that cannot fund one complete request must stop rather than
-    // keep dispatching requests that will fail until its wall deadline.
-    if (facts.dimension === 'tokens' && facts.available === 0) {
-      const rollup = rollupBudgets(this.store, agent.cluster_id);
-      const left = rollup.tokens.limit - rollup.tokens.reserved - rollup.tokens.spent;
-      if (rollup.tokens.limit > 0 && left < 4096) {
-        this.blockClusterInternal(agent.cluster_id,
-          `BUDGET: ${String(reason).slice(0, 200)} (only ${left} tokens remain in the cluster)`, 'BUDGET_EXHAUSTED');
-      }
-    }
     // A funded shortfall belongs to an admitted request. Record it as repaired
     // so consumers can distinguish successful funding from a terminal refusal.
     const type = facts.terminal === false ? 'budget-shortfall' : 'budget-refused';
@@ -4820,7 +4431,6 @@ case 'effects': {
   #persistence: FlowPersistenceSeam | null = null;
   #startFailures: Map<string, number> = new Map();
   #schedulingEnabled = false;
-  #forceCompact: Set<string> = new Set();
 
   // ----------------------------------------------------------- inventory
 
@@ -4853,19 +4463,12 @@ case 'effects': {
 
   grantAgentBudget(clusterId: string, node: NodeRecord, nodeBudget: BudgetRecord, agent: AgentRecord, role: FlowAgentRole): BudgetRecord {
     const fresh = this.store.getBudget(nodeBudget.id) ?? fail('Budget not found', 404);
-    const limits: Record<string, number> = { tokens: 0, model_requests: 0, tool_calls: 0, agents: 0, max_active_agents: 0 };
+    const limits: Record<string, number> = { tool_calls: 0, agents: 0, max_active_agents: 0 };
     if (role === 'worker') {
       // Bound each Worker's initial grant so management roles retain capacity
       // to plan, review and close the transaction.
-      const workerGrant: { tokens: number; model_requests: number; tool_calls: number } = { tokens: 65_536, model_requests: 8, tool_calls: 32 };
-      // Grant at most the per-Worker task-request allowance plus one reservation
-      // for compaction or a send released before dispatch. The hard allowance
-      // remains enforced on every task request.
-      const perWorkerAllowance = Number(this.store.getCluster(clusterId)?.limits?.worker_model_requests) || 0;
-      if (perWorkerAllowance > 0) {
-        workerGrant.model_requests = Math.min(workerGrant.model_requests, perWorkerAllowance + 1);
-      }
-      for (const key of ['tokens', 'model_requests', 'tool_calls'] as const) {
+      const workerGrant = { tool_calls: 32 };
+      for (const key of ['tool_calls'] as const) {
         limits[key] = Math.max(1, Math.min(workerGrant[key], dimensionAvailable(fresh, key)));
       }
       // Enforce concurrency at the cluster window. An Agent can hold only one
@@ -4875,11 +4478,7 @@ case 'effects': {
       // one quarter of the node's available capacity. Further turns can draw
       // from the node through agentBudgetChain.
       const cluster = this.store.getCluster(clusterId);
-      const perTurn = Math.max(16_384, (Number(this.config?.context?.role) || 8192) * 2);
       const turns = Math.max(1, Number(cluster?.limits?.max_role_turns) || 3);
-      const working = Math.min(perTurn * turns, Math.floor(dimensionAvailable(fresh, 'tokens') / 4));
-      limits.tokens = Math.max(1, working);
-      limits.model_requests = Math.max(1, Math.min(turns * 4, Math.floor(dimensionAvailable(fresh, 'model_requests') / 4)));
       // Size tool grants for the role's allowed turns and bound them by a
       // quarter of the node's available tool-call capacity.
       limits.tool_calls = Math.max(1, Math.min(turns * 20, Math.floor(dimensionAvailable(fresh, 'tool_calls') / 4)));
@@ -5040,16 +4639,7 @@ case 'effects': {
    * is a real transfer, so the ledger stays hierarchical and the Allocator can
    * still move budget explicitly with `rebalance_budget`.
    */
-  /**
-   * Top-up entry point for the request path. The request path names the *gap*
-   * it is short of, in the dimensions it needs; nothing else moves.
-   *
-   * Two rules make this honest rather than generous:
-   * - a Worker whose request allowance is spent gets no tokens — paying for a
-   *   request that cannot be sent is not a top-up;
-   * - the node is asked for the gap, and siblings are reclaimed only when the
-   *   node really cannot cover it.
-   */
+  /** Transfer only the measured tool-call deficit from authorized scopes. */
   topUpBudgetForAgent(agent: AgentRecord, amounts: LedgerAmounts = {}): FlowBudgetInput | null {
     const cluster = this.store.getCluster(agent.cluster_id) ?? fail('Cluster not found', 404);
     const agentBudgetId = this.store.budgetForScope(agent.cluster_id, 'agent', agent.id)?.id;
@@ -5057,12 +4647,6 @@ case 'effects': {
     const nodeBudget = this.fundingBudget(cluster, agent);
     if (!agentBudget || !nodeBudget) return null;
     const wanted = positiveLedgerAmounts(amounts);
-    const allowance = this.workerRequestAllowance(agent);
-    // Top-ups cannot extend a Worker's per-identity request allowance.
-    // Tool calls remain fundable so a Worker can submit its final result after
-    // using its last model request.
-    const wantsRequests = Number(wanted.model_requests ?? 0) > 0;
-    if (allowance !== null && wantsRequests && this.store.countWorkerRequests(cluster.id, agent.id) >= allowance) return null;
     const row = this.store.getBudget(agentBudget.id) ?? fail('Budget not found', 404);
     const gap: Record<string, number> = {};
     for (const key of LEDGER_DIMENSIONS) {
@@ -5140,53 +4724,9 @@ case 'effects': {
         // move the identity's availability is a bookkeeping defect, and the
         // numbers are what makes that visible.
         available_after: {
-          tokens: dimensionAvailable(after, 'tokens'),
-          model_requests: dimensionAvailable(after, 'model_requests'),
           tool_calls: dimensionAvailable(after, 'tool_calls'),
         },
       });
-    }
-    return granted;
-  }
-
-  /**
-   * Fund the compaction pool's measured deficit from the root node budget.
-   * Reclaim that node's idle identity grants while retaining live reservations.
-   */
-  topUpCompactionPool(clusterId: string, amounts: LedgerAmounts = {}): unknown {
-    const poolId = this.compactionBudgetId(clusterId);
-    const pool = poolId ? this.store.getBudget(poolId) : null;
-    const rootId = this.store.listNodes(clusterId, { parent_id: null })[0]?.id ?? null;
-    const node = rootId ? this.store.budgetForScope(clusterId, 'node', rootId) : null;
-    if (!pool || !node) return null;
-    const wanted = positiveLedgerAmounts(amounts);
-    if (!Object.keys(wanted).length) return null;
-    const gap: Record<string, number> = {};
-    for (const key of LEDGER_DIMENSIONS) {
-      const need = wanted[key];
-      if (need === undefined) continue;
-      // Refill against the limit, including any prior overshoot.
-      const { limit, reserved, spent } = budgetDimensionAmounts(pool, key);
-      const short = need + reserved + spent - limit;
-      if (short > 0) gap[key] = short;
-    }
-    if (!Object.keys(gap).length) return null;
-    const before = this.store.getBudget(node.id) ?? fail('Budget not found', 404);
-    if (Object.entries(gap).some(([key, need]) => dimensionAvailable(before, key) < need)) {
-      this.reclaimAllIdleGrants(clusterId, node.id);
-    }
-    const available = this.store.getBudget(node.id) ?? fail('Budget not found', 404);
-    const give: Record<string, number> = {};
-    for (const [key, need] of Object.entries(gap)) {
-      const movable = Math.min(need, dimensionAvailable(available, key));
-      if (movable > 0) give[key] = movable;
-    }
-    if (!Object.keys(give).length) return null;
-    const nodeBudget = this.store.getBudget(node.id) ?? fail('Budget not found', 404);
-    const poolBudget = this.store.getBudget(pool.id) ?? fail('Budget not found', 404);
-    const granted = this.grantBudget(nodeBudget, poolBudget, give);
-    if (granted) {
-      this.store.appendEvent(clusterId, 'budget-topup', { scope: pool.id, granted: asJsonValue(granted), mode: 'compaction-pool' });
     }
     return granted;
   }
@@ -5327,9 +4867,8 @@ case 'effects': {
 
 
   /**
-   * The enforcing scope for one agent's requests is its own grant. Budget moves
-   * downward as a transfer (`limit` leaves the parent), so reserving on the
-   * whole lineage would double-count the same tokens.
+   * Tool quota belongs to the identity grant. Transfers remove capacity
+   * from the parent, so reserve only the grant and never its whole lineage.
    */
   agentBudgetChain(cluster: ClusterRecord, agent: AgentRecord): readonly string[] {
     const agentBudget = this.store.budgetForScope(cluster.id, 'agent', agent.id);
@@ -5351,7 +4890,7 @@ case 'effects': {
     // "grant everything": a budget top-up must never hand over the node's
     // agent or active-slot capacity.
     for (const [key, wanted] of Object.entries(amounts)) {
-      if (!['tokens', 'model_requests', 'tool_calls', 'agents', 'max_active_agents'].includes(key)) {
+      if (!['tool_calls', 'agents', 'max_active_agents'].includes(key)) {
         fail(`Unknown budget dimension: ${key}`);
       }
       const available = dimensionAvailable(parent, key);
@@ -5365,6 +4904,7 @@ case 'effects': {
   }
 
   teamSelectModel(sessionId:string,model:FlowModelSelection):void {
+    model = validateModelSelection(model);
     if(!model.provider||!model.model)return;
     for(const run of this.teamRuns(sessionId).filter(run=>!['completed','cancelled','failed'].includes(run.state))) {
       const root=this.store.nodesInSubtree(run.id,null).find(node=>node.parent_id===null);
@@ -5378,8 +4918,7 @@ case 'effects': {
 
   modelFor(agent: AgentRecord): FlowModelSelection {
     const root=this.store.nodesInSubtree(agent.cluster_id,null).find(node=>node.parent_id===null);
-    return prepareModelSelection(this.config.model, root?.scope,
-      this.store.getCluster(agent.cluster_id)?.limits.worker_max_tokens)(agent);
+    return prepareModelSelection(this.config.model, root?.scope)(agent);
   }
 
   /**
@@ -5552,7 +5091,6 @@ case 'effects': {
           || (this.store.allocationOutdated(id, allocation) && !this.activeTurnFor(allocation.agent_id));
       });
       if (releasable.length) items.push({ action: 'release_agent', allocations: releasable.map(a => a.id).slice(0, 64) });
-      const nodeBudget = this.store.budgetForScope(id, 'node', node.id);
       {
         // A rebalance hint must name an Allocator whose domain owns both ends.
         // Capacity outside the requesting subtree belongs to an ancestor's decision.
@@ -5570,18 +5108,14 @@ case 'effects': {
             if (agent && within.includes(agent.node_id)) budgets.set(row.scope_id, { ...row, via_node_id: agent.node_id });
           }
         }
-        // Include every spendable dimension so a tool-call shortfall is visible
-        // even when the node has ample tokens and model requests.
+        // Tool-call shortfalls use the same ledger as explicit rebalances.
         const headroomOf = (row: BudgetRowWithNode): BudgetHeadroom => ({
           scope_kind: row.scope_kind === 'agent' ? 'agent' : 'node', scope_id: row.scope_id,
           node_id: row.node_id ?? row.via_node_id ?? null,
-          tokens: Math.max(0, row.tokens_limit - row.tokens_spent - row.tokens_reserved),
-          model_requests: Math.max(0, row.requests_limit - row.requests_spent - row.requests_reserved),
           tool_calls: Math.max(0, row.tool_calls_limit - row.tool_calls_spent - row.tool_calls_reserved),
         });
-        const enough = (row: BudgetHeadroom): boolean => row.tokens > 4 * Math.max(16_384, Number(this.config.context.role ?? 8192) * 2)
-          || row.model_requests > 4 || row.tool_calls > 16;
-        const spenders = ['tokens', 'model_requests', 'tool_calls'] as const;
+        const enough = (row: BudgetHeadroom): boolean => row.tool_calls > 16;
+        const spenders = ['tool_calls'] as const;
         for (const candidate of within) {
           const short = budgets.get(candidate);
           if (!short) continue;
@@ -5606,14 +5140,14 @@ case 'effects': {
             return dimension === key ? Math.max(0, requested) : 0;
           };
           const required: Record<string, number> = {
-            tokens: requiredOf('tokens'), model_requests: requiredOf('model_requests'), tool_calls: requiredOf('tool_calls'),
+            tool_calls: requiredOf('tool_calls'),
           };
           if (!spenders.some(key => dimensionAvailable(short, key) < (required[key] ?? 0))) continue;
           const sources = [...budgets.values()]
             .filter(other => other.scope_id !== candidate)
             .map(headroomOf)
             .filter(row => enough(row))
-            .sort((a, b) => (b.tokens + b.model_requests * 16_384) - (a.tokens + a.model_requests * 16_384))
+            .sort((a, b) => b.tool_calls - a.tool_calls)
             .slice(0, 3);
           if (!sources.length) continue;
           items.push({
@@ -5638,22 +5172,6 @@ case 'effects': {
           }),
           note: 'the topology fixture requires this management child; call flow_allocation spawn_management_node with scope, max_children and spawn_children from this instruction',
         });
-      }
-      // Only an unfinished Worker's *owner* can fund it, and a declared
-      // per-Worker request allowance is a ceiling, not a request for a top-up.
-      const starved = this.store.all(
-        `SELECT b.scope_id AS agent_id FROM budgets b
-           JOIN agents a ON a.id = b.scope_id
-           JOIN allocations al ON al.agent_id = a.id AND al.status='ACTIVE'
-           JOIN transactions t ON t.id = al.transaction_id
-          WHERE b.cluster_id=? AND b.scope_kind='agent' AND al.node_id=? AND a.status<>'TERMINATED'
-            AND a.role='worker' AND t.status IN ('READY','RUNNING')
-            AND (b.requests_limit - b.requests_reserved - b.requests_spent) <= 0
-          LIMIT 16`, id, node.id).map(row => textField(row.agent_id, 'starved.agent_id', 128))
-        .filter(agentId => !cluster.limits.worker_model_requests
-          || this.store.countWorkerRequests(id, agentId) < cluster.limits.worker_model_requests);
-      if (starved.length && nodeBudget && dimensionAvailable(nodeBudget, 'model_requests') > 0) {
-        items.push({ action: 'rebalance_budget', starved_agents: starved, from: { kind: 'node', id: node.id } });
       }
     } else if (role === 'auditor') {
       const auditorId = recipient;
@@ -5946,8 +5464,6 @@ case 'effects': {
       // full ledger (including scope ids and reservations) is a flow_query away.
       ...(role === 'auditor' && actions.length ? {} : {
         budget_available: nodeBudget ? {
-          tokens: dimensionAvailable(nodeBudget, 'tokens'),
-          model_requests: dimensionAvailable(nodeBudget, 'model_requests'),
           tool_calls: dimensionAvailable(nodeBudget, 'tool_calls'),
           agents: dimensionAvailable(nodeBudget, 'agents'),
           max_active_agents: dimensionAvailable(nodeBudget, 'max_active_agents'),
@@ -6162,60 +5678,6 @@ case 'effects': {
     });
   }
 
-  /**
-   * A context refusal that stopped a turn, from either shape the host can
-   * produce: an exception out of the turn, or a turn that ended with the
-   * refusal as its failure reason. Returns the message, or null.
-   */
-  contextRefusal(outcome: TurnOutcome | null, error: unknown, agent: AgentRecord | null = null): { readonly code: string; readonly message: string } | null {
-    // The shape is the point: the *code* travels with the message, so the
-    // durable event carries a machine-readable reason and a reader is never
-    // asked to parse a sentence to find out whether a stop was a budget stop.
-    // A refusal the *pre-dispatch ceiling* raises after it could not fund the
-    // compaction carries `BUDGET_EXHAUSTED`, and it is recognised here too: the
-    // producer's code decides the class, not the gate that noticed.
-    if (errorCode(error) === 'BUDGET_EXHAUSTED') return { message: messageOf(error), code: 'BUDGET_EXHAUSTED' };
-    if (errorCode(error) === 'CONTEXT_PRESSURE') return { message: messageOf(error), code: 'CONTEXT_PRESSURE' };
-    const detail = outcome?.stopDetail ?? null;
-    if (detail?.code === 'BUDGET_EXHAUSTED') return { message: String(detail.message ?? 'budget exhausted'), code: 'BUDGET_EXHAUSTED' };
-    if (detail?.code === 'CONTEXT_PRESSURE') return { message: String(detail.message ?? 'context ceiling'), code: 'CONTEXT_PRESSURE' };
-    if (typeof detail?.message === 'string' && detail.message.startsWith('BUDGET: ')) {
-      return { message: detail.message, code: 'BUDGET_EXHAUSTED' };
-    }
-    if (typeof detail?.message === 'string' && detail.message.includes('CONTEXT_PRESSURE')) {
-      return { message: detail.message, code: 'CONTEXT_PRESSURE' };
-    }
-    // The scoped pre-step listener rejects requests that remain over either
-    // the identity budget or the provider input ceiling after compaction. The
-    // rejection carries its measurements and identifies the exceeded ceiling.
-    if (outcome?.stopReason === 'blocked') {
-      const rejection = jsonRecordOf(outcome.stopDetail?.info?.rejection);
-      if (rejection?.compaction_unfunded) {
-        // The session could not be shrunk because the budget could not pay for
-        // the summary: the stop is a budget stop, and it is reported as one.
-        return { message: `BUDGET: the session could not be compacted — ${JSON.stringify(rejection)}`, code: 'BUDGET_EXHAUSTED' };
-      }
-      // A session above either sending limit whose cluster budget is spent
-      // cannot fund further compaction; report the budget stop rather than
-      // attributing it to a provider or context malfunction.
-      const rollup = agent?.cluster_id ? rollupBudgets(this.store, agent.cluster_id) : null;
-      const tokensLeft = rollup ? rollup.tokens.limit - rollup.tokens.reserved - rollup.tokens.spent : null;
-      if (rollup && rollup.tokens.limit > 0 && tokensLeft !== null && tokensLeft <= 0 && rejection) {
-        return {
-          message: `BUDGET: the session could not be compacted because the cluster budget is exhausted — ${JSON.stringify(rejection)}`,
-          code: 'BUDGET_EXHAUSTED',
-        };
-      }
-      return {
-        message: rejection
-          ? `the step could not be sent inside its ${rejection.exceeded === 'identity' ? 'identity budget' : 'provider ceiling'}: ${JSON.stringify(rejection)}`
-          : 'the step could not be sent inside its identity budget or provider ceiling, and compaction did not reduce it',
-        code: 'CONTEXT_PRESSURE',
-      };
-    }
-    return null;
-  }
-
   #hasActiveDelegatedWork(nodes: readonly NodeRecord[], rootId: string): boolean {
     return nodes.some(node => node.id !== rootId && node.status === 'ACTIVE'
       && (node.kind === 'worker' || (node.kind === 'management' && node.delegated_transaction_id)));
@@ -6229,8 +5691,7 @@ case 'effects': {
       this.store.updateNode(nodeId, { status: 'BLOCKED' });
       // The identity whose request failed is part of the record: a node stops
       // *for* something specific, and only its own record can say what the repair
-      // would have to make affordable again. A refusal is not scoped to the node —
-      // it names the agent, or the compaction pool.
+      // would have to make affordable again. The refusal names its identity.
       this.store.appendEvent(clusterId, 'node-blocked', {
         node_id: nodeId, reason, code, agent_id: facts?.agent_id ?? null,
         dimension: facts?.dimension ?? null, requested: facts?.requested ?? null,
@@ -6400,7 +5861,7 @@ case 'effects': {
       const remaining = budget ? this.store.getBudget(budget.id) : null;
       const returned: Record<string, number> = {};
       if (remaining?.parent_budget_id) {
-        for (const key of ['tokens', 'model_requests', 'tool_calls', 'agents', 'max_active_agents']) {
+        for (const key of ['tool_calls', 'agents', 'max_active_agents']) {
           const amount = dimensionAvailable(remaining, key);
           if (amount > 0) returned[key] = amount;
         }
@@ -6571,7 +6032,7 @@ function scopeNodes(store: ClusterStore, actor: FlowActor, clusterId: string): N
 
 // List queries carry bounded references, not every saved result, session or
 // node objective. Full transaction evidence is available via the per-id
-// detail query; inlining six full rows already overflowed a role's 8192 tokens.
+// detail query; the full rows remain available without enlarging each prompt.
 function nodeReference(node: NodeRecord): FlowNodeReference {
   return {
     id: node.id, parent_id: node.parent_id, path: node.path, depth: node.depth,

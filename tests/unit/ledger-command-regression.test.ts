@@ -18,7 +18,7 @@ function fixture(t: TestContext) {
   const store = new ClusterStore(':memory:');
   t.after(() => store.close());
   const budget = (id: string, limit = 100, cluster = 'cluster'): BudgetRecord => createBudget(store, {
-    cluster_id: cluster, scope_kind: 'node', scope_id: id, limit: { tokens: limit },
+    cluster_id: cluster, scope_kind: 'node', scope_id: id, limit: { tool_calls: limit },
   });
   return { store, budget };
 }
@@ -85,31 +85,31 @@ test('command receipt owns atomicity and binds replay to its cluster and authent
 test('ledger refuses duplicate scope ids before any reservation or settlement', t => {
   const { store, budget } = fixture(t);
   const row = budget('payer');
-  assert.throws(() => reserveChain(store, [row.id, row.id], { tokens: 60 }), /Duplicate budget scope/);
-  assert.equal(must(store.getBudget(row.id), 'budget row').tokens_reserved, 0);
-  reserveChain(store, [row.id], { tokens: 60 });
+  assert.throws(() => reserveChain(store, [row.id, row.id], { tool_calls: 60 }), /Duplicate budget scope/);
+  assert.equal(must(store.getBudget(row.id), 'budget row').tool_calls_reserved, 0);
+  reserveChain(store, [row.id], { tool_calls: 60 });
   assert.throws(() => settleChain(store, [row.id, row.id], {
-    reservedAmounts: { tokens: 20 }, consumed: { tokens: 20 },
+    reservedAmounts: { tool_calls: 20 }, consumed: { tool_calls: 20 },
   }), /Duplicate budget scope/);
-  assert.equal(must(store.getBudget(row.id), 'budget row').tokens_reserved, 60);
-  assert.equal(must(store.getBudget(row.id), 'budget row').tokens_spent, 0);
+  assert.equal(must(store.getBudget(row.id), 'budget row').tool_calls_reserved, 60);
+  assert.equal(must(store.getBudget(row.id), 'budget row').tool_calls_spent, 0);
 });
 
 test('ledger settlement and release roll back all scopes on underflow, including inside a caught nested failure', t => {
   const { store, budget } = fixture(t);
   const first = budget('first');
   const second = budget('second');
-  reserveChain(store, [first.id], { tokens: 20 });
-  reserveChain(store, [second.id], { tokens: 10 });
+  reserveChain(store, [first.id], { tool_calls: 20 });
+  reserveChain(store, [second.id], { tool_calls: 10 });
   const before = store.listBudgets('cluster');
   const settle = () => settleChain(store, [first.id, second.id], {
-    reservedAmounts: { tokens: 20 }, consumed: { tokens: 15 },
+    reservedAmounts: { tool_calls: 20 }, consumed: { tool_calls: 15 },
   });
   assert.throws(settle, /go negative/);
   assert.deepEqual(store.listBudgets('cluster'), before);
   store.tx(() => {
     assert.throws(settle, /go negative/);
-    assert.throws(() => releaseChain(store, [first.id, second.id], { tokens: 20 }), /go negative/);
+    assert.throws(() => releaseChain(store, [first.id, second.id], { tool_calls: 20 }), /go negative/);
     store.appendEvent('cluster', 'continued');
   });
   assert.deepEqual(store.listBudgets('cluster'), before);
@@ -129,8 +129,8 @@ test('ledger rejects invalid numeric and unknown dimensions consistently', t => 
   ];
   const before = store.listBudgets('cluster');
   for (const apply of operations) {
-    for (const tokens of [-1, 0.5, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
-      assert.throws(() => apply({ tokens }), /Invalid/);
+    for (const tool_calls of [-1, 0.5, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => apply({ tool_calls }), /Invalid/);
     }
     assert.throws(() => apply({ token: 1 }), /Unknown budget dimension/);
   }
@@ -148,22 +148,22 @@ test('transfers own atomicity when the recipient write fails and cannot cross cl
     if (id === second.id) throw new Error('recipient write failed');
     return original(id, patch);
   };
-  assert.throws(() => transferBudget(store, first.id, second.id, { tokens: 20 }), /recipient write failed/);
+  assert.throws(() => transferBudget(store, first.id, second.id, { tool_calls: 20 }), /recipient write failed/);
   assert.deepEqual(store.listBudgets('cluster'), before);
-  assert.throws(() => transferBudget(store, first.id, foreign.id, { tokens: 20 }), /between clusters/);
+  assert.throws(() => transferBudget(store, first.id, foreign.id, { tool_calls: 20 }), /between clusters/);
   assert.deepEqual(store.listBudgets('cluster'), before);
 });
 
 test('ledger permits honest overshoot but rejects accounting overflow and missing scopes atomically', t => {
   const { store, budget } = fixture(t);
   const first = budget('first');
-  reserveChain(store, [first.id], { tokens: 20 });
-  settleChain(store, [first.id], { reservedAmounts: { tokens: 20 }, consumed: { tokens: 120 } });
-  assert.equal(must(store.getBudget(first.id), 'budget row').tokens_spent, 120);
-  assert.equal(must(store.getBudget(first.id), 'budget row').tokens_reserved, 0);
+  reserveChain(store, [first.id], { tool_calls: 20 });
+  settleChain(store, [first.id], { reservedAmounts: { tool_calls: 20 }, consumed: { tool_calls: 120 } });
+  assert.equal(must(store.getBudget(first.id), 'budget row').tool_calls_spent, 120);
+  assert.equal(must(store.getBudget(first.id), 'budget row').tool_calls_reserved, 0);
   const before = store.getBudget(first.id);
-  assert.throws(() => spendChain(store, [first.id], { tokens: Number.MAX_SAFE_INTEGER }), /safe integer range/);
-  assert.throws(() => spendChain(store, [first.id, 'missing'], { tokens: 1 }), /Budget not found/);
+  assert.throws(() => spendChain(store, [first.id], { tool_calls: Number.MAX_SAFE_INTEGER }), /safe integer range/);
+  assert.throws(() => spendChain(store, [first.id, 'missing'], { tool_calls: 1 }), /Budget not found/);
   assert.deepEqual(store.getBudget(first.id), before);
 });
 

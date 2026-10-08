@@ -1,55 +1,30 @@
 # 预算账本
 
-预算组件管理额度、预留和实际用量。父节点下拨给子节点的额度来自已有预算；汇总集群预算时，不能把父子额度当作彼此独立的预算重复相加。
+预算账本约束工具调用次数、身份容量、执行容量和截止时间。父子授予来自已有额度，汇总时不能重复累加。Token 用量另从宿主持久化事件被动投影，不参与准入、分配或扣减。
 
 ## 主要入口
 
 | 符号 | 用途 |
-|---|---|
-| `createBudget`、`budgetView` | 为预算账户建立账本，并生成查询视图 |
-| `reserveChain` | 在截止时间和各维度可用额度内预留 |
-| `settleChain`、`releaseChain` | 结算实际用量，或释放未使用的预留额度 |
+| --- | --- |
+| `createBudget`、`budgetView` | 建立工具和容量账户，生成查询视图 |
+| `reserveChain` | 在截止时间和工具额度内预留 |
+| `settleChain`、`releaseChain` | 结算工具调用或释放未使用预留 |
 | `transferBudget` | 转移未使用且未预留的额度 |
-| `reclaimCapacity` | 归还智能体数量额度和并发执行额度 |
-| `effectiveDeadline`、`rollupBudgets` | 计算继承的截止时间，汇总集群用量 |
-| `runtime.ts` 的模型请求记账函数 | 记录每次请求由哪个预算账户承担用量，并保存回执 |
+| `reclaimCapacity` | 归还身份和执行容量 |
+| `effectiveDeadline`、`rollupBudgets` | 继承截止时间并汇总资源 |
 
-上述账本函数位于 `core/budget.ts`。资源调拨由资源分配智能体的动作触发；自动补足额度时，依据的是运行时测得的具体请求缺口。
-
-## 维度及语义
+## 维度与边界
 
 | 维度 | 语义 |
-|---|---|
-| `tokens`、`model_requests`、`tool_calls` | 用量累计，保存额度 `limit`、预留量 `reserved` 和已用量 `spent` |
-| `agents`、`max_active_agents` | 容量：占用时预留，释放时归还，不累计已用量 |
-| `wall_time_ms` | 形成绝对截止时间；继承祖先中最早的截止时间 |
+| --- | --- |
+| `tool_calls` | 累计额度，保存 `limit / reserved / spent` |
+| `agents`、`max_active_agents` | 占用时预留，释放时归还的容量 |
+| `wall_time_ms` | 绝对截止时间，继承祖先中最早期限 |
 
-请求获准发送前，必须先检查剩余额度。结算必须记录真实用量，即使用量高于预留，也不能截断记录来掩盖超支；用量记录中的 `overshoot` 用于报告这类情况，后续请求仍受额度约束。
+`allocate_budget` 与 `rebalance_budget` 的 `amounts` 只接受 `tool_calls`、`agents` 和 `max_active_agents`；截止时间由父域继承，不是可调拨额度。不能用零、无限值或极大整数表示已删除的模型预算。无压缩预算账户、模型付款范围、模型请求预留或结算。
 
-## 请求用量归属
+工具调用仍保留回执、准入、结算、权限、租约隔离和未确认副作用处理。共享 `ACCOUNTING_UNCERTAIN` 可能由工具额度产生，不表示模型请求付款状态。管理轮次、任务尝试与纠正次数仍然有效，也不等同于模型请求次数。
 
-一次模型请求的全部 Token 用量和请求次数必须由同一个预算账户承担，不能拼凑多个账户的余额，也不能在没有账户承担用量时发送。持久化回执中的 `usage_receipt.budget_scope_id` 记录实际使用的预算账户，结算与释放均针对该账户，恢复时不能改用重新推导的祖先账户链。
+暂停和重启不会重置截止时间或工具消耗；调整父节点不能延长已有更早期限。调拨不能转移已使用或预留额度。CPU/GPU 和内存尚无可靠的按管理域计量。
 
-普通请求优先使用本管理域及相关智能体的额度；上下文压缩请求优先使用专门预留的摘要预算。这部分额度从根预算中划拨，不能作为额外预算加到根预算之上。分给闲置智能体的额度可以回收；兄弟管理域之间的预算调拨，需要由资源分配智能体明确发起。
-
-```mermaid
-flowchart TB
-    Plan["请求完整额度"] --> Reserve{"额度足够且未到截止时间？"}
-    Reserve -->|否| Refusal["持久化具体拒绝原因"]
-    Reserve -->|是| Receipt["已预留：记录预算账户"]
-    Receipt --> Send["实际模型请求"]
-    Send --> Settled["已结算：记录实际用量"]
-    Receipt --> NotSent["未发送：释放预留"]
-    Send --> Unknown["用量未知：保留未确认记录"]
-```
-
-回执状态 `RESERVED` 表示额度已预留，`SETTLED` 表示已按实际用量结算，`NOT_SENT` 表示请求未发送，`UNKNOWN` 表示请求的实际用量尚无法确认。
-
-## 调拨与恢复边界
-
-- 只能转移未使用且未预留的额度；已用量不会因调整父节点、替换执行者或恢复而下降。
-- 暂停和重启不重置按实际经过时间计算的截止时间；迁往时间限制更宽松的父管理域，也不能延长原先更早的截止时间。
-- 余额很低本身不足以触发模型调度；调拨通知应附确切请求缺口。
-- CPU/GPU 和内存尚无可信的按管理域计量方式；本地 `api_cost` 的未计价标记不意味着真实成本为零。
-
-源码：[budget.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/budget.ts)、[runtime.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/runtime.ts)。
+源码：[budget.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/budget.ts)。

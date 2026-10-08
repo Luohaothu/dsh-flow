@@ -1,4 +1,7 @@
 import { join } from 'node:path';
+import { summarizeNativeUsage } from '../../packages/dsh-flow/src/core/native-usage.ts';
+import type { NativeSessionFact } from '../../packages/dsh-flow/src/core/native-usage.ts';
+import type { FlowUsageSummary } from '../../packages/dsh-flow/src/types.ts';
 /**
  * Read-only access to a finished run's cluster.sqlite, for acceptance checks.
  * The runner never writes through this handle.
@@ -16,27 +19,19 @@ export interface Ledger {
   close(): void;
 }
 
-/** One usage-receipt aggregate for a cluster. */
-export interface UsageSummary {
-  requests: number;
-  total_tokens: number | null;
-  prompt_tokens: number | null;
-  completion_tokens: number | null;
-  cached_tokens: number | null;
-  reasoning_tokens: number | null;
-  unknown_requests: number | null;
-  overshoot: number | null;
-}
+/** Host-recorded usage, preserving missing fields and observation completeness. */
+export type UsageSummary = FlowUsageSummary;
 
 /** One worker's activation counters. */
 export interface WorkerActivationRow {
   agent_id: string | null;
   turns: number;
-  dispatched_requests: number;
-  distinct_requests: number;
+  started_turns: number;
+  completed_turns: number;
+  native_settlements: number;
 }
 
-/** How many workers were created, sent a request, and ran a turn. */
+/** Worker identities, completed execution lifecycles and native assistant settlements. */
 export interface WorkerActivation {
   per_agent: WorkerActivationRow[];
   created: number;
@@ -44,7 +39,7 @@ export interface WorkerActivation {
   with_turns: number;
 }
 
-/** Two independently measured concurrency ceilings. */
+/** Agent lifecycle concurrency; provider request concurrency remains unavailable here. */
 export interface ConcurrencyPeaks {
   resident_peak: number | null;
   provider_inflight_peak: number | null;
@@ -107,91 +102,60 @@ export function openLedger(dbPath: string): Ledger {
   };
 }
 
+/** Read durable native event facts without mutating the Flow database. */
+export function nativeSessionFacts(ledger: Ledger, clusterId: string): NativeSessionFact[] {
+  return ledger.all('SELECT * FROM native_session_events WHERE cluster_id=? ORDER BY native_session_id,native_seq', clusterId).map(row => ({
+    native_session_id: String(row.native_session_id), native_seq: countOf(row, 'native_seq'),
+    cluster_id: String(row.cluster_id), agent_id: String(row.agent_id), node_id: String(row.node_id),
+    role: String(row.role) as NativeSessionFact['role'], transaction_id: textOf(row, 'transaction_id'),
+    type: String(row.type), data: JSON.parse(String(row.data)) as NativeSessionFact['data'],
+    time: countOf(row, 'time'),
+  }));
+}
+
 export function usageSummary(ledger: Ledger, clusterId: string): UsageSummary {
-  const row = ledger.get(
-    `SELECT COUNT(*) AS requests,
-            SUM(COALESCE(total_tokens,0)) AS total_tokens,
-            SUM(COALESCE(prompt_tokens,0)) AS prompt_tokens,
-            SUM(COALESCE(completion_tokens,0)) AS completion_tokens,
-            SUM(COALESCE(cached_tokens,0)) AS cached_tokens,
-            SUM(COALESCE(reasoning_tokens,0)) AS reasoning_tokens,
-            SUM(CASE WHEN status='UNKNOWN' THEN 1 ELSE 0 END) AS unknown_requests,
-            SUM(COALESCE(overshoot,0)) AS overshoot
-     FROM usage_receipts WHERE cluster_id=?`, clusterId);
-  return {
-    requests: countOf(row, 'requests'),
-    total_tokens: sumOf(row, 'total_tokens'),
-    prompt_tokens: sumOf(row, 'prompt_tokens'),
-    completion_tokens: sumOf(row, 'completion_tokens'),
-    cached_tokens: sumOf(row, 'cached_tokens'),
-    reasoning_tokens: sumOf(row, 'reasoning_tokens'),
-    unknown_requests: sumOf(row, 'unknown_requests'),
-    overshoot: sumOf(row, 'overshoot'),
-  };
+  return summarizeNativeUsage(nativeSessionFacts(ledger, clusterId));
 }
 
 /**
- * Worker activation: a worker counts as *activated* only when it really sent at
- * least one non-compaction provider request. A created identity, a queued turn
- * or a receipt whose request never left the client (`NOT_SENT`) proves nothing
- * about model-backed execution, so none of them may be counted here.
+ * Activation requires native assistant settlement evidence and an actual Agent
+ * execution lifecycle. A created identity or scheduled turn alone is insufficient.
+ * This proves execution, not dispatch counts or provider request concurrency.
  */
 export function workerActivation(ledger: Ledger, clusterId: string): WorkerActivation {
-  const perAgent = ledger.all(
-    `SELECT a.id AS agent_id, a.turns,
-            (SELECT COUNT(*) FROM usage_receipts u
-              WHERE u.agent_id=a.id AND u.cluster_id=a.cluster_id AND u.kind='worker' AND u.status<>'NOT_SENT') AS dispatched_requests,
-            (SELECT COUNT(DISTINCT u.request_id) FROM usage_receipts u
-              WHERE u.agent_id=a.id AND u.cluster_id=a.cluster_id AND u.kind='worker' AND u.status<>'NOT_SENT') AS distinct_requests
-     FROM agents a WHERE a.cluster_id=? AND a.role='worker'`, clusterId)
-    .map(row => ({
-      agent_id: textOf(row, 'agent_id'),
-      turns: countOf(row, 'turns'),
-      dispatched_requests: countOf(row, 'dispatched_requests'),
-      distinct_requests: countOf(row, 'distinct_requests'),
+  const perAgent = ledger.all(`SELECT a.id AS agent_id,a.turns,
+    (SELECT COUNT(*) FROM events e WHERE e.cluster_id=a.cluster_id AND e.type='turn-start' AND json_extract(e.data,'$.agent_id')=a.id) AS started_turns,
+    (SELECT COUNT(*) FROM events e WHERE e.cluster_id=a.cluster_id AND e.type='turn-end' AND json_extract(e.data,'$.agent_id')=a.id) AS completed_turns,
+    (SELECT COUNT(*) FROM native_session_events n WHERE n.cluster_id=a.cluster_id AND n.agent_id=a.id AND n.type IN ('assistant/message','assistant/attempt')) AS native_settlements
+    FROM agents a WHERE a.cluster_id=? AND a.role='worker'`, clusterId).map(row => ({
+      agent_id: textOf(row, 'agent_id'), turns: countOf(row, 'turns'),
+      started_turns: countOf(row, 'started_turns'), completed_turns: countOf(row, 'completed_turns'),
+      native_settlements: countOf(row, 'native_settlements'),
     }));
-  return {
-    per_agent: perAgent,
-    created: perAgent.length,
-    activated: perAgent.filter(row => row.dispatched_requests > 0).length,
-    with_turns: perAgent.filter(row => row.turns > 0).length,
-  };
+  return { per_agent: perAgent, created: perAgent.length,
+    activated: perAgent.filter(row => row.started_turns > 0 && row.completed_turns > 0 && row.native_settlements > 0).length,
+    with_turns: perAgent.filter(row => row.started_turns > 0 && row.completed_turns > 0).length };
 }
 
 /**
- * Two different ceilings, measured two different ways:
- * `resident_peak` is the peak of locally registered live turn handles (from
- * lease intervals) and `provider_inflight_peak` is the peak of dispatched but
- * unsettled provider requests (from receipt intervals). Neither is ever
- * substituted for the other, and a run with no intervals reports `null`.
+ * Agent lifecycle intervals measure resident turns. Durable assistant settlement
+ * events contain no request dispatch intervals, so provider concurrency stays
+ * unknown unless an independent provider observer records it elsewhere.
  */
 export function concurrencyPeaks(ledger: Ledger, clusterId: string): ConcurrencyPeaks {
-  const overlap = (rows: SqlRow[], from: string, to: string): number | null => {
-    const points: Array<[number, number]> = [];
-    for (const row of rows) {
-      const start = row[from];
-      const end = row[to];
-      if (typeof start !== 'number' || typeof end !== 'number') continue;
-      points.push([start, 1], [Math.max(start, end), -1]);
-    }
-    if (!points.length) return null;
-    points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    let live = 0;
-    let peak = 0;
-    for (const [, delta] of points) {
-      live += delta;
-      if (live > peak) peak = live;
-    }
-    return peak;
-  };
-  const receipts = ledger.all('SELECT created, settled FROM usage_receipts WHERE cluster_id=?', clusterId);
-  const leases = ledger.all('SELECT created, expires FROM leases WHERE cluster_id=?', clusterId);
-  return {
-    resident_peak: overlap(leases, 'created', 'expires'),
-    provider_inflight_peak: overlap(receipts, 'created', 'settled'),
-    resident_samples: leases.length,
-    provider_samples: receipts.length,
-  };
+  const events = ledger.all("SELECT type,data,at FROM events WHERE cluster_id=? AND type IN ('turn-start','turn-end') ORDER BY seq", clusterId);
+  const active = new Set<string>();
+  let peak = 0;
+  let samples = 0;
+  for (const event of events) {
+    const data = asRecord(JSON.parse(String(event.data)));
+    const agent = data?.agent_id;
+    if (typeof agent !== 'string') continue;
+    if (event.type === 'turn-start') { active.add(agent); samples += 1; peak = Math.max(peak, active.size); }
+    else active.delete(agent);
+  }
+  return { resident_peak: samples ? peak : null, provider_inflight_peak: null,
+    resident_samples: samples, provider_samples: 0 };
 }
 
 export function deliveryCounts(ledger: Ledger, clusterId: string): DeliveryCountRow[] {
@@ -318,16 +282,4 @@ function countOf(row: SqlRow | undefined, key: string): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'bigint') return Number(value);
   return 0;
-}
-
-/**
- * A row's SUM column exactly as SQL produced it: a number, or null when the
- * aggregate covered no rows. "No receipt was recorded" is not "zero used", so
- * the null is preserved rather than flattened.
- */
-function sumOf(row: SqlRow | undefined, key: string): number | null {
-  const value = row?.[key];
-  if (typeof value === 'number') return value;
-  if (typeof value === 'bigint') return Number(value);
-  return null;
 }

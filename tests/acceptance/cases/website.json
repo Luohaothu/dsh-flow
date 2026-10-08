@@ -17,8 +17,6 @@
     "max_role_turns": 32
   },
   "budget": {
-    "tokens": 2097152,
-    "model_requests": 256,
     "tool_calls": 2048,
     "wall_time_ms": 3600000,
     "agents": 256,

@@ -1,29 +1,21 @@
 ---
 title: 智能体配置参数
-description: 区分部署时的模型与上下文默认值，以及资源分配智能体在运行时对具体身份的调整。
+description: 模型路由由 Flow 配置，上下文、输出和官方默认压缩由 DSH 原生 Agent 处理。
 ---
 
 # 智能体配置参数 {#agent-配置参数}
 
-一个管理节点包含编排智能体、资源分配智能体和审计智能体，三者使用独立身份；执行智能体也使用独立身份。部署配置为所有身份提供一组共同的模型默认值，通过 `context.role` 和 `context.worker` 区分管理角色与执行智能体的上下文预算。目前没有为不同角色分别指定模型的部署配置项。
+管理角色与执行智能体均使用独立的 DSH 原生 Agent。Flow 配置任务输入、结果交付、模型选择、推理设置与工具能力。模型解析、上下文窗口、输出和压缩由 DSH 处理，Flow 不查询或缓存模型容量，不在模型发送前添加准入守卫。
 
-## 部署时设置默认值
+## 部署模型默认值
 
-以下参数位于配置方案的 `dsh-flow.config` 中，通过配置规则校验后用于创建运行时。
-
-| 参数 | 默认值 | 作用与约束 |
-| --- | --- | --- |
-| `provider` | 必填 | 已在 DSH 中配置的模型提供方，非空字符串 |
-| `model` | 必填 | 该提供方的模型 ID，非空字符串 |
-| `reasoningEffort` | 不设置 | 可选字符串，由宿主的模型提供方解释；未设置时不会写入智能体选项 |
-| `maxTokens` | `4096` | 每次模型请求的输出 Token 上限，整数 `1…2³¹` |
-| `context.role` | `8192` | 管理角色的上下文压缩预算 |
-| `context.worker` | `16384` | 执行智能体的上下文压缩预算 |
-| `context.compaction_threshold` | `0.8` | 上下文占用达到该智能体上下文预算的这一比例后，考虑压缩；有效范围 `(0, 1]` |
-| `context.model` | `131072` | 部署声明的模型窗口 |
-| `context.server_input` | `142074` | 部署声明的服务端输入上限；应与实际服务配置一致 |
-
-上下文 Token 数均须为正整数，最终配置校验上限为 `2³¹`。运行时以模型窗口与服务端输入上限中的较小值作为发送上限，并为输出预留空间，在发送前测量请求大小。提高某个智能体的压缩预算不会放宽这些限制；压缩预算也不等于模型服务的硬性上下文上限。
+| 参数 | 作用 |
+| --- | --- |
+| `provider` | DSH 中配置的模型提供方 |
+| `model` | 模型 ID |
+| `reasoningEffort` | 可选推理设置，由宿主模型适配器解释 |
+| `defaultModel` | 新团队的固定 `{ provider, model }`；省略或 `null` 时跟随主会话 |
+| `defaultReasoningEffort` | `inherit / off / low / medium / high`，用于新团队 |
 
 ```yaml
 - id: dsh-flow
@@ -31,47 +23,24 @@ description: 区分部署时的模型与上下文默认值，以及资源分配�
     provider: local-sglang
     model: Qwen3.8-27B-FP8
     reasoningEffort: off
-    maxTokens: 4096
-    context:
-      role: 8192
-      worker: 16384
-      compaction_threshold: 0.8
-      model: 131072
-      server_input: 142074
 ```
 
-上例使用的是示例模型路由。模型提供方的地址、鉴权和模型清单仍由宿主 `llm-pi-ai` 配置管理。插件组合默认从 `ctx.agentDefaultModel.currentSelection()` 读取模型选择。覆盖配置会替换对应条目的整个 `config`，因此按上例覆盖时，必须重新填写 `provider` 与 `model`。
+宿主模型适配器自己的 `contextWindow` 和输出设置仍由 DSH 配置管理。Flow 使用模型的实际上下文配置；官方默认策略可以提前压缩，也负责处理容量缺失和服务错误。每个 Flow Agent 在隔离作用域挂载一份官方默认 `compaction-basic`，卸载随 Agent 生命周期完成，部署示例无需全局启用第二份监听器或修改摘要参数。
 
-## 资源分配智能体可以调整什么 {#allocator-可以调整什么}
+## 运行中调整 {#allocator-可以调整什么}
 
-资源分配智能体通过自身的 `flow_allocation` 工具调整运行中的智能体及其资源，操作受管理域、集群上限和预算约束。用户通过主会话 `/agent-team` 启动并在主会话管理整体任务。插件的执行默认值用于新团队，显示偏好只影响阅读；成员完整会话支持符合生命周期条件的文本续聊。
+资源分配智能体通过 `flow_allocation` 调整已有身份，操作仍受管理域权限、可选路由表、资源额度与安全点约束。
 
-| 动作 | 调整对象 | 当前边界 |
-| --- | --- | --- |
-| `select_model` | 指定 `agent_id`，或本管理域子树内已有智能体的模型设置 | 只能选择运行时路由表中已有的模型提供方与模型；不会注册新的模型提供方 |
-| `set_context_budget` | 单个智能体的 `agents.meta.context` | `context_limit` 为 `1024…1048576`；`compression_threshold` 为 `(0, 1]`，默认 `0.8` |
-| `set_concurrency` | 当前集群的活跃执行数与模型请求并发数 | 可调 `max_active_agents`、`max_llm_concurrency`；超过启动时声明上限的值会被限制在该上限内，并记录事件 |
-| `allocate_budget` / `rebalance_budget` | 本管理域内的预算分配与调拨 | 调拨可用且未预留额度，不产生新的根预算 |
-| `allocate_agent` / `replace_agent` / `reassign_agent` | 执行身份、能力和执行分配 | 不修改任务单元的目标或验收标准，仍需满足执行安全点要求并通过资源检查 |
+| 动作 | 调整对象 |
+| --- | --- |
+| `select_model` | `provider`、`model` 与可选 `reasoning_effort`；不注册新提供方或预检模型能力 |
+| `set_concurrency` | 活跃 Agent 执行容量与 `max_llm_concurrency` 调度许可 |
+| `allocate_budget` / `rebalance_budget` | 工具次数、身份容量、执行容量与截止时间 |
+| `allocate_agent` / `replace_agent` / `reassign_agent` | 执行身份、能力和分配 |
 
-标准 `Config` 当前只构造一条 `provider → [model]` 路由。`select_model` 只能从已有路由中选择，无法单独将普通部署扩展成多模型池。该动作还可接收 `reasoning_effort`、`max_tokens`，并将选择保存在身份元数据中。运行时优先使用针对该智能体单独设置的值，未覆盖部分依次来自团队模型设置与部署路由。团队可跟随主会话模型或使用插件设置中的固定默认模型。
+成员配置优先于团队选择，再继承部署默认值。界面分别展示当前配置模型与最近原生事件记录的实际模型及推理设置；尚无请求事实时，实际模型显示未知。并发许可覆盖 Agent 执行轮的调度，不能据此证明所有宿主辅助模型请求的精确并发。
 
-执行智能体还有独立的输出上限：实际 `maxTokens` 取上述有效值与 `limits.worker_max_tokens` 中的较小值。管理角色不受这一专属上限约束。
-
-例如，资源分配智能体可以调整一个已有身份的上下文预算：
-
-```json
-{
-  "action": "set_context_budget",
-  "params": {
-    "agent_id": "<本管理域的智能体 ID>",
-    "context_limit": 24576,
-    "compression_threshold": 0.8
-  }
-}
-```
-
-`retention_policy` 可以记录在身份元数据中，但当前实现不会据此切换压缩算法。摘要和检查点仍由宿主的上下文压缩服务生成。
+废弃上下文、输出、Token 预算与模型请求次数参数在实际配置和动作入口明确拒绝；旧团队与数据库不迁移，应使用新的 `dataDir`。
 
 ## 能力与工具范围
 
@@ -91,4 +60,4 @@ description: 区分部署时的模型与上下文默认值，以及资源分配�
 
 ## 源码依据
 
-[Config 与解析](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/config.ts)、[动作实现](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[上下文测量](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/runtime.ts)、[能力映射](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts)、[角色工具](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)。
+[Config 与解析](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/config.ts)、[动作实现](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[原生 Agent 接入](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/runtime.ts)、[能力映射](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts)、[角色工具](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)。

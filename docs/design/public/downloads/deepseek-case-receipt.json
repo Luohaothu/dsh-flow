@@ -1,0 +1,483 @@
+{
+  "receipt_version": 1,
+  "run_id": "deepseek-budget-live-20261008-03",
+  "reviewed_at": "2026-10-08T07:55:35.134Z",
+  "review": {
+    "method": "Independent read-only SQLite and durable native Session inspection; no API, UI, environment, DB, Session or business artifact writes.",
+    "status": "PASSED",
+    "assertions": {
+      "report_passed": true,
+      "accepted_7_of_7": true,
+      "independent_validation_audit": true,
+      "worker_and_auditor_real_arithmetic": true,
+      "artifact_matches_settled_write": true,
+      "worker_readback_completed": true,
+      "auditor_used_settled_effect_and_no_file_read": true,
+      "main_deliveries_persisted_and_correct": true,
+      "idempotent_finalize": true,
+      "no_pending_work": true,
+      "all_durable_team_facts_match_native": true,
+      "all_native_exports_match_durable_sessions": true,
+      "independent_raw_usage_sums_match": true,
+      "actual_deepseek_route": true,
+      "no_mock_artifacts_or_report_markers": true,
+      "original_failure_retained_and_collection_only": true,
+      "protected_files_unchanged_during_review": true
+    }
+  },
+  "runner": {
+    "status": "PASSED",
+    "checks": [
+      {
+        "name": "native-skill-and-create",
+        "passed": true
+      },
+      {
+        "name": "real-worker-arithmetic",
+        "passed": true
+      },
+      {
+        "name": "independent-auditor-arithmetic",
+        "passed": true
+      },
+      {
+        "name": "independent-auditor-settled-write-evidence",
+        "passed": true
+      },
+      {
+        "name": "file-delivered",
+        "passed": true
+      },
+      {
+        "name": "accepted-and-independent-result-audit",
+        "passed": true
+      },
+      {
+        "name": "main-delivery-and-finalize",
+        "passed": true
+      },
+      {
+        "name": "main-delivery-matches-auditor-evidence",
+        "passed": true
+      },
+      {
+        "name": "actual-model-route",
+        "passed": true
+      },
+      {
+        "name": "real-host-usage",
+        "passed": true
+      }
+    ],
+    "original_status": "FAILED",
+    "original_failed_checks": [
+      "main-delivery-matches-auditor-evidence"
+    ],
+    "original_report_sha256": "cac1947accdbdfd284d93f89ccfa53bcfd97d8d0108443149c22046e51aef3aa"
+  },
+  "team_id": "0d16f528-71a1-4b7a-a526-5c46d92f2f1f",
+  "main_session_id": "session-16a6d2ab-be57-4f63-945c-238f2f637a87",
+  "business": {
+    "budget_cny": 3000,
+    "expenses_cny": [
+      1500,
+      680,
+      420
+    ],
+    "spent_cny": 2600,
+    "remaining_cny": 400,
+    "exceeds_budget": false,
+    "artifact": {
+      "path": "workspace/budget-report.md",
+      "bytes": 616,
+      "lines": 22,
+      "sha256": "ac72378c5076874e5931f741443fb6179890b31fb83cc62d43c9f8fe1ecfa30b"
+    },
+    "transactions": [
+      {
+        "id": "4a8f3fc3-931c-4213-adde-85bb189f6bf8",
+        "status": "ACCEPTED",
+        "result_revision": 2,
+        "accepted": true,
+        "checks": 7,
+        "passed_checks": 7
+      }
+    ],
+    "independent_audits": [
+      {
+        "kind": "plan",
+        "decision": "APPROVED",
+        "auditor_agent_id": "ca897f56-fbfc-4b32-9c2a-655ea2d64276",
+        "target_revision": 1
+      },
+      {
+        "kind": "validation",
+        "decision": "APPROVED",
+        "auditor_agent_id": "ca897f56-fbfc-4b32-9c2a-655ea2d64276",
+        "target_revision": 2
+      }
+    ],
+    "arithmetic": [
+      {
+        "role": "auditor",
+        "agent_id": "ca897f56-fbfc-4b32-9c2a-655ea2d64276",
+        "calls": [
+          {
+            "seq": 41,
+            "result_seq": 42,
+            "values": [
+              1500,
+              680,
+              420
+            ],
+            "result": 2600,
+            "successful": true,
+            "correct": true
+          },
+          {
+            "seq": 43,
+            "result_seq": 44,
+            "values": [
+              3000,
+              -2600
+            ],
+            "result": 400,
+            "successful": true,
+            "correct": true
+          }
+        ]
+      },
+      {
+        "role": "worker",
+        "agent_id": "30619b2d-cd9d-4bbd-9163-bb0389b93285",
+        "calls": [
+          {
+            "seq": 14,
+            "result_seq": 15,
+            "values": [
+              1500,
+              680,
+              420
+            ],
+            "result": 2600,
+            "successful": true,
+            "correct": true
+          },
+          {
+            "seq": 16,
+            "result_seq": 17,
+            "values": [
+              3000,
+              -2600
+            ],
+            "result": 400,
+            "successful": true,
+            "correct": true
+          }
+        ]
+      }
+    ],
+    "deliveries": [
+      {
+        "seq": 206,
+        "persisted": true,
+        "bytes": 2329,
+        "sha256": "e41c18800b73b21a4cee9f39474833a2fe4e2d1af25c3a124eea2acc84763089",
+        "correct_amounts_and_artifact": true,
+        "honest_auditor_method": true
+      },
+      {
+        "seq": 226,
+        "persisted": true,
+        "bytes": 2542,
+        "sha256": "0fa4ba93737b6891e84ef3b16b67df463f0ecca98c96792db4f406d9cb808744",
+        "correct_amounts_and_artifact": true,
+        "honest_auditor_method": true
+      }
+    ],
+    "audit_method": "Auditor inspected the settled write via flow_query and independently called flow_sum; it did not read the file with fs_read.",
+    "known_limitation": "Executor result hash_sha256 was a placeholder; receipt SHA-256 is independently computed from the delivered file."
+  },
+  "lifecycle": {
+    "cluster": {
+      "id": "0d16f528-71a1-4b7a-a526-5c46d92f2f1f",
+      "status": "COMPLETED"
+    },
+    "finalizers": [
+      {
+        "call_seq": 190,
+        "result_seq": 191,
+        "successful": true,
+        "state": "completed",
+        "version": 102,
+        "finalized_at": 1791445413684
+      },
+      {
+        "call_seq": 222,
+        "result_seq": 223,
+        "successful": true,
+        "state": "completed",
+        "version": 102,
+        "finalized_at": 1791445413684
+      }
+    ],
+    "finalized_events": 1,
+    "pending": {
+      "leases": 0,
+      "running_agents": 0,
+      "started_effects": 0,
+      "open_issues": 0
+    },
+    "worker_activation": {
+      "per_agent": [
+        {
+          "agent_id": "30619b2d-cd9d-4bbd-9163-bb0389b93285",
+          "turns": 1,
+          "started_turns": 1,
+          "completed_turns": 1,
+          "native_settlements": 4
+        }
+      ],
+      "created": 1,
+      "activated": 1,
+      "with_turns": 1
+    }
+  },
+  "model": {
+    "configured_provider": "deepseek",
+    "configured_model": "deepseek-flash",
+    "endpoint_hostname": "api.deepseek.com",
+    "actual": [
+      {
+        "scope": "main_session",
+        "observations": 36,
+        "actual_routes": [
+          {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "reasoning_effort": "off"
+          }
+        ]
+      },
+      {
+        "scope": "orchestrator",
+        "observations": 8,
+        "actual_routes": [
+          {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "reasoning_effort": "off"
+          }
+        ]
+      },
+      {
+        "scope": "auditor",
+        "observations": 5,
+        "actual_routes": [
+          {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "reasoning_effort": "off"
+          }
+        ]
+      },
+      {
+        "scope": "allocator",
+        "observations": 3,
+        "actual_routes": [
+          {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "reasoning_effort": "off"
+          }
+        ]
+      },
+      {
+        "scope": "worker",
+        "observations": 4,
+        "actual_routes": [
+          {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "reasoning_effort": "off"
+          }
+        ]
+      }
+    ]
+  },
+  "usage": {
+    "method": "Native assistant settlements and explicit model compaction calls, with missing fields preserved; reasoning is not added to total tokens.",
+    "main_session": {
+      "summary": {
+        "requests": 36,
+        "total_tokens": 2861540,
+        "prompt_tokens": 190280,
+        "completion_tokens": 7324,
+        "cached_tokens": null,
+        "cache_read_tokens": 2663936,
+        "cache_write_tokens": null,
+        "reasoning_tokens": null,
+        "completeness": "incomplete"
+      },
+      "raw_recorded_fields": {
+        "settlements": 36,
+        "attempts": 0,
+        "known": {
+          "inputTokens": 190280,
+          "outputTokens": 7324,
+          "totalTokens": 2861540,
+          "cacheReadTokens": 2663936,
+          "cacheWriteTokens": null,
+          "reasoningTokens": null
+        },
+        "missing": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 36,
+          "reasoningTokens": 36
+        }
+      }
+    },
+    "team": {
+      "summary": {
+        "requests": 20,
+        "total_tokens": 125240,
+        "prompt_tokens": 24750,
+        "completion_tokens": 4362,
+        "cached_tokens": null,
+        "cache_read_tokens": 96128,
+        "cache_write_tokens": null,
+        "reasoning_tokens": null,
+        "completeness": "incomplete"
+      },
+      "raw_recorded_fields": {
+        "settlements": 20,
+        "attempts": 0,
+        "known": {
+          "inputTokens": 24750,
+          "outputTokens": 4362,
+          "totalTokens": 125240,
+          "cacheReadTokens": 96128,
+          "cacheWriteTokens": null,
+          "reasoningTokens": null
+        },
+        "missing": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 20,
+          "reasoningTokens": 20
+        }
+      }
+    },
+    "combined_observed_tutorial": {
+      "requests": 56,
+      "total_tokens": 2986780,
+      "prompt_tokens": 215030,
+      "completion_tokens": 11686,
+      "cached_tokens": null,
+      "cache_read_tokens": 2760064,
+      "cache_write_tokens": null,
+      "reasoning_tokens": null,
+      "completeness": "incomplete"
+    },
+    "pricing": "No currency charge is inferred from token usage; missing cache-write/reasoning fields remain unknown."
+  },
+  "native_evidence": {
+    "main": {
+      "events": 229,
+      "tail": 228,
+      "export_matches_native": true
+    },
+    "sessions": [
+      {
+        "agent_id": "40a13745-a663-474f-a489-4b7ec1a31550",
+        "role": "orchestrator",
+        "status": "TERMINATED",
+        "native_session_id": "1c60d285-224c-4cb0-9738-9bd181098f62",
+        "native_events": 77,
+        "native_tail": 76,
+        "projected_events": 77,
+        "projected_tail": 76,
+        "cursor": 76,
+        "facts_match_native": true,
+        "export_matches_native": true,
+        "cursor_matches_projected_tail": true,
+        "unprojected_types": [],
+        "unprojected_usage_events": 0
+      },
+      {
+        "agent_id": "ca897f56-fbfc-4b32-9c2a-655ea2d64276",
+        "role": "auditor",
+        "status": "TERMINATED",
+        "native_session_id": "81aaae6d-3c98-46e0-9ab8-ba9c10e52382",
+        "native_events": 64,
+        "native_tail": 63,
+        "projected_events": 64,
+        "projected_tail": 63,
+        "cursor": 63,
+        "facts_match_native": true,
+        "export_matches_native": true,
+        "cursor_matches_projected_tail": true,
+        "unprojected_types": [],
+        "unprojected_usage_events": 0
+      },
+      {
+        "agent_id": "e6b110d0-7b0d-4958-88e1-ec2740622ae5",
+        "role": "allocator",
+        "status": "TERMINATED",
+        "native_session_id": "4032c1e1-62e0-4b38-8345-e8017f1d8f01",
+        "native_events": 43,
+        "native_tail": 42,
+        "projected_events": 43,
+        "projected_tail": 42,
+        "cursor": 42,
+        "facts_match_native": true,
+        "export_matches_native": true,
+        "cursor_matches_projected_tail": true,
+        "unprojected_types": [],
+        "unprojected_usage_events": 0
+      },
+      {
+        "agent_id": "30619b2d-cd9d-4bbd-9163-bb0389b93285",
+        "role": "worker",
+        "status": "TERMINATED",
+        "native_session_id": "04ca5246-7d3b-4bdc-a449-b4a3c2b4b055",
+        "native_events": 36,
+        "native_tail": 35,
+        "projected_events": 36,
+        "projected_tail": 35,
+        "cursor": 35,
+        "facts_match_native": true,
+        "export_matches_native": true,
+        "cursor_matches_projected_tail": true,
+        "unprojected_types": [],
+        "unprojected_usage_events": 0
+      }
+    ]
+  },
+  "protected_files_sha256": {
+    "data/cluster.sqlite": "5bd94e5a28d0b5b7beaf8dc736143569c7833819ef139e336640da489e5a54c9",
+    "workspace/budget-report.md": "ac72378c5076874e5931f741443fb6179890b31fb83cc62d43c9f8fe1ecfa30b",
+    "home/sessions/--home-leo-projects-dsh-flow-.artifacts-deepseek-budget-live-20261008-03-workspace--/session-16a6d2ab-be57-4f63-945c-238f2f637a87/session.v4.jsonl.zstd": "f5f7f95ee037e281fac42529a2138abf7b7e83f03c1d651c69fae06239cc564f",
+    "home/sessions/--home-leo-projects-dsh-flow-.artifacts-deepseek-budget-live-20261008-03-workspace--/1c60d285-224c-4cb0-9738-9bd181098f62/session.v4.jsonl.zstd": "3d6d079686878108078a0484c1ec98f37bbafa70dbefbcb427d2c20605a395ac",
+    "home/sessions/--home-leo-projects-dsh-flow-.artifacts-deepseek-budget-live-20261008-03-workspace--/81aaae6d-3c98-46e0-9ab8-ba9c10e52382/session.v4.jsonl.zstd": "06db30114b5578a2824f4520b24599edcec53bb488b66bef61ad1552f5336e2e",
+    "home/sessions/--home-leo-projects-dsh-flow-.artifacts-deepseek-budget-live-20261008-03-workspace--/4032c1e1-62e0-4b38-8345-e8017f1d8f01/session.v4.jsonl.zstd": "dada66734f068e10591f7c9e65448ecce6598fe6dbb13b1edf9ae70fa09d2c43",
+    "home/sessions/--home-leo-projects-dsh-flow-.artifacts-deepseek-budget-live-20261008-03-workspace--/04ca5246-7d3b-4bdc-a449-b4a3c2b4b055/session.v4.jsonl.zstd": "5b4c254e09e54f8aaae54ccbaf64a70784b8199b8530efc49608086d581d476b"
+  },
+  "publication": {
+    "whitelist_only": true,
+    "excluded": [
+      "credentials",
+      "authorization headers",
+      "auth URLs",
+      "environment values",
+      "raw Session bodies",
+      "raw profiles",
+      "raw request headers"
+    ]
+  }
+}

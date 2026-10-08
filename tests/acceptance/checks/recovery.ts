@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import { openLedger, deliveryCounts } from '../../../src/host/ledger.ts';
 import { countDeliveriesInSession, findSessionFile } from '../../../src/host/session-scan.ts';
-import { asArray, asNumber, asObject, asString } from '../context.ts';
+import { asArray, asNumber, asString } from '../context.ts';
 import type { CheckEntry, CheckOutcome, JsonObject, RestartFacts } from '../context.ts';
 
 interface CaseInstructions {
@@ -29,7 +29,7 @@ interface RecoveryRestart {
   readonly kill_at_ms?: unknown;
   readonly event_seq_at_kill?: unknown;
   readonly leases_at_crash?: unknown;
-  readonly receipts_in_flight_at_crash?: unknown;
+  readonly interrupted_agents_at_crash?: unknown;
 }
 
 interface RecoveryReport {
@@ -140,29 +140,15 @@ export async function run({ caseDef, report, layout, events }: RecoveryContext):
     ? null : fenced >= leasesAtCrashCount || expired >= leasesAtCrashCount,
   `${fenced} leases fenced at recovery, ${leasesAtCrashCount ?? 'unknown'} live at the crash, ${expired} expired during the run`);
 
-  const duplicateCharges = ledger.get('SELECT COUNT(*) AS c FROM (SELECT request_id FROM usage_receipts WHERE cluster_id=? GROUP BY request_id HAVING COUNT(*)>1)', clusterId)?.c;
-  push('no-duplicate-charges', duplicateCharges === 0, `${duplicateCharges} duplicated request ids`);
+  const duplicateCharges = ledger.get('SELECT COUNT(*) AS c FROM (SELECT native_session_id,native_seq FROM native_session_events WHERE cluster_id=? GROUP BY native_session_id,native_seq HAVING COUNT(*)>1)', clusterId)?.c;
+  push('no-duplicate-charges', duplicateCharges === 0, `${duplicateCharges} duplicated native session event keys`);
 
   const duplicateAccepts = ledger.get("SELECT COUNT(*) AS c FROM (SELECT json_extract(data,'$.transaction_id') AS t FROM events WHERE cluster_id=? AND type='result-accepted' GROUP BY t HAVING COUNT(*)>1)", clusterId)?.c;
   push('no-recomputed-acceptance', duplicateAccepts === 0, `${duplicateAccepts} transactions accepted more than once`);
 
-  // The expected number of UNKNOWN results is exactly the set of receipts that
-  // were dispatched and never settled when the process died — read from the
-  // crash's own snapshot, not from an allowance. A run that leaves *more*
-  // unaccounted requests than it interrupted has lost accounting; one that
-  // leaves fewer has silently charged a request that never happened.
-  const inFlight = asArray(restart?.receipts_in_flight_at_crash);
-  const unknownRows = ledger.all("SELECT request_id,agent_id,status,note FROM usage_receipts WHERE cluster_id=? AND status='UNKNOWN'", clusterId);
-  const inFlightIds = new Set((inFlight ?? []).map(row => asString(asObject(row)?.request_id) ?? ''));
-  const unexplained = unknownRows.filter(row => {
-    const id = asString(row.request_id);
-    return id === null || !inFlightIds.has(id);
-  });
-  push('usage-unknown-bounded',
-    inFlight === null ? null : (unknownRows.length === inFlight.length && unexplained.length === 0),
-    inFlight === null
-      ? 'the crash snapshot did not record the in-flight receipts, so the number of UNKNOWN results cannot be attributed'
-      : `${unknownRows.length} UNKNOWN receipt(s) against ${inFlight.length} dispatched-unsettled at the crash; unattributed: ${JSON.stringify(unexplained.map(row => row.request_id))}`);
+  const cursors = ledger.all('SELECT c.native_session_id,c.native_seq,MAX(n.native_seq) AS projected_seq FROM native_usage_cursors c JOIN native_session_events n ON n.native_session_id=c.native_session_id WHERE n.cluster_id=? GROUP BY c.native_session_id,c.native_seq', clusterId);
+  push('native-usage-cursors-consistent', cursors.length > 0 ? cursors.every(row => Number(row.native_seq) === Number(row.projected_seq)) : null,
+    `durable native event consumption cursors: ${JSON.stringify(cursors)}`);
 
   // The claim is about the recipient's *native Session*, so the check reads the
   // durable Session log: a recipients-table pair count would be a tautology.

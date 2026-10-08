@@ -23,7 +23,6 @@ import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
 import { communicate } from '../../packages/dsh-flow/src/core/communication.ts';
-import { reserveLlmRequest, runTurn } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { budgetView } from '../../packages/dsh-flow/src/core/budget.ts';
 import { integer, objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
 
@@ -66,7 +65,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -128,7 +127,7 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -165,15 +164,14 @@ test('a crash between taking a message and admitting it reopens it on recovery',
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a turn that dies between taking and admitting', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'allocator', limit: 5 }), 'agent');
@@ -225,15 +223,14 @@ test('a turn whose flush is refused hands its messages back', async t => {
   const host = createFakeHost({ flushResult: false });
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a turn whose flush is refused', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 2 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'allocator', limit: 5 }), 'agent');
@@ -259,14 +256,13 @@ test('disposal drains the live turns before it resolves', async t => {
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   const clusterId = runtime.start({
     objective: 'a live turn at disposal', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 4 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction').id });
@@ -295,88 +291,13 @@ test('disposal drains the live turns before it resolves', async t => {
   const db = new DatabaseSync(join(dir, 'cluster.sqlite'), { readOnly: true });
   const dbCount = (sql: string): number => numberOf(jsonObject(required(db.prepare(sql).get(), 'db row'), 'db row').c, 0, 1e9, 'count');
   assert.equal(dbCount('SELECT COUNT(*) AS c FROM leases'), 0, 'and the leases are already fenced when it resolves');
-  assert.equal(dbCount("SELECT COUNT(*) AS c FROM usage_receipts WHERE status='RESERVED'"), 0, 'with no request left reserved');
   db.close();
-});
-
-test('a receipt with no resolvable payer blocks its owner instead of debiting another request', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime, {
-    budget: { tokens: 1_000_000, model_requests: 100, tool_calls: 100, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
-  });
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');
-  const chain = runtime.budgetChainForAgent(agent, { tokens: 2_000, requests: 1 });
-
-  // Another request legitimately holds quota in the chain this agent would fall
-  // back to: that hold must not be the one an unattributable receipt consumes.
-  const live = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id, transaction_id: null,
-    role: 'orchestrator', kind: 'role', model: 'm', provider: 'p',
-    budgetIds: chain, reservationTokens: 2_000, turn_seq: 1,
-  });
-  const payer = required(required(runtime.store.getUsageReceipt(live.request_id), 'receipt').budget_scope_id, 'payer');
-  const before = required(runtime.store.getBudget(payer), 'budget');
-  assert.equal(before.requests_reserved, 1);
-
-  // A receipt whose recorded payer does not exist.
-  runtime.store.tx(() => runtime.store.insertUsageReceipt({
-    request_id: 'orphan-request', cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id,
-    transaction_id: null, role: 'orchestrator', kind: 'role', provider: 'p', model: 'm',
-    status: 'RESERVED', reservation_tokens: 500, turn_seq: 1, attempt: 1,
-    budget_scope_id: 'budget-that-does-not-exist',
-  }));
-
-  const reconciliation = runtime.reconcileReservations(required(runtime.store.getCluster(clusterId), 'cluster'), agent);
-  assert.equal(reconciliation.uncertain, 1, `the orphan is reported as uncertain: ${JSON.stringify(reconciliation)}`);
-  const after = required(runtime.store.getBudget(payer), 'budget');
-  // The live receipt is reconciled against its own payer — one attempt consumed,
-  // its token hold untouched. The orphan contributes nothing: the fallback chain
-  // would have consumed a second request from this same scope.
-  assert.equal(after.requests_spent, before.requests_spent + 1, 'exactly one attempt was consumed');
-  assert.equal(after.requests_reserved, 0, 'the live reservation became a spent attempt');
-  assert.equal(after.tokens_reserved, before.tokens_reserved, 'and its tokens stay held');
-  assert.equal(required(runtime.store.getAgent(agent.id), 'agent').status, 'BLOCKED', 'the owner is blocked');
-  assert.equal(required(runtime.store.getUsageReceipt('orphan-request'), 'receipt').status, 'RESERVED', 'and the orphan reservation is preserved');
-  const events = runtime.store.readEvents(clusterId, { limit: 300 });
-  assert.ok(events.some(event => event.type === 'accounting-uncertain' && /does not exist/.test(String(jsonObject(event.data, 'accounting-uncertain data').reason))));
-  assert.ok(events.some(event => event.type === 'node-blocked' && jsonObject(event.data, 'node-blocked data').code === 'ACCOUNTING_UNCERTAIN'));
-  void orchestrator;
-});
-
-test('a failed settlement leaves the receipt held and blocks its transaction', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator' }), 'agent');
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-  const reserved = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id, transaction_id: tx.id,
-    role: 'orchestrator', kind: 'role', model: 'm', provider: 'p',
-    budgetIds: runtime.budgetChainForAgent(agent, { tokens: 2_000, requests: 1 }),
-    reservationTokens: 2_000, turn_seq: 1,
-  });
-  const payer = required(required(runtime.store.getUsageReceipt(reserved.request_id), 'receipt').budget_scope_id, 'payer');
-  // Simulate a damaged ledger: the payer row still exists, but its request
-  // hold disappeared. Settling this receipt must not consume another hold.
-  runtime.store.tx(() => runtime.store.updateBudget(payer, { requests_reserved: 0 }));
-  const outcome = runtime.reconcileReservations(required(runtime.store.getCluster(clusterId), 'cluster'), agent, { transactionId: tx.id });
-  assert.deepEqual(outcome, { consumed: 0, uncertain: 1 });
-  assert.equal(required(runtime.store.getUsageReceipt(reserved.request_id), 'receipt').status, 'RESERVED');
-  assert.equal(required(runtime.store.getBudget(payer), 'budget').requests_spent, 0);
-  assert.equal(required(runtime.store.getAgent(agent.id), 'agent').status, 'BLOCKED');
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'BLOCKED',
-    'the Orchestrator must not publish work whose request cannot be settled');
-  assert.equal(required(runtime.store.getNode(root.id), 'node').status, 'BLOCKED');
-  assert.ok(runtime.store.readEvents(clusterId, { limit: 200 }).some(event =>
-    event.type === 'accounting-uncertain' && jsonObject(event.data, 'accounting-uncertain data').code === 'ACCOUNTING_UNCERTAIN'));
 });
 
 test('tool quota is reconciled once, by how far the call got — not by the effect decision', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime, {
-    budget: { tokens: 1_000_000, model_requests: 100, tool_calls: 100, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
+    budget: { tool_calls: 100, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
   });
   const root = rootNode(runtime, clusterId);
   const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
@@ -449,15 +370,14 @@ test('a durably answered message is never reopened by recovery', async t => {
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a message that is really answered', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'allocator', limit: 5 }), 'agent');
@@ -491,15 +411,14 @@ test('an addressed message and a subscribed blackboard change each wake an idle 
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'communication as work', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocatorAgent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'allocator', limit: 5 }), 'agent');
@@ -589,15 +508,14 @@ test('a pre-dispatch failure never runs the tool and never costs quota', async t
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a barrier that fails closed', workspace: dir, capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');
@@ -654,76 +572,10 @@ test('a pre-dispatch failure never runs the tool and never costs quota', async t
   assert.equal(outcome.counters.reserved, before.reserved, 'and neither holds quota');
 });
 
-test('a completed Worker with an unattributable request is blocked, not published', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-orphan-worker-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'a worker whose accounting cannot be attributed', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_attempts: 1, max_role_turns: 3 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
-  command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'allocate_agent', { transaction_id: tx.id });
-
-  // The Worker stages a result, and an orphan receipt (a payer that does not
-  // exist) is left behind by the same turn.
-  host.setScript(async turn => {
-    if (!(turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker')) return;
-    await turn.callTool('flow_transaction', {
-      action: 'submit_result', params: { transaction_id: tx.id, result: { claim: 'sum is 5' } },
-    });
-    const agent = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'agent');
-    runtime.store.tx(() => runtime.store.insertUsageReceipt({
-      request_id: 'orphan-worker-request', cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id,
-      transaction_id: tx.id, role: 'worker', kind: 'worker', provider: 'p', model: 'm',
-      status: 'RESERVED', reservation_tokens: 500, turn_seq: 1, attempt: 1,
-      budget_scope_id: 'budget-that-does-not-exist',
-    }));
-  });
-
-  runtime.enableScheduling();
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    if (['BLOCKED', 'FAILED', 'SUBMITTED'].includes(required(runtime.store.getTransaction(tx.id), 'transaction').status) || Date.now() > deadline) break;
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-  }
-
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'BLOCKED', 'the transaction is blocked, not submitted');
-  const events = runtime.store.readEvents(clusterId, { limit: 500 });
-  assert.equal(events.filter(event => event.type === 'result-submitted' && jsonObject(event.data, 'result-submitted data').transaction_id === tx.id).length, 0,
-    'no result is published from unattributable accounting');
-  const withheld = events.filter(event => event.type === 'result-withheld' && jsonObject(event.data, 'result-withheld data').transaction_id === tx.id);
-  assert.ok(withheld.some(event => jsonObject(event.data, 'result-withheld data').code === 'ACCOUNTING_UNCERTAIN'), `the turn says why: ${JSON.stringify(withheld.map(event => event.data))}`);
-  assert.ok(events.some(event => event.type === 'accounting-uncertain' && /does not exist/.test(String(jsonObject(event.data, 'accounting-uncertain data').reason))));
-  // The staged result is kept for the human decision, and the adapter still holds
-  // its orphan reservation rather than inventing a payer for it.
-  assert.equal(required(runtime.store.getUsageReceipt('orphan-worker-request'), 'receipt').status, 'RESERVED');
-  assert.ok(required(runtime.store.getTransaction(tx.id), 'transaction').result !== null && required(runtime.store.getTransaction(tx.id), 'transaction').result !== undefined,
-    'the staged result is preserved, not discarded');
-});
-
 test('one tool hold is moved once: recover, resolve and a late completion stay consistent', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime, {
-    budget: { tokens: 1_000_000, model_requests: 100, tool_calls: 20, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
+    budget: { tool_calls: 20, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
   });
   const root = rootNode(runtime, clusterId);
   const owner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'agent');
@@ -794,15 +646,14 @@ test('a role that only queries or is refused is stagnant, and stops at the bound
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a role that changes nothing', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 12 },
-    budget: { tokens: 2_000_000, model_requests: 100, tool_calls: 5_000, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 5_000, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'allocator', limit: 5 }), 'agent');
@@ -843,76 +694,20 @@ test('a role that only queries or is refused is stagnant, and stops at the bound
   assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'BLOCKED');
 });
 
-test('pre-turn and in-turn compaction keep both steps inside the identity budget', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-anchor-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  // The meter reports the session; each compaction halves it.
-  let tokens = 30_000;
-  const calls: { readonly reason: unknown; readonly at: number }[] = [];
-  const host = createFakeHost({
-    tokenMeter: { measure: () => ({ totalTokens: tokens, logRevision: 1 }) },
-    compaction: {
-      async compactNow() { return null; },
-      async compactIfNeeded(_session, reason) {
-        calls.push({ reason, at: tokens });
-        tokens = Math.floor(tokens / 2);
-        return { summarySeq: calls.length };
-      },
-    },
-  });
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const auditor = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'agent');
-
-  // A large session first shrinks before the turn, then each step must still
-  // fit the identity limit; regrowth inside the turn requires another summary.
-  const decisions: string[] = [];
-  host.setScript(async turn => {
-    decisions.push((await turn.preStep({ step: 1 })).kind);
-    tokens = 16_000;
-    decisions.push((await turn.preStep({ step: 2 })).kind);
-  });
-  await runTurn(host.ctx, {
-    agent: auditor, role: 'auditor', prompt: 'work', allowedTools: [], globalTools: [], capabilities: [],
-    resume: false,
-    model: runtime.config.model,
-    signal: new AbortController().signal, logger: { warn() {}, info() {}, error() {} },
-    budgetIds: runtime.agentBudgetChain(required(runtime.store.getCluster(clusterId), 'cluster'), auditor),
-    transactionId: null, turnSeq: 1, flow: runtime,
-    contextLimits: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
-  });
-
-  assert.deepEqual(decisions, ['enter', 'enter']);
-  assert.equal(tokens, 8_000, 'both steps fit the 8192-token identity budget after compaction');
-  assert.equal(calls.length, 3, 'pre-turn and two in-turn compactions were required');
-  const steps = runtime.store.readEvents(clusterId, { limit: 200 }).filter(event => event.type === 'context-step');
-  assert.deepEqual(steps.map(event => {
-    const data = jsonObject(event.data, 'context-step data');
-    return [data.decision, numberOf(data.after, 0, 1e9, 'after')];
-  }), [['compact', 7_500], ['compact', 8_000]]);
-  assert.ok(steps.every(event => {
-    const data = jsonObject(event.data, 'context-step data');
-    return numberOf(data.after, 0, 1e9, 'after') + numberOf(data.pending, 0, 1e9, 'pending')
-      <= numberOf(data.context_limit, 0, 1e9, 'context_limit');
-  }));
-});
-
 test('a long tool result is stored as valid JSON, never as a truncation of it', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-jsonbody-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 8192, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a receipt that stays parseable', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');

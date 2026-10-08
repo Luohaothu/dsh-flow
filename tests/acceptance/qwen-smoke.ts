@@ -129,7 +129,7 @@ async function httpProtocolSuite(receipts: QwenReceipts): Promise<void> {
     JSON.stringify(streamed.toolCalls).slice(0, 300));
   // The service's own default keeps thinking on; the harness disables it per
   // request through the qwen chat template, so the raw probe records the
-  // default and the *agent* path is asserted from its usage receipts below.
+  // default and the *agent* path is asserted from its native event facts below.
   receipts.http.streaming = { finishReason: streamed.finishReason, usage: streamed.usage, toolCalls: streamed.toolCalls, reasoningChars: streamed.reasoningChars, chunks: streamed.chunks };
   push('default-mode-observed', true, `service default produced ${streamed.reasoningChars} reasoning chars (thinking on unless the request disables it)`);
 
@@ -227,7 +227,7 @@ async function agentReasoningSuite(host: DshHost, layout: RunLayout, receipts: Q
   }, 600_000));
   if (!single) throw new Error('single reply is not a single-agent result');
   receipts.host.reasoning = single.usage;
-  push('agent-requests-carry-no-reasoning-tokens', (single.usage?.reasoning_tokens ?? 0) === 0 && (single.usage?.requests ?? 0) > 0,
+  push('agent-requests-carry-no-reasoning-tokens', single.usage?.reasoning_tokens === 0 && (single.usage?.requests ?? 0) > 0,
     `usage ${JSON.stringify(single.usage)}`);
 
   const db = new DatabaseSync(join(layout.data, 'cluster.sqlite'), { readOnly: true });
@@ -236,7 +236,7 @@ async function agentReasoningSuite(host: DshHost, layout: RunLayout, receipts: Q
   try {
     agentRow = db.prepare("SELECT session_id FROM agents WHERE cluster_id=? AND role='worker' LIMIT 1").get(single.cluster_id);
     transactionRow = db.prepare('SELECT id,status,result FROM transactions WHERE cluster_id=? LIMIT 1').get(single.cluster_id);
-    const routes = db.prepare('SELECT provider,model FROM usage_receipts WHERE cluster_id=?').all(single.cluster_id);
+    const routes = db.prepare("SELECT json_extract(data,'$.message.source.provider') AS provider,json_extract(data,'$.message.source.model') AS model FROM native_session_events WHERE cluster_id=? AND type='assistant/message'").all(single.cluster_id);
     push('host-model-route-matches-deployment', routes.length > 0 && routes.every(row => row.provider === PROVIDER && row.model === MODEL),
       JSON.stringify(routes));
   } finally {
@@ -369,7 +369,7 @@ async function cancellationSuite(host: DshHost, layout: RunLayout, receipts: Qwe
     objective: 'Write a 2000-word essay about the history of the abacus, one paragraph per tool call.',
     workspace: layout.workspace,
     capabilities: ['fs_read', 'fs_write'],
-    budget: { tokens: 262144, model_requests: 32, tool_calls: 64, wall_time_ms: 300_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 64, wall_time_ms: 300_000, agents: 16, max_active_agents: 3 },
     limits: { max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
   }, 120_000));
   if (!created) throw new Error('start reply carried no cluster');
@@ -400,7 +400,7 @@ async function concurrencySuite(host: DshHost, layout: RunLayout, receipts: Qwen
 }
 
 function singleBudget(): JsonObject {
-  return { tokens: 1_048_576, model_requests: 48, tool_calls: 128, wall_time_ms: 900_000, agents: 8, max_active_agents: 2 };
+  return { tool_calls: 128, wall_time_ms: 900_000, agents: 8, max_active_agents: 2 };
 }
 
 function sumTool(): JsonObject {

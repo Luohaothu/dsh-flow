@@ -12,7 +12,7 @@ import { isJsonValue } from '@deepseek-ai/dsh-util-values';
 import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 
 import { fail, messageOf } from '../errors.ts';
-import { integer, normalizeLimit, objectField, validateCapabilities } from '../validation.ts';
+import { normalizeLimit, objectField, validateCapabilities } from '../validation.ts';
 import type { FlowAgentRole, FlowAuditKind, FlowBudgetView, FlowJsonValue, FlowManagementRole, FlowTransactionStatus } from '../types.ts';
 import type {
   AgentRecord, AllocationRecord, AuditRecord, BudgetRecord, ClusterRecord,
@@ -89,8 +89,6 @@ type JsonBudgetView = {
   node_id: string | null
   parent_budget_id: string | null
   revision: number
-  tokens: JsonBudgetDimension
-  model_requests: JsonBudgetDimension
   tool_calls: JsonBudgetDimension
   agents: JsonBudgetDimension
   max_active_agents: JsonBudgetDimension
@@ -104,7 +102,7 @@ function budgetJson(view: FlowBudgetView | null): JsonBudgetView | null {
   return {
     id: view.id, scope_kind: view.scope_kind, scope_id: view.scope_id, node_id: view.node_id,
     parent_budget_id: view.parent_budget_id, revision: view.revision,
-    tokens: view.tokens, model_requests: view.model_requests, tool_calls: view.tool_calls,
+    tool_calls: view.tool_calls,
     agents: view.agents, max_active_agents: view.max_active_agents,
     wall_limit_ms: view.wall_limit_ms, wall_deadline: view.wall_deadline,
   };
@@ -162,7 +160,6 @@ interface ClusterRuntimePort {
   readonly store: ClusterStore
   readonly config: {
     readonly staleMs: number
-    readonly context: { readonly role: number }
     readonly routes: Record<string, readonly string[]>
   }
   timestamp(): number
@@ -193,7 +190,7 @@ interface ClusterRuntimePort {
   healthSignals(clusterId: string, options: { windowMs?: number }): unknown
   settledDependencies(tx: TransactionRecord): boolean
   sessionOffsetOf(sessionId: string): number | null
-  usageWatermark(clusterId: string): number | null
+  usageWatermark(nativeSessionId: string): number | null
   setLlmConcurrency(limit: number,clusterId?:string): void
   noteCorrectionBudgetStop?(
     clusterId: string,
@@ -447,16 +444,15 @@ function assertWriteScopeFree(rt: ClusterRuntimePort, cluster: ClusterRecord, ca
 }
 
 /**
- * Accept both `{tokens: 1000}` and `{tokens: {limit: 1000}}` (a shape models
- * reach for), and translate a requests/tool-calls spelling to this ledger.
+ * Accept scalar or nested tool quota amounts and validate every dimension.
  */
 function normaliseAmounts(amounts: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   const source = amounts !== null && typeof amounts === 'object' && !Array.isArray(amounts)
     ? objectField(amounts, 'amounts') : {};
   for (const [key, value] of Object.entries(source)) {
-    const name = key === 'requests' || key === 'model_requests' ? 'model_requests'
-      : key === 'tool_calls' || key === 'tools' ? 'tool_calls'
+    if (!['tool_calls', 'tools', 'agents', 'max_active_agents', 'max_active'].includes(key)) fail(`Unknown budget dimension: ${key}`);
+    const name = key === 'tool_calls' || key === 'tools' ? 'tool_calls'
         : key === 'max_active' || key === 'max_active_agents' ? 'max_active_agents'
           : key;
     const entries = value !== null && typeof value === 'object' && !Array.isArray(value) ? objectField(value, key) : null;
@@ -471,7 +467,7 @@ function normaliseAmounts(amounts: unknown): Record<string, number> {
 function applyBudgetGrant(rt: ClusterRuntimePort, fromBudget: BudgetRecord | null | undefined, toBudget: BudgetRecord, amounts: Record<string, unknown>): void {
   const transfer: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(amounts)) {
-    if (!['tokens', 'model_requests', 'tool_calls', 'agents', 'max_active_agents'].includes(key)) fail(`Unknown budget dimension: ${key}`);
+    if (!['tool_calls', 'agents', 'max_active_agents'].includes(key)) fail(`Unknown budget dimension: ${key}`);
     transfer[key] = value;
   }
   if (!Object.keys(transfer).length) return;
@@ -497,7 +493,7 @@ function reclaimUnusedAgentGrant(rt: ClusterRuntimePort, clusterId: string, agen
   const agentBudget: BudgetRecord | null = rt.store.budgetForScope(clusterId, 'agent', agentId);
   if (!agentBudget) return;
   const give: Record<string, number> = {};
-  for (const key of ['tokens', 'model_requests', 'tool_calls']) {
+  for (const key of ['tool_calls']) {
     const available = dimensionAvailable(agentBudget, key);
     if (available > 0) give[key] = available;
   }
@@ -1064,33 +1060,19 @@ export const HANDLERS = {
       // Allocator can explicitly grant more as the work requires.
       const workingTurns = Math.min(3, Math.max(1, Number(cluster.limits?.max_role_turns) || 3));
       const declaredTools = Number(cluster.spec?.budget?.tool_calls ?? cluster.budget?.tool_calls ?? 0) || 0;
-      const declaredTokens = Number(cluster.spec?.budget?.tokens ?? cluster.budget?.tokens ?? 0) || 0;
-      const declaredRequests = Number(cluster.spec?.budget?.model_requests ?? cluster.budget?.model_requests ?? 0) || 0;
       // Use one eighth of the declared tool budget as a per-node fair-share
       // floor, bounded below by working needs and above by the available grant.
       const fairShareTools = declaredTools > 0 ? Math.floor(declaredTools / 8) : 0;
-      const perTurn = Math.max(16_384, Number(rt.config?.context?.role ?? 8_192) * 2);
       const wave = Math.max(1, Number(cluster.limits?.max_active_agents) || 1);
-      // Apply the fair-share floor across tokens, requests and tool calls.
+      // Size the tool-call floor for management and Worker execution.
       // Cap the tool minimum at a quarter of the declaration so small budgets
       // can fund multiple branches.
       const toolFloor = Math.min(
         Math.max(workingTurns * 20 * 3 + wave * 16, fairShareTools),
         Math.max(4, Math.floor(declaredTools / 4)),
       );
-      const tokenFloor = declaredTokens > 0 ? Math.floor(declaredTokens / 8) : 0;
-      const requestFloor = declaredRequests > 0 ? Math.floor(declaredRequests / 8) : 0;
-      const floor: Record<string, number> = {
-        tokens: Math.max(workingTurns * perTurn * 3 + wave * perTurn, tokenFloor),
-        model_requests: Math.max(workingTurns * 10 + wave * 3, requestFloor),
-        // The tool floor covers management actions and the Worker wave together.
-        tool_calls: toolFloor,
-      };
-      // A target endowment includes several turns per role; missing it by a
-      // few thousand tokens must not turn a funded branch into an inert one.
-      // The hard minimum is one send/tool action for each management role and
-      // a two-request Worker with its own 65,536-token grant at the leaf.
-      const minimum: Record<string, number> = { tokens: 3 * perTurn + 65_536, model_requests: 5, tool_calls: 5 };
+      const floor: Record<string, number> = { tool_calls: toolFloor };
+      const minimum: Record<string, number> = { tool_calls: 5 };
       // Reclaim this parent's idle role grants before funding a child.
       // The transfer stays within the parent's domain and preserves live turns.
       rt.reclaimIdleRoleGrants(cluster.id, parentBudget.id);
@@ -1301,9 +1283,17 @@ export const HANDLERS = {
   },
 
   select_model(rt, cluster, actor, params) {
+    for (const key of Object.keys(params)) {
+      if (!['agent_id', 'node_id', 'provider', 'model', 'model_id', 'id', 'reasoning_effort'].includes(key)) {
+        fail(`Unsupported select_model field: ${key}`);
+      }
+    }
     // `model` may be a bare id or an object; both spellings name the same route.
     const spec: Record<string, unknown> = params.model !== null && typeof params.model === 'object' && !Array.isArray(params.model)
       ? objectField(params.model, 'model') : {};
+    for (const key of Object.keys(spec)) {
+      if (!['provider', 'model', 'reasoningEffort'].includes(key)) fail(`Unknown model field: ${key}`);
+    }
     const provider = typeof params.provider === 'string' ? params.provider
       : typeof spec.provider === 'string' ? spec.provider : undefined;
     const modelId = typeof params.model_id === 'string' ? params.model_id
@@ -1314,12 +1304,10 @@ export const HANDLERS = {
       fail('select_model needs {"provider":"<route>","model":"<model id>"} (or {"model":{"provider":...,"model":...}})');
     }
     const reasoningEffortValue = params.reasoning_effort ?? spec.reasoningEffort;
-    const maxTokensValue = params.max_tokens;
     const model = {
       provider,
       model: modelId,
       ...(typeof reasoningEffortValue === 'string' ? { reasoningEffort: reasoningEffortValue } : {}),
-      ...(typeof maxTokensValue === 'number' ? { maxTokens: maxTokensValue } : {}),
     };
     const route = rt.config.routes?.[model.provider];
     if (!route) fail(`unknown model provider route: ${model.provider}`, 409);
@@ -1510,9 +1498,6 @@ export const HANDLERS = {
       const allocation = rt.store.activeAllocationForAgent(agent.id);
       if (allocation) fail(`cannot reparent while allocation ${allocation.id} is still active`, 409);
     }
-    const reserved = rt.store.usageReceiptsAll(cluster.id).filter(receipt => receipt.status === 'RESERVED'
-      && agents.some(agent => agent.id === receipt.agent_id));
-    if (reserved.length) fail(`cannot reparent while ${reserved.length} usage reservations are still open in the subtree`, 409);
     const openCalls = rt.store.toolCallReceipts(cluster.id).filter(receipt => receipt.dispatch_status === 'ADMITTED'
       && agents.some(agent => agent.id === receipt.agent_id));
     if (openCalls.length) fail(`cannot reparent while ${openCalls.length} tool calls are admitted but not settled in the subtree`, 409);
@@ -1608,7 +1593,7 @@ export const HANDLERS = {
       flushed_seq: rt.sessionOffsetOf(agent.session_id),
       events_seq: rt.store.latestEventSeq(cluster.id), transaction_id: allocation?.transaction_id ?? null,
       transaction_revision: allocation?.transaction_id ? rt.store.getTransaction(allocation.transaction_id)?.revision ?? null : null,
-      inbox_ack_cursor: null, usage_watermark: rt.usageWatermark(cluster.id), turn_seq: agent.turns,
+      inbox_ack_cursor: null, usage_watermark: rt.usageWatermark(agent.session_id), turn_seq: agent.turns,
       data: { reason: 'explicit checkout' },
     }) ?? fail('Failed to write checkpoint', 500);
     rt.store.deleteCheckpointsAfter(cluster.id, agent.id, checkpoint.id);
@@ -2170,24 +2155,6 @@ export const HANDLERS = {
     return { health_id: row.id, signals, scores, weights };
   },
 
-  // ----------------------------------------------------------------- allocator
-  /**
-   * A per-identity context budget: the Allocator's answer to one session that
-   * outgrows the role default, without moving the default for everyone.
-   */
-  set_context_budget(rt, cluster, actor, params) {
-    const agent = rt.store.getAgent(optionalText(params.agent_id) ?? optionalText(params.agent) ?? '');
-    if (!agent || agent.cluster_id !== cluster.id) fail('Agent not found', 404);
-    assertDomain(rt, cluster, actor, agent.node_id);
-    const limit = integer(params.context_limit ?? params.limit, 1024, 1_048_576, 'context_limit');
-    const trigger = params.compression_threshold ?? params.trigger ?? 0.8;
-    if (typeof trigger !== 'number' || !(trigger > 0) || trigger > 1) fail('compression_threshold must be a number in (0,1]');
-    const retention = optionalText(params.retention_policy);
-    rt.store.updateAgent(agent.id, { meta: { ...agent.meta, context: { limit, trigger, retention } } });
-    rt.store.appendEvent(cluster.id, 'context-budget-set', { agent_id: agent.id, limit, trigger, retention });
-    return { agent_id: agent.id, context: { limit, trigger, retention } };
-  },
-
   // ------------------------------------------------------------------ worker
   /**
    * Stage a Worker's proposal. It is deliberately *not* published yet: only a
@@ -2248,8 +2215,9 @@ function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: T
       objective: tx.objective.slice(0, 400),
       result_revision: tx.result_revision,
       conclusion: summariseResult(tx.result),
+      conclusions: [{ transaction_id: tx.id, result: summariseResult(tx.result) ?? 'null' }],
       evidence: (tx.validation?.checks ?? []).map(check => ({
-        criterion: String(check.criterion).slice(0, 300), passed: check.passed, evidence: String(check.evidence ?? '').slice(0, 400),
+        transaction_id: tx.id, criterion: String(check.criterion).slice(0, 300), passed: check.passed, evidence: String(check.evidence ?? '').slice(0, 400),
       })),
       accepted_by: 'auditor',
     },
@@ -2315,7 +2283,7 @@ function writeNodeSummary(rt: ClusterRuntimePort, cluster: ClusterRecord, nodeId
       },
       conclusions: summaries.map(summary => ({
         transaction_id: typeof summary.transaction_id === 'string' ? summary.transaction_id : null,
-        conclusion: jsonValue(summary.conclusion ?? null, 'summary.conclusion'),
+        result: typeof summary.conclusion === 'string' ? summary.conclusion : JSON.stringify(summary.conclusion ?? null),
       })),
       evidence,
       unresolved_questions: openIssues.map(issue => ({ issue_id: issue.id, required_change: issue.required_change.slice(0, 300) })),
@@ -2355,11 +2323,11 @@ function normaliseDecision(value: unknown): 'APPROVED' | 'REJECTED' {
 }
 
 /** The dimensions a child grant is split over, in declaration order. */
-const GRANT_DIMENSIONS: readonly BudgetDimension[] = ['tokens', 'model_requests', 'tool_calls', 'agents', 'max_active_agents'];
+const GRANT_DIMENSIONS: readonly BudgetDimension[] = ['tool_calls', 'agents', 'max_active_agents'];
 
 /** The limit column each grantable dimension reads from a budget row. */
 const LIMIT_COLUMN: Record<BudgetDimension, BudgetNumericColumn> = {
-  tokens: 'tokens_limit', model_requests: 'requests_limit', tool_calls: 'tool_calls_limit',
+  tool_calls: 'tool_calls_limit',
   agents: 'agents_limit', max_active_agents: 'max_active_limit',
 };
 

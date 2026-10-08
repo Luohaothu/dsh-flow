@@ -7,7 +7,7 @@
  * from the earliest ancestor; pause or restart never resets it.
  */
 import { fail } from '../errors.ts';
-import { integer, objectField } from '../validation.ts';
+import { BUDGET_KEYS, integer, objectField, rejectUnknownFields } from '../validation.ts';
 import type {
   FlowBudgetDimensionView,
   FlowBudgetEvaluation,
@@ -19,16 +19,14 @@ import type { BudgetPatch, BudgetRecord } from './model.ts';
 import type { ClusterStore } from './store.ts';
 
 /**
- * The five dimensions the ledger funds. `agents` and `max_active_agents` are
+ * The three dimensions the ledger funds. `agents` and `max_active_agents` are
  * *capacity*, not consumable resources: a slot is held while an identity exists
  * and returned when it is released, so there is nothing to consume.
  */
-export type BudgetDimension = 'tokens' | 'model_requests' | 'tool_calls' | 'agents' | 'max_active_agents';
+export type BudgetDimension = 'tool_calls' | 'agents' | 'max_active_agents';
 
 /** Every numeric column of a budget row: one per dimension role. */
 export type BudgetNumericColumn =
-  | 'tokens_limit' | 'tokens_reserved' | 'tokens_spent'
-  | 'requests_limit' | 'requests_reserved' | 'requests_spent'
   | 'tool_calls_limit' | 'tool_calls_reserved' | 'tool_calls_spent'
   | 'agents_limit' | 'agents_reserved'
   | 'max_active_limit' | 'max_active_reserved';
@@ -45,18 +43,14 @@ export interface DimensionSpec {
   readonly spent: BudgetNumericColumn | null;
 }
 
-const TOKENS: DimensionSpec = { key: 'tokens', limit: 'tokens_limit', reserved: 'tokens_reserved', spent: 'tokens_spent' };
-const MODEL_REQUESTS: DimensionSpec = { key: 'model_requests', limit: 'requests_limit', reserved: 'requests_reserved', spent: 'requests_spent' };
 const TOOL_CALLS: DimensionSpec = { key: 'tool_calls', limit: 'tool_calls_limit', reserved: 'tool_calls_reserved', spent: 'tool_calls_spent' };
 const AGENTS: DimensionSpec = { key: 'agents', limit: 'agents_limit', reserved: 'agents_reserved', spent: null };
 const MAX_ACTIVE_AGENTS: DimensionSpec = { key: 'max_active_agents', limit: 'max_active_limit', reserved: 'max_active_reserved', spent: null };
 
-export const DIMENSIONS: readonly DimensionSpec[] = [TOKENS, MODEL_REQUESTS, TOOL_CALLS, AGENTS, MAX_ACTIVE_AGENTS];
+export const DIMENSIONS: readonly DimensionSpec[] = [TOOL_CALLS, AGENTS, MAX_ACTIVE_AGENTS];
 
 /** Named lookup so a proven dimension literal needs no re-listing. */
 const DIMENSION_SPECS: Record<BudgetDimension, DimensionSpec> = {
-  tokens: TOKENS,
-  model_requests: MODEL_REQUESTS,
   tool_calls: TOOL_CALLS,
   agents: AGENTS,
   max_active_agents: MAX_ACTIVE_AGENTS,
@@ -107,13 +101,14 @@ export function createBudget(store: ClusterStore, {
   cluster_id, scope_kind, scope_id, node_id = null, parent_budget_id = null,
   limit = {}, reserved = {}, spent = {}, wall_limit_ms = 0, wall_deadline = null,
 }: CreateBudgetInput): BudgetRecord {
+  for (const [label, values] of [['limit', limit], ['reserved', reserved], ['spent', spent]] as const) {
+    rejectUnknownFields(objectField(values, label), BUDGET_KEYS, label);
+  }
   const existing = store.budgetForScope(cluster_id, scope_kind, scope_id);
   if (existing) return existing;
   const inserted = store.insertBudget({
     id: `${cluster_id}:${scope_kind}:${scope_id}`,
     cluster_id, scope_kind, scope_id, node_id, parent_budget_id,
-    tokens_limit: limit.tokens ?? 0, tokens_reserved: reserved.tokens ?? 0, tokens_spent: spent.tokens ?? 0,
-    requests_limit: limit.model_requests ?? 0, requests_reserved: reserved.model_requests ?? 0, requests_spent: spent.model_requests ?? 0,
     tool_calls_limit: limit.tool_calls ?? 0, tool_calls_reserved: reserved.tool_calls ?? 0, tool_calls_spent: spent.tool_calls ?? 0,
     agents_limit: limit.agents ?? 0, agents_reserved: reserved.agents ?? 0,
     max_active_limit: limit.max_active_agents ?? 0, max_active_reserved: reserved.max_active_agents ?? 0,
@@ -135,8 +130,6 @@ function dimensionView(row: BudgetRecord, spec: DimensionSpec): FlowBudgetDimens
 /** Project a row that is already known to exist. */
 function projectBudget(row: BudgetRecord): FlowBudgetView {
   const dimensions: Record<BudgetDimension, FlowBudgetDimensionView> = {
-    tokens: dimensionView(row, DIMENSION_SPECS.tokens),
-    model_requests: dimensionView(row, DIMENSION_SPECS.model_requests),
     tool_calls: dimensionView(row, DIMENSION_SPECS.tool_calls),
     agents: dimensionView(row, DIMENSION_SPECS.agents),
     max_active_agents: dimensionView(row, DIMENSION_SPECS.max_active_agents),
@@ -213,7 +206,7 @@ export function reserveChain(
   store: ClusterStore,
   budgetIds: readonly string[],
   amounts: unknown,
-  { label = 'model request' }: { label?: string } = {},
+  { label = 'resource reservation' }: { label?: string } = {},
 ): string[] {
   const wanted = budgetAmounts(amounts, 'reservation');
   return store.tx(() => {
@@ -389,8 +382,6 @@ export type FlowBudgetRollup = Record<BudgetDimension, FlowBudgetRollupDimension
  */
 export function rollupBudgets(store: ClusterStore, clusterId: string): FlowBudgetRollup {
   const total: FlowBudgetRollup = {
-    tokens: { limit: 0, reserved: 0, spent: 0 },
-    model_requests: { limit: 0, reserved: 0, spent: 0 },
     tool_calls: { limit: 0, reserved: 0, spent: 0 },
     agents: { limit: 0, reserved: 0, spent: 0 },
     max_active_agents: { limit: 0, reserved: 0, spent: 0 },
@@ -425,7 +416,7 @@ export function evaluateTree(store: ClusterStore, clusterId: string): FlowBudget
 export function exhausted(
   store: ClusterStore,
   budget: string | BudgetRecord,
-  dimensions: readonly BudgetDimension[] = ['tokens', 'model_requests', 'tool_calls'],
+  dimensions: readonly BudgetDimension[] = ['tool_calls'],
 ): boolean {
   const row = typeof budget === 'string' ? store.getBudget(budget) : budget;
   if (!row) return true;

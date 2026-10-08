@@ -395,19 +395,18 @@ export function classifyRequest(body: unknown): MockRequestClassification {
   const text = roleMessage ? messageText(roleMessage) : workerMessage ? messageText(workerMessage) : lastUserText;
   const toolMessages = messages.filter(message => message.role === 'tool');
   const lastMessageRole = messages.length ? textOf(messages[messages.length - 1]?.role) : null;
-  // The digest is read from the *last user message*: either the plugin's own
-  // role prompt, or the checkpoint a native compaction put in its place. Both
-  // are the state the turn is acting on. A digest that only an older message
-  // carries is not used to choose an action — the step then ends the turn and
-  // the scheduler re-prompts with current state.
-  const digestFromLastUser = digestIn(lastUserText);
-  const digest = digestFromLastUser ?? identity.digest;
+  // Native policy snapshots and inbox notices can follow a fresh role prompt.
+  // Freshness depends on whether its digest follows the last assistant reply,
+  // rather than whether the final user message happens to contain the digest.
+  const digestMessage = [...users].reverse().find(message => digestIn(messageText(message)) !== null) ?? null;
+  const digestText = messageText(digestMessage);
+  const digest = digestIn(digestText) ?? identity.digest;
   return {
     kind: compaction ? 'compaction' : identity.role ? 'role' : identity.workerPrompt || identity.transactionId ? 'worker' : 'unknown',
     compaction,
     checkpoint_continuation: checkpointContinuation,
-    digest_source: digestFromLastUser ? (lastUserText.includes(DIGEST_MARKER) ? 'prompt' : 'checkpoint') : identity.digest ? 'older' : null,
-    fresh_digest: digestFromLastUser !== null && lastMessageRole === 'user',
+    digest_source: digestMessage ? (digestText.includes(DIGEST_MARKER) ? 'prompt' : 'checkpoint') : identity.digest ? 'older' : null,
+    fresh_digest: digestMessage !== null && messages.lastIndexOf(digestMessage) > messages.findLastIndex(message => message.role === 'assistant'),
     last_message_role: lastMessageRole,
     role: identity.role,
     nodeId: identity.nodeId,
@@ -910,8 +909,8 @@ function splitText(text: string): string[] {
 }
 
 /**
- * Synthetic usage. It is an input to the ledger, not a measurement: the point
- * is that a request which really dispatched is accounted exactly once.
+ * Controlled provider usage is a fixture input, not measured model cost.
+ * DSH emits the native settlement events that Flow observes passively.
  */
 function defaultUsage(text: string, toolCalls: readonly MockToolCallSpec[]): MockUsage {
   const completion = Math.max(1, Math.ceil((text.length + JSON.stringify(toolCalls).length) / 4));

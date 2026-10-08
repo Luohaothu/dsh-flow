@@ -66,10 +66,10 @@ export function visibleEndedRows(rows: readonly TreeRow[], agents: readonly Flow
   return rows.filter(row => included.has(row.agent.id));
 }
 export function formatMetric(metric: FlowTeamMetric, mode: 'short' | 'exact' = 'exact'): string {
-  if (metric.value === null) return '—';
+  if (metric.value === null) return metric.completeness === 'incomplete' ? '未知（可能不完整）' : '—';
   const prefix = metric.estimated ? '约 ' : '';
   const number = mode === 'short' && metric.value >= 1000 ? `${(metric.value / 1000).toFixed(1).replace(/\.0$/, '')}k` : metric.value.toLocaleString('zh-CN');
-  return `${prefix}${number}${metric.scope === 'descendants' ? '（含子代理）' : ''}`;
+  return `${prefix}${number}${metric.scope === 'descendants' ? '（含子代理）' : ''}${metric.completeness === 'incomplete' ? '（可能不完整）' : metric.completeness === 'unknown' ? '（完整性未知）' : ''}`;
 }
 export function duration(start: number, end: number | null, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor(((end ?? now) - start) / 1000));

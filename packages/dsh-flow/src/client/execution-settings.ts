@@ -27,13 +27,8 @@ export const EXECUTION_FIELDS: readonly ExecutionField[] = [
   { key:'agents',label:'团队代理总数上限',path:['defaultLimits','max_agents'],mirror:['defaultBudget','agents'],min:3,max:100000,hint:'包含总协调、资源协调和质量审核。' },
   { key:'minutes',label:'最长运行时间（分钟）',path:['defaultBudget','wall_time_ms'],factor:60000,min:1,max:10080 },
   { key:'active',label:'同时运行代理上限',path:['defaultLimits','max_active_agents'],mirror:['defaultBudget','max_active_agents'],min:1,max:512 },
-  { key:'llm',label:'同时请求模型上限',path:['defaultLimits','max_llm_concurrency'],min:1,max:64 },
-  { key:'tokens',label:'团队 Token 总预算',path:['defaultBudget','tokens'],min:1,max:2**40 },
-  { key:'requests',label:'团队模型请求上限',path:['defaultBudget','model_requests'],min:1,max:2**40 },
+  { key:'llm',label:'同时持有模型调度许可的代理上限',path:['defaultLimits','max_llm_concurrency'],min:1,max:64 },
   { key:'tools',label:'团队工具调用上限',path:['defaultBudget','tool_calls'],min:1,max:2**40 },
-  { key:'output',label:'单次最大输出 Token',path:['maxTokens'],min:1,max:2**31 },
-  { key:'workerOutput',label:'任务代理最大输出 Token',path:['defaultLimits','worker_max_tokens'],min:64,max:32768,step:64,hint:'填写 64 的倍数。' },
-  { key:'workerRequests',label:'每个任务代理模型请求上限',path:['defaultLimits','worker_model_requests'],min:1,max:64 },
   { key:'turns',label:'管理代理轮数上限',path:['defaultLimits','max_role_turns'],min:1,max:512 },
   { key:'attempts',label:'任务尝试次数',path:['defaultLimits','max_attempts'],min:1,max:16 },
   { key:'corrections',label:'审核修正次数',path:['defaultLimits','max_corrections'],min:0,max:16 },
@@ -61,7 +56,9 @@ function choiceSpec(field:string,choices:readonly string[]):SettingsFieldSpec {
 }
 const modelSpec:SettingsFieldSpec={field:'model',format:value=>value===null?'inherit':JSON.stringify(value)??'inherit',parse:text=>{
   if(text==='inherit')return {kind:'set',value:null};
-  try {const route:unknown=JSON.parse(text);const provider=at(route,['provider']),model=at(route,['model']);
+  try {const route:unknown=JSON.parse(text);
+    if(route===null||typeof route!=='object'||Array.isArray(route)||Object.keys(route).some(key=>!['provider','model'].includes(key)))return undefined;
+    const provider=at(route,['provider']),model=at(route,['model']);
     return typeof provider==='string'&&provider.trim()&&typeof model==='string'&&model.trim()?{kind:'set',value:{provider,model}}:undefined;
   }catch{return undefined;}
 }};

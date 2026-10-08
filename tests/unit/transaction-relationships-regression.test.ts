@@ -41,14 +41,14 @@ function fixture(t: TestContext) {
   const ctx: Context = fromAny({ logger: { warn() {}, error() {}, info() {} }, get() {} });
   const runtime = new ClusterRuntime(ctx, {
     path: join(dir, 'cluster.sqlite'), dataDir: dir, autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
   });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
   let commandId = 0;
   function cluster() {
     const id = runtime.start({
       objective: 'check transaction relationships', workspace: dir, capabilities: ['fs_read'],
-      budget: { tokens: 2_000_000, model_requests: 3000, tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
+      budget: { tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
     }).cluster.id;
     const node = must(runtime.store.listNodes(id, { parent_id: null })[0], 'root node');
     const agent = must(runtime.store.listAgents(id, { node_id: node.id, role: 'orchestrator' })[0], 'orchestrator');

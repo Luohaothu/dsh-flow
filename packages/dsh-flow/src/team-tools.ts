@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { strictTool } from './tool-arguments.ts';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type {} from './service.ts';
@@ -56,7 +57,7 @@ const output = { schema: { type: 'string' as const }, render: (_args: unknown, v
 const present = (title: string, kind: 'read' | 'execute' = 'execute') => () => ({ card: 'generic' as const, title, kind });
 
 export function registerTeamTools(ctx: Context): void {
-  ctx.tools.register(defineTool({
+  ctx.tools.register(strictTool(defineTool({
     name: 'agent_team_create',
     description: 'Create this main conversation’s team after evaluating its task. Use launch_id from agent_team_read for the human /agent-team skill invocation. Returns confirmed startup state and effective parameters. Retries of one launch must use identical parameters.',
     parameters: {
@@ -69,8 +70,8 @@ export function registerTeamTools(ctx: Context): void {
       acceptance_criteria: { type: 'array', required: true, items: { type: 'string' } },
       workspace: { type: 'string', description: 'Defaults to the main conversation workspace.' },
       capabilities: { type: 'array', items: { type: 'string', enum: ['fs_read', 'fs_write', 'shell', 'web_fetch', 'browser'] } },
-      budget: { type: 'json', description: 'Optional overrides: tokens, model_requests, tool_calls, wall_time_ms, agents, max_active_agents. Omitted dimensions inherit deployment defaults.' },
-      limits: { type: 'json', description: 'Optional overrides: max_children, max_depth, max_agents, max_active_agents, max_llm_concurrency, max_attempts, max_corrections, max_role_turns, worker_model_requests, worker_max_tokens.' },
+      budget: { type: 'json', description: 'Optional overrides: tool_calls, wall_time_ms, agents, max_active_agents. Omitted dimensions inherit deployment defaults.' },
+      limits: { type: 'json', description: 'Optional overrides: max_children, max_depth, max_agents, max_active_agents, max_llm_concurrency, max_attempts, max_corrections, max_role_turns, max_tool_calls_per_turn, max_scale_batch.' },
     },
     output, presentCall: present('创建智能体团队'),
     async execute(args, exec) {
@@ -90,8 +91,8 @@ export function registerTeamTools(ctx: Context): void {
       const { workspace, capabilities, budget, limits } = ctx.flow.read(team.run.id, { include_events: false }).cluster;
       return JSON.stringify({ ...team, run_id: team.run.id, version: team.run.version, parameters: { workspace, capabilities, budget, limits } });
     },
-  }));
-  ctx.tools.register(defineTool({
+  })));
+  ctx.tools.register(strictTool(defineTool({
     name: 'agent_team_read',
     description: 'Read this main conversation’s launches, deployment defaults and actual team evidence. Before creation returns launch_id for the skill request. Use run_id or launch_id to disambiguate runs; after_version and wait_ms perform bounded polling (maximum 30000 ms).',
     parameters: { run_id: { type: 'string' }, launch_id: { type: 'string' }, after_version: { type: 'integer' }, wait_ms: { type: 'integer' }, transaction_id: {type:'string',description:'Optional result and independent validation detail; use when the cluster summary is still absent.'} },
@@ -116,8 +117,8 @@ export function registerTeamTools(ctx: Context): void {
       const { workspace, capabilities, budget, limits } = ctx.flow.read(id, { include_events: false }).cluster;
       return JSON.stringify({ ...team, run_id: id, version: team.run.version, runs, launches, defaults: ctx.flow.teamStartDefaults() ?? null, parameters: { workspace, capabilities, budget, limits }, execution: executionEvidence(ctx,id,args.transaction_id) });
     },
-  }));
-  ctx.tools.register(defineTool({
+  })));
+  ctx.tools.register(strictTool(defineTool({
     name: 'agent_team_message', description: 'Send the main Agent’s self-contained instruction or human answer to an owned live team, then read state to confirm. Progress questions can be answered with agent_team_read.',
     parameters: { run_id: { type: 'string' }, text: { type: 'string', required: true } },
     output, presentCall: present('发送团队指令'),
@@ -129,8 +130,8 @@ export function registerTeamTools(ctx: Context): void {
       ctx.flow.teamReply(agent.session.id, exec.callId, args.text, id);
       return JSON.stringify(ctx.flow.teamRead(agent.session.id, id));
     },
-  }));
-  ctx.tools.register(defineTool({
+  })));
+  ctx.tools.register(strictTool(defineTool({
     name: 'agent_team_control', description: 'Carry out the human’s explicit pause, resume or cancel instruction on an owned team. Read and report the confirmed state afterwards.',
     parameters: { run_id: { type: 'string' }, action: { type: 'string', required: true, enum: ['pause', 'resume', 'cancel'] } },
     output, presentCall: present('调整团队运行'),
@@ -141,8 +142,8 @@ export function registerTeamTools(ctx: Context): void {
       ctx.flow.control(id, args.action);
       return JSON.stringify(ctx.flow.teamRead(agent.session.id, id));
     },
-  }));
-  ctx.tools.register(defineTool({
+  })));
+  ctx.tools.register(strictTool(defineTool({
     name: 'agent_team_finalize', description: 'Release resources of an owned completed, failed or cancelled team after reading its result. Retains sessions, communications, audit evidence and results. Idempotent; refuses live teams or turns still exiting.',
     parameters: { run_id: { type: 'string', required: true } },
     output, presentCall: present('完成团队收尾'),
@@ -151,5 +152,5 @@ export function registerTeamTools(ctx: Context): void {
       const agent = owner(ctx, exec.agent);
       return JSON.stringify(ctx.flow.finalizeTeam(agent.session.id, args.run_id));
     },
-  }));
+  })));
 }

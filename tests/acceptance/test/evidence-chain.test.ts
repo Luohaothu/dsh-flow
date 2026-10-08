@@ -21,8 +21,10 @@ import type { JsonObject, MechanismReport, StoneLedger } from '../context.ts';
 import { asObject, decodeCaseDefinition, decodeSingleReply, decodeSnapshot, decodeLiveChecks, decodeCheckOutcome } from '../context.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { ClusterStore } from '../../../packages/dsh-flow/src/core/store.ts';
-import { writeScopeAnalysis } from '../../../src/host/ledger.ts';
-import * as contextChecks from '../checks/context.ts';
+import { writeScopeAnalysis, workerActivation, concurrencyPeaks, openLedger } from '../../../src/host/ledger.ts';
+import { fromPartial } from '@total-typescript/shoehorn';
+import { SessionSeq } from '@deepseek-ai/dsh-session';
+import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import * as browserChecks from '../checks/browser.ts';
 import * as recoveryChecks from '../checks/recovery.ts';
 import * as smokeChecks from '../checks/smoke.ts';
@@ -39,18 +41,6 @@ interface SmokeReportFixture extends JsonObject {
   ledger?: Partial<StoneLedger> | null;
 }
 
-
-test('context gate judges the request after compaction, including its pending prompt', async () => {
-  const { requestBudgetOverruns } = contextChecks
-  const compacted = { before: 8487, after: 4435, pending: 0, context_limit: 8192, decision: 'compact' };
-  assert.deepEqual(requestBudgetOverruns([compacted]), [],
-    'a send below the limit is valid even though compaction began above it');
-  const oversized = { ...compacted, after: 8100, pending: 100 };
-  assert.deepEqual(requestBudgetOverruns([oversized]), [oversized],
-    'pending input counts against the send-time limit after compaction');
-  assert.deepEqual(requestBudgetOverruns([{ ...oversized, decision: 'reject' }]), [],
-    'a rejected step did not send an over-budget request');
-});
 
 test('browser gate rejects launch failures and dashboards without an opened plugin manager', async (t: TestContext) => {
   
@@ -163,7 +153,7 @@ test('a case cannot hijack the runner-owned environment', (t: TestContext) => {
       FLOW_QWEN_BASE_URL: 'https://api.example.com/v1', FLOW_QWEN_MODEL: 'some-cloud-model',
       FLOW_MODEL_PROVIDER: 'untrusted', FLOW_MODEL_API_KEY: 'untrusted-secret',
       ANTHROPIC_AUTH_TOKEN: 'untrusted-anthropic-secret',
-      FLOW_DATA_DIR: '/tmp/other-data', FLOW_CONTEXT_ROLE: '1',
+      FLOW_DATA_DIR: '/tmp/other-data', FLOW_CONTEXT_MODEL: '1',
     },
   });
   for (const key of RUNNER_ENV_KEYS) {
@@ -179,7 +169,7 @@ test('a case cannot hijack the runner-owned environment', (t: TestContext) => {
   assert.equal(env.FLOW_MODEL_API_KEY, undefined);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
   // The case's own keys still arrive.
-  assert.equal(env.FLOW_CONTEXT_ROLE, '1');
+  assert.equal(env.FLOW_CONTEXT_MODEL, '1');
 
   // Only the allowlist is inherited from the operator's environment.
   const inherited = inheritEnv({ PATH: '/usr/bin', SECRET_TOKEN: 'leak', HOME: '/home/operator',
@@ -188,10 +178,10 @@ test('a case cannot hijack the runner-owned environment', (t: TestContext) => {
   assert.ok(HOST_ENV_ALLOWLIST.includes('DSH_INSTALL_PATH'));
 
   // And a case may only set the keys that describe its context.
-  assert.deepEqual(validateCaseEnv({ id: 'c', env: { FLOW_CONTEXT_TRIGGER: '0.8' } }), { FLOW_CONTEXT_TRIGGER: '0.8' });
+  assert.deepEqual(validateCaseEnv({ id: 'c', env: { FLOW_CONTEXT_MODEL: '8192' } }), { FLOW_CONTEXT_MODEL: '8192' });
   assert.throws(() => validateCaseEnv({ id: 'c', env: { HOME: '/tmp' } }), /may only set/);
-  assert.throws(() => validateCaseEnv({ id: 'c', env: { FLOW_CONTEXT_ROLE: '' } }), /non-empty string/);
-  assert.deepEqual(CASE_ENV_KEYS.length, 5);
+  assert.throws(() => validateCaseEnv({ id: 'c', env: { FLOW_CONTEXT_MODEL: '' } }), /non-empty string/);
+  assert.deepEqual(CASE_ENV_KEYS.length, 1);
 });
 
 test('a DSH OpenAI-compatible route receives only its explicit credential, never Anthropic ambient state', (t: TestContext) => {
@@ -327,19 +317,19 @@ test('the tier denominator has exactly one source, and a mismatched budget is re
   const spec = {
     generated_tier: true,
     initial_transactions: planned,
-    budget: { tokens: 65_536 * 64, model_requests: 12 * 64, tool_calls: 16 * 64, wall_time_ms: 21_600_000, agents: 4096, max_active_agents: 9 },
+    budget: { tool_calls: 16 * 64, wall_time_ms: 21_600_000, agents: 4096, max_active_agents: 9 },
   };
   assert.equal(assertTierBudget(spec), undefined, 'a conforming tier passes the guard');
   // The 64 tier carrying a 1024 tier's budget is the defect this refuses.
   for (const wrong of [
-    { tokens: 65_536 * 1024 }, { model_requests: 12 * 1024 }, { tool_calls: 16 * 1024 },
+    { tool_calls: 16 * 1024 },
   ]) {
     assert.throws(() => assertTierBudget({ ...spec, budget: { ...spec.budget, ...wrong } }), /tier budget mismatch: \w+ is \d+, expected \d+ for 64 planned transactions/);
   }
   // A fixture that planned nothing is a mismatch too, not a silent zero budget.
   assert.throws(() => assertTierBudget({ ...spec, initial_transactions: [] }), /tier budget mismatch/);
   // And a hand-written case (not a generated tier) is not subject to the rule.
-  assert.equal(assertTierBudget({ initial_transactions: planned, budget: { tokens: 1 } }), undefined);
+  assert.equal(assertTierBudget({ initial_transactions: planned, budget: { tool_calls: 1 } }), undefined);
 });
 
 test('the acceptance fingerprint covers the host modules under their own prefix', (t: TestContext) => {
@@ -493,7 +483,7 @@ test('the recovery case measures the blackboard key its own instructions name', 
 
 test('the clock and the limit evidence are measured before the case checks run', async () => {
   
-  const budget = { tokens: 1000, model_requests: 10, wall_time_ms: 60_000 };
+  const budget = { wall_time_ms: 60_000 };
 
   // A run that spent its wall budget: the checks that derive their own class
   // read `limit_reached` and the clock, so both must exist before they run.
@@ -532,7 +522,7 @@ test('the clock and the limit evidence are measured before the case checks run',
   measureRun(withRefusal, {
     startedAt: started, clock: started + 100, budget,
     usage: { total_tokens: 10, requests: 1 },
-    refusals: [{ scope: 'node x', dimension: 'tokens' }],
+    refusals: [{ scope: 'node x', dimension: 'tool_calls' }],
   });
   assert.equal(required(withRefusal.limit_reached).refusals.length, 1);
   assert.equal(required(withRefusal.limit_reached).blockedOnBudget, true);
@@ -615,11 +605,11 @@ test('the write-scope analysis reports UNKNOWN when it could not check every wri
 
 test('a scenario failure with structured limit evidence is a limit, not a model failure', async () => {
   
-  const budget = { tokens: 1000, model_requests: 10, wall_time_ms: 60_000 };
+  const budget = { wall_time_ms: 60_000 };
 
   // Nothing the checks derived, but the ledger holds a structured refusal: the
   // class must be the limit the run really hit.
-  const refusals = [{ scope: 'node a', dimension: 'tokens', requested: 10, available: 0 }];
+  const refusals = [{ scope: 'node a', dimension: 'tool_calls', requested: 10, available: 0 }];
   const limited = classifyOutcome({
     failureClass: null, scenarioStatus: 'FAILED', budget,
     usage: { total_tokens: 100, requests: 2 }, wallTimeMs: 5_000, clusterReason: null, refusals,
@@ -643,43 +633,6 @@ test('a scenario failure with structured limit evidence is a limit, not a model 
   });
   assert.equal(model.failure_class, 'MODEL_OUTPUT');
   assert.equal(model.limit_reached, null);
-});
-
-test('a Worker over its provider-request allowance is caught through every kind it sends', async () => {
-  const { run } = smokeChecks
-  
-  
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-smoke-allowance-'));
-  try {
-    const report = {
-      cluster_id: 'c1', build_hashes: { plugin_source: { digest: 'a', files: 1 }, lib_index: { digest: 'b', files: 1 }, lib_client: { digest: 'c', files: 1 }, case_file: { digest: 'd', files: 1 }, patches: [{ path: 'p', digest: 'e' }] },
-      build_drift: null,
-      ledger: {
-        usage_by_agent: [
-          // Two ordinary sends plus one compaction: three provider requests for
-          // the same Worker, which is over the allowance.
-          { agent_id: 'w1', role: 'worker', kind: 'worker', c: 2, sent: 2 },
-          { agent_id: 'w1', role: 'worker', kind: 'compaction', c: 1, sent: 1 },
-          { agent_id: 'w2', role: 'worker', kind: 'worker', c: 2, sent: 2 },
-        ],
-        audits: [],
-      },
-      spec: {},
-    };
-    const out = await run({ workspace: dir, report, snapshot: { cluster: { status: 'COMPLETED' }, transactions: [], agents: [] }, events: [], single: null });
-    const allowance = out.checks.find(entry => entry.name === 'worker-request-allowance');
-    assert.equal(allowance?.passed, false, `the compaction counts: ${allowance?.evidence}`);
-    assert.match(String(allowance?.evidence), /"sent":3/);
-    // Two ordinary sends and nothing else stays inside it.
-    const within = await run({
-      workspace: dir,
-      report: { ...report, ledger: { ...report.ledger, usage_by_agent: [{ agent_id: 'w2', role: 'worker', kind: 'worker', c: 2, sent: 2 }] } },
-      snapshot: { cluster: { status: 'COMPLETED' }, transactions: [], agents: [] }, events: [], single: null,
-    });
-    assert.equal(within.checks.find(entry => entry.name === 'worker-request-allowance')?.passed, true);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test('the fingerprint check keeps failure, unknown and pass apart', async () => {
@@ -941,11 +894,11 @@ test('unknown acceptance boundaries preserve absence and nullable usage instead 
   assert.equal('error' in live, false);
   const reply = decodeSingleReply({
     cluster_id: 'boundary-cluster', stop_reason: 'completed', final_text: '', finalText: '',
-    tool_calls: [], usage: { requests: 0, total_tokens: null, unknown_requests: null }, error: null,
+    tool_calls: [], usage: { requests: 0, total_tokens: null, completeness: 'unknown' }, error: null,
   });
   assert.ok(reply);
   assert.equal(reply.usage?.total_tokens, null);
-  assert.equal(reply.usage?.unknown_requests, null);
+  assert.equal(reply.usage?.completeness, 'unknown');
   assert.equal(reply.usage?.prompt_tokens, undefined);
   assert.throws(() => decodeSingleReply({ cluster_id: 'c', usage: { requests: 'one' } }), /invalid fields/);
   assert.throws(() => decodeSnapshot({ cluster: {}, agents: [{ id: 'a', role: 7 }] }), /invalid fields/);
@@ -967,26 +920,45 @@ test('an empty real SQLite usage aggregate keeps nullable SUM counters across re
   const ledger = readStoneLedger(layout, 'empty-usage');
   assert.equal(ledger.available, true);
   assert.equal(ledger.usage?.requests, 0);
-  for (const key of ['total_tokens', 'prompt_tokens', 'completion_tokens', 'cached_tokens', 'reasoning_tokens', 'unknown_requests', 'overshoot']) {
+  for (const key of ['total_tokens', 'prompt_tokens', 'completion_tokens', 'cached_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_write_tokens']) {
     assert.equal(asObject(ledger.usage)?.[key], null, `${key} is a nullable SQL SUM, not a fabricated zero`);
   }
 });
 
-test('queued usage reservations do not count as concurrent admitted model requests', t => {
-  const layout=createRunLayout(scratch(t),'queued-model-requests');
+test('Agent permit evidence is distinct from unavailable provider dispatch intervals', t => {
+  const layout=createRunLayout(scratch(t),'native-model-permits');
   const store=new ClusterStore(join(layout.data,'cluster.sqlite'));
-  store.createCluster({id:'queued',objective:'serialized provider requests',workspace:layout.workspace,capabilities:[],limits:{max_llm_concurrency:1}},{});
-  for(const [id,start,end] of [['first',10,40],['second',20,50]] as const)store.run(
-    "INSERT INTO usage_receipts(request_id,cluster_id,role,kind,provider,model,status,created,settled) VALUES (?,?,'worker','worker','fixture','fixture','SETTLED',?,?)",id,'queued',start,end);
+  store.createCluster({id:'permits',objective:'native scheduling permits',workspace:layout.workspace,capabilities:[],limits:{max_llm_concurrency:1}},{});
   store.close();
-  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'request interval evidence detects overlap');
+  assert.equal(readStoneLedger(layout,'permits').max_llm_inflight,null,'without admission events scheduling concurrency is unknown');
   const admitted=new ClusterStore(join(layout.data,'cluster.sqlite'));
-  for(const count of [1,0,1,0])admitted.appendEvent('queued','llm-slot',{in_use:count,limit:1});
+  for(const count of [1,0,1,0])admitted.appendEvent('permits','llm-slot',{in_use:count,limit:1});
   admitted.close();
-  const ledger=readStoneLedger(layout,'queued');
-  assert.equal(ledger.max_llm_inflight,1,'durable permit receipts show sequential admission despite overlapping reservations');
+  const ledger=readStoneLedger(layout,'permits');
+  assert.equal(ledger.max_llm_inflight,1,'durable permit events show sequential Agent admission');
   assert.equal(ledger.llm_inflight_over_limit,false);
   const violated=new ClusterStore(join(layout.data,'cluster.sqlite'));
-  violated.appendEvent('queued','llm-slot',{in_use:2,limit:1});violated.close();
-  assert.equal(readStoneLedger(layout,'queued').llm_inflight_over_limit,true,'an actual permit violation remains a failure');
+  violated.appendEvent('permits','llm-slot',{in_use:2,limit:1});violated.close();
+  assert.equal(readStoneLedger(layout,'permits').llm_inflight_over_limit,true,'an actual permit violation remains a failure');
+});
+
+test('Worker activation requires Agent lifecycle and native settlement, while provider concurrency remains unknown', t=>{
+  const layout=createRunLayout(scratch(t),'worker-native-evidence');
+  const file=join(layout.data,'cluster.sqlite');
+  const store=new ClusterStore(file);
+  store.createCluster({id:'activation',objective:'native evidence',workspace:layout.workspace,capabilities:[],limits:{}},{});
+  store.insertAgent({id:'worker',cluster_id:'activation',node_id:'node',role:'worker',session_id:'native-worker',status:'READY'});
+  store.updateAgent('worker',{turns:12});
+  const ledger=openLedger(file);t.after(()=>ledger.close());t.after(()=>store.close());
+  assert.equal(workerActivation(ledger,'activation').activated,0,'a scheduled count is not evidence of Agent execution');
+  store.appendEvent('activation','turn-start',{agent_id:'worker'});
+  store.appendEvent('activation','turn-end',{agent_id:'worker'});
+  assert.equal(workerActivation(ledger,'activation').with_turns,1);
+  assert.equal(workerActivation(ledger,'activation').activated,0,'the lifecycle alone does not prove a model-backed settlement');
+  store.projectNativeUsage({clusterId:'activation',agentId:'worker',nodeId:'node',role:'worker',nativeSessionId:'native-worker',events:[
+    fromPartial<SessionEvent<'assistant/message'>>({seq:SessionSeq(0),time:1,type:'assistant/message',data:{usage:{inputTokens:10,outputTokens:5,totalTokens:15}}}),
+  ]});
+  assert.equal(workerActivation(ledger,'activation').activated,1);
+  assert.equal(concurrencyPeaks(ledger,'activation').resident_peak,1);
+  assert.equal(concurrencyPeaks(ledger,'activation').provider_inflight_peak,null,'settlement events have no provider dispatch intervals');
 });

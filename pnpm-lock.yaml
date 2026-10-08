@@ -303,6 +303,9 @@ importers:
       '@deepseek-ai/dsh':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(1b176e184bafb5155e4c54d931bdd4a2)
+      '@deepseek-ai/dsh-compaction-basic':
+        specifier: 0.1.7-rc.2
+        version: 0.1.7-rc.2(c6226e3c6390500e403c4c73f4637d3e)
       '@deepseek-ai/dsh-scope':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))

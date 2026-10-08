@@ -12,7 +12,6 @@ import type {
   FlowBudgetInput,
   FlowCapability,
   FlowClusterStatus,
-  FlowContextLimits,
   FlowLimits,
   FlowManagementRole,
   FlowNodeStatus,
@@ -64,9 +63,6 @@ export const ALLOCATOR_ACTIONS = [
   'allocate_budget', 'rebalance_budget', 'set_concurrency', 'scale_out', 'scale_in',
   'select_model', 'evaluate_allocation', 'replace_agent', 'reassign_agent', 'reparent',
   'checkpoint', 'restore', 'resolve_effect',
-  // Per-identity context budget: the Allocator's answer to a session that
-  // outgrows the role default without changing it for every identity.
-  'set_context_budget',
 ] as const satisfies readonly string[];
 
 /** Auditor: independent planning/validation gate inside its domain. */
@@ -228,8 +224,6 @@ export interface FlowDefaultLimits extends FlowLimits {
 }
 
 export const DEFAULT_LIMITS: FlowDefaultLimits = {
-  worker_model_requests: 0,
-  worker_max_tokens: 0,
   max_children: 8,
   max_depth: 6,
   max_agents: 2048,
@@ -239,23 +233,6 @@ export const DEFAULT_LIMITS: FlowDefaultLimits = {
   max_corrections: 2,
   max_role_turns: 24,
   max_tool_calls_per_turn: 24,
-};
-
-/**
- * Context pressure thresholds per role. tokenMeter measures the current
- * session; compaction starts at a fraction of the identity budget. The model
- * and server input windows bound the request that can actually be sent.
- */
-export const DEFAULT_CONTEXT_LIMITS: FlowContextLimits = {
-  /** Per-role context budgets used to trigger compaction. */
-  role: 8192,
-  worker: 16384,
-  /** Fraction of the role/identity compaction budget. */
-  compaction_threshold: 0.8,
-  /** Model context window declared by the deployment. */
-  model: 131072,
-  /** Deployment input ceiling applied alongside the model window. */
-  server_input: 142074,
 };
 
 /** A validated start spec: every field narrowed for the cluster to consume. */
@@ -271,6 +248,9 @@ export interface FlowSpecValidation {
 
 export function validateSpec(spec: unknown): FlowSpecValidation {
   const source = objectField(spec, 'spec');
+  for (const key of ['context', 'maxTokens', 'max_tokens']) {
+    if (Object.hasOwn(source, key)) fail(`Unsupported spec.${key}`);
+  }
   const objective = validateText(source.objective, 'spec.objective', 16384);
   const workspace = validateText(source.workspace, 'spec.workspace', 4096);
   const capabilities = validateCapabilities(source.capabilities ?? ['fs_read'], 'spec.capabilities');

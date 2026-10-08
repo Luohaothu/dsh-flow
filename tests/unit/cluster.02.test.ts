@@ -20,7 +20,6 @@ import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { ClusterStore } from '../../packages/dsh-flow/src/core/store.ts';
 import { checkWriteAccess } from '../../packages/dsh-flow/src/core/scope.ts';
-import { releaseLlmRequest, reserveLlmRequest } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { dimensionAvailable } from '../../packages/dsh-flow/src/core/budget.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { integer, objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
@@ -60,7 +59,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -109,7 +108,7 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -255,95 +254,6 @@ test('a failure while preparing a turn still releases its permit, lease and entr
   assert.deepEqual(runtime.activeTurnIds(), []);
   assert.equal(runtime.store.all('SELECT * FROM leases WHERE cluster_id=?', clusterId).length, 0, 'no lease is left behind');
   runtime.collectDeliveries = original;
-});
-
-test('a service request chain resolves to real budget rows', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 })[0];
-  for (const agent of runtime.store.listAgents(clusterId, { limit: 10 })) {
-    const chain = runtime.budgetChainForAgent(agent);
-    assert.ok(chain.length > 0, `${agent.role} has a fundable chain`);
-    for (const id of chain) {
-      assert.equal(typeof id, 'string', 'every chain entry is an id');
-      assert.ok(runtime.store.getBudget(id), `budget ${id} exists`);
-    }
-  }
-  // A worker's chain follows its *management* node, which is where its grant
-  // came from, so compacting a worker session does not need its own node budget.
-  void orchestrator;
-});
-
-test('a scale tier sets its budget from N, and a Worker cannot exceed its allowance', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-tier-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const runtime = makeRuntime(t);
-
-  // The tier budget is a function of N: `buildSpec` sets these three from the
-  // transaction count instead of inheriting the 1024-tier ceiling.
-  const formula = startCluster(runtime, {
-    workspace: dir,
-    budget: { tokens: 65536 * 4, model_requests: 12 * 4, tool_calls: 16 * 4, wall_time_ms: 21_600_000, agents: 64, max_active_agents: 4 },
-  });
-  const tier = required(runtime.store.getCluster(formula), 'tier cluster');
-  assert.equal(tier.budget.tokens, 262_144, 'N x 65536, not the 1024-tier ceiling');
-  assert.equal(tier.budget.model_requests, 48);
-  assert.ok(runtime.compactionBudgetId(formula), 'compaction gets its own funded scope');
-
-  // A Worker allowance is a hard per-identity cap, independent of the tier size.
-  const clusterId = startCluster(runtime, {
-    workspace: dir,
-    budget: { tokens: 4_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 4 },
-    limits: { worker_model_requests: 2, worker_max_tokens: 128 },
-  });
-  const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  const allocated = jsonFirst02(command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id }).result.allocations, 'allocations');
-  const worker = required(runtime.store.getAgent(textOf(allocated.agent_id, 'agent_id')), 'worker');
-
-  assert.equal(runtime.workerRequestAllowance(worker), 2);
-  assert.equal(runtime.workerRequestAllowance(runtime.store.getAgent(allocator.agent_id)), null, 'only Workers are capped');
-  assert.equal(runtime.modelFor(worker).maxTokens, 128, 'the Worker token cap is applied');
-  assert.notEqual(runtime.modelFor(required(runtime.store.getAgent(allocator.agent_id), 'allocator agent')).maxTokens, 128, 'management keeps the configured budget');
-
-  const chain = runtime.agentBudgetChain(cluster, worker);
-  const reserve = (kind: 'worker' | 'compaction', budgetIds: readonly string[] = chain) => reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-    role: 'worker', kind, model: 'm', provider: 'p', budgetIds,
-    reservationTokens: 100, turn_seq: 1, maxRequests: runtime.workerRequestAllowance(worker),
-  });
-  reserve('worker');
-  reserve('worker');
-  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2);
-  assert.equal(runtime.store.countUsageReceipts(clusterId, worker.id), 2);
-  assert.throws(() => reserve('worker'), /allowance for this task/, 'a third Worker request is refused');
-  // Compaction is accounted separately, is paid by the summary pool the runtime
-  // selects for it, and does not consume the allowance. Routing it through the
-  // Worker's own grant would make the pool unreachable and hand a request to a
-  // scope that is capped at exactly its allowance.
-  const pool = runtime.compactionBudgetId(clusterId);
-  assert.ok(pool, 'the run has a funded summary pool');
-  assert.equal(reserve('compaction', [pool]).tokens > 0, true);
-  assert.equal(runtime.store.countUsageReceipts(clusterId, worker.id), 3, 'the compaction request is recorded');
-  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2, 'the compaction request is not counted against the Worker allowance');
-
-  // A request that never reached the provider (released before dispatch) costs
-  // no allowance: it is not an attempt.
-  const released = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-    role: 'worker', kind: 'worker', model: 'm', provider: 'p', budgetIds: chain,
-    reservationTokens: 10, turn_seq: 1, maxRequests: null,
-  });
-  releaseLlmRequest(runtime.store, { cluster_id: clusterId, reservation: released, budgetIds: chain, dispatched: false });
-  assert.equal(required(runtime.store.getUsageReceipt(released.request_id), 'usage receipt').status, 'NOT_SENT');
-  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2, 'a NOT_SENT request consumed no allowance');
 });
 
 test('a released worker frees its child slot, so the ladder is not capped by task count', async t => {
@@ -544,38 +454,6 @@ test('a turn identity belongs to one live agent instance, not to its session', t
   assert.equal(required(runtime.turnActor(secondInstance), 'second turn identity').epoch, 2);
   assert.equal(runtime.turnActor(fakeAgent02(agent.session_id)), null, 'an unregistered instance owns no turn');
   assert.equal(runtime.turnActor(undefined), null);
-});
-
-test('a depleted worker grant is replenished from the budget that funds it', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  const allocation = firstOf(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }), 'active allocation');
-  const worker = required(runtime.store.getAgent(allocation.agent_id), 'worker');
-  const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', worker.id), 'agent budget');
-
-  // A worker's node id names the worker node, but its grant is parented to the
-  // management node's budget: resolving by node id would find nothing.
-  assert.notEqual(agentBudget.parent_budget_id, runtime.store.budgetForScope(clusterId, 'node', worker.node_id)?.id ?? null);
-  const parent = required(runtime.store.getBudget(required(agentBudget.parent_budget_id, 'agent budget parent id')), 'funding parent');
-  assert.ok(parent, 'the funding parent exists');
-
-  // Drain the grant, then replenish from the parent.
-  runtime.store.tx(() => runtime.store.updateBudget(agentBudget.id, { tokens_limit: 0, requests_limit: 0 }));
-  assert.equal(runtime.store.budgetForScope(clusterId, 'node', worker.node_id), null);
-  const grantedValue = runtime.store.tx(() => runtime.topUpBudgetForAgent(worker, { tokens: 5_000, model_requests: 1 }));
-  assert.ok(grantedValue, 'the top-up must resolve the real funding parent');
-  const granted = grantedValue;
-  assert.equal(granted.tokens, 5_000, 'the gap it was asked for');
-  assert.equal(granted.model_requests, 1);
-  assert.equal(required(runtime.store.getBudget(agentBudget.id), 'agent budget').tokens_limit, granted.tokens);
 });
 
 test('the scheduling barrier gates every driver, and session existence is probed', async t => {
@@ -834,8 +712,6 @@ test('reparent runs only at a safe point and rejects unsafe requests', t => {
     const parentBudget = required(runtime.store.budgetForScope(clusterId, 'node', childNodeId), 'parent node budget');
     const row = required(runtime.store.getBudget(parentBudget.id), 'parent budget');
     runtime.store.updateBudget(parentBudget.id, {
-      tokens_limit: Number(row.tokens_limit) + 500_000,
-      requests_limit: Number(row.requests_limit) + 40,
       tool_calls_limit: Number(row.tool_calls_limit) + 40,
     });
   });
@@ -967,7 +843,7 @@ test('allocation operations: model selection, evaluation, replace, reassign, che
     'allocation evaluation needs only the local capacity and its funding chain, not every agent grant');
   assert.equal(numberOf(jsonObject(firstOf(evaluatedBudgets, 'evaluated budget').available, 'budget availability').agents, 0, 1_000_000, 'agents'), dimensionAvailable(nodeBudget, 'agents'));
   assert.ok(JSON.stringify(evaluated.result).length < 3_000,
-    'a role can read the capacity result within its unchanged 8192-token identity context');
+    'a role can read the capacity result in its next prompt');
 
   // A checkpoint is only restorable against a *known* native offset: the stub
   // answers with the offset the host session would report.
@@ -994,7 +870,7 @@ test('Allocator evaluation keeps every active allocation reachable after a bound
   const clusterId = startCluster(runtime, {
     limits: { max_children: 16, max_depth: 3, max_active_agents: 8, max_llm_concurrency: 2,
       max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000,
+    budget: { tool_calls: 1000,
       wall_time_ms: 3_600_000, agents: 32, max_active_agents: 8 },
   });
   const root = rootNode(runtime, clusterId);
@@ -1072,14 +948,13 @@ test('an Allocator cannot replace or reassign a Worker holding a live lease', t 
     runtime.store.updateTransaction(first.id, { status: 'READY', __bump_revision: false });
   });
   const oldBudget = required(runtime.store.budgetForScope(clusterId, 'agent', allocation.agent_id), 'old worker budget');
-  assert.ok(dimensionAvailable(oldBudget, 'tokens') > 0);
+  assert.ok(dimensionAvailable(oldBudget, 'tool_calls') > 0);
   const replacement = command(runtime, allocator, 'replace_agent', { allocation_id: allocation.id }).result;
   const replacementAgentId = textOf(replacement.agent_id, 'replacement agent_id');
   assert.notEqual(replacementAgentId, allocation.agent_id, 'replacement works after the turn drains');
-  assert.equal(dimensionAvailable(required(runtime.store.getBudget(oldBudget.id), 'old worker budget'), 'tokens'), 0,
+  assert.equal(dimensionAvailable(required(runtime.store.getBudget(oldBudget.id), 'old worker budget'), 'tool_calls'), 0,
     'unused funds from the retired Worker return to the same management node');
-  assert.equal(dimensionAvailable(required(runtime.store.getBudget(oldBudget.id), 'old worker budget'), 'model_requests'), 0);
-  assert.ok(dimensionAvailable(required(runtime.store.budgetForScope(clusterId, 'agent', replacementAgentId), 'replacement budget'), 'tokens') > 0,
+  assert.equal(dimensionAvailable(required(runtime.store.getBudget(oldBudget.id), 'old worker budget'), 'tool_calls'), 0);
+  assert.ok(dimensionAvailable(required(runtime.store.budgetForScope(clusterId, 'agent', replacementAgentId), 'replacement budget'), 'tool_calls') > 0,
     'the new Worker inherits enough funding to make a real request');
 });
-

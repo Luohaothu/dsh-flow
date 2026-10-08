@@ -8,8 +8,11 @@ import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-commands';
 import type {} from '@deepseek-ai/dsh-compaction';
 import { scopeOf } from '@deepseek-ai/dsh-scope';
+import { fromAny } from '@total-typescript/shoehorn';
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller';
 import { asObject, requiredString, messageOf } from '../context.ts';
+import { runTurn } from '../../../packages/dsh-flow/src/core/runtime.ts';
+import type { ClusterRuntime } from '../../../packages/dsh-flow/src/core/cluster.ts';
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -25,13 +28,23 @@ export interface Config {
 }
 
 export const name = 'flow-native-observer';
-export const inject = ['flow', 'agents', 'agentLoop', 'tools', 'llm', 'compaction', 'commands', 'sessionController'];
+export const inject = ['flow', 'agents', 'agentLoop', 'tools', 'llm', 'commands', 'sessionController', 'sessions'];
 
 /** Observes the real request waterfall and drives only fixture-owned Agents. */
 export function apply(ctx: Context, config: Config): void {
   const pending = new Set<Promise<void>>();
   const handles = new Set<AgentHandle>();
   let closed = false;
+  ctx.on('agent/created', ({ agent }) => {
+    if (!ctx.flow.isTeamAgentSession(agent.id)) return;
+    const fibers = [...ctx.registry.values()].filter(runtime => runtime.callback.name === 'BasicCompactionEngine').flatMap(runtime => [...runtime.fibers]);
+    const owned = fibers.filter(fiber => scopeOf(fiber.ctx) === agent);
+    appendFileSync(`${config.evidencePath}.compaction.jsonl`, `${JSON.stringify({
+      session_id: agent.id, private_backends: owned.length,
+      global_backends: fibers.filter(fiber => scopeOf(fiber.ctx) === undefined).length,
+      config: owned[0]?._config,
+    })}\n`);
+  });
   ctx.on('llm/stream', async function* (options, next) {
     const before = JSON.stringify(options);
     try {
@@ -56,6 +69,37 @@ export function apply(ctx: Context, config: Config): void {
     const task = (async () => {
       try {
         if (closed) throw new Error('native observer disposed');
+        if (operation === 'resume-compacted') {
+          // This fixture owns the completed single-Agent session. Exercise the
+          // production native resume seam without reopening its team or tools.
+          const runtime = fromAny<ClusterRuntime, typeof ctx.flow>(ctx.flow);
+          const sessionId = requiredString(message.sessionId, 'compacted session id');
+          const agent = runtime.store.getAgentBySession(sessionId);
+          if (!agent) throw new Error('compacted fixture agent was not found');
+          const cold = ctx.sessions.get(SessionId(sessionId)) === undefined;
+          const saved = await ctx.sessionController.inspect(SessionId(sessionId));
+          let checkpointInHistory = false;
+          const outcome = await runTurn(ctx, {
+            agent, role: agent.role, prompt: 'NATIVE-RESUMED-COMPACTION: confirm the saved checkpoint is available and answer RESUMED-COMPACTION-OK.',
+            model: runtime.modelFor(agent), allowedTools: [], globalTools: [],
+            capabilities: [], cwd: config.workspace, resume: true, turnSeq: agent.turns + 1,
+            flow: runtime,
+            onAgentReady(live) {
+              checkpointInHistory = JSON.stringify(live.session.deriveMessages()).includes('<compacted-summary>');
+            },
+          });
+          const settled = runtime.store.usageSummary(agent.cluster_id);
+          await runtime.replayNativeUsage();
+          await runtime.replayNativeUsage();
+          process.send?.({ nativeObserver: true, requestId, ok: true, value: {
+            cold, checkpoint_in_history: checkpointInHistory,
+            saved_summaries: saved.events.filter(event => event.type === 'compaction/summary').length,
+            final_text: outcome.finalText, native_seq: outcome.native_seq,
+            cursor: runtime.store.nativeUsageCursor(sessionId),
+            replay_unchanged: JSON.stringify(runtime.store.usageSummary(agent.cluster_id)) === JSON.stringify(settled),
+          } });
+          return;
+        }
         if (operation !== 'scopes' && operation !== 'ordinary' && operation !== 'team-launch' && operation !== 'agent-session') throw new Error('unknown native observer operation');
         const ordinary = await ctx.agents.create({
           sessionId: SessionId(randomUUID()),
@@ -114,7 +158,7 @@ export function apply(ctx: Context, config: Config): void {
               source: { kind: 'native-test' },
             }));
             await ordinary.agent.whenIdle();
-            process.send?.({ nativeObserver: true, requestId, ok: true, value: { session_id: ordinary.agent.id, ordinary_tools: ordinaryTools } });
+            process.send?.({ nativeObserver: true, requestId, ok: true, value: { session_id: ordinary.agent.id, ordinary_tools: ordinaryTools, flow_compaction_backends: [...ctx.registry.values()].filter(runtime => runtime.callback.name === 'BasicCompactionEngine').flatMap(runtime => [...runtime.fibers]).filter(fiber => { const owner = scopeOf(fiber.ctx); return owner !== undefined && typeof owner === 'object' && 'id' in owner && typeof owner.id === 'string' && ctx.flow.isTeamAgentSession(owner.id); }).length } });
           } else {
             process.send?.({nativeObserver:true,requestId,ok:true,value:{ordinary_tools:ordinaryTools}});
           }

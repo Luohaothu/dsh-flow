@@ -17,7 +17,7 @@ function fixture(t: TestContext) {
   const host = createFakeHost();
   const deployment = resolveConfig(Config({
     provider: 'local-fake', model: 'fake-model', workspace: dir, dataDir: dir,
-    defaultBudget: { model_requests: 37 }, defaultLimits: { max_depth: 3 },
+    defaultBudget: { tool_calls: 37 }, defaultLimits: { max_depth: 3 },
   }));
   const runtime = new ClusterRuntime(host.ctx, {
     ...deployment.runtime, path: join(dir, 'cluster.sqlite'), dataDir: dir,
@@ -36,7 +36,7 @@ function fixture(t: TestContext) {
 test('service starts persist deployment defaults merged per field', t => {
   const f = fixture(t);
   const request: FlowStartRequest = {
-    objective: 'same partial envelope', budget: { tokens: 100_000 },
+    objective: 'same partial envelope', budget: { tool_calls: 100_000 },
     limits: { max_children: 2 }, capabilities: [],
   };
   f.flow.start(request);
@@ -46,11 +46,8 @@ test('service starts persist deployment defaults merged per field', t => {
     assert.equal(row.workspace, f.dir);
     assert.deepEqual(row.capabilities, [], 'an explicit empty capability list is not replaced');
     assert.deepEqual(row.limits, { ...INTERACTIVE_LIMITS, max_depth: 3, max_children: 2 });
-    // start grants the root scope into node/compaction budgets; the stored
-    // cluster envelope retains the exact merged request before those grants.
-    assert.equal(row.budget.tokens, 100_000);
-    assert.equal(row.budget.model_requests, 37);
-    assert.equal(row.budget.tool_calls, INTERACTIVE_BUDGET.tool_calls);
+    // The envelope retains the merged resource contract before grants.
+    assert.equal(row.budget.tool_calls, 100_000);
     assert.equal(row.budget.wall_time_ms, INTERACTIVE_BUDGET.wall_time_ms);
     assert.equal(row.budget.agents, INTERACTIVE_BUDGET.agents);
     assert.equal(row.budget.max_active_agents, INTERACTIVE_BUDGET.max_active_agents);
@@ -63,7 +60,9 @@ test('service starts persist deployment defaults merged per field', t => {
 test('invalid service starts reject without writing clusters or events', t => {
   const f = fixture(t);
   const malformed: unknown[] = [
-    { budget: { tokens: 0 } }, { budget: { tokens: -1 } }, { budget: { tokens: '100' } },
+    { budget: { tool_calls: 0 } }, { budget: { tool_calls: -1 } }, { budget: { tool_calls: '100' } },
+    { budget: { tokens: 1 } }, { budget: { model_requests: 1 } }, { budget: { requests: 1 } },
+    { maxTokens: 1 }, { context: {} }, { limits: { worker_max_tokens: 1 } }, { limits: { worker_model_requests: 1 } },
     { budget: null }, { limits: { max_children: 0 } }, { limits: { max_depth: -1 } },
     { limits: { max_children: '2' } }, { limits: null },
     { workspace: null }, { workspace: '' },
@@ -78,4 +77,14 @@ test('invalid service starts reject without writing clusters or events', t => {
     assert.deepEqual(f.runtime.store.listClusters({}), []);
     assert.deepEqual(f.runtime.store.all('SELECT * FROM events'), before);
   }
+});
+
+
+test('deployment configuration rejects removed model controls before defaults can hide them', () => {
+  for (const input of [
+    { maxTokens: 4096 }, { context: {} },
+    { defaultModel: { provider: 'host', model: 'model', maxTokens: 1 } },
+    { defaultBudget: { tokens: 1000 } }, { defaultBudget: { model_requests: 1 } }, { defaultBudget: { requests: 1 } },
+    { defaultLimits: { worker_max_tokens: 512 } }, { defaultLimits: { worker_model_requests: 1 } },
+  ]) assert.throws(() => Reflect.apply(Config, undefined, [{ provider: 'fixture', model: 'model', ...input }]), /Removed configuration field|Unsupported defaultModel field/);
 });

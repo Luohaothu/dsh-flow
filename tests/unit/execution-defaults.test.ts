@@ -16,39 +16,40 @@ test('official volatile defaults capture new teams without relabelling active or
   const dir=mkdtempSync(join(tmpdir(),'flow-live-defaults-')),path=join(dir,'ledger.sqlite');
   const initial=Config({provider:'fixture',model:'base',workspace:dir,dataDir:dir,defaultLimits:{max_depth:2,max_children:3}});
   let budget=initial.defaultBudget.get(),limits=initial.defaultLimits.get(),mode:'parallel'|'serial'='parallel';
-  let route:{provider:string;model:string}|null=null,output=2048,effort:'inherit'|'high'='inherit';
-  const config:ResolvedConfig={...initial,defaultBudget:{get:()=>budget},defaultLimits:{get:()=>limits},defaultDispatchMode:{get:()=>mode},defaultModel:{get:()=>route},maxTokens:{get:()=>output},defaultReasoningEffort:{get:()=>effort}};
+  let route:{provider:string;model:string}|null=null,effort:'inherit'|'high'='inherit';
+  const config:ResolvedConfig={...initial,defaultBudget:{get:()=>budget},defaultLimits:{get:()=>limits},defaultDispatchMode:{get:()=>mode},defaultModel:{get:()=>route},defaultReasoningEffort:{get:()=>effort}};
   const deployment=resolveConfig(config);
   let runtime=new ClusterRuntime(new Context(),{...deployment.runtime,startDefaults:deployment.startDefaults,path,autoTick:false});
   t.after(async()=>{await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
   const first=runtime.startTeam('main','first','First',dir,{provider:'owner',model:'owner-model',reasoningEffort:'low'});
   const lead=runtime.store.listAgents(first.cluster.id,{role:'orchestrator'})[0]!;
-  assert.equal(runtime.modelFor(lead).model,'owner-model');assert.equal(runtime.modelFor(lead).maxTokens,2048);
-  budget={...budget,tokens:123456,wall_time_ms:180000,agents:12};limits={...limits,max_depth:1,max_children:2,max_agents:12};
-  mode='serial';route={provider:'fixture',model:'fixed'};output=1024;effort='high';
+  assert.equal(runtime.modelFor(lead).model,'owner-model');
+  budget={...budget,tool_calls:123456,wall_time_ms:180000,agents:12};limits={...limits,max_depth:1,max_children:2,max_agents:12};
+  mode='serial';route={provider:'fixture',model:'fixed'};effort='high';
   assert.equal(runtime.startTeam('main','first','First',dir).cluster.id,first.cluster.id,'acknowledgment retry keeps its original snapshot');
   const second=runtime.startTeam('main','second','Second',dir,{provider:'owner',model:'ignored'});
   const secondLead=runtime.store.listAgents(second.cluster.id,{role:'orchestrator'})[0]!;
-  assert.equal(second.cluster.budget.tokens,123456);assert.equal(second.cluster.budget.wall_time_ms,180000);
+  assert.equal(second.cluster.budget.tool_calls,123456);assert.equal(second.cluster.budget.wall_time_ms,180000);
   assert.equal(second.cluster.limits.max_depth,1);assert.equal(second.cluster.limits.max_children,2);
   assert.equal(second.cluster.limits.max_agents,12);assert.equal(second.cluster.limits.max_active_agents,1);assert.equal(second.cluster.limits.max_llm_concurrency,1);
   assert.equal(runtime.modelFor(secondLead).model,'fixed');assert.equal(runtime.modelFor(secondLead).reasoningEffort,'high');
   runtime.teamSelectModel('main',{provider:'owner',model:'new-owner',reasoningEffort:'medium'});
   assert.equal(runtime.modelFor(secondLead).model,'fixed','explicit team model survives a main-dialogue selection');
-  assert.equal(runtime.modelFor(lead).model,'new-owner');assert.equal(runtime.modelFor(lead).maxTokens,2048,'the team retains its captured output cap');
+  assert.equal(runtime.modelFor(lead).model,'new-owner');
   assert.equal(runtime.store.getCluster(first.cluster.id)!.limits.max_depth,2);
-  await runtime.dispose();output=8192;route=null;mode='parallel';
+  await runtime.dispose();route=null;mode='parallel';
   runtime=new ClusterRuntime(new Context(),{...deployment.runtime,path,autoTick:false});
-  assert.equal(runtime.modelFor(secondLead).model,'fixed');assert.equal(runtime.modelFor(secondLead).maxTokens,1024,'cold restart uses persisted model options');
+  assert.equal(runtime.modelFor(secondLead).model,'fixed');
   const third=runtime.startTeam('main','third','Third',dir,{provider:'owner',model:'latest'});
-  assert.equal(runtime.modelFor(runtime.store.listAgents(third.cluster.id,{role:'orchestrator'})[0]!).maxTokens,8192);
+  assert.equal(runtime.modelFor(runtime.store.listAgents(third.cluster.id,{role:'orchestrator'})[0]!).model,'latest');
 });
 
 test('editable Config validates defaults while preserving deployment-specific budgets',()=>{
-  const config=Config({provider:'fixture',model:'model',defaultBudget:{tokens:456789},defaultLimits:{max_depth:3,max_children:2}});
+  const config=Config({provider:'fixture',model:'model',defaultBudget:{tool_calls:456789},defaultLimits:{max_depth:3,max_children:2,max_tool_calls_per_turn:7,max_scale_batch:3}});
   const defaults=resolveConfig(config).runtime.executionDefaults();
-  assert.equal(defaults.start.budget.tokens,456789);assert.equal(defaults.start.limits.max_depth,3);
-  for(const input of [{defaultLimits:{max_depth:0}},{defaultBudget:{tokens:0}},{defaultDispatchMode:'unknown'},{maxTokens:-1}])assert.throws(()=>Reflect.apply(Config,undefined,[{provider:'fixture',model:'model',...input}]));
+  assert.equal(defaults.start.budget.tool_calls,456789);assert.equal(defaults.start.limits.max_depth,3);
+  assert.equal(defaults.start.limits.max_tool_calls_per_turn,7);assert.equal(defaults.start.limits.max_scale_batch,3);
+  for(const input of [{defaultLimits:{max_depth:0}},{defaultBudget:{tool_calls:0}},{defaultDispatchMode:'unknown'},{maxTokens:-1}])assert.throws(()=>Reflect.apply(Config,undefined,[{provider:'fixture',model:'model',...input}]));
 });
 
 test('topology centers parents, prevents overlap and keeps unresolved roots accessible',()=>{

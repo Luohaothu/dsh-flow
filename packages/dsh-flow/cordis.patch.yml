@@ -1,3 +1,9 @@
+# Flow native Agents install the official default backend in their own isolated
+# scope, just as the host standard preset does. A host-plane backend would also
+# receive their Agent events and run a second automatic listener.
+- id: compaction-basic
+  disabled: true
+
 # The standard plugin owns execution, Remote reads and the main-session command.
 - insert:
     - id: dsh-flow

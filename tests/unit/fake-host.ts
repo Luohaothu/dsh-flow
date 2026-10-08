@@ -27,7 +27,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { Session, SessionEvent, SessionEventMap, TurnEndReason } from '@deepseek-ai/dsh-session';
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence';
-import { fromPartial } from '@total-typescript/shoehorn';
+import { fromAny, fromPartial } from '@total-typescript/shoehorn';
 
 import type { Agent, AgentHandle, AgentOptions, CreateAgentOptions, ResumeAgentOptions, PreStepDecision } from '@deepseek-ai/dsh-agent';
 import type { GenerateOptions, StreamChunk, TokenUsage, UserMessage } from '@deepseek-ai/dsh-llm';
@@ -37,7 +37,7 @@ import type {
   ToolExecutionResult,
   ToolRunContext,
 } from '@deepseek-ai/dsh-tools';
-import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm';
+import { ToolCallId, createUserMessage, createAssistantMessage } from '@deepseek-ai/dsh-llm';
 import type { ContentBlock, TextBlock } from '@deepseek-ai/dsh-llm';
 import { isFlowJsonValue } from '../../packages/dsh-flow/src/validation.ts';
 
@@ -49,12 +49,12 @@ export interface FakeLogger {
   error(message: unknown, ...rest: unknown[]): void
 }
 
-/** The token meter the context-pressure tests script. */
+/** A host token-meter spy used to detect unwanted Flow measurement. */
 export interface FakeTokenMeter {
   measure(session?: unknown): { totalTokens: number; logRevision?: number }
 }
 
-/** The compaction engine the context-pressure tests script. */
+/** Host manual-compaction spies used to detect unwanted Flow intervention. */
 export interface FakeCompaction {
   compactNow?(live?: unknown, reason?: unknown): Promise<unknown>
   compactIfNeeded?(live?: unknown, reason?: unknown): Promise<unknown>
@@ -83,7 +83,7 @@ export interface FakeProviderChunk {
   readonly replayState?: unknown
 }
 
-/** One `llm/stream` listener the runtime installed on its agent scope. */
+/** One host provider-waterfall listener exercised by a scripted request. */
 export type FakeStreamHandler =
   (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => AsyncIterable<StreamChunk>
 
@@ -187,7 +187,7 @@ export interface FakeTurn {
   toolExecutionHook(): FakeToolExecuteHandler | null
   callTool(name: string, args: unknown, options?: FakeCallToolOptions): Promise<ToolExecutionResult>
   preStep(options?: FakePreStepOptions): Promise<FakePreStepDecision>
-  emit(type: 'turn/end', data: SessionEventMap['turn/end']): void
+  emit<T extends keyof SessionEventMap>(type: T, data: SessionEventMap[T]): void
 }
 
 /** Mutable fixture state shared by every scripted turn. */
@@ -275,6 +275,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       return scope.waterfall('tools/execute', exec, next);
     },
   ];
+  const sessionLogs = new Map<string, SessionEvent[]>();
   const state: FakeHostState = { script: null, agentOptions: {}, current: null, turns: [], sessionTokens: 0, callSeq: 0 };
 
   /** Provide one service on the root fiber and record it for `provided`. */
@@ -357,7 +358,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       this.agentCtx = agentCtx;
     }
 
-    /** One provider round trip, accounted exactly like a real one. */
+    /** One provider round trip recorded as native event facts. */
     async request({
       purpose = 'worker',
       usage = { totalTokens: 100, inputTokens: 80, outputTokens: 20 },
@@ -383,7 +384,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       const record: FakeRequestRecord = { purpose, usage, dispatchFails, error: null };
       this.requests.push(record);
       const handler = this.agentCtx.streamHandlers[0];
-      if (!handler) throw new Error('no llm/stream accounting listener was installed for this turn');
+      if (!handler) throw new Error('the fixture provider waterfall is unavailable');
       // A dispatch that throws *before* the request is produced is the only case
       // that may release everything: nothing provably reached the provider.
       const scripted: readonly FakeProviderChunk[] = chunks
@@ -429,6 +430,16 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
         }
       }
       record.error = failure;
+      const stream = scripted.filter(chunk => chunk.type === 'usage').map(chunk => ({
+        type: 'chunk' as const, time: Date.now(), chunk: { type: 'usage' as const, usage: chunk.usage ?? usage },
+      }));
+      if (failure || !text) this.emit('assistant/attempt', { turn: 1, step: this.requests.length, stream });
+      else this.emit('assistant/message', {
+        turn: 1, step: this.requests.length, stream, usage,
+        message: createAssistantMessage({ content: [{ type: 'text', text }], source: {
+          provider: options.provider, model: options.model,
+        } }),
+      });
       return { text, usage, error: failure };
     }
 
@@ -523,8 +534,11 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
     }
 
     /** A native session event, as the host would append it. */
-    emit(type: 'turn/end', data: SessionEventMap['turn/end']): void {
-      root.emit('session/event', this.session, fromPartial<SessionEvent<'turn/end'>>({ type, data, time: Date.now() }));
+    emit<T extends keyof SessionEventMap>(type: T, data: SessionEventMap[T]): void {
+      const events = sessionLogs.get(this.session.id)!;
+      const event = fromAny<SessionEvent, object>({ type, data, time: Date.now(), seq: events.length });
+      events.push(event);
+      root.emit('session/event', this.session, event);
     }
   }
 
@@ -532,7 +546,9 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
     async create({ sessionId, agentOptions, setup }: CreateAgentOptions): Promise<AgentHandle> {
       state.agentOptions = agentOptions ?? {};
       const id = sessionId;
-      const session = fromPartial<Session>({ id: sessionId });
+      const events = sessionLogs.get(sessionId) ?? [];
+      sessionLogs.set(sessionId, events);
+      const session = fromPartial<Session>({ id: sessionId, get seq() { return events.length; }, snapshotEvents: (fromSeq = 0) => events.slice(fromSeq) });
       let agentScope: FakeAgentScope | undefined;
       const fiber = root.plugin({
         name: `fake-agent-${id}-${state.turns.length}`,

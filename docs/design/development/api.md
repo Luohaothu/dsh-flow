@@ -39,7 +39,7 @@ function startReview(flow: FlowService) {
     objective: '检查指定工作区模块的导出接口，给出带文件引用的说明',
     capabilities: ['fs_read'],
     acceptance_criteria: ['每个结论附可核对的源码位置'],
-    budget: { tokens: 120_000 },
+    budget: { tool_calls: 2048 },
   });
 
   const id = snapshot.cluster.id;
@@ -61,8 +61,8 @@ function startReview(flow: FlowService) {
 | `id` | 可选集群标识；用户工具不暴露此字段 |
 | `workspace` | 可选工作区；缺省使用部署配置 |
 | `capabilities` | `fs_read`、`fs_write`、`shell`、`web_fetch`、`browser` 的子集 |
-| `budget` | 局部覆盖 `tokens`、`model_requests`、`tool_calls`、`wall_time_ms`、`agents`、`max_active_agents` |
-| `limits` | 身份数量、层级深度、直接子节点数、执行并发、尝试与纠正次数上限，以及执行智能体的请求限制等 |
+| `budget` | 局部覆盖 `tool_calls`、`wall_time_ms`、`agents`、`max_active_agents` |
+| `limits` | 身份数量、层级深度、直接子节点数、执行并发、尝试与纠正次数上限，管理轮次与工具约束等 |
 | `initial_transactions` | 可选的初始任务单元 JSON，用于指定集群启动时的工作安排 |
 | `acceptance_criteria` | 隐式根任务单元的验收标准 |
 
@@ -120,9 +120,9 @@ const roots = result.value.data.items;
 | `issues` / `issue` | 列表分页 / 单条 `id` | 纠正问题与证据 |
 | `audits` / `audit` | 列表分页 / 单条 `id` | 待作出决定的审查 / 单条审查详情 |
 | `effects` / `effect` | 列表分页 / 单条 **`call_id`** | 副作用回执 |
-| `usage` | `agent_id?`、单个 `status?`、分页 | 模型请求回执与用量汇总 |
+| `usage` | `agent_id?`、分页 | 宿主持久化事件与已记录用量汇总 |
 | `deliveries` | 分页 | 消息及接收方投递状态 |
-| `context` | `agent_id`；`transaction_id?` | 最近的上下文步骤与摘要；宿主端调用必须提供智能体标识 |
+| `context` | `agent_id`；`transaction_id?` | 宿主已记录的上下文与摘要；无记录时未知；宿主端调用必须提供智能体标识 |
 | `health` | `node_id?` | 编排质量评估、八项维度及观测信号 |
 | `summary` | `node_id?`、`transaction_id?` | 相应作用域最新摘要 |
 | `blackboard` | `prefix?`、分页 | 版本化黑板条目 |
@@ -156,7 +156,7 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 | 角色 | 命令工具 | 当前动作 |
 |---|---|---|
 | 编排智能体 | `flow_transaction` | `create_transaction`、`decompose`、`set_dependency`、`set_priority`、`dispatch`、`adjust_transaction`、`validate`、`accept_result`、`reject_result`、`aggregate`、`escalate`、`request_user`、`finish_cluster`、`pause_transaction`、`resume_transaction`、`cancel_transaction` |
-| 资源分配智能体 | `flow_allocation` | `allocate_agent`、`spawn_agent`、`spawn_management_node`、`release_agent`、`allocate_budget`、`rebalance_budget`、`set_concurrency`、`scale_out`、`scale_in`、`select_model`、`evaluate_allocation`、`replace_agent`、`reassign_agent`、`reparent`、`checkpoint`、`restore`、`resolve_effect`、`set_context_budget` |
+| 资源分配智能体 | `flow_allocation` | `allocate_agent`、`spawn_agent`、`spawn_management_node`、`release_agent`、`allocate_budget`、`rebalance_budget`、`set_concurrency`、`scale_out`、`scale_in`、`select_model`、`evaluate_allocation`、`replace_agent`、`reassign_agent`、`reparent`、`checkpoint`、`restore`、`resolve_effect` |
 | 审计智能体 | `flow_audit` | `inspect_plan`、`inspect_validation`、`request_correction`、`request_replan`、`request_revalidation`、`verify_correction`、`escalate`、`notify`、`recommend`、`evaluate_health` |
 | 执行智能体 | `flow_transaction` | 仅 `submit_result` |
 

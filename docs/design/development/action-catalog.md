@@ -34,7 +34,6 @@
 | `allocate_budget` / `rebalance_budget` | 在授权范围内分配或调拨尚未占用的额度 |
 | `set_concurrency` / `scale_out` / `scale_in` | 调整执行容量和执行者数量，仍受全局限制与预算约束 |
 | `select_model` | 设置目标身份的模型路由 |
-| `set_context_budget` | 设置目标身份的上下文额度、压缩触发比例与保留策略 |
 | `reparent` | 在无活跃执行和未结算副作用等前提下移动子树 |
 | `checkpoint` / `restore` | 保存检查点或按有效证据恢复身份 |
 | `resolve_effect` | 依据实际证据处置未知副作用，决定是否允许继续执行 |
@@ -60,7 +59,7 @@
 
 ## 执行智能体与共享工具
 
-执行智能体的 `flow_transaction` 只允许 `submit_result`，用于暂存候选结果与证据。一轮执行正常结束、租约有效且记账可确认后，运行时才正式发布结果。执行智能体不能自行验收、扩大预算或改变管理结构。
+执行智能体的 `flow_transaction` 只允许 `submit_result`，用于暂存候选结果与证据。一轮执行正常结束、租约有效且工具副作用可确认后，运行时才正式发布结果。执行智能体不能自行验收、扩大预算或改变管理结构。
 
 所有角色可使用 `flow_query` 读取自身权限范围内的状态，通过 `flow_communicate` 发送消息、管理协作组或读写共享黑板。通信动作与参数见[通信与共享黑板](/development/components/communication)。
 

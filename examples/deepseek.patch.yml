@@ -1,0 +1,59 @@
+# Official DeepSeek API overlay for an already installed dsh-flow composition.
+# Apply after examples/instance.patch.yml (or the development cluster overlay).
+# Credentials are resolved at request time. This is the name of an environment
+# variable, never its secret value; do not dump credentials.
+# API/model capacities checked against https://api-docs.deepseek.com/quick_start/pricing.
+- id: llm-pi-ai
+  config:
+    providers:
+      deepseek:
+        displayName: DeepSeek API
+        api: openai-completions
+        baseURL: !!js process.env.FLOW_QWEN_BASE_URL ?? 'https://api.deepseek.com'
+        apiKeyEnv: FLOW_MODEL_API_KEY
+        timeoutMs: 120000
+        streamIdleTimeoutMs: 60000
+        retryPolicy:
+          mode: normal
+          maxRetries: 0
+        compat:
+          thinkingFormat: deepseek
+          supportsStore: false
+          supportsDeveloperRole: false
+          supportsReasoningEffort: true
+          supportsStrictMode: false
+          supportsUsageInStreaming: true
+          maxTokensField: max_tokens
+          requiresReasoningContentOnAssistantMessages: true
+        models:
+          - id: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
+            contextWindow: 1048576
+            maxTokens: 393216
+            input: [text]
+            # A null off mapping omits DeepSeek's toggle and leaves thinking on.
+            reasoningEfforts:
+              off: off
+              high: high
+
+- id: agent-default-model
+  config:
+    provider: deepseek
+    model: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
+    reasoningEffort: off
+
+# Patches replace the entire config row. Keep deployment paths and lifecycle
+# settings here so applying the model overlay cannot reset the instance policy.
+- id: dsh-flow
+  config:
+    dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
+    workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
+    provider: deepseek
+    model: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
+    reasoningEffort: off
+    defaultCapabilities: [fs_read, fs_write]
+    tickMs: 250
+    staleMs: 120000
+    maxTurnMs: 900000
+    heartbeatMs: 20000
+    leaseTtlMs: 60000
+    disposeTimeoutMs: 5000

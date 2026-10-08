@@ -16,8 +16,6 @@
     "max_role_turns": 24
   },
   "budget": {
-    "tokens": 2097152,
-    "model_requests": 256,
     "tool_calls": 2048,
     "wall_time_ms": 1800000,
     "agents": 64,
@@ -42,7 +40,9 @@
       "id": "rec-flat",
       "objective": "Own the flat branch: produce the file `flat/result.txt` containing a single line `flat-ok`, without creating any child management node.",
       "inputs": {
-        "write_scope": ["flat/"]
+        "write_scope": [
+          "flat/"
+        ]
       },
       "expected_output": "`flat/result.txt` exists.",
       "acceptance_criteria": [
@@ -54,7 +54,9 @@
       "id": "rec-verify",
       "objective": "Independent verification: write `verify/result.txt` containing the line `verifier-ran` and the number of `result.txt` files currently present under {{workspace}}. Report that count honestly, including zero.",
       "inputs": {
-        "write_scope": ["verify/"]
+        "write_scope": [
+          "verify/"
+        ]
       },
       "expected_output": "`verify/result.txt` exists with the verifier line and a count.",
       "acceptance_criteria": [

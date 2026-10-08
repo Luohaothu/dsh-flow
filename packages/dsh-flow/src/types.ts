@@ -73,9 +73,6 @@ export type FlowEffectStatus = 'STARTED' | 'SETTLED' | 'FAILED' | 'CANCELLED' | 
 /** Durable tool-call receipt state. */
 export type FlowDispatchStatus = 'ADMITTED' | 'DISPATCHED' | 'SETTLED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN';
 
-/** Model-request receipt state. */
-export type FlowUsageStatus = 'RESERVED' | 'SETTLED' | 'NOT_SENT' | 'UNKNOWN';
-
 /** Injected-message delivery state. */
 export type FlowDeliveryStatus = 'PENDING' | 'DELIVERED' | 'ACKED';
 
@@ -97,7 +94,7 @@ export type FlowAuditDecision =
   | 'CORRECTION_REQUESTED' | 'REPLAN_REQUESTED' | 'REVALIDATION_REQUESTED';
 
 /** The kind of scope a budget row funds. */
-export type FlowScopeKind = 'cluster' | 'root' | 'node' | 'transaction' | 'agent' | 'compaction';
+export type FlowScopeKind = 'cluster' | 'root' | 'node' | 'transaction' | 'agent';
 
 /** The three operations a cluster may be told to perform on its own state. */
 export type FlowControlAction = 'pause' | 'resume' | 'cancel';
@@ -120,8 +117,6 @@ export type FlowQueryKind =
  * and `max_active_agents` are capacity, not consumable resources.
  */
 export interface FlowBudget {
-  readonly tokens: number
-  readonly model_requests: number
   readonly tool_calls: number
   readonly wall_time_ms: number
   readonly agents: number
@@ -130,8 +125,6 @@ export interface FlowBudget {
 
 /** A partial budget: only the dimensions a caller actually named. */
 export interface FlowBudgetInput {
-  readonly tokens?: number
-  readonly model_requests?: number
   readonly tool_calls?: number
   readonly wall_time_ms?: number
   readonly agents?: number
@@ -146,7 +139,7 @@ export interface FlowBudgetDimensionView {
   readonly available: number
 }
 
-/** One budget row, projected for reading: the six dimensions plus wall time. */
+/** One budget row, projected for reading: tool quota, capacities and wall time. */
 export interface FlowBudgetView {
   readonly id: string
   readonly scope_kind: FlowScopeKind
@@ -154,8 +147,6 @@ export interface FlowBudgetView {
   readonly node_id: string | null
   readonly parent_budget_id: string | null
   readonly revision: number
-  readonly tokens: FlowBudgetDimensionView
-  readonly model_requests: FlowBudgetDimensionView
   readonly tool_calls: FlowBudgetDimensionView
   readonly agents: FlowBudgetDimensionView
   readonly max_active_agents: FlowBudgetDimensionView
@@ -175,8 +166,8 @@ export interface FlowLimits {
   readonly max_attempts: number
   readonly max_corrections: number
   readonly max_role_turns: number
-  readonly worker_model_requests: number
-  readonly worker_max_tokens: number
+  readonly max_tool_calls_per_turn?: number
+  readonly max_scale_batch?: number
 }
 
 /** A partial limit patch: only the keys a caller overrode. */
@@ -191,24 +182,6 @@ export interface FlowLimitsInput {
   readonly max_role_turns?: number
   readonly max_tool_calls_per_turn?: number
   readonly max_scale_batch?: number
-  readonly worker_model_requests?: number
-  readonly worker_max_tokens?: number
-}
-
-/**
- * Per-role context pressure thresholds.
- *
- * `role`/`worker` are the compaction windows for a management identity and a
- * Worker; `model`/`server_input` are the served model's declared window and the
- * deployment's input cap, which are hard ceilings rather than compaction
- * triggers.
- */
-export interface FlowContextLimits {
-  readonly role: number
-  readonly worker: number
-  readonly model: number
-  readonly compaction_threshold: number
-  readonly server_input: number
 }
 
 // -------------------------------------------------------------- start input
@@ -381,8 +354,6 @@ export interface FlowBudgetEvaluation {
   readonly node_id: string | null
   readonly parent_budget_id: string | null
   readonly revision: number
-  readonly tokens: FlowBudgetDimensionView
-  readonly model_requests: FlowBudgetDimensionView
   readonly tool_calls: FlowBudgetDimensionView
   readonly agents: FlowBudgetDimensionView
   readonly max_active_agents: FlowBudgetDimensionView
@@ -451,46 +422,45 @@ export interface FlowAllocationRecord {
   readonly updated: number
 }
 
-/** One model-request receipt. */
-export interface FlowUsageReceipt {
-  readonly request_id: string
+/** Completeness of the host's recorded facts, independently of known zero counts. */
+export type FlowUsageCompleteness = 'complete' | 'incomplete' | 'unknown';
+
+/** One durable native settlement event; its seq is the idempotency key within the session. */
+export interface FlowUsageEvent {
+  readonly native_session_id: string
+  readonly native_seq: number
+  readonly event_type: 'assistant/message' | 'assistant/attempt' | 'compaction/summary'
   readonly cluster_id: string
   readonly agent_id: string
-  readonly node_id: string | null
+  readonly node_id: string
   readonly transaction_id: string | null
   readonly role: FlowAgentRole
-  readonly kind: string
   readonly provider: string | null
   readonly model: string | null
-  readonly status: FlowUsageStatus
+  readonly reasoning_effort: string | null
+  readonly prompt_tokens: number | null
+  readonly completion_tokens: number | null
+  readonly cache_read_tokens: number | null
+  readonly cache_write_tokens: number | null
+  readonly cached_tokens: number | null
+  readonly reasoning_tokens: number | null
+  readonly total_tokens: number | null
+  readonly completeness: FlowUsageCompleteness
+  readonly interrupted: boolean
+  readonly created: number
+}
+
+/** Sum of known host-recorded fields. Null means no recorded value; incomplete sums are partial. */
+export interface FlowUsageSummary {
+  readonly requests: number
   readonly total_tokens: number | null
   readonly prompt_tokens: number | null
   readonly completion_tokens: number | null
-  readonly created: number
-  readonly settled: number | null
-}
-
-/** Aggregate model usage for one cluster or subtree. */
-export interface FlowUsageSummary {
-  readonly requests: number
-  readonly total_tokens: number
-  readonly prompt_tokens: number
-  readonly completion_tokens: number
-  readonly cached_tokens: number
-  readonly reasoning_tokens: number
-  readonly unknown_requests: number
-  readonly overshoot: number
-  readonly api_cost: FlowUsageCost
-}
-
-/**
- * The cost line of a usage summary. No monetary price model is configured;
- * `local-unpriced` marks the placeholder independently of the provider route.
- */
-export interface FlowUsageCost {
-  readonly amount: number
-  readonly currency: string
-  readonly pricing: string
+  readonly cached_tokens: number | null
+  readonly cache_read_tokens: number | null
+  readonly cache_write_tokens: number | null
+  readonly reasoning_tokens: number | null
+  readonly completeness: FlowUsageCompleteness
 }
 
 /** One injected-message delivery row. */
@@ -514,27 +484,16 @@ export interface FlowBlackboardEntry {
   readonly updated_by: string | null
 }
 
-/**
- * One context step: the event's own `seq` plus the payload the runtime
- * appended for it.
- */
-export interface FlowContextStep {
-  readonly seq: number
-  readonly agent_id: string
-  readonly role: FlowAgentRole
-  readonly turn_seq: number
-  readonly step: number
-  readonly native_seq: number | null
-  readonly before: number | null
-  readonly after: number
-  readonly pending: number
-  readonly threshold: number
-  readonly context_limit: number
-  readonly sending_ceiling: number
-  readonly summary_seq: number | null
-  readonly charged_scope: string | null
+/** Host-recorded context and actual request facts; no model metadata is resolved by Flow. */
+export interface FlowNativeContext {
+  readonly context_used: number | null
+  readonly context_limit: number | null
   readonly compacted_at: number | null
-  readonly decision: string
+  readonly model: string | null
+  readonly provider: string | null
+  readonly reasoning_effort: string | null
+  readonly native_session_id: string | null
+  readonly native_seq: number | null
 }
 
 /** The latest saved summary for a scope. */
@@ -1076,10 +1035,10 @@ export interface FlowClusterEffectQueryData {
   readonly effect: FlowEffectRecord
 }
 
-/** Model-request receipts plus the aggregate usage they roll up to. */
+/** Native settlement events plus their host-recorded aggregate usage. */
 export interface FlowClusterUsageQueryData {
   readonly usage: FlowUsageSummary
-  readonly items: readonly FlowUsageReceipt[]
+  readonly items: readonly FlowUsageEvent[]
   readonly total: number
   readonly offset: number
   readonly limit: number
@@ -1095,10 +1054,10 @@ export interface FlowClusterDeliveriesQueryData {
   readonly next_offset: number | null
 }
 
-/** One identity's recent context steps and latest summary. */
+/** One identity's latest native context facts and saved scope summary. */
 export interface FlowClusterContextQueryData {
   readonly agent_id: string
-  readonly steps: readonly FlowContextStep[]
+  readonly context: FlowNativeContext
   readonly summary: FlowSummary | null
 }
 
@@ -1159,6 +1118,8 @@ export interface FlowTeamMetric {
   readonly unit: string
   readonly scope: 'self' | 'descendants' | 'unknown'
   readonly estimated: boolean
+  /** Completeness of durable host observations, independent of recorded totals. */
+  readonly completeness: 'complete' | 'incomplete' | 'unknown'
 }
 /** Provider-reported allowance. Different dimensions are never added together. */
 export interface FlowTeamAllowance {
@@ -1190,10 +1151,13 @@ export interface FlowTeamAgent {
   readonly ended: number | null
   readonly version: number
   readonly tokens: FlowTeamMetric
-  /** Latest recorded request model, or the resolved route before the first request. */
+  /** Latest actual non-summary model recorded by the native Session. */
   readonly model: string | null
   /** Reasoning effort from the same actual request, when recorded. */
   readonly reasoning_effort: string | null
+  /** Current route configuration, independent of actual request evidence. */
+  readonly configured_model: string | null
+  readonly configured_reasoning_effort: string | null
   readonly allowances: readonly FlowTeamAllowance[]
   readonly context_used: number | null
   readonly context_limit: number | null

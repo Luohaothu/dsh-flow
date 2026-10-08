@@ -21,7 +21,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DshHost, buildHostEnv, CASE_ENV_KEYS, createRunLayout, ensureProfile, WEB_PROFILE_BUNDLES, PROJECT_ROOT } from '../../src/host/host.ts';
-import { openLedger, writeScopeAnalysis } from '../../src/host/ledger.ts';
+import { openLedger, writeScopeAnalysis, usageSummary } from '../../src/host/ledger.ts';
 import { buildDrift, computeBuildHashes, hashFile } from './build-fingerprint.ts';
 import type { BuildHashes } from './build-fingerprint.ts';
 import { startMockModel } from '../../src/host/mock-model.ts';
@@ -89,7 +89,7 @@ ${routes.map(route => `
           maxTokensField: max_completion_tokens
         models:
           - id: ${route.model}
-            contextWindow: 131072
+            contextWindow: !!js Number(process.env.FLOW_CONTEXT_MODEL ?? 131072)
             maxTokens: 4096
             input: [text]
             reasoningEfforts:
@@ -403,7 +403,7 @@ async function runOnce({ args, caseDef, mode, runId }: { args: RunArgs; caseDef:
       // The case remains an immutable baseline. The effective budget and this
       // override are both written into the report under a new run id; identity
       // and concurrency ceilings stay unchanged.
-      for (const dimension of ['tokens', 'model_requests', 'tool_calls', 'wall_time_ms']) {
+      for (const dimension of ['tool_calls', 'wall_time_ms']) {
         const current = spec.budget[dimension] ?? NaN;
         const scaled = current * budgetScale;
         if (!Number.isSafeInteger(scaled)) throw new Error(`scaled ${dimension} is not a safe integer`);
@@ -737,9 +737,8 @@ async function restartMidFlight({
   const killAtMs = Date.now();
   const stopped = await host.stop({ signal: 'SIGKILL', graceMs: 2000 });
   const atCrash = readStoneLedger(layout, report.cluster_id ?? null);
-  // The exact receipts that were dispatched and never settled at the crash: the
-  // expected number of UNKNOWN results is this set, not an arbitrary allowance.
-  const inFlight = (atCrash.usage_rows ?? []).filter(row => row.settled === null && Number(row.created) <= killAtMs);
+  // Record Agent lifecycle interruption; settlement facts do not expose request dispatch.
+  const interrupted = (atCrash.agent_sessions ?? []).filter(row => row.status === 'RUNNING');
   await new Promise(resolvePromise => setTimeout(resolvePromise, Number(caseDef.recovery?.restart_delay_ms ?? 2000)));
   const restarted = new DshHost({ profile, patches, cwd: workspace, env, logPath: join(layout.logs, 'host-restart.log') });
   await startAcceptanceHost(restarted);
@@ -758,15 +757,7 @@ async function restartMidFlight({
       accepted_at_crash: atCrash.transactions_by_status ?? null,
       uncertain_effects_at_crash: atCrash.effects ?? null,
       leases_at_crash: atCrash.lease_rows ?? null,
-      // Receipts dispatched but unsettled, and the transactions that were not
-      // yet terminal: the crash's own account of what it interrupted.
-      receipts_in_flight_at_crash: inFlight.map(row => ({
-        request_id: asString(row.request_id) ?? '',
-        agent_id: asString(row.agent_id),
-        role: asString(row.role),
-        kind: asString(row.kind),
-        created: asNumber(row.created),
-      })),
+      interrupted_agents_at_crash: interrupted,
       transactions_open_at_crash: (atCrash.transactions_detail ?? []).filter(row => row.status !== 'ACCEPTED'),
       restarted: true,
     },
@@ -835,15 +826,10 @@ function buildSpec(
     // The approved V6 tier budget is a function of N, not a ceiling: keeping the
     // case's 1024-tier numbers would let a 16-file canary spend 64x its tier and
     // would not test the limits the plan actually approved.
-    budget.tokens = 65536 * generated.length;
-    budget.model_requests = 12 * generated.length;
     budget.tool_calls = 16 * generated.length;
     limits.max_agents = Math.max(limits.max_agents ?? 0, generated.length + 32);
     limits.max_role_turns = Math.max(limits.max_role_turns ?? 0, Math.ceil(generated.length / 8) + 16);
-    // One Worker may send at most `worker_model_requests` model requests (V6);
-    // compaction is accounted separately and does not consume this allowance.
-    limits.worker_model_requests = caseDef.scale_fixture?.worker_model_requests ?? 2;
-    limits.worker_max_tokens = caseDef.scale_fixture?.worker_max_tokens ?? 512;
+
   }
   const values = { workspace, runId, webUrl: extra.webUrl ?? '' };
   return {
@@ -991,7 +977,7 @@ export function assertTierBudget(spec: TierBudgetSpec): void {
   if (spec.generated_tier !== true) return;
   const planned = (spec.initial_transactions ?? []).length;
   const budget = spec.budget ?? {};
-  const expected = { tokens: 65536 * planned, model_requests: 12 * planned, tool_calls: 16 * planned };
+  const expected = { tool_calls: 16 * planned };
   for (const [key, value] of Object.entries(expected)) {
     if (budget[key] !== value) throw new Error(`tier budget mismatch: ${key} is ${budget[key]}, expected ${value} for ${planned} planned transactions`);
   }
@@ -1077,6 +1063,11 @@ function prepareWorkspace(caseDef: CaseDefinition, workspace: string, layout: Ru
   }
   if (caseDef.dataset) {
     prep.dataset = buildDataset(caseDef.dataset, workspace);
+  }
+  if (caseDef.id === 'context') {
+    writeFileSync(join(workspace, 'pressure.txt'), Array.from({ length: 1600 }, (_, index) =>
+      `line ${index}: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega`).join('\n'));
+    prep.details.push('created long input for real native read history and default compaction');
   }
   return prep;
 }
@@ -1430,7 +1421,7 @@ export function measureRun<T extends MeasuredRun>(report: T, {
 }
 
 export function classifyOutcome({
-  failureClass, scenarioStatus, budget, usage, wallTimeMs, clusterReason = null, refusals = null,
+  failureClass, scenarioStatus, budget, wallTimeMs, clusterReason = null, refusals = null,
 }: {
   failureClass?: string | null;
   scenarioStatus?: string | null;
@@ -1440,20 +1431,10 @@ export function classifyOutcome({
   clusterReason?: string | null;
   refusals?: readonly LedgerRow[] | null;
 }): ClassificationOutcome {
-  const tokens = usage?.total_tokens ?? 0;
-  const requests = usage?.requests ?? 0;
-  // Proximity is *reported*, never used as the cause: 95 of 100 requests leaves
-  // five legal sends, and ordinary stagnation can happen there.
-  const tokenLimit = budget.tokens ?? Infinity;
-  const requestLimit = budget.model_requests ?? Infinity;
   const wallLimit = budget.wall_time_ms ?? Infinity;
-  const proximity: BudgetProximity = {
-    tokens: tokenLimit === Infinity ? null : Number((tokens / tokenLimit).toFixed(4)),
-    requests: requestLimit === Infinity ? null : Number((requests / requestLimit).toFixed(4)),
-    wall: wallLimit === Infinity ? null : Number((wallTimeMs / wallLimit).toFixed(4)),
-  };
+  const proximity: BudgetProximity = { wall: wallLimit === Infinity ? null : Number((wallTimeMs / wallLimit).toFixed(4)) };
   const structured = Array.isArray(refusals)
-    ? refusals.filter(entry => entry && typeof entry.scope === 'string' && entry.scope !== '' && typeof entry.dimension === 'string' && entry.dimension !== '')
+    ? refusals.filter(entry => entry && ['tool_calls','agents','max_active_agents','wall_time_ms'].includes(String(entry.dimension)) && typeof entry.scope === 'string' && entry.scope !== '' && typeof entry.dimension === 'string' && entry.dimension !== '')
     : [];
   // `blockedOnBudget` is only ever derived from structured records: a persisted
   // refusal naming its scope and dimension, or the cluster's own persistent stop
@@ -1462,12 +1443,8 @@ export function classifyOutcome({
   const codedReason = typeof clusterReason === 'string' && /^\s*(BUDGET|LIMIT_REACHED):/.test(clusterReason);
   const blockedOnBudget = structured.length > 0 || codedReason;
   const hitWall = wallTimeMs >= wallLimit;
-  const exhausted: LimitExhausted = {
-    tokens: budget.tokens !== undefined && tokens >= budget.tokens,
-    requests: budget.model_requests !== undefined && requests >= budget.model_requests,
-    wall: hitWall,
-  };
-  const limitReached = Boolean(blockedOnBudget || exhausted.tokens || exhausted.requests || hitWall);
+  const exhausted: LimitExhausted = { wall: hitWall };
+  const limitReached = Boolean(blockedOnBudget || hitWall);
   // A class that a check derived is final: the budget branch may only supply a
   // default when nothing was derived. `limit_reached` carries the structured
   // facts either way, so the tier checks can reach their own verdict.
@@ -1477,7 +1454,7 @@ export function classifyOutcome({
     limit_reached: limitReached
       ? {
         hitWall, blockedOnBudget, refusals: structured,
-        exhausted, tokens, requests, cluster_reason: clusterReason, proximity,
+        exhausted, cluster_reason: clusterReason, proximity,
       }
       : null,
     budget_proximity: proximity,
@@ -1507,7 +1484,7 @@ export function mechanismVerdict(report: MechanismReport, ledger: StoneLedger): 
     }
   }
   if (ledger.granted_scope_overlaps === null) unmeasured.push('granted write-scope overlap');
-  if (ledger.llm_inflight_over_limit === null) unmeasured.push('LLM in-flight ceiling');
+  if (ledger.llm_inflight_over_limit === null) unmeasured.push('Agent model scheduling permit ceiling');
   if (ledger.resident_handles_over_limit === null) unmeasured.push('resident turn-handle ceiling');
   if (report.failure_class === 'MECHANISM') return record('FAIL');
   if ((ledger.duplicate_accepts ?? 0) > 0) notes.push(`duplicate accepts: ${ledger.duplicate_accepts}`);
@@ -1518,7 +1495,7 @@ export function mechanismVerdict(report: MechanismReport, ledger: StoneLedger): 
   if ((ledger.cross_scope_writes ?? 0) > 0) notes.push(`writes that escaped their granted scope: ${ledger.cross_scope_writes}`);
   if ((ledger.lost_transactions ?? 0) > 0) notes.push(`transactions without a terminal state: ${ledger.lost_transactions}`);
   if (ledger.resident_handles_over_limit) notes.push('resident turn handles exceeded max_active_agents');
-  if (ledger.llm_inflight_over_limit) notes.push('LLM in-flight exceeded max_llm_concurrency');
+  if (ledger.llm_inflight_over_limit) notes.push('Agent model scheduling permits exceeded max_llm_concurrency');
   // An unmeasured invariant is never evidence of a pass: name it and withhold
   // the aggregate verdict.
   if (!ledger.available) return record('UNKNOWN');
@@ -1550,12 +1527,10 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
   const cluster = clusterId;
   try {
     parsed.clusters = all('SELECT id,status,revision,limits,budget,declared_limits FROM clusters WHERE id=?', cluster);
-    parsed.usage = all("SELECT COUNT(*) AS requests, SUM(COALESCE(total_tokens,0)) AS total_tokens, SUM(COALESCE(prompt_tokens,0)) AS prompt_tokens, SUM(COALESCE(completion_tokens,0)) AS completion_tokens, SUM(COALESCE(cached_tokens,0)) AS cached_tokens, SUM(COALESCE(reasoning_tokens,0)) AS reasoning_tokens, SUM(CASE WHEN status='UNKNOWN' THEN 1 ELSE 0 END) AS unknown_requests, SUM(COALESCE(overshoot,0)) AS overshoot FROM usage_receipts WHERE cluster_id=?", cluster)[0];
-    parsed.usage_by_role = all('SELECT role,kind,COUNT(*) AS c,SUM(COALESCE(total_tokens,0)) AS tokens FROM usage_receipts WHERE cluster_id=? GROUP BY role,kind', cluster);
-    parsed.usage_by_agent = all("SELECT agent_id, role, kind, COUNT(*) AS c, SUM(CASE WHEN status<>'NOT_SENT' THEN 1 ELSE 0 END) AS sent FROM usage_receipts WHERE cluster_id=? GROUP BY agent_id, role, kind", cluster);
-    parsed.usage_states = all('SELECT status, COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? GROUP BY status', cluster);
-    parsed.usage_rows = all('SELECT request_id,agent_id,role,kind,status,created,settled FROM usage_receipts WHERE cluster_id=? ORDER BY created,request_id', cluster);
-    parsed.usage_unknown_without_note = all("SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND status='UNKNOWN' AND (note IS NULL OR note='')", cluster)[0]?.c;
+    parsed.usage = usageSummary(ledger, cluster);
+    parsed.usage_by_role = all("SELECT role,type AS kind,COUNT(*) AS c FROM native_session_events WHERE cluster_id=? AND type IN ('assistant/message','assistant/attempt','compaction/summary') GROUP BY role,type", cluster);
+    parsed.usage_by_agent = all("SELECT agent_id,role,type AS kind,COUNT(*) AS c,COUNT(*) AS sent FROM native_session_events WHERE cluster_id=? AND type IN ('assistant/message','assistant/attempt') GROUP BY agent_id,role,type", cluster);
+    parsed.usage_rows = all('SELECT native_session_id,native_seq,agent_id,role,type,time FROM native_session_events WHERE cluster_id=? ORDER BY native_session_id,native_seq', cluster);
     parsed.transactions_by_status = all('SELECT status,COUNT(*) AS c FROM transactions WHERE cluster_id=? GROUP BY status', cluster);
     parsed.transactions_detail = all('SELECT id,node_id,status,revision FROM transactions WHERE cluster_id=? ORDER BY created,id', cluster);
     parsed.agents = all("SELECT COUNT(*) AS c, SUM(CASE WHEN status<>'TERMINATED' THEN 1 ELSE 0 END) AS live, SUM(CASE WHEN turns>0 THEN 1 ELSE 0 END) AS activated, SUM(turns) AS turns FROM agents WHERE cluster_id=?", cluster)[0];
@@ -1576,7 +1551,7 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
     parsed.blockers = all("SELECT json_extract(data,'$.code') AS code, json_extract(data,'$.reason') AS reason FROM events WHERE cluster_id=? AND type IN ('cluster-blocked','node-blocked')", cluster);
     parsed.blocked_reason = all("SELECT json_extract(data,'$.reason') AS reason FROM events WHERE cluster_id=? AND type='cluster-blocked' ORDER BY seq DESC LIMIT 1", cluster)[0]?.reason ?? null;
     parsed.duplicate_accepts = all("SELECT COUNT(*) AS c FROM (SELECT json_extract(data,'$.transaction_id') AS t FROM events WHERE cluster_id=? AND type='result-accepted' GROUP BY t HAVING COUNT(*)>1)", cluster)[0]?.c;
-    parsed.duplicate_charges = all('SELECT COUNT(*) AS c FROM (SELECT request_id FROM usage_receipts WHERE cluster_id=? GROUP BY request_id HAVING COUNT(*)>1)', cluster)[0]?.c;
+    parsed.duplicate_charges = all('SELECT COUNT(*) AS c FROM (SELECT native_session_id,native_seq FROM native_session_events WHERE cluster_id=? GROUP BY native_session_id,native_seq HAVING COUNT(*)>1)', cluster)[0]?.c;
     parsed.double_leases = all('SELECT COUNT(*) AS c FROM (SELECT agent_id FROM leases WHERE cluster_id=? GROUP BY agent_id HAVING COUNT(*)>1)', cluster)[0]?.c;
     // Derive concurrency from real recorded intervals, never from configured limits.
     const maxOverlap = (rows: readonly Record<string, unknown>[]): number => {
@@ -1596,12 +1571,9 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
       }
       return peak;
     };
-    // Reservations begin before permit admission and can remain unsettled
-    // after cancellation. The scheduler's permit receipts record actual
-    // concurrent admissions; older ledgers fall back to request intervals.
+    // Model permits measure Agent scheduling admission, not provider dispatch.
     const permits=all("SELECT json_extract(data,'$.in_use') AS in_use FROM events WHERE cluster_id=? AND type='llm-slot'",cluster).map(row=>asNumber(row.in_use)).filter((value):value is number=>value!==null);
-    const receipts = all('SELECT created, settled FROM usage_receipts WHERE cluster_id=?', cluster);
-    parsed.max_llm_inflight = permits.length?Math.max(...permits):receipts.length?maxOverlap(receipts):null;
+    parsed.max_llm_inflight = permits.length ? Math.max(...permits) : null;
     const turnEvents = all("SELECT type,data,at FROM events WHERE cluster_id=? AND type IN ('turn-start','turn-end') ORDER BY seq", cluster);
     const openTurns = new Map<string, number>();
     const turnIntervals: { created: number; settled: number }[] = [];
@@ -1711,9 +1683,7 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
     usage: ledgerUsage(parsed.usage),
     usage_by_role: ledgerRows(parsed, 'usage_by_role'),
     usage_by_agent: ledgerRows(parsed, 'usage_by_agent'),
-    usage_states: ledgerRows(parsed, 'usage_states'),
     usage_rows: ledgerRows(parsed, 'usage_rows'),
-    usage_unknown_without_note: ledgerNumber(parsed, 'usage_unknown_without_note') ?? 0,
     transactions_by_status: ledgerRows(parsed, 'transactions_by_status'),
     transactions_detail: ledgerRows(parsed, 'transactions_detail'),
     agents: aggregateRow('agents'),
@@ -1816,8 +1786,9 @@ function ledgerUsage(value: unknown): LedgerUsage | undefined {
     completion_tokens: field('completion_tokens'),
     cached_tokens: field('cached_tokens'),
     reasoning_tokens: field('reasoning_tokens'),
-    unknown_requests: field('unknown_requests'),
-    overshoot: field('overshoot'),
+    cache_read_tokens: field('cache_read_tokens'),
+    cache_write_tokens: field('cache_write_tokens'),
+    completeness: row.completeness === 'complete' || row.completeness === 'incomplete' ? row.completeness : 'unknown',
   };
 }
 

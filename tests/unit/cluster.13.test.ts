@@ -22,7 +22,6 @@ import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
 import { communicate } from '../../packages/dsh-flow/src/core/communication.ts';
-import { dimensionAvailable } from '../../packages/dsh-flow/src/core/budget.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { integer, objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
 import * as recursionChecks from '../acceptance/checks/recursion.ts';
@@ -68,7 +67,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -130,7 +129,7 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   }, internals);
   return snapshot.cluster.id;
@@ -193,27 +192,7 @@ function queryView13(result: unknown, label = 'communication query'): Blackboard
 }
 
 /** One pending action read as the budget hint the runtime attaches to a rebalance. */
-interface PendingBudgetHint13 {
-  readonly action: string
-  readonly to: Record<string, unknown> | null
-  readonly required: Record<string, unknown> | null
-  readonly from_options: readonly Record<string, unknown>[]
-}
 
-/** Read one pending action as a budget hint; the hint fields are optional on the base action. */
-function budgetHint13(action: unknown, label: string): PendingBudgetHint13 {
-  const row = objectField(action, label);
-  return {
-    action: textOf(row.action, `${label}.action`),
-    to: row.to === undefined || row.to === null ? null : objectField(row.to, `${label}.to`),
-    required: row.required === undefined || row.required === null
-      ? null
-      : objectField(row.required, `${label}.required`),
-    from_options: row.from_options === undefined || row.from_options === null
-      ? []
-      : objectRows13(row.from_options, `${label}.from_options`),
-  };
-}
 
 test('a management node at the depth cap is refused, because no Worker could run', async t => {
   const runtime = makeRuntime(t);
@@ -320,7 +299,7 @@ test('a delegated depth counter cannot be revised to invent management levels', 
     capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 4, max_llm_concurrency: 2,
       max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 4_000_000, model_requests: 1_000, tool_calls: 2_000,
+    budget: { tool_calls: 2_000,
       wall_time_ms: 3_600_000, agents: 64, max_active_agents: 4 },
   };
   const startOverridesInternals: FlowStartInternals = { delegation: [{ scope: 'deep/', objective: 'deliver the deep result', spawn_children: 3,
@@ -390,7 +369,7 @@ test('the scheduler never runs a Worker granted before its transaction revision'
     });
   }
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', maxTokens: 512,
+    dataDir: dir, provider: 'local-fake', model: 'fake-model',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
@@ -398,7 +377,7 @@ test('the scheduler never runs a Worker granted before its transaction revision'
     objective: 'write a scoped file', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2,
       max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 100, tool_calls: 100,
+    budget: { tool_calls: 100,
       wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
@@ -473,110 +452,6 @@ test('a Worker can discover its management roles without reading sibling Workers
     ['allocator', 'auditor', 'orchestrator'], 'the Worker can address all three owning roles');
   assert.equal(visible.some(agent => agent.id === sibling.agent_id), false,
     'discovering the managers does not expose other Workers in their domain');
-});
-
-test('Allocator does not fund a Worker that already submitted its result', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  const allocation = required(runtime.store.activeAllocationForTransaction(tx.id), 'allocation');
-  const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', allocation.agent_id), 'agent budget');
-  runtime.store.tx(() => runtime.store.updateBudget(agentBudget.id, { requests_spent: agentBudget.requests_limit }));
-  const pending = () => runtime.pendingFor('allocator', root, required(runtime.store.getCluster(clusterId), 'cluster'),
-    required(runtime.store.getAgent(allocator.agent_id), 'allocator'));
-  assert.ok(pending().some(item => item.starved_agents?.includes(allocation.agent_id)),
-    'a READY Worker without a request can be funded');
-  runtime.store.tx(() => runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED' }));
-  assert.equal(pending().some(item => item.starved_agents?.includes(allocation.agent_id)), false,
-    'SUBMITTED work belongs to validation, not to a Worker top-up');
-  runtime.store.tx(() => {
-    runtime.store.updateTransaction(tx.id, { status: 'READY' });
-    const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-    runtime.store.updateCluster(clusterId, {
-      limits: { ...cluster.limits, worker_model_requests: 2 },
-    });
-    for (let index = 0; index < 2; index += 1) {
-      runtime.store.insertUsageReceipt({
-        request_id: `spent-worker-${index}`, cluster_id: clusterId, agent_id: allocation.agent_id,
-        node_id: required(runtime.store.getAgent(allocation.agent_id), 'worker').node_id,
-        role: 'worker', kind: 'worker', status: 'SETTLED', reservation_tokens: 10, turn_seq: 1,
-      });
-    }
-  });
-  assert.equal(pending().some(item => item.starved_agents?.includes(allocation.agent_id)), false,
-    'a Worker at its declared request allowance cannot be funded again');
-});
-
-test('a waiting parent does not rebalance budget just because its node balance is zero', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const parent = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'parent transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: parent.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: parent.id, decision: 'approve' });
-  const child = command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: parent.id, scope: { objective: 'complete child work' },
-  }).result;
-  const childNodeId = textOf(child.node_id, 'node_id');
-  const childTxId = textOf(child.delegated_transaction_id, 'delegated_transaction_id');
-  const childOrchestrator = actorFor(runtime, clusterId, 'orchestrator', childNodeId);
-  const childAuditor = actorFor(runtime, clusterId, 'auditor', childNodeId);
-  command(runtime, childOrchestrator, 'dispatch', { transaction_id: childTxId });
-  command(runtime, childAuditor, 'inspect_plan', {
-    transaction_id: childTxId, decision: 'approve',
-  });
-  runtime.store.tx(() => runtime.store.updateTransaction(childTxId, {
-    status: 'SUBMITTED', result: { evidence: 'awaiting validation' },
-  }));
-  assert.ok(runtime.store.parentsAwaitingChildren(clusterId).includes(parent.id));
-  const rootBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'root node budget');
-  runtime.store.tx(() => runtime.store.updateBudget(rootBudget.id, {
-    tokens_spent: rootBudget.tokens_limit - rootBudget.tokens_reserved,
-  }));
-  assert.equal(dimensionAvailable(required(runtime.store.getBudget(rootBudget.id), 'root node budget'), 'tokens'), 0);
-  const hints = runtime.pendingFor('allocator', root, required(runtime.store.getCluster(clusterId), 'cluster'),
-    required(runtime.store.getAgent(allocator.agent_id), 'allocator')).map(item => budgetHint13(item, 'pending action'));
-  assert.equal(hints.some(item => item.action === 'rebalance_budget' && item.to !== null && textOf(item.to.id, 'to.id') === root.id), false,
-    'the root has no executable local work until its delegated child completes');
-});
-
-test('a parent Allocator sees a blocked child whose positive balance is below its refused request', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const delegated = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'delegated transaction');
-  const child = command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: delegated.id, scope: { objective: 'write a child result' },
-  }).result;
-  const childNodeId = textOf(child.node_id, 'node_id');
-  const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', childNodeId), 'child node budget');
-  runtime.store.tx(() => runtime.store.updateBudget(nodeBudget.id, {
-    tokens_limit: nodeBudget.tokens_spent + nodeBudget.tokens_reserved + 8_511,
-    requests_limit: nodeBudget.requests_spent + nodeBudget.requests_reserved + 1,
-  }));
-  const childAllocator = actorFor(runtime, clusterId, 'allocator', childNodeId);
-  runtime.blockNodeInternal(clusterId, childNodeId,
-    'BUDGET: next role request needs 16,000 tokens and one request', 'BUDGET_EXHAUSTED', {
-      agent_id: childAllocator.agent_id, dimension: 'tokens', requested: 16_000,
-      envelope: { tokens: 16_000, model_requests: 1, tool_calls: 0 },
-    });
-  const actions = runtime.pendingFor('allocator', root, required(runtime.store.getCluster(clusterId), 'cluster'),
-    required(runtime.store.getAgent(allocator.agent_id), 'allocator'));
-  const hint = actions.map(item => budgetHint13(item, 'pending action'))
-    .find(item => item.action === 'rebalance_budget' && item.to !== null && textOf(item.to.id, 'to.id') === childNodeId);
-  assert.ok(hint, `a positive balance smaller than the refused request is still starvation: ${JSON.stringify(actions)}`);
-  assert.equal(numberOf(required(hint.required, 'hint.required').tokens, 0, 1_000_000_000, 'tokens'), 16_000,
-    'the funder sees the actual envelope rather than a zero-balance guess');
-  assert.ok(hint.from_options.some(option => numberOf(option.tokens, 0, 1_000_000_000, 'tokens') >= 16_000));
 });
 
 test('acceptance closes an issue only when new Worker evidence answered it', t => {

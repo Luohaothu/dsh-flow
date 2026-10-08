@@ -48,9 +48,9 @@ export function objectField(value: unknown, label: string): Record<string, unkno
   return value as Record<string, unknown>;
 }
 
-/** The six budget dimensions the cluster funds work from, in declaration order. */
+/** The retained resource dimensions, in declaration order. */
 export const BUDGET_KEYS = [
-  'tokens', 'model_requests', 'tool_calls', 'wall_time_ms', 'agents', 'max_active_agents',
+  'tool_calls', 'wall_time_ms', 'agents', 'max_active_agents',
 ] as const;
 
 /**
@@ -124,13 +124,12 @@ export function validateCapabilities(
 export function validateBudget(value: unknown, label = 'budget'): FlowBudgetInput {
   const source = objectField(value, label);
   const out: {
-    tokens?: number
-    model_requests?: number
     tool_calls?: number
     wall_time_ms?: number
     agents?: number
     max_active_agents?: number
   } = {};
+  rejectUnknownFields(source, BUDGET_KEYS, label);
   for (const key of BUDGET_KEYS) {
     if (source[key] === undefined) continue;
     out[key] = integer(source[key], 1, 2 ** 40, `${label}.${key}`);
@@ -157,7 +156,7 @@ export function isFlowJsonValue(value: unknown): value is FlowJsonValue {
 const LIMIT_KEYS = [
   'max_children', 'max_depth', 'max_agents', 'max_active_agents', 'max_llm_concurrency',
   'max_attempts', 'max_corrections', 'max_role_turns', 'max_tool_calls_per_turn',
-  'max_scale_batch', 'worker_model_requests', 'worker_max_tokens',
+  'max_scale_batch',
 ] as const satisfies readonly (keyof FlowLimitsInput)[];
 
 /** The inclusive bounds each limit key must fall inside. */
@@ -172,8 +171,6 @@ const LIMIT_BOUNDS: { readonly [K in (typeof LIMIT_KEYS)[number]]: readonly [num
   max_role_turns: [1, 512],
   max_tool_calls_per_turn: [1, 4096],
   max_scale_batch: [1, 100000],
-  worker_model_requests: [1, 64],
-  worker_max_tokens: [64, 32768],
 };
 
 /**
@@ -188,6 +185,7 @@ const LIMIT_BOUNDS: { readonly [K in (typeof LIMIT_KEYS)[number]]: readonly [num
  */
 export function validateLimits(value: unknown, label = 'limits'): FlowLimitsInput {
   const source = objectField(value, label);
+  rejectUnknownFields(source, LIMIT_KEYS, label);
   const out: { [K in (typeof LIMIT_KEYS)[number]]?: number } = {};
   for (const key of LIMIT_KEYS) {
     const current = source[key];
@@ -196,4 +194,11 @@ export function validateLimits(value: unknown, label = 'limits'): FlowLimitsInpu
     out[key] = integer(current, min, max, `${label}.${key}`);
   }
   return out;
+}
+
+/** Refuse unsupported fields at the boundary instead of silently dropping them. */
+export function rejectUnknownFields(source: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  for (const key of Object.keys(source)) {
+    if (!allowed.includes(key)) fail(`Unsupported ${label}.${key}`);
+  }
 }

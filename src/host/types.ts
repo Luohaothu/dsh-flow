@@ -91,8 +91,6 @@ export interface CaseDataset {
 /** The per-tier knobs a scale case overrides. */
 export interface CaseScaleFixture {
   workers?: number;
-  worker_model_requests?: number;
-  worker_max_tokens?: number;
   concurrency_probe?: boolean;
   concurrency_probe_window_ms?: number;
   generated_tier?: number;

@@ -9,6 +9,7 @@ The main Agent manages a team's lifecycle through a skill and tools. Each manage
 The Chinese [documentation](docs/design/index.md) covers usage, architecture and development:
 
 - [Quick start](docs/design/quick-start.md) and [advanced usage](docs/design/advanced.md)
+- [DeepSeek step-by-step walkthrough](docs/design/step-by-step.md): official API setup, tool calculation, independent review and file delivery
 - [Agent roles](docs/design/agents.md), [hierarchy](docs/design/hierarchy.md), [dispatch](docs/design/dispatch.md) and [communication](docs/design/communication.md)
 - [Development setup](docs/design/development/setup.md) and [code structure](docs/design/development/code-structure.md)
 - [Interface behavior](docs/design/development/interface.md), [API](docs/design/development/api.md) and [provider interfaces](docs/design/development/provider-interfaces.md)
@@ -60,9 +61,9 @@ Transactions progress through `DRAFT`, `READY`, `RUNNING`, `SUBMITTED`, `VALIDAT
 
 A parent aggregates only accepted children. Accepted root transactions still require the root Orchestrator's `finish_cluster` action before the cluster completes. Resource reclamation and task success are distinct states.
 
-Budgets account for tokens, model requests, tool calls, wall time, agent identities and active concurrency. Usage comes from request receipts; unknown usage is not presented as zero. Shared grants are not summed once per agent. Declared write scopes support allocation checks and managed-tool authorization; filesystem access also depends on the host's sandbox and permission policy.
+Budgets account for tool calls, wall time, agent identities and active execution capacity. DSH owns model context, output and default compaction. Token statistics passively project durable native Session events as host-recorded usage; missing fields remain unknown and incomplete observations are marked. Agent scheduling permits do not prove the concurrency of all host auxiliary model requests. Shared grants are not summed once per agent. Declared write scopes support allocation checks and managed-tool authorization; filesystem access also depends on the host's sandbox and permission policy.
 
-SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, model, budget and permission controls.
+SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 3 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
 
 ## Workspace
 

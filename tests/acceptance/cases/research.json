@@ -1,17 +1,43 @@
 {
   "title": "Evidence-backed comparison of local inference servers",
   "objective": "Research, for a single-machine multi-agent cluster, how SGLang, vLLM and llama.cpp's server compare, focusing on concurrency and queueing, KV/prefix caching, OpenAI tool calling, structured output, cancellation and usage observability, and operational limits. Produce a decision recommendation that cites evidence and a list of questions that still need a local experiment.\n\nUse `web_fetch` on the official documentation and official repositories only: docs.sglang.io, docs.vllm.ai, blog.vllm.ai, and the GitHub repositories of sgl-project/sglang, vllm-project/vllm and ggml-org/llama.cpp. Read at least twelve distinct official pages, at least four per project, and continue by following links you find on those pages. Organise the work with one child management node per engine plus one comparison-and-citation worker; share the evidence table over the blackboard and use cross-subtree messages to resolve contradictions between sources.\n\nDeliverables in {{workspace}}: `report.md`, `sources.json` (one record per fetched page, with source_id, request URL, final URL, fetch time, hash) and `claims.json` (one record per claim, with `{claim, source_ids, quotes, confidence, unverified}`).",
-  "capabilities": ["fs_read", "fs_write", "web_fetch"],
-  "limits": { "max_children": 8, "max_depth": 6, "max_agents": 128, "max_active_agents": 8, "max_llm_concurrency": 2, "max_attempts": 2, "max_corrections": 2, "max_role_turns": 32 },
-  "budget": { "tokens": 2097152, "model_requests": 256, "tool_calls": 2048, "wall_time_ms": 3600000, "agents": 256, "max_active_agents": 8 },
+  "capabilities": [
+    "fs_read",
+    "fs_write",
+    "web_fetch"
+  ],
+  "limits": {
+    "max_children": 8,
+    "max_depth": 6,
+    "max_agents": 128,
+    "max_active_agents": 8,
+    "max_llm_concurrency": 2,
+    "max_attempts": 2,
+    "max_corrections": 2,
+    "max_role_turns": 32
+  },
+  "budget": {
+    "tool_calls": 2048,
+    "wall_time_ms": 3600000,
+    "agents": 256,
+    "max_active_agents": 8
+  },
   "timeout_ms": 3600000,
-  "workspace": { "kind": "empty" },
+  "workspace": {
+    "kind": "empty"
+  },
   "seed_urls": [
     "https://docs.sglang.io/",
     "https://docs.vllm.ai/en/latest/",
     "https://github.com/ggml-org/llama.cpp/tree/master/tools/server"
   ],
-  "allowed_hosts": ["docs.sglang.io", "docs.vllm.ai", "blog.vllm.ai", "github.com", "raw.githubusercontent.com"],
+  "allowed_hosts": [
+    "docs.sglang.io",
+    "docs.vllm.ai",
+    "blog.vllm.ai",
+    "github.com",
+    "raw.githubusercontent.com"
+  ],
   "minimum_pages": 12,
   "minimum_pages_per_project": 4,
   "dimensions": [

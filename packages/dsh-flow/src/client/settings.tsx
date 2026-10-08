@@ -27,15 +27,15 @@ export function SettingsPage({store,execution,settings,catalog,view,onLeave,guar
     <fieldset disabled={disabled}><legend>团队默认值</legend><small>用于之后新建的团队。</small>
       <div className="flow-settings-grid">{['depth','children','agents','minutes'].map(numeric)}</div>
       <label>子代理派发模式<select aria-label="子代理派发模式" value={mode} onChange={e=>execution.actions.edit('mode',e.target.value)}><option value="parallel">并行</option><option value="serial">串行</option></select></label>
-      {mode==='parallel'?<div className="flow-settings-grid">{['active','llm'].map(numeric)}</div>:<small>每次运行一个代理、一个模型请求。</small>}
+      {mode==='parallel'?<div className="flow-settings-grid">{['active','llm'].map(numeric)}</div>:<small>每次运行一个代理，由宿主执行模型请求。</small>}
     </fieldset>
     <fieldset disabled={disabled}><legend>模型与用量</legend>
       <label>团队默认模型<select aria-label="团队默认模型" value={field('model').text} onChange={e=>execution.actions.edit('model',e.target.value)}><option value="inherit">跟随主会话</option>{models.map(model=><option key={model.value} value={model.value}>{model.label}</option>)}{field('model').text!=='inherit'&&!models.some(model=>model.value===field('model').text)&&<option value={field('model').text}>已保存的模型（当前不可用）</option>}</select></label>
       {catalogError&&<small role="status">模型目录加载失败。<Button size="sm" onClick={()=>void catalog().then(value=>{setModels(value);setCatalogError(false);},()=>setCatalogError(true))}>重试</Button></small>}
       <label>推理等级<select aria-label="团队推理等级" value={field('effort').text} onChange={e=>execution.actions.edit('effort',e.target.value)}><option value="inherit">跟随主会话</option><option value="off">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-      <div className="flow-settings-grid">{['tokens','output','requests','tools'].map(numeric)}</div>
+      <div className="flow-settings-grid">{['tools'].map(numeric)}</div>
     </fieldset>
-    <details className="flow-settings-advanced"><summary>更多执行限制</summary><div className="flow-settings-grid">{['workerOutput','workerRequests','turns','attempts','corrections'].map(numeric)}</div></details>
+    <details className="flow-settings-advanced"><summary>更多执行限制</summary><div className="flow-settings-grid">{['turns','attempts','corrections'].map(numeric)}</div></details>
     {state.readError && <p role="status">设置读取失败：{state.readError}。当前为临时默认值。<Button onClick={()=>void store.save()}>保存临时默认值</Button></p>}
     <fieldset disabled={disabled}><legend>显示方式</legend>
       <label>默认团队视图<select aria-label="默认团队视图" value={value.view} onChange={e=>store.edit('view',e.target.value==='list'?'list':'graph')}><option value="graph">拓扑图</option><option value="list">列表</option></select></label>

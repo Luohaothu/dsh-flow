@@ -18,7 +18,6 @@ import { Context } from '@deepseek-ai/cordis';
 
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
-import { releaseLlmRequest, reserveLlmRequest } from '../../packages/dsh-flow/src/core/runtime.ts';
 import type { TurnOutcome } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { budgetView } from '../../packages/dsh-flow/src/core/budget.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
@@ -59,7 +58,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -108,7 +107,7 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -138,16 +137,12 @@ function command(
 
 /** The three ledger dimensions the interactive envelope spends. */
 interface SpentTotals {
-  tokens: number
-  model_requests: number
   tool_calls: number
 }
 
 function totalSpent(runtime: ClusterRuntime, clusterId: string): SpentTotals {
-  const total: SpentTotals = { tokens: 0, model_requests: 0, tool_calls: 0 };
+  const total: SpentTotals = { tool_calls: 0 };
   for (const row of runtime.store.listBudgets(clusterId)) {
-    total.tokens += row.tokens_spent;
-    total.model_requests += row.requests_spent;
     total.tool_calls += row.tool_calls_spent;
   }
   return total;
@@ -210,8 +205,6 @@ function beginTurn(
 function scriptedTurn(completed: boolean, stopReason: string, finalText: string): TurnOutcome {
   return {
     native_seq: null, stopDetail: null, missing_capability_tools: [], admitted: false,
-    context: null, context_pressure: false, context_over_budget: false, context_blocked: false,
-    context_code: null, context_overflowed: false,
     events: [], assistant: [], usage: [], toolCalls: [], completed, stopReason, finalText,
   };
 }
@@ -293,30 +286,30 @@ test('budget transfers move only unused unreserved capacity and releasing reclai
 
   const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
   const nodeView = required(budgetView(required(runtime.store.getBudget(nodeBudget.id), 'node budget')), 'node budget view');
-  assert.ok(nodeView.tokens.limit < 1_000_000 && nodeView.tokens.available > 0,
-    `role grants must draw the node budget down from the root (limit ${nodeView.tokens.limit}, available ${nodeView.tokens.available})`);
+  assert.ok(nodeView.tool_calls.limit < 1000 && nodeView.tool_calls.available > 0,
+    `role grants must draw the node budget down from the root (limit ${nodeView.tool_calls.limit}, available ${nodeView.tool_calls.available})`);
   assert.throws(() => command(runtime, allocator, 'rebalance_budget', {
-    from: { kind: 'node', id: root.id }, to: { kind: 'root', id: clusterId }, amounts: { tokens: nodeView.tokens.available + 1 },
+    from: { kind: 'node', id: root.id }, to: { kind: 'root', id: clusterId }, amounts: { tool_calls: nodeView.tool_calls.available + 1 },
   }), error => error instanceof Error && 'code' in error && error.code === 'LIMIT_REACHED');
 
-  const moved = Math.floor(nodeView.tokens.available / 2);
+  const moved = Math.floor(nodeView.tool_calls.available / 2);
   command(runtime, allocator, 'rebalance_budget', {
-    from: { kind: 'node', id: root.id }, to: { kind: 'root', id: clusterId }, amounts: { tokens: moved },
+    from: { kind: 'node', id: root.id }, to: { kind: 'root', id: clusterId }, amounts: {tool_calls: moved},
   });
-  assert.equal(required(budgetView(required(runtime.store.getBudget(nodeBudget.id), 'node budget')), 'node budget view').tokens.limit, nodeView.tokens.limit - moved);
+  assert.equal(required(budgetView(required(runtime.store.getBudget(nodeBudget.id), 'node budget')), 'node budget view').tool_calls.limit, nodeView.tool_calls.limit - moved);
 
   command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: tx.id });
   command(runtime, actorFor(runtime, clusterId, 'auditor', root.id), 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const allocation = firstOf(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }), 'active allocation');
   const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', allocation.agent_id), 'agent budget');
-  assert.ok(agentBudget.tokens_limit > 0);
+  assert.ok(agentBudget.tool_calls_limit > 0);
   const spentBefore = totalSpent(runtime, clusterId);
 
   command(runtime, allocator, 'release_agent', { allocations: [allocation.id] });
   assert.equal(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }).length, 0);
-  assert.equal(totalSpent(runtime, clusterId).tokens, spentBefore.tokens, 'releasing must never reverse spend');
-  assert.ok(totalSpent(runtime, clusterId).tokens + totalSpent(runtime, clusterId).model_requests * 0 >= 0);
+  assert.equal(totalSpent(runtime, clusterId).tool_calls, spentBefore.tool_calls, 'releasing must never reverse spend');
+  assert.ok(totalSpent(runtime, clusterId).tool_calls >= 0);
   assert.equal(runtime.store.countAgents(clusterId, { live: true }), 3);
 });
 test('a transaction without an explicit capability set still yields working workers', t => {
@@ -350,7 +343,7 @@ test('a delegation fixture builds a decreasing management chain', t => {
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
   }, { delegation: [{ scope: 'deep/', objective: 'deep branch', max_children: 4, spawn_children: 3 }] }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
@@ -412,51 +405,24 @@ test('a budget top-up moves exactly the gap it was asked for, and nothing else',
   const agentBefore = required(runtime.store.getBudget(agentBudget.id), 'agent budget');
 
   // Ask for a request the identity cannot cover from what it holds.
-  const held = Math.max(0, agentBefore.tokens_limit - agentBefore.tokens_reserved - agentBefore.tokens_spent);
-  const want = held + 5_000;
+  const held = Math.max(0, agentBefore.tool_calls_limit - agentBefore.tool_calls_reserved - agentBefore.tool_calls_spent);
+  const want = held + 5;
   const short = want - held;
-  const granted = jsonObject(runtime.store.tx(() => runtime.topUpBudgetForAgent(auditor, { tokens: want, model_requests: 1 })), 'top-up grant');
-  assert.equal(granted.tokens, short, 'exactly the tokens that were missing');
+  const granted = jsonObject(runtime.store.tx(() => runtime.topUpBudgetForAgent(auditor, {tool_calls: want})), 'top-up grant');
+  assert.equal(granted.tool_calls, short, 'exactly the tokens that were missing');
   const after = required(runtime.store.getBudget(nodeBudget.id), 'node budget');
   assert.equal(after.agents_limit, 32, 'a top-up must not move agent capacity');
   assert.equal(after.max_active_limit, 4, 'a top-up must not move active-slot capacity');
-  assert.equal(after.tokens_limit, before.tokens_limit - short, 'the node gave exactly that many tokens');
+  assert.equal(after.tool_calls_limit, before.tool_calls_limit - short, 'the node gave exactly that many tokens');
 
   const agentAfter = required(runtime.store.getBudget(agentBudget.id), 'agent budget');
   assert.equal(agentAfter.max_active_limit, 0, 'a management role does not hold an active slot');
-  assert.ok(agentAfter.tokens_limit - agentAfter.tokens_reserved - agentAfter.tokens_spent >= want,
+  assert.ok(agentAfter.tool_calls_limit - agentAfter.tool_calls_reserved - agentAfter.tool_calls_spent >= want,
     'the identity can now cover the request it asked about');
 
   // Nothing to top up is not a top-up.
-  assert.equal(runtime.store.tx(() => runtime.topUpBudgetForAgent(auditor, { tokens: 1, model_requests: 1 })), null);
-  // A Worker whose request allowance is spent gets no tokens: paying for a
-  // request that cannot be sent is not a top-up.
-  const workerTx = textOf(command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'create_transaction', {
-    objective: 'worker work', acceptance_criteria: ['done'],
-  }).result.transaction_id, 'transaction_id');
-  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: workerTx });
-  if (required(runtime.store.getTransaction(workerTx), 'worker transaction').status === 'DRAFT') {
-    command(runtime, actorFor(runtime, clusterId, 'auditor', root.id), 'inspect_plan', { transaction_id: workerTx, decision: 'approve' });
-  }
-  runtime.store.tx(() => runtime.store.updateCluster(clusterId, {
-    limits: { ...required(runtime.store.getCluster(clusterId), 'cluster').limits, worker_model_requests: 2 },
-  }));
-  const allocationResults = jsonObject(command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'allocate_agent', { transaction_id: workerTx }).result, 'allocation result').allocations;
-  assert.ok(Array.isArray(allocationResults));
-  const allocated = jsonObject(firstOf(allocationResults, 'allocation'), 'allocation');
-  const worker = required(runtime.store.getAgent(textOf(allocated.agent_id, 'agent_id')), 'worker');
-  assert.equal(runtime.workerRequestAllowance(worker), 2);
-  runtime.store.tx(() => {
-    for (let index = 0; index < 2; index += 1) {
-      runtime.store.insertUsageReceipt({
-        request_id: `worker-req-${index}`, cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id,
-        role: 'worker', kind: 'worker', status: 'SETTLED', reservation_tokens: 10, turn_seq: 1,
-      });
-    }
-  });
-  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), runtime.workerRequestAllowance(worker));
-  assert.equal(runtime.store.tx(() => runtime.topUpBudgetForAgent(worker, { tokens: 1_000_000, model_requests: 1 })), null,
-    'a worker at its request allowance is not topped up');
+  assert.equal(runtime.store.tx(() => runtime.topUpBudgetForAgent(auditor, {})), null);
+
 });
 
 test('communication crosses subtrees without touching the management tree', t => {
@@ -688,7 +654,7 @@ test('a staged proposal survives pause, but not a stale epoch or a foreign turn'
   void newLease;
 });
 
-test('the model-request semaphore transfers a permit without freeing it', async t => {
+test('the Agent scheduling semaphore transfers a permit without freeing it', async t => {
   const runtime = makeRuntime(t);
   runtime.setLlmConcurrency(1);
 
@@ -922,109 +888,6 @@ test('one scheduling pass starts several agents before any of them finishes', as
   held();
 });
 
-test('a small cluster keeps working capacity: the compaction earmark never takes the workload', async t => {
-  const runtime = makeRuntime(t);
-  // 100k tokens and 20 requests: an unconditional 200k/64 earmark would take
-  // everything and leave the cluster unable to run a single turn.
-  const clusterId = startCluster(runtime, {
-    budget: { tokens: 100_000, model_requests: 20, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 4 },
-  });
-  // Grants move a scope's own limit downward, so compare against the declared
-  // tier (`100_000` tokens, `20` requests), not the post-transfer remainder.
-  const poolId = runtime.compactionBudgetId(clusterId);
-  if (poolId) {
-    const pool = runtime.store.getBudget(poolId);
-    if (pool) {
-      assert.ok(pool.tokens_limit <= 100_000 * 0.25, 'the earmark is a share, not a floor');
-      assert.ok(pool.requests_limit <= 20 * 0.25, 'the earmark cannot take the request allowance');
-    }
-  }
-  const total = runtime.store.listBudgets(clusterId);
-  const working = total.filter(row => row.scope_kind === 'root' || row.scope_kind === 'node');
-  const available = working.reduce((sum, row) => sum + (row.tokens_limit - row.tokens_spent - row.tokens_reserved), 0);
-  assert.ok(available > 0, 'ordinary work still has tokens');
-  const availableRequests = working.reduce((sum, row) => sum + (row.requests_limit - row.requests_spent - row.requests_reserved), 0);
-  assert.ok(availableRequests > 0, 'ordinary work still has model requests');
-
-  // And a role can really reserve a request against its own node budget.
-  const node = rootNode(runtime, clusterId);
-  const orchestrator = firstOf(runtime.store.listAgents(clusterId, { node_id: node.id, role: 'orchestrator', limit: 5 }), 'orchestrator');
-  const chain = runtime.agentBudgetChain(required(runtime.store.getCluster(clusterId), 'cluster'), orchestrator);
-  const reserved = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: orchestrator.id, node_id: orchestrator.node_id,
-    transaction_id: null, role: 'orchestrator', kind: 'role', model: 'm', provider: 'p',
-    budgetIds: chain, reservationTokens: 1000, turn_seq: 1,
-  });
-  assert.ok(reserved.request_id, 'a fresh small cluster can still send a request');
-});
-
-test('the 64-file tier funds compaction as a bounded share instead of a fixed small-cluster cap', t => {
-  const runtime = makeRuntime(t);
-  const tokens = 65_536 * 64 * 4;
-  const modelRequests = 12 * 64 * 4;
-  const clusterId = startCluster(runtime, {
-    budget: {
-      tokens, model_requests: modelRequests, tool_calls: 16 * 64 * 4,
-      wall_time_ms: 600_000, agents: 128, max_active_agents: 9,
-    },
-  });
-  const budgets = runtime.store.listBudgets(clusterId);
-  const pool = required(runtime.store.getBudget(required(runtime.compactionBudgetId(clusterId), 'compaction budget id')), 'compaction budget');
-  assert.equal(pool.tokens_limit, Math.floor(tokens * 0.10),
-    'a 400k absolute cap strands a 64-file tier after roughly 16 files');
-  assert.equal(pool.requests_limit, Math.floor(modelRequests * 0.20),
-    'summary request capacity scales with the same tier');
-  assert.equal(budgets.reduce((sum, row) => sum + row.tokens_limit, 0), tokens,
-    'the maintenance share is transferred from the declared budget, not minted');
-  assert.equal(budgets.reduce((sum, row) => sum + row.requests_limit, 0), modelRequests);
-});
-
-test('a compaction reservation is charged where it can actually be funded, and released there', t => {
-  const runtime = makeRuntime(t);
-  // A budget whose node scope is emptied by the transfer: compacting must still
-  // be fundable, and reconciliation must return the tokens to that same scope.
-  const clusterId = startCluster(runtime, {
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
-  });
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'orchestrator');
-  const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-  // Drain the node scope, leaving only the dedicated compaction scope funded.
-  const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
-  const agentBudget = runtime.store.budgetForScope(clusterId, 'agent', orchestrator.id);
-  runtime.store.tx(() => {
-    runtime.store.updateBudget(nodeBudget.id, { tokens_limit: 0, requests_limit: 0 });
-    if (agentBudget) runtime.store.updateBudget(agentBudget.id, { tokens_limit: 0, requests_limit: 0 });
-  });
-
-  const chain = runtime.budgetChainForAgent(orchestrator, { tokens: 5_000, kind: 'compaction' });
-  assert.equal(chain.length, 1, 'exactly one enforcing grant');
-  const pool = required(runtime.store.getBudget(required(runtime.compactionBudgetId(clusterId), 'compaction budget id')), 'compaction budget');
-  assert.equal(firstOf(chain, 'budget chain'), pool.id, 'the funded scope is the one charged');
-  assert.equal(firstOf(runtime.budgetChainForAgent(orchestrator, { tokens: 5_000, kind: 'role' }), 'role budget chain'), pool.id,
-    'an ordinary request can borrow the pool only when its owning grants cannot pay');
-
-  const request = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: orchestrator.id, node_id: orchestrator.node_id,
-    transaction_id: null, role: 'orchestrator', kind: 'compaction', model: 'm', provider: 'p',
-    budgetIds: chain, reservationTokens: 5_000, turn_seq: 1,
-  });
-  const afterReserve = required(runtime.store.getBudget(pool.id), 'compaction budget');
-  assert.equal(afterReserve.tokens_reserved, 5_000, 'the pool holds the reservation');
-  assert.equal(required(runtime.store.getUsageReceipt(request.request_id), 'usage receipt').budget_scope_id, pool.id, 'the receipt names the charged scope');
-
-  // Recovery moves the counters in that same scope — not in the drained node,
-  // which would leave the pool's hold orphaned and the node over-charged.
-  runtime.reconcileReservations(cluster, orchestrator);
-  const afterReconcile = required(runtime.store.getBudget(pool.id), 'compaction budget');
-  assert.equal(afterReconcile.requests_spent, 1, 'the attempt is consumed in the charged scope');
-  assert.equal(afterReconcile.tokens_reserved, 5_000, 'an unknown-cost request keeps its token hold');
-  assert.equal(required(runtime.store.getBudget(nodeBudget.id), 'node budget').requests_spent, 0, 'the drained node is not charged instead');
-  const receipt = required(runtime.store.getUsageReceipt(request.request_id), 'usage receipt');
-  assert.equal(receipt.status, 'UNKNOWN');
-  assert.match(String(receipt.note), /tokens retained/);
-});
-
 test('a role cannot raise the limits the run declared', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime, {
@@ -1046,55 +909,6 @@ test('a role cannot raise the limits the run declared', t => {
   const lowered = command(runtime, allocator, 'set_concurrency', { max_active_agents: 2 }).result;
   assert.equal(jsonObject(lowered.limits, 'lowered limits').max_active_agents, 2);
   assert.equal(runtime.llmSlotsInUse(), 0);
-});
-
-test('the charged scope covers the whole reservation, and a throw releases it there', async t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime, {
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
-  });
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'orchestrator');
-  const pool = required(runtime.store.getBudget(required(runtime.compactionBudgetId(clusterId), 'compaction budget id')), 'compaction budget');
-
-  // Partially depleted pool, funded node: the pool can no longer cover the
-  // request, so the node must be chosen instead of stranding it.
-  const nodeBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
-  runtime.store.tx(() => runtime.store.updateBudget(pool.id, { tokens_limit: 10_000 }));
-  assert.equal(firstOf(runtime.budgetChainForAgent(orchestrator, { tokens: 50_000, kind: 'compaction' }), 'compaction budget chain'),
-    nodeBudget.id, 'an underfunded compaction pool falls back to the management grant');
-  assert.equal(firstOf(runtime.budgetChainForAgent(orchestrator, { tokens: 5_000, kind: 'compaction' }), 'compaction budget chain'),
-    pool.id, 'compaction draws from its dedicated pool when it can cover the request');
-  assert.equal(firstOf(runtime.budgetChainForAgent(orchestrator, { tokens: 5_000, kind: 'role' }), 'role budget chain'),
-    nodeBudget.id, 'an ordinary request does not drain that pool while its owning grant can pay');
-
-  // A dispatch that throws must release the *charged* scope and leave the other
-  // reservation untouched.
-  const chain = [pool.id];
-  const request = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: orchestrator.id, node_id: orchestrator.node_id,
-    transaction_id: null, role: 'orchestrator', kind: 'compaction', model: 'm', provider: 'p',
-    budgetIds: chain, reservationTokens: 4_000, turn_seq: 1,
-  });
-  const ordinary = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: orchestrator.id, node_id: orchestrator.node_id,
-    transaction_id: null, role: 'orchestrator', kind: 'role', model: 'm', provider: 'p',
-    budgetIds: [nodeBudget.id], reservationTokens: 6_000, turn_seq: 1,
-  });
-  const poolBefore = required(runtime.store.getBudget(pool.id), 'compaction budget');
-  const nodeBefore = required(runtime.store.getBudget(nodeBudget.id), 'node budget');
-  assert.equal(poolBefore.tokens_reserved, 4_000);
-  assert.equal(nodeBefore.tokens_reserved, 6_000);
-
-  // Release the compaction request as a failed dispatch, passing the caller's
-  // ordinary chain: the receipt must still route it to the pool.
-  releaseLlmRequest(runtime.store, {
-    cluster_id: clusterId, reservation: request, budgetIds: [nodeBudget.id], dispatched: false, note: 'dispatch failed',
-  });
-  assert.equal(required(runtime.store.getBudget(pool.id), 'compaction budget').tokens_reserved, 0, 'the pool hold is released');
-  assert.equal(required(runtime.store.getBudget(nodeBudget.id), 'node budget').tokens_reserved, 6_000, "the ordinary reservation is untouched");
-  assert.equal(required(runtime.store.getUsageReceipt(request.request_id), 'usage receipt').status, 'NOT_SENT');
-  assert.equal(required(runtime.store.getUsageReceipt(ordinary.request_id), 'usage receipt').status, 'RESERVED');
 });
 
 test('competing drivers cannot exceed the active-turn window together', async t => {
@@ -1125,4 +939,3 @@ test('competing drivers cannot exceed the active-turn window together', async t 
   held();
   heldAgain();
 });
-

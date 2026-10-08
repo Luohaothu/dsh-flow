@@ -1,6 +1,6 @@
 # Agent 上下文与模型执行限制移除方案
 
-状态：已于 2026 年 10 月 8 日确认定稿，待实施。源码核查基线为 `d2295af2098f8e64a59cec02827c03b3c0b90c34`，实际依赖为仓库锁定的 Harness `0.1.7-rc.2` 及补丁。
+状态：已于 2026 年 10 月 8 日完整实施并通过验收，结果见[实施与验收记录](model-context-token-limits-validation.md)。方案源码核查基线为 `d2295af2098f8e64a59cec02827c03b3c0b90c34`，实际依赖为仓库锁定的 Harness `0.1.7-rc.2` 及补丁。
 
 Flow 以 DSH Agent 为最小操作单元，配置任务输入、结果交付和工具能力，并管理团队协作。模型解析、容量、输出和压缩全部由 DSH 实现。本次彻底删除 Flow 的上下文限制、输出截顶、累计 Token 预算和模型请求次数限制；统计改为消费宿主已经记录的用量。项目尚未稳定发布，直接采用新契约，不做历史兼容。
 
@@ -171,7 +171,7 @@ Flow 继续通过 `ctx.agents.create/resume` 和原生 Agent 输入、结果、�
 
 重写 `context-trigger.test.ts` 中的人为窗口和强制低阈值测试；删除 Token 与请求次数分配、付款、耗尽和恢复的旧断言。保留其他资源守卫测试；新增被动用量投影的重放、去重及缺失数据测试。真实 Loader 与原生 Agent 组合测试证明默认压缩和输入输出工作正常。
 
-实施后执行 `pnpm install --frozen-lockfile`、`pnpm run typecheck`、`pnpm run build`、`pnpm test`、`pnpm run test:mock`、`pnpm run docs:build` 和 `git diff --check`。再完成真实宿主的成员执行、压缩与界面验证。这些是后续实施验收要求，本次方案未将其报告为已通过。
+实施验收执行 `pnpm install --frozen-lockfile`、`pnpm run typecheck`、`pnpm run build`、`pnpm test`、`pnpm run test:mock`、`pnpm run docs:build` 和 `git diff --check`，并验证真实宿主的成员执行、压缩与界面。以上门禁已全部通过，测试范围、宿主证据和模型服务限制见[实施与验收记录](model-context-token-limits-validation.md)。
 
 ## 源码依据
 

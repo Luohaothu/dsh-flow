@@ -130,7 +130,7 @@ async function waitFor(check: () => boolean, { attempts = 400, delayMs = 5 } = {
 }
 
 function pluginConfig(dataDir: string): Config {
-  return { dataDir, provider: 'local-fake', model: 'fake-model', maxTokens: 512, tickMs: 60_000 };
+  return { dataDir, provider: 'local-fake', model: 'fake-model', tickMs: 60_000 };
 }
 
 const flowOf = (ctx: Context): FlowService | undefined => ctx.get('flow');
@@ -168,7 +168,7 @@ test('a recovery failure never publishes a usable service', async t => {
   // persisted open cluster is what makes the proof pass run at all.
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), dataDir, autoTick: false });
-  seed.start({ id: 'seed-cluster', objective: 'persisted work', workspace: dir, capabilities: [], budget: { tokens: 100_000, model_requests: 20, tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
+  seed.start({ id: 'seed-cluster', objective: 'persisted work', workspace: dir, capabilities: [], budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   await seed.dispose();
   t.after(() => seedHost.dispose());
 
@@ -306,7 +306,7 @@ test('delayed durable-session proof gates consumers until recovery completes', {
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
   const saved = seed.start({ objective: 'persisted session proof', workspace: dir, capabilities: [],
-    budget: { tokens: 100_000, model_requests: 20, tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
+    budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   const identity = seed.store.listAgents(saved.cluster.id, {})[0];
   assert.ok(identity);
   seed.store.updateAgent(identity.id, { turns: 1, session_id: 'stored-proof-session' });
@@ -349,7 +349,7 @@ test('unload drains an in-flight proof and discards its late completion before s
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
   const saved = seed.start({ objective: 'late durable proof', workspace: dir, capabilities: [],
-    budget: { tokens: 100_000, model_requests: 20, tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
+    budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   const identity = seed.store.listAgents(saved.cluster.id, {})[0];
   assert.ok(identity);
   seed.store.updateAgent(identity.id, { turns: 1, session_id: 'late-proof-session' });
@@ -421,7 +421,7 @@ for (const phase of ['stat', 'open'] as const) {
       const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
       const saved = seed.start({
         objective: 'interrupt startup proof', workspace: dir, capabilities: [],
-        budget: { tokens: 100_000, model_requests: 20, tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 },
+        budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 },
       });
       const identity = seed.store.listAgents(saved.cluster.id, {})[0];
       assert.ok(identity);

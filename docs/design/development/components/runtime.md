@@ -1,27 +1,16 @@
 # 智能体运行时
 
-`core/runtime.ts` 将智能体的一轮执行接入 DeepSeek Harness 宿主。它连接宿主智能体、会话、模型请求和工具钩子，并向控制平面返回执行结果；执行循环由宿主提供。
+`core/runtime.ts` 配置 DSH 原生 Agent 的输入输出和工具。Flow 使用 `ctx.agents.create/resume`、原生输入、结果、取消和会话接口；执行循环、模型解析、上下文与输出由宿主实现。
 
-## 主要入口
+## 执行边界
 
-| 符号 | 职责 |
-|---|---|
-| `runTurn` | 创建或恢复原生智能体；应用本轮配置；执行并将会话持久化 |
-| `mountCapabilityTools`、`missingCapabilityTools` | 在智能体自身作用域装配并确认所需工具存在 |
-| `installToolPolicy` | 限制继承工具的可见性，并检查当前作用域中所有工具的执行权限 |
-| `reserveLlmRequest`、`settleLlmRequest`、`releaseLlmRequest` | 检查请求能否发送、结算用量、释放未发送请求的预留额度 |
-| `createToolExecutionHook` | 检查工具调用条件、派发调用、记录结果与异常 |
-| `core/role-tools.ts` 的 `registerRoleTools` | 注册当前角色的命令、查询和通信工具 |
+模型选择合并成员覆盖、团队选择和部署默认值，保留模型与推理设置。Flow 不传自己的上下文窗口或输出上限，不拦截 `llm/stream`，不改写模型参数、摘要内容或工具声明。停止原因和服务错误作为原生 Agent 执行结果处理。
 
-## 一轮执行的边界
+每个 Flow Agent 在自己的隔离作用域装配一份官方默认 `compaction-basic`，共用宿主服务，随作用域卸载。Flow 不主动压缩、不追加溢出重试，也不提供压缩策略覆盖。原生持久化 Session 事件负责记录摘要与已知用量。
 
-模型选择由 `core/model-selection.ts` 统一合并：团队模型存在时从部署默认值继承输出上限，再应用团队模型、团队保存的选项和成员覆盖，最后施加执行代理的输出限制。没有团队模型时使用部署默认模型。团队快照在同一事务内复用已读取的团队配置，历史模型回执仍优先于下一轮选择。
+控制平面保留工具能力、权限、工具额度、时间、身份容量、执行容量、管理轮次、尝试与纠正次数。`max_llm_concurrency` 约束 Agent 执行轮外围的调度许可；辅助请求的提供方并发需要独立观测。缺少已声明能力的宿主工具仍拒绝执行。
 
-控制平面传入智能体身份、执行轮次序号、模型、能力、授权工具、任务单元与预算账户；执行适配层创建或恢复该身份的原生会话。角色工具在该智能体的宿主上下文对象内注册，普通用户会话不会因此获得 `flow_audit` 或 `flow_allocation`。
-
-每次模型请求前，重新确定能够承担本次用量的预算账户并检查上下文占用情况。必要的上下文压缩也会消耗模型请求次数和 Token 额度。若已声明某项能力，但对应宿主工具未能装配，则必须拒绝执行，不能将其视为能力已经具备。
-
-成功的管理命令会调用 `exec.concludeTurn()`，交还调度权，让其他角色有机会执行。执行智能体在 `submit_result` 后结束当前轮次；其此前读写工具调用仍属于同一任务。一轮执行结束不等于业务验收成功，候选结果由控制平面决定是否发布。
+角色工具在 Agent 自身作用域注册。成功的管理命令调用 `exec.concludeTurn()` 交还调度权；Worker 的 `submit_result` 暂存候选，正式发布仍需正常执行结束、有效租约和工具副作用核对，再独立验收。
 
 ## 原生成员会话输入
 
@@ -35,13 +24,10 @@
 
 执行开始时，固定租约与执行轮次的绑定关系；迟到的调用不能通过查询最新租约代次来获得授权。一次成功的原生调用会保留调用标识、原生返回结果及相关参数，供审计智能体和恢复过程核对。
 
-## 异常边界
+## 用量与异常
 
-- 请求没有发送时释放预留并记录 `NOT_SENT`；已发送但结果未知时保留不确定性，不能按未发生处理。
-- 未确认会话持久化成功时，不能据此认定消息已持久化或结果可安全发布。
-- 因预算不足而拒绝请求时，需要保留具体账户 `scope`、维度 `dimension`、申请量 `requested` 和可用量 `available`，不能误报为模型服务异常。
-- 执行智能体的一轮执行正常结束但没有显式提交结果时，运行时可以依据本轮的副作用回执生成候选结果；这一自动生成的结果仍须独立验收。
+宿主已记录用量来自 `assistant/message`、`assistant/attempt` 和 `compaction/summary`。attempt 通过公开 helper 读取最后一条 usage，stream 增量不重复累计。压缩开始、结束与错误只影响统计完整性，不补造用量或请求数。
 
-继续阅读：[持久化与恢复](/development/components/persistence)、[任务单元与独立审计](/development/components/transactions)。
+工具已派发但结果或副作用不能确认时，保留不确定性并阻止相关重放。未确认原生会话持久化时，不认定消息或候选结果已可靠保存。工具预算拒绝保留具体作用域、维度、申请量与可用量。
 
 源码：[runtime.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/runtime.ts)、[role-tools.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)。

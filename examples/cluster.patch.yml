@@ -81,17 +81,6 @@
         approval: never
     defaultPreset: workspace-write-unattended
 
-# The shipped web bundle disables the host-plane compaction backend and mounts
-# it inside the agent preset. A cluster agent never mounts that preset, so the
-# cluster enables the host-plane backend for the sessions it drives; without it
-# a long management session can only grow until the provider rejects it.
-# Compaction reserves 4,096 output tokens to produce a complete checkpoint
-# within the role's budget. Subsequent input must fit its 8,192-token ceiling.
-- id: compaction-basic
-  disabled: false
-  config:
-    maxTokens: 4096
-
 - insert:
     - id: dsh-flow
       name: dsh-flow
@@ -101,13 +90,6 @@
         provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
         model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
         reasoningEffort: !!js process.env.FLOW_REASONING_EFFORT ?? 'off'
-        maxTokens: !!js Number(process.env.FLOW_MAX_TOKENS ?? 4096)
-        context:
-          role: !!js Number(process.env.FLOW_CONTEXT_ROLE ?? 8192)
-          worker: !!js Number(process.env.FLOW_CONTEXT_WORKER ?? 16384)
-          model: !!js Number(process.env.FLOW_CONTEXT_MODEL ?? 131072)
-          compaction_threshold: !!js Number(process.env.FLOW_CONTEXT_TRIGGER ?? 0.8)
-          server_input: !!js Number(process.env.FLOW_CONTEXT_SERVER_INPUT ?? 142074)
         tickMs: !!js Number(process.env.FLOW_TICK_MS ?? 250)
         staleMs: !!js Number(process.env.FLOW_STALE_MS ?? 120000)
         maxTurnMs: !!js Number(process.env.FLOW_MAX_TURN_MS ?? 900000)

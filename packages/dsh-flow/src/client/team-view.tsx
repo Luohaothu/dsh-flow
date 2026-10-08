@@ -31,7 +31,7 @@ function Status({agent,compact=false}: {agent:Pick<FlowTeamAgent,'state'|'raw_st
 }
 function RowStatus({agent,compact=false}: {agent:FlowTeamAgent;compact?:boolean}) {
   const effort=reasoningLabel(agent.reasoning_effort);
-  return <span className="flow-row-state"><Status agent={agent} compact={compact}/>{agent.model&&<span className="flow-agent-model" title={`${agent.model}${effort?` · 推理${effort}`:''}`}><span className="flow-model-divider" aria-hidden="true">·</span><ModelLogo model={agent.model}/><span className="flow-model-name">{agent.model}</span>{effort&&<span className="flow-model-effort">{effort}</span>}</span>}</span>;
+  return <span className="flow-row-state"><Status agent={agent} compact={compact}/>{agent.model&&<span className="flow-agent-model" title={`最近实际模型：${agent.model}${effort?` · 推理${effort}`:''}`}><span className="flow-model-divider" aria-hidden="true">·</span><ModelLogo model={agent.model}/><span className="flow-model-name">{agent.model}</span>{effort&&<span className="flow-model-effort">{effort}</span>}</span>}</span>;
 }
 function TreeToggle({name,hasChildren,collapsed,toggle}: {name:string;hasChildren:boolean;collapsed:boolean;toggle:()=>void}) {
   return hasChildren?<Button size="sm" className="flow-tree-toggle" aria-label={`${collapsed?'展开':'折叠'} ${name} 的子代理`} aria-expanded={!collapsed} onClick={toggle}><IconChevronRightOutlineRegular size={14}/></Button>:<span className="flow-tree-leaf" aria-hidden="true"/>;
@@ -95,7 +95,7 @@ export function TeamHeader({ui}: {ui:TeamUi}) {
     {open&&<MenuSurface ref={popup} style={position??undefined} className="flow-team-popup" role="dialog" aria-label="智能体团队" onPointerEnter={enter} onPointerLeave={leave}>
       {data.loading&&<p role="status">正在加载团队…</p>}{data.error&&<p role="status">{team?'连接中断，显示的是上次数据。':'暂时无法读取团队。'}{data.error}<Button onClick={()=>void ui.observer.refresh()}>重试连接</Button></p>}
       {team&&<>{!local.showEnded&&headerEnded>0&&<Button onClick={()=>update(()=>local.showEnded=true)}>已结束 {headerEnded} 个 · 展开</Button>}<AgentTree rows={headerVisible} local={local} settings={preferences} full={full} aside={agent=>{ui.sidebar(agent);close();}} change={()=>update(()=>{})}/>{team.agents.length===1&&<p>尚未派生子代理</p>}</>}
-      <div className="flow-team-footer"><Button size="sm" onClick={()=>{ui.openTeam();close();}}>查看智能体</Button></div>
+      <div className="flow-team-footer">{team&&<small>宿主已记录：{formatMetric(team.tokens,preferences.tokens)} Token</small>}<Button size="sm" onClick={()=>{ui.openTeam();close();}}>查看智能体</Button></div>
     </MenuSurface>}
   </span>;
 }
@@ -107,11 +107,11 @@ function Information({agent,team,select,main}: {agent:FlowTeamAgent;team:FlowTea
   const children=team.agents.filter(item=>item.parent_id===agent.id);
   const absent=(value:number|null)=>value===null?'尚未提供':value.toLocaleString('zh-CN');
   return <section className="flow-information flow-scroll" aria-label={`${agent.name} 信息`}><h3>{agent.name}</h3><p className="flow-id">{agent.id}</p><Button size="sm" onClick={()=>void writeClipboard(agent.id).then(ok=>setCopied(ok?'ID 已复制':'未能复制 ID'))}>复制 ID</Button>{copied&&<span role="status">{copied}</span>}
-    <h4>基本信息</h4><Status agent={agent}/>{agent.model&&<p>模型：{agent.model}</p>}<p>{agent.reason??(agent.state.startsWith('waiting')?'等待原因尚未提供':'状态原因尚未提供')}</p><p>{agent.responsibility}</p><p>启动：{new Date(agent.created).toLocaleString()} · 持续 {duration(agent.created,agent.ended)}</p>
+    <h4>基本信息</h4><Status agent={agent}/><p>当前配置模型：{agent.configured_model??'跟随宿主'}{agent.configured_reasoning_effort&&` · 推理 ${agent.configured_reasoning_effort}`}</p><p>最近实际模型：{agent.model??'未知'}{agent.reasoning_effort&&` · 推理 ${agent.reasoning_effort}`}</p><p>{agent.reason??(agent.state.startsWith('waiting')?'等待原因尚未提供':'状态原因尚未提供')}</p><p>{agent.responsibility}</p><p>启动：{new Date(agent.created).toLocaleString()} · 持续 {duration(agent.created,agent.ended)}</p>
     {agent.waiting_since!==null&&<p>等待时长：{duration(agent.waiting_since,agent.ended)}</p>}{agent.state==='waiting_user'&&agent.reason&&<Button onClick={main}>前往主会话答复</Button>}{agent.waiting_for&&<Button onClick={()=>select(agent.waiting_for!)}>查看等待的智能体</Button>}
     {agent.recycled&&<p>运行资源已释放，历史记录仍可查看。</p>}
     <h4>关系</h4><p>层级：{row&&!row.incomplete?`第 ${row.depth+1} 层`:"正在补全关系"}</p><p>父代理：{parent?<Button onClick={()=>select(parent.id)}>{parent.name}</Button>:agent.parent_id?'正在补全关系':'无（总协调）'}</p>{children.map(child=><Button key={child.id} onClick={()=>select(child.id)}>{child.name}</Button>)}
-    <h4>用量与预算</h4><p>累计 Token（当前代理自身）：{formatMetric(agent.tokens)}{agent.tokens.value===null&&' · 尚未上报'}</p>
+    <h4>用量与预算</h4><p>宿主已记录 Token（当前代理自身）：{formatMetric(agent.tokens)}{agent.tokens.completeness==='unknown'&&' · 统计完整性未知'}</p>
     {!agent.allowances.length&&<p>预算尚未提供</p>}{agent.allowances.map(budget=><article key={budget.id}><strong>{budget.name}</strong><p>{budget.shared?`共享额度 · 作用域 ${budget.scope_id} · 团队 ${team.run.id}`:'当前代理独立额度'}</p><p>总额 {absent(budget.total)} · 已用 {absent(budget.used)} · 剩余 {absent(budget.remaining)} {budget.unit}</p></article>)}
     <h4>上下文</h4><p>已用 {absent(agent.context_used)} · 上限 {absent(agent.context_limit)} Token{agent.context_used!==null&&agent.context_limit!==null&&agent.context_limit>0&&` · ${Math.round(agent.context_used/agent.context_limit*100)}%`}</p>{agent.compacted_at!==null&&<p>上下文已压缩 · {new Date(agent.compacted_at).toLocaleString()}</p>}
     <h4>会话记录</h4><p className="flow-id">{agent.session_id}</p><p>所属主会话：{team.run.main_session_id}</p>

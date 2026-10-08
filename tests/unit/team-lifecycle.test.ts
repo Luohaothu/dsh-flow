@@ -27,11 +27,11 @@ function fixture(t:TestContext) {
   const tools=new Map<string,ToolDefinition>();
   const ctx=fromPartial<Context>({flow:runtime,tools:fromPartial<Context['tools']>({register(tool:ToolDefinition){tools.set(tool.name,tool);return()=>{};}}),
     sessionController:fromPartial<Context['sessionController']>({async inspect(id:SessionId){return fromPartial<Awaited<ReturnType<Context['sessionController']['inspect']>>>({events:id===session.id?session.snapshotEvents():[],meta:session.header});}}),
-    sessionProjections:fromPartial<Context['sessionProjections']>({stateOf(){return undefined;}}),agentDefaultModel:fromPartial<Context['agentDefaultModel']>({currentSelection(){return {provider:'fixture',model:'fixture'};}}),
+    sessionProjections:fromPartial<Context['sessionProjections']>({stateOf(){return undefined;}}),agentDefaultModel:fromPartial<Context['agentDefaultModel']>({currentSelection(){return {provider:'fixture',model:'fixture',maxTokens:4096};}}),
   });
   registerTeamTools(ctx);
   const agent=fromPartial<Agent>({id:session.id,session});
-  const request:FlowTeamCreateRequest={objective:'Sum [2,3]',assessment:{complexity:'simple',rationale:'One numerical check and independent review'},acceptance_criteria:['The verified total is 5'],capabilities:[],budget:{tokens:600000},limits:{max_depth:2}};
+  const request:FlowTeamCreateRequest={objective:'Sum [2,3]',assessment:{complexity:'simple',rationale:'One numerical check and independent review'},acceptance_criteria:['The verified total is 5'],capabilities:[],budget:{tool_calls:600},limits:{max_depth:2}};
   const exec=(caller=agent,signal=new AbortController().signal)=>fromPartial<ToolRunContext>({agent:caller,callId:ToolCallId('call'),signal});
   const call=async(name:string,args:unknown,caller=agent)=>{const result=await tools.get(name)!.execute(args,exec(caller));assert.ok(typeof result==='string');return JSON.parse(result);};
   t.after(async()=>{await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
@@ -44,13 +44,13 @@ test('main Agent reads a launch, creates with assessed overrides and checks actu
   assert.equal(before.run,null);assert.equal(before.launches[0].launch_id,'launch');assert.equal(before.defaults.limits.max_active_agents,4);
   const created=await f.call('agent_team_create',{launch_id:'launch',...f.request});
   assert.equal(created.run.state,'running');assert.equal(created.agents.length,3);
-  assert.deepEqual(created.parameters.capabilities,[]);assert.equal(created.parameters.budget.tokens,600000);assert.equal(created.parameters.limits.max_depth,2);
+  assert.deepEqual(created.parameters.capabilities,[]);assert.equal(created.parameters.budget.tool_calls,600);assert.equal(created.parameters.limits.max_depth,2);
   const checked=await f.call('agent_team_read',{launch_id:'launch'});
   assert.equal(checked.run_id,created.run_id);
   assert.equal(f.runtime.store.listTransactions({cluster_id:created.run_id})[0]?.acceptance_criteria[0],'The verified total is 5');
   const replay=await f.call('agent_team_create',{launch_id:'launch',...f.request});
   assert.equal(replay.run_id,created.run_id);assert.equal(f.runtime.teamRuns('main').length,1);
-  await assert.rejects(f.call('agent_team_create',{launch_id:'launch',...f.request,budget:{tokens:700000}}),/参数已确定/);
+  await assert.rejects(f.call('agent_team_create',{launch_id:'launch',...f.request,budget:{}}),/参数已确定/);
   assert.equal(f.runtime.teamRuns('main').length,1);
 });
 
@@ -59,6 +59,18 @@ test('creation rejects missing assessment and foreign launch before starting exe
   await assert.rejects(f.call('agent_team_create',{launch_id:'other',...f.request}),/启动意图/);
   await assert.rejects(f.call('agent_team_create',{launch_id:'launch',...f.request,assessment:undefined}));
   await assert.rejects(f.call('agent_team_create',{launch_id:'launch',...f.request,acceptance_criteria:[]}));
+  assert.equal(f.runtime.teamRuns('main').length,0);
+});
+
+test('team service rejects retired fields before creating durable state', async t=>{
+  const f=fixture(t);
+  for(const key of ['maxTokens','context']) {
+    assert.throws(()=>f.runtime.createTeam('main',`retired-${key}`,{...f.request,[key]:1}), /不受支持/);
+    await assert.rejects(f.call('agent_team_create',{launch_id:'launch',...f.request,[key]:1}), new RegExp(`Unsupported agent_team_create argument: ${key}`));
+  }
+  const retiredModel={provider:'fixture',model:'fixture',maxTokens:1};
+  assert.throws(()=>f.runtime.createTeam('main','retired-model',f.request,retiredModel), /Unsupported model selection field: maxTokens/);
+  assert.throws(()=>f.runtime.startTeam('main','retired-start','任务',undefined,retiredModel), /Unsupported model selection field: maxTokens/);
   assert.equal(f.runtime.teamRuns('main').length,0);
 });
 

@@ -21,11 +21,14 @@ import {
   integer,
   isFlowJsonValue,
   normalizeLimit,
+  rejectUnknownFields,
   objectField,
   textField,
   validateCapabilities,
 } from '../validation.ts';
 import { DEFAULT_LIMITS } from './protocol.ts';
+import { nativeUsageEvents, summarizeNativeUsage, nativeContext } from './native-usage.ts';
+import type { NativeUsageProjection, NativeSessionFact } from './native-usage.ts';
 import type {
   FlowAuditDecision,
   FlowAuditKind,
@@ -47,7 +50,9 @@ import type {
   FlowNodeStatus,
   FlowScopeKind,
   FlowTransactionStatus,
-  FlowUsageStatus,
+  FlowUsageEvent,
+  FlowUsageSummary,
+  FlowNativeContext,
 } from '../types.ts';
 import type {
   AgentPatch,
@@ -75,10 +80,9 @@ import type {
   ToolCallReceiptRecord,
   TransactionPatch,
   TransactionRecord,
-  UsageReceiptRecord,
 } from './model.ts';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** One SQLite row as the driver returns it. */
 type Row = Record<string, SQLOutputValue>;
@@ -172,13 +176,12 @@ function limitOf(value: unknown, fallback: number): number {
 /**
  * Read one stored limits row tolerantly.
  *
- * A key that is absent or not a non-negative integer falls back to the
- * deployment default, so a row an older schema wrote — and a zero-valued
- * per-Worker allowance, which `DEFAULT_LIMITS` itself carries — reads cleanly.
- * Only a value that is not an object at all is refused.
+ * Missing retained limits use their deployment defaults. Unsupported fields
+ * are refused; no historical model-limit contract is decoded.
  */
 function decodeLimits(value: unknown): FlowLimits {
   const source = objectField(value, 'limits');
+  rejectUnknownFields(source, Object.keys(DEFAULT_LIMITS).concat('max_tool_calls_per_turn', 'max_scale_batch'), 'limits');
   return {
     max_children: limitOf(source.max_children, DEFAULT_LIMITS.max_children),
     max_depth: limitOf(source.max_depth, DEFAULT_LIMITS.max_depth),
@@ -188,8 +191,12 @@ function decodeLimits(value: unknown): FlowLimits {
     max_attempts: limitOf(source.max_attempts, DEFAULT_LIMITS.max_attempts),
     max_corrections: limitOf(source.max_corrections, DEFAULT_LIMITS.max_corrections),
     max_role_turns: limitOf(source.max_role_turns, DEFAULT_LIMITS.max_role_turns),
-    worker_model_requests: limitOf(source.worker_model_requests, DEFAULT_LIMITS.worker_model_requests),
-    worker_max_tokens: limitOf(source.worker_max_tokens, DEFAULT_LIMITS.worker_max_tokens),
+    ...(source.max_tool_calls_per_turn === undefined ? {} : {
+      max_tool_calls_per_turn: limitOf(source.max_tool_calls_per_turn, DEFAULT_LIMITS.max_tool_calls_per_turn),
+    }),
+    ...(source.max_scale_batch === undefined ? {} : {
+      max_scale_batch: limitOf(source.max_scale_batch, 1),
+    }),
   };
 }
 
@@ -203,6 +210,7 @@ function decodeLimits(value: unknown): FlowLimits {
  */
 function decodeBudget(value: unknown): FlowBudgetInput {
   const source = objectField(value, 'budget');
+  rejectUnknownFields(source, BUDGET_KEYS, 'budget');
   const out: { [K in (typeof BUDGET_KEYS)[number]]?: number } = {};
   for (const key of BUDGET_KEYS) {
     const entry = source[key];
@@ -224,7 +232,7 @@ const TRANSACTION_STATUSES = [
 const ALLOCATION_STATUSES = ['ACTIVE', 'RELEASED'] as const satisfies readonly FlowAllocationStatus[];
 const INBOX_STATUSES = ['PENDING', 'CONSUMED'] as const satisfies readonly FlowInboxStatus[];
 const GROUP_STATUSES = ['OPEN', 'CLOSED'] as const satisfies readonly FlowGroupStatus[];
-const SCOPE_KINDS = ['cluster', 'root', 'node', 'transaction', 'agent', 'compaction'] as const satisfies readonly FlowScopeKind[];
+const SCOPE_KINDS = ['cluster', 'root', 'node', 'transaction', 'agent'] as const satisfies readonly FlowScopeKind[];
 const AUDIT_KINDS = ['plan', 'validation'] as const satisfies readonly FlowAuditKind[];
 const AUDIT_DECISIONS = [
   'PENDING', 'APPROVED', 'REJECTED', 'OVERRIDDEN', 'STALE',
@@ -233,7 +241,6 @@ const AUDIT_DECISIONS = [
 const ISSUE_STATUSES = ['OPEN', 'VERIFYING', 'CORRECTED', 'ESCALATED', 'DISMISSED'] as const satisfies readonly FlowIssueStatus[];
 const EFFECT_STATUSES = ['STARTED', 'SETTLED', 'FAILED', 'CANCELLED', 'UNKNOWN', 'EFFECT_UNCERTAIN'] as const satisfies readonly FlowEffectStatus[];
 const DISPATCH_STATUSES = ['ADMITTED', 'DISPATCHED', 'SETTLED', 'FAILED', 'CANCELLED', 'UNKNOWN'] as const satisfies readonly FlowDispatchStatus[];
-const USAGE_STATUSES = ['RESERVED', 'SETTLED', 'NOT_SENT', 'UNKNOWN'] as const satisfies readonly FlowUsageStatus[];
 const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKED'] as const satisfies readonly FlowDeliveryStatus[];
 
 // ------------------------------------------------------- operation vocabulary
@@ -348,7 +355,7 @@ interface EffectWithOwner extends EffectRecord {
   readonly owner_management_id: string | null
 }
 
-/** One orchestrator context measurement, read from its turn-end event. */
+/** One orchestrator context fact from its native Session. */
 interface OrchestratorContextRow {
   readonly data: FlowJsonValue
   readonly agent_id: string | null
@@ -359,19 +366,6 @@ interface OrchestratorContextRow {
 interface DeliveryTraffic {
   readonly deliveries: number
   readonly cross_subtree: number
-}
-
-/** Rolled-up provider usage of one scope. */
-interface UsageSummaryRow {
-  readonly requests: number
-  readonly total_tokens: number
-  readonly prompt_tokens: number
-  readonly completion_tokens: number
-  readonly cached_tokens: number
-  readonly reasoning_tokens: number
-  readonly unknown_requests: number
-  readonly overshoot: number
-  readonly api_cost: { readonly amount: number; readonly currency: string; readonly pricing: string }
 }
 
 /** One health evaluation row, its JSON columns decoded. */
@@ -573,12 +567,6 @@ interface BudgetInsert {
   readonly scope_id: string
   readonly node_id?: string | null | undefined
   readonly parent_budget_id?: string | null | undefined
-  readonly tokens_limit?: number | undefined
-  readonly tokens_reserved?: number | undefined
-  readonly tokens_spent?: number | undefined
-  readonly requests_limit?: number | undefined
-  readonly requests_reserved?: number | undefined
-  readonly requests_spent?: number | undefined
   readonly tool_calls_limit?: number | undefined
   readonly tool_calls_reserved?: number | undefined
   readonly tool_calls_spent?: number | undefined
@@ -588,44 +576,6 @@ interface BudgetInsert {
   readonly agents_reserved?: number | undefined
   readonly max_active_limit?: number | undefined
   readonly max_active_reserved?: number | undefined
-}
-
-/** One model-request receipt to insert. */
-interface UsageReceiptInsert {
-  readonly request_id: string
-  readonly cluster_id: string
-  readonly agent_id?: string | null | undefined
-  readonly node_id?: string | null | undefined
-  readonly transaction_id?: string | null | undefined
-  readonly role: FlowAgentRole
-  readonly kind: string
-  readonly provider?: string | null | undefined
-  readonly model?: string | null | undefined
-  readonly reasoning_effort?: string | null | undefined
-  readonly status: FlowUsageStatus
-  readonly reservation_tokens?: number | undefined
-  readonly prompt_tokens?: number | null | undefined
-  readonly completion_tokens?: number | null | undefined
-  readonly cached_tokens?: number | null | undefined
-  readonly reasoning_tokens?: number | null | undefined
-  readonly total_tokens?: number | null | undefined
-  readonly overshoot?: number | undefined
-  readonly turn_seq?: number | null | undefined
-  readonly attempt?: number | undefined
-  readonly note?: string | null | undefined
-  readonly budget_scope_id?: string | null | undefined
-}
-
-/** One usage settlement patch. */
-interface UsageSettlement {
-  readonly status?: FlowUsageStatus | undefined
-  readonly prompt_tokens?: number | null | undefined
-  readonly completion_tokens?: number | null | undefined
-  readonly cached_tokens?: number | null | undefined
-  readonly reasoning_tokens?: number | null | undefined
-  readonly total_tokens?: number | null | undefined
-  readonly overshoot?: number | null | undefined
-  readonly note?: string | null | undefined
 }
 
 /** One message row to insert. */
@@ -800,7 +750,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS clusters(
   id TEXT PRIMARY KEY, objective TEXT NOT NULL, workspace TEXT NOT NULL,
   capabilities TEXT NOT NULL, limits TEXT NOT NULL, budget TEXT NOT NULL,
-  spec TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
+  spec TEXT NOT NULL, declared_limits TEXT, status TEXT NOT NULL, revision INTEGER NOT NULL,
   created INTEGER NOT NULL, updated INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS team_runs(
   run_id TEXT PRIMARY KEY REFERENCES clusters(id), main_session_id TEXT NOT NULL,
@@ -833,6 +783,8 @@ CREATE TABLE IF NOT EXISTS transactions(
   priority INTEGER NOT NULL, capabilities TEXT NOT NULL, status TEXT NOT NULL,
   revision INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, result TEXT,
   result_revision INTEGER, validation TEXT, plan_approved_revision INTEGER,
+  result_staged_epoch INTEGER, result_staged_turn INTEGER, result_staged_agent TEXT,
+  pre_pause_status TEXT, pre_pause_revision INTEGER,
   created INTEGER NOT NULL, updated INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS transactions_owner ON transactions(cluster_id,node_id,status);
 CREATE INDEX IF NOT EXISTS transactions_status ON transactions(cluster_id,status);
@@ -872,8 +824,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS inbox_dedupe ON inbox(dedupe_key) WHERE dedupe
 CREATE TABLE IF NOT EXISTS budgets(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL,
   node_id TEXT, parent_budget_id TEXT,
-  tokens_limit INTEGER NOT NULL DEFAULT 0, tokens_reserved INTEGER NOT NULL DEFAULT 0, tokens_spent INTEGER NOT NULL DEFAULT 0,
-  requests_limit INTEGER NOT NULL DEFAULT 0, requests_reserved INTEGER NOT NULL DEFAULT 0, requests_spent INTEGER NOT NULL DEFAULT 0,
   tool_calls_limit INTEGER NOT NULL DEFAULT 0, tool_calls_reserved INTEGER NOT NULL DEFAULT 0, tool_calls_spent INTEGER NOT NULL DEFAULT 0,
   wall_limit_ms INTEGER NOT NULL DEFAULT 0, wall_deadline INTEGER,
   agents_limit INTEGER NOT NULL DEFAULT 0, agents_reserved INTEGER NOT NULL DEFAULT 0,
@@ -881,16 +831,18 @@ CREATE TABLE IF NOT EXISTS budgets(
   revision INTEGER NOT NULL DEFAULT 1, created INTEGER NOT NULL, updated INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS budgets_scope ON budgets(cluster_id,scope_kind,scope_id);
 CREATE INDEX IF NOT EXISTS budgets_node ON budgets(cluster_id,node_id);
-CREATE TABLE IF NOT EXISTS usage_receipts(
-  request_id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, agent_id TEXT, node_id TEXT,
-  transaction_id TEXT, role TEXT NOT NULL, kind TEXT NOT NULL, provider TEXT, model TEXT,
-  status TEXT NOT NULL, reservation_tokens INTEGER NOT NULL DEFAULT 0,
-  prompt_tokens INTEGER, completion_tokens INTEGER, cached_tokens INTEGER,
-  reasoning_tokens INTEGER, total_tokens INTEGER, overshoot INTEGER NOT NULL DEFAULT 0,
-  turn_seq INTEGER, attempt INTEGER NOT NULL DEFAULT 1, note TEXT,
-  created INTEGER NOT NULL, settled INTEGER);
-CREATE INDEX IF NOT EXISTS usage_cluster ON usage_receipts(cluster_id,created);
-CREATE INDEX IF NOT EXISTS usage_agent ON usage_receipts(agent_id,status);
+CREATE TABLE IF NOT EXISTS native_session_events(
+  native_session_id TEXT NOT NULL, native_seq INTEGER NOT NULL,
+  cluster_id TEXT NOT NULL, agent_id TEXT NOT NULL, node_id TEXT NOT NULL,
+  transaction_id TEXT, role TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL,
+  time INTEGER NOT NULL, PRIMARY KEY(native_session_id,native_seq));
+CREATE INDEX IF NOT EXISTS native_events_cluster ON native_session_events(cluster_id,agent_id,time,native_seq);
+CREATE TABLE IF NOT EXISTS native_usage_cursors(
+  native_session_id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+  native_seq INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS native_context_snapshots(
+  native_session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  native_seq INTEGER NOT NULL, data TEXT NOT NULL, time INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS messages(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, from_agent TEXT, from_node TEXT,
   kind TEXT NOT NULL, content TEXT NOT NULL, created INTEGER NOT NULL);
@@ -962,8 +914,6 @@ CREATE TABLE IF NOT EXISTS issues(
 CREATE INDEX IF NOT EXISTS issues_status ON issues(cluster_id,status);
 `;
 
-const WORKFLOW_TABLES = ['workflows', 'idem', 'result_messages', 'controller_workflows'];
-
 export class ClusterStore {
   readonly path: string;
   now: () => number;
@@ -975,61 +925,45 @@ export class ClusterStore {
     this.path = path;
     this.now = now;
     this.#db = new DatabaseSync(path);
-    this.#db.exec('PRAGMA journal_mode=WAL');
-    this.#db.exec('PRAGMA foreign_keys=ON');
-    this.#db.exec('PRAGMA busy_timeout=5000');
-    this.#assertFresh();
-    this.#db.exec(SCHEMA);
-    this.#migrateColumns();
-    this.#db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
     this.#stmts = new Map();
+    try {
+      this.#assertFresh();
+      this.#db.exec('PRAGMA journal_mode=WAL');
+      this.#db.exec('PRAGMA foreign_keys=ON');
+      this.#db.exec('PRAGMA busy_timeout=5000');
+      this.#db.exec(SCHEMA);
+      this.#db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
+    } catch (error) {
+      this.#db.close();
+      throw error;
+    }
   }
 
   #assertFresh(): void {
     const version = numOf(this.#db.prepare('PRAGMA user_version').get()?.user_version, 'user_version');
-    if (version > SCHEMA_VERSION) fail(`cluster database schema ${version} is newer than supported ${SCHEMA_VERSION}; choose another dataDir`, 409);
-    const names = this.#db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+    const names = this.#db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()
       .map(row => textOf(row.name, 'table name'));
-    if (version === 0 && WORKFLOW_TABLES.some(t => names.includes(t))) {
-      fail('workflow database is not supported; choose a separate dataDir (existing data is left untouched)', 409);
+    if ((version !== 0 && version !== SCHEMA_VERSION) || (version === 0 && names.length > 0)) {
+      fail(`cluster database schema ${version} is not the current resource contract ${SCHEMA_VERSION}; use a new dataDir (existing data is left untouched)`, 409);
     }
-  }
-
-  /** Add missing durable columns without discarding existing runs or evidence. */
-  #migrateColumns(): void {
-    const additions: readonly (readonly [string, string, string])[] = [
-      ['transactions', 'result_staged_epoch', 'INTEGER'],
-      ['transactions', 'result_staged_turn', 'INTEGER'],
-      ['transactions', 'result_staged_agent', 'TEXT'],
-      ['allocations', 'write_scope_canonical', "TEXT NOT NULL DEFAULT '[]'"],
-      ['usage_receipts', 'budget_scope_id', 'TEXT'],
-      ['usage_receipts', 'reasoning_effort', 'TEXT'],
-      ['issues', 'reviewed_revision', 'INTEGER'],
-      ['clusters', 'declared_limits', 'TEXT'],
-      // Native session offsets and cluster event cursors belong to different
-      // logs and are recorded independently.
-      ['checkpoints', 'events_seq', 'INTEGER'],
-      ['transactions', 'pre_pause_status', 'TEXT'],
-      ['transactions', 'pre_pause_revision', 'INTEGER'],
-    ];
-    for (const [table, column, type] of additions) {
-      const columns = this.#db.prepare(`PRAGMA table_info(${table})`).all()
-        .map(row => textOf(row.name, 'column name'));
-      if (columns.includes(column)) continue;
-      this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    if (version === SCHEMA_VERSION && names.length > 0) {
+      // The current version must already be self-contained; opening it must
+      // never repair an old or partially upgraded contract with CREATE/ALTER.
+      const expected = new DatabaseSync(':memory:');
+      try {
+        expected.exec(SCHEMA);
+        const tables = expected.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+        for (const entry of tables) {
+          const table = textOf(entry.name, 'table name');
+          const columns = this.#db.prepare(`PRAGMA table_info(${table})`).all().map(row => textOf(row.name, 'column name'));
+          const required = expected.prepare(`PRAGMA table_info(${table})`).all().map(row => textOf(row.name, 'column name'));
+          if (columns.length !== required.length || required.some(column => !columns.includes(column))) {
+            fail(`cluster database does not contain the current schema ${SCHEMA_VERSION} contract; use a new dataDir (existing data is left untouched)`, 409);
+          }
+        }
+        if (names.includes('usage_receipts')) fail('old model receipts are not the current resource contract; use a new dataDir (existing data is left untouched)', 409);
+      } finally { expected.close(); }
     }
-    // Derive ownership from node kind and transaction placement. Normalize
-    // both tables atomically so readers see one canonical answer; failures
-    // roll back the complete correction without changing business state.
-    this.tx(() => {
-      this.#db.exec(`
-        UPDATE nodes SET owner_management_id =
-          CASE WHEN kind='management' THEN id ELSE parent_id END
-        WHERE owner_management_id IS NOT (CASE WHEN kind='management' THEN id ELSE parent_id END)`);
-      this.#db.exec(`
-        UPDATE transactions SET owner_management_id = node_id
-        WHERE owner_management_id IS NOT node_id`);
-    });
   }
 
   close(): void {
@@ -1947,26 +1881,10 @@ export class ClusterStore {
     return this.all(`SELECT * FROM effects WHERE ${where.join(' AND ')} ORDER BY created`, ...args).map(decodeEffect);
   }
 
-  /** Every usage receipt of one identity in one state, with no page limit. */
-  usageReceiptsAll(clusterId: string, { agent_id = null, status = null }: { agent_id?: string | null | undefined; status?: string | null | undefined } = {}): UsageReceiptRecord[] {
-    const where = ['cluster_id=?'];
-    const args: BindValue[] = [clusterId];
-    if (agent_id) { where.push('agent_id=?'); args.push(agent_id); }
-    if (status) { where.push('status=?'); args.push(status); }
-    return this.all(`SELECT * FROM usage_receipts WHERE ${where.join(' AND ')} ORDER BY created, request_id`, ...args).map(decodeUsageReceipt);
-  }
-
   /** Number of rows changed by the last `run`, for a caller that reports counts. */
   changed(): number {
     const row = this.#db.prepare('SELECT changes() AS c').get();
     return row === undefined ? 0 : numOf(row.c, 'changes');
-  }
-
-  /** Identities whose turn died with a provider request still reserved. */
-  agentsWithReservedReceipts(clusterId: string): AgentRecord[] {
-    return this.all(
-      `SELECT DISTINCT a.* FROM agents a JOIN usage_receipts u ON u.agent_id = a.id AND u.status='RESERVED'
-       WHERE a.cluster_id=? AND a.status<>'TERMINATED'`, clusterId).map(decodeAgent);
   }
 
   /** Every effect call id in one state, with no page limit. */
@@ -2064,21 +1982,12 @@ export class ClusterStore {
     return { deliveries: total, cross_subtree: cross };
   }
 
-  /** Latest measured context per orchestrator identity, read from its turns. */
+  /** Host-recorded context facts for orchestrators; Flow does not measure or budget their windows. */
   latestOrchestratorContext(clusterId: string): OrchestratorContextRow[] {
-    return this.all(
-      `SELECT e.data AS data, json_extract(e.data,'$.agent_id') AS agent_id,
-              json_extract(e.data,'$.context.totalTokens') AS tokens
-         FROM (SELECT json_extract(data,'$.agent_id') AS agent_id, MAX(seq) AS seq
-                 FROM events WHERE cluster_id=? AND type='turn-end'
-                  AND json_extract(data,'$.role')='orchestrator'
-                  AND json_extract(data,'$.context.totalTokens') IS NOT NULL
-                GROUP BY 1) latest
-         JOIN events e ON e.seq = latest.seq`, clusterId,
-    ).map(row => ({
-      data: jsonOf(p(row.data), 'events.data'),
-      agent_id: textOrNull(row.agent_id, 'events.agent_id'),
-      tokens: numOrNull(row.tokens, 'events.tokens'),
+    return this.agentsInSubtree(clusterId, null, { role: 'orchestrator' }).map(agent => ({
+      data: this.latestNativeContext(agent.id) as unknown as FlowJsonValue,
+      agent_id: agent.id,
+      tokens: this.latestNativeContext(agent.id).context_used,
     }));
   }
 
@@ -2190,13 +2099,10 @@ export class ClusterStore {
     const at = this.now();
     this.run(
       `INSERT INTO budgets(id,cluster_id,scope_kind,scope_id,node_id,parent_budget_id,
-        tokens_limit,tokens_reserved,tokens_spent,requests_limit,requests_reserved,requests_spent,
         tool_calls_limit,tool_calls_reserved,tool_calls_spent,wall_limit_ms,wall_deadline,
         agents_limit,agents_reserved,max_active_limit,max_active_reserved,revision,created,updated)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       budget.id, budget.cluster_id, budget.scope_kind, budget.scope_id, budget.node_id ?? null, budget.parent_budget_id ?? null,
-      budget.tokens_limit ?? 0, budget.tokens_reserved ?? 0, budget.tokens_spent ?? 0,
-      budget.requests_limit ?? 0, budget.requests_reserved ?? 0, budget.requests_spent ?? 0,
       budget.tool_calls_limit ?? 0, budget.tool_calls_reserved ?? 0, budget.tool_calls_spent ?? 0,
       budget.wall_limit_ms ?? 0, budget.wall_deadline ?? null,
       budget.agents_limit ?? 0, budget.agents_reserved ?? 0, budget.max_active_limit ?? 0, budget.max_active_reserved ?? 0,
@@ -2265,140 +2171,99 @@ export class ClusterStore {
     return this.updateBudget(id, patch);
   }
 
-  // ---------------------------------------------------------------- usage
+  // ------------------------------------------------------ native usage facts
 
-  insertUsageReceipt(receipt: UsageReceiptInsert): UsageReceiptRecord | null {
-    this.run(
-      `INSERT INTO usage_receipts(request_id,cluster_id,agent_id,node_id,transaction_id,role,kind,provider,model,status,
-        reservation_tokens,prompt_tokens,completion_tokens,cached_tokens,reasoning_tokens,total_tokens,overshoot,turn_seq,attempt,note,budget_scope_id,created,settled,reasoning_effort)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      receipt.request_id, receipt.cluster_id, receipt.agent_id ?? null, receipt.node_id ?? null,
-      receipt.transaction_id ?? null, receipt.role, receipt.kind, receipt.provider ?? null, receipt.model ?? null,
-      receipt.status, receipt.reservation_tokens ?? 0, receipt.prompt_tokens ?? null, receipt.completion_tokens ?? null,
-      receipt.cached_tokens ?? null, receipt.reasoning_tokens ?? null, receipt.total_tokens ?? null,
-      receipt.overshoot ?? 0, receipt.turn_seq ?? null, receipt.attempt ?? 1, receipt.note ?? null,
-      receipt.budget_scope_id ?? null, this.now(), null, receipt.reasoning_effort ?? null,
-    );
-    return one(this.get('SELECT * FROM usage_receipts WHERE request_id=?', receipt.request_id), decodeUsageReceipt);
+  /** Atomically persist host facts and advance their native session consumption cursor. */
+  projectNativeUsage(input: NativeUsageProjection): number | null {
+    return this.tx(() => {
+      let cursor = this.nativeUsageCursor(input.nativeSessionId);
+      const owner = this.get('SELECT cluster_id,agent_id FROM native_usage_cursors WHERE native_session_id=?', input.nativeSessionId);
+      if (owner && (owner.cluster_id !== input.clusterId || owner.agent_id !== input.agentId)) {
+        fail('Native session usage belongs to another cluster or identity', 409);
+      }
+      for (const event of input.events) {
+        integer(event.seq, 0, Number.MAX_SAFE_INTEGER, 'native event seq');
+        const existing = this.get('SELECT type,data,time FROM native_session_events WHERE native_session_id=? AND native_seq=?', input.nativeSessionId, event.seq);
+        if (existing) {
+          if (existing.type !== event.type || canonical(p(existing.data)) !== canonical(event.data) || existing.time !== event.time) {
+            fail('Native event replay changed an already projected fact', 409);
+          }
+          continue;
+        }
+        if (event.seq !== (cursor === null ? 0 : cursor + 1)) fail('Native usage projection requires contiguous event replay', 409);
+        this.run(`INSERT INTO native_session_events(native_session_id,native_seq,cluster_id,agent_id,node_id,transaction_id,role,type,data,time)
+          VALUES(?,?,?,?,?,?,?,?,?,?)`, input.nativeSessionId, event.seq, input.clusterId, input.agentId, input.nodeId,
+          input.transactionId ?? null, input.role, event.type, j(event.data), event.time);
+        cursor = event.seq;
+      }
+      if (cursor !== null) this.run(`INSERT INTO native_usage_cursors(native_session_id,cluster_id,agent_id,native_seq) VALUES(?,?,?,?)
+        ON CONFLICT(native_session_id) DO UPDATE SET native_seq=excluded.native_seq`, input.nativeSessionId, input.clusterId, input.agentId, cursor);
+      if (input.contextSnapshot) {
+        const snapshot = input.contextSnapshot;
+        integer(snapshot.nativeSeq, 0, Number.MAX_SAFE_INTEGER, 'native context seq');
+        if (cursor === null || snapshot.nativeSeq > cursor) fail('Native context snapshot is ahead of durable usage facts', 409);
+        const time = numOf(this.get('SELECT time FROM native_session_events WHERE native_session_id=? AND native_seq=?', input.nativeSessionId, snapshot.nativeSeq)?.time, 'native context time');
+        this.run(`INSERT INTO native_context_snapshots(native_session_id,agent_id,native_seq,data,time) VALUES(?,?,?,?,?)
+          ON CONFLICT(native_session_id) DO UPDATE SET native_seq=excluded.native_seq,data=excluded.data,time=excluded.time
+          WHERE excluded.native_seq >= native_context_snapshots.native_seq`, input.nativeSessionId, input.agentId, snapshot.nativeSeq, j(snapshot), time);
+      }
+      return cursor;
+    });
   }
 
-  getUsageReceipt(requestId: string): UsageReceiptRecord | null {
-    return one(this.get('SELECT * FROM usage_receipts WHERE request_id=?', requestId), decodeUsageReceipt);
+  nativeUsageCursor(nativeSessionId: string): number | null {
+    return numOrNull(this.get('SELECT native_seq FROM native_usage_cursors WHERE native_session_id=?', nativeSessionId)?.native_seq, 'native usage cursor');
   }
 
-  settleUsageReceipt(requestId: string, settlement: UsageSettlement): UsageReceiptRecord | null {
-    const row = this.getUsageReceipt(requestId);
-    if (!row) fail('Usage receipt not found', 404);
-    if (row.status === 'SETTLED') return row;
-    const sets = ['status=?', 'settled=?'];
-    const args: BindValue[] = [settlement.status ?? 'SETTLED', this.now()];
-    for (const column of USAGE_SETTLEMENT_COLUMNS) {
-      const value = settlement[column];
-      if (value === undefined) continue;
-      sets.push(`${column}=?`);
-      args.push(value);
-    }
-    args.push(requestId);
-    this.run(`UPDATE usage_receipts SET ${sets.join(',')} WHERE request_id=?`, ...args);
-    return this.getUsageReceipt(requestId);
+  nativeEventsForAgent(agentId: string): NativeSessionFact[] {
+    return this.all('SELECT * FROM native_session_events WHERE agent_id=? ORDER BY native_session_id,native_seq', agentId).map(decodeNativeFact);
   }
 
-  listUsageReceipts(
-    clusterId: string,
-    { agent_id, status, limit, offset }: { agent_id?: string | undefined; status?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {},
-  ): UsageReceiptRecord[] {
+  latestNativeContext(agentId: string): FlowNativeContext {
+    const context = nativeContext(this.nativeEventsForAgent(agentId));
+    const row = this.get('SELECT * FROM native_context_snapshots WHERE agent_id=? ORDER BY time DESC,native_seq DESC LIMIT 1', agentId);
+    if (!row) return context;
+    const snapshot = objectField(p(row.data), 'native context snapshot');
+    const count = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    const current = row.native_seq === this.nativeUsageCursor(textOf(row.native_session_id, 'native snapshot session'));
+    return {
+      ...context,
+      // A snapshot that predates the consumed tail describes an older surface.
+      context_used: current ? count(snapshot.projectedTokens) ?? count(snapshot.pressureTokens) : null,
+      context_limit: context.context_limit ?? (current ? count(snapshot.contextWindow) : null),
+    };
+  }
+
+  usageEventsForDomain(clusterId: string, { scope_node_id, nodeIds, agent_id, agentId, limit, offset = 0 }: {
+    scope_node_id?: string | undefined; nodeIds?: readonly string[] | undefined;
+    agent_id?: string | undefined; agentId?: string | undefined; limit?: number | undefined; offset?: number | undefined;
+  } = {}): { items: FlowUsageEvent[]; total: number } {
+    const facts = this.#usageFacts(clusterId, scope_node_id, agent_id ?? agentId, nodeIds);
+    const events = nativeUsageEvents(facts);
+    return { items: events.slice(offset, offset + normalizeLimit(limit)), total: events.length };
+  }
+
+  usageSummary(clusterId: string, { nodeId = null, agentId = null }: {
+    nodeId?: string | null | undefined; agentId?: string | null | undefined;
+  } = {}): FlowUsageSummary {
+    return summarizeNativeUsage(this.#usageFacts(clusterId, nodeId ?? undefined, agentId ?? undefined));
+  }
+
+  #usageFacts(clusterId: string, nodeId?: string, agentId?: string, nodeIds?: readonly string[]): NativeSessionFact[] {
     const where = ['cluster_id=?'];
     const args: BindValue[] = [clusterId];
-    if (agent_id) {
-      where.push('agent_id=?');
-      args.push(agent_id);
+    if (nodeId) {
+      where.push(`node_id IN (WITH RECURSIVE sub(id) AS (SELECT id FROM nodes WHERE cluster_id=? AND id=?
+        UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent_id=sub.id WHERE n.cluster_id=?) SELECT id FROM sub)`);
+      args.push(clusterId, nodeId, clusterId);
     }
-    if (status) {
-      where.push('status=?');
-      args.push(status);
+    if (nodeIds) {
+      if (nodeIds.length === 0) return [];
+      where.push(`node_id IN (${nodeIds.map(() => '?').join(',')})`);
+      args.push(...nodeIds);
     }
-    args.push(normalizeLimit(limit), offset ?? 0);
-    return this.all(`SELECT * FROM usage_receipts WHERE ${where.join(' AND ')} ORDER BY created,request_id LIMIT ? OFFSET ?`, ...args).map(decodeUsageReceipt);
-  }
-
-  /** Domain-filtered receipts: neither the count nor offset crosses siblings. */
-  usageReceiptsForDomain(
-    clusterId: string,
-    { scope_node_id, agent_id, status, limit, offset = 0 }: {
-      scope_node_id?: string | undefined
-      agent_id?: string | undefined
-      status?: string | undefined
-      limit?: number | undefined
-      offset?: number | undefined
-    } = {},
-  ): { items: UsageReceiptRecord[]; total: number } {
-    const scope = scope_node_id
-      ? `WITH RECURSIVE sub(id) AS (
-           SELECT id FROM nodes WHERE cluster_id=? AND id=?
-           UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent_id=sub.id WHERE n.cluster_id=?
-         ) `
-      : '';
-    const where = ['r.cluster_id=?'];
-    const args: BindValue[] = scope_node_id ? [clusterId, scope_node_id, clusterId, clusterId] : [clusterId];
-    if (scope_node_id) where.push('r.node_id IN (SELECT id FROM sub)');
-    if (agent_id) { where.push('r.agent_id=?'); args.push(agent_id); }
-    if (status) { where.push('r.status=?'); args.push(status); }
-    const filter = `FROM usage_receipts r WHERE ${where.join(' AND ')}`;
-    const total = numOf(this.get(`${scope}SELECT COUNT(*) AS c ${filter}`, ...args)?.c, 'usage.count');
-    const items = this.all(`${scope}SELECT r.* ${filter} ORDER BY r.created,r.request_id LIMIT ? OFFSET ?`,
-      ...args, normalizeLimit(limit), offset).map(decodeUsageReceipt);
-    return { items, total };
-  }
-
-  /** How many provider requests this identity really dispatched. */
-  countWorkerRequests(clusterId: string, agentId: string): number {
-    // A request that never left the client (`NOT_SENT`) is not an attempt: it
-    // consumed no allowance and must not make the next real request look like
-    // the one that broke the ceiling.
-    return numOf(this.get(
-      "SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND agent_id=? AND kind='worker' AND status<>'NOT_SENT'",
-      clusterId, agentId)?.c, 'usage.count');
-  }
-
-  /** How many provider requests this identity has made, by kind. */
-  countUsageReceipts(clusterId: string, agentId: string, { kind = null }: { kind?: string | null | undefined } = {}): number {
-    const row = kind
-      ? this.get('SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND agent_id=? AND kind=?', clusterId, agentId, kind)
-      : this.get('SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND agent_id=?', clusterId, agentId);
-    return row === undefined ? 0 : numOf(row.c, 'usage.count');
-  }
-
-  usageSummary(clusterId: string, { nodeId = null }: { nodeId?: string | null | undefined } = {}): UsageSummaryRow {
-    const scope = nodeId
-      ? `WITH RECURSIVE sub(id) AS (
-           SELECT id FROM nodes WHERE cluster_id=? AND id=?
-           UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent_id=sub.id WHERE n.cluster_id=?
-         ) `
-      : '';
-    const args: BindValue[] = nodeId ? [clusterId, nodeId, clusterId, clusterId] : [clusterId];
-    const row = this.get(
-      `${scope}SELECT COUNT(*) AS requests,
-              SUM(COALESCE(total_tokens,0)) AS total_tokens,
-              SUM(COALESCE(prompt_tokens,0)) AS prompt_tokens,
-              SUM(COALESCE(completion_tokens,0)) AS completion_tokens,
-              SUM(COALESCE(cached_tokens,0)) AS cached_tokens,
-              SUM(COALESCE(reasoning_tokens,0)) AS reasoning_tokens,
-              SUM(CASE WHEN status='UNKNOWN' THEN 1 ELSE 0 END) AS unknown_requests,
-              SUM(COALESCE(overshoot,0)) AS overshoot
-       FROM usage_receipts WHERE cluster_id=?${nodeId ? ' AND node_id IN (SELECT id FROM sub)' : ''}`, ...args);
-    return {
-      requests: numOrNull(row?.requests, 'usage.requests') ?? 0,
-      total_tokens: numOrNull(row?.total_tokens, 'usage.total_tokens') ?? 0,
-      prompt_tokens: numOrNull(row?.prompt_tokens, 'usage.prompt_tokens') ?? 0,
-      completion_tokens: numOrNull(row?.completion_tokens, 'usage.completion_tokens') ?? 0,
-      cached_tokens: numOrNull(row?.cached_tokens, 'usage.cached_tokens') ?? 0,
-      reasoning_tokens: numOrNull(row?.reasoning_tokens, 'usage.reasoning_tokens') ?? 0,
-      unknown_requests: numOrNull(row?.unknown_requests, 'usage.unknown_requests') ?? 0,
-      overshoot: numOrNull(row?.overshoot, 'usage.overshoot') ?? 0,
-      // No price model is configured. The local-unpriced marker distinguishes
-      // this placeholder from a measured zero monetary charge.
-      api_cost: { amount: 0, currency: 'USD', pricing: 'local-unpriced' },
-    };
+    if (agentId) { where.push('agent_id=?'); args.push(agentId); }
+    return this.all(`SELECT * FROM native_session_events WHERE ${where.join(' AND ')} ORDER BY native_session_id,native_seq`, ...args).map(decodeNativeFact);
   }
 
   // ------------------------------------------------- messages and recipients
@@ -3002,15 +2867,9 @@ const GROUP_COLUMNS = [
 
 /** The numeric budget columns `updateBudget`/`bumpBudget` write, in order. */
 const BUDGET_NUMERIC_KEYS = [
-  'tokens_limit', 'tokens_reserved', 'tokens_spent', 'requests_limit', 'requests_reserved', 'requests_spent',
   'tool_calls_limit', 'tool_calls_reserved', 'tool_calls_spent', 'wall_limit_ms', 'wall_deadline',
   'agents_limit', 'agents_reserved', 'max_active_limit', 'max_active_reserved',
 ] as const satisfies readonly (keyof BudgetPatch)[];
-
-/** The usage columns `settleUsageReceipt` writes from a settlement, in order. */
-const USAGE_SETTLEMENT_COLUMNS = [
-  'prompt_tokens', 'completion_tokens', 'cached_tokens', 'reasoning_tokens', 'total_tokens', 'overshoot', 'note',
-] as const satisfies readonly (keyof UsageSettlement)[];
 
 /** The effect columns `settleEffect` writes from a settlement, in order. */
 const EFFECT_SETTLEMENT_COLUMNS = ['body', 'error', 'job_id'] as const satisfies readonly (keyof EffectSettlement)[];
@@ -3162,12 +3021,6 @@ function decodeBudgetRow(row: Row): BudgetRecord {
     node_id: textOrNull(row.node_id, 'budgets.node_id'),
     parent_budget_id: textOrNull(row.parent_budget_id, 'budgets.parent_budget_id'),
     revision: numOf(row.revision, 'budgets.revision'),
-    tokens_limit: numOf(row.tokens_limit, 'budgets.tokens_limit'),
-    tokens_reserved: numOf(row.tokens_reserved, 'budgets.tokens_reserved'),
-    tokens_spent: numOf(row.tokens_spent, 'budgets.tokens_spent'),
-    requests_limit: numOf(row.requests_limit, 'budgets.requests_limit'),
-    requests_reserved: numOf(row.requests_reserved, 'budgets.requests_reserved'),
-    requests_spent: numOf(row.requests_spent, 'budgets.requests_spent'),
     tool_calls_limit: numOf(row.tool_calls_limit, 'budgets.tool_calls_limit'),
     tool_calls_reserved: numOf(row.tool_calls_reserved, 'budgets.tool_calls_reserved'),
     tool_calls_spent: numOf(row.tool_calls_spent, 'budgets.tool_calls_spent'),
@@ -3256,34 +3109,6 @@ function decodeToolCallReceipt(row: Row): ToolCallReceiptRecord {
   };
 }
 
-function decodeUsageReceipt(row: Row): UsageReceiptRecord {
-  return {
-    request_id: textOf(row.request_id, 'usage_receipts.request_id'),
-    cluster_id: textOf(row.cluster_id, 'usage_receipts.cluster_id'),
-    agent_id: textOrNull(row.agent_id, 'usage_receipts.agent_id'),
-    node_id: textOrNull(row.node_id, 'usage_receipts.node_id'),
-    transaction_id: textOrNull(row.transaction_id, 'usage_receipts.transaction_id'),
-    role: oneOf(row.role, AGENT_ROLES, 'usage_receipts.role'),
-    kind: textOf(row.kind, 'usage_receipts.kind'),
-    provider: textOrNull(row.provider, 'usage_receipts.provider'),
-    model: textOrNull(row.model, 'usage_receipts.model'),
-    reasoning_effort: textOrNull(row.reasoning_effort, 'usage_receipts.reasoning_effort'),
-    status: oneOf(row.status, USAGE_STATUSES, 'usage_receipts.status'),
-    reservation_tokens: numOf(row.reservation_tokens, 'usage_receipts.reservation_tokens'),
-    prompt_tokens: numOrNull(row.prompt_tokens, 'usage_receipts.prompt_tokens'),
-    completion_tokens: numOrNull(row.completion_tokens, 'usage_receipts.completion_tokens'),
-    cached_tokens: numOrNull(row.cached_tokens, 'usage_receipts.cached_tokens'),
-    reasoning_tokens: numOrNull(row.reasoning_tokens, 'usage_receipts.reasoning_tokens'),
-    total_tokens: numOrNull(row.total_tokens, 'usage_receipts.total_tokens'),
-    overshoot: numOf(row.overshoot, 'usage_receipts.overshoot'),
-    turn_seq: numOrNull(row.turn_seq, 'usage_receipts.turn_seq'),
-    attempt: numOf(row.attempt, 'usage_receipts.attempt'),
-    note: textOrNull(row.note, 'usage_receipts.note'),
-    budget_scope_id: textOrNull(row.budget_scope_id, 'usage_receipts.budget_scope_id'),
-    created: numOf(row.created, 'usage_receipts.created'),
-    settled: numOrNull(row.settled, 'usage_receipts.settled'),
-  };
-}
 
 function decodeLease(row: Row): LeaseRecord {
   return {
@@ -3453,3 +3278,18 @@ function canonical(value: unknown): string {
 }
 
 export { j as encodeJson, p as decodeJson, canonical };
+
+function decodeNativeFact(row: Row): NativeSessionFact {
+  return {
+    native_session_id: textOf(row.native_session_id, 'native.session_id'),
+    native_seq: numOf(row.native_seq, 'native.seq'),
+    cluster_id: textOf(row.cluster_id, 'native.cluster_id'),
+    agent_id: textOf(row.agent_id, 'native.agent_id'),
+    node_id: textOf(row.node_id, 'native.node_id'),
+    transaction_id: textOrNull(row.transaction_id, 'native.transaction_id'),
+    role: oneOf(row.role, AGENT_ROLES, 'native.role'),
+    type: textOf(row.type, 'native.type'),
+    data: jsonOf(p(row.data), 'native.data'),
+    time: numOf(row.time, 'native.time'),
+  };
+}

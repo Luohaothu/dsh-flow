@@ -85,6 +85,7 @@
     "prepack": "pnpm --dir ../.. run build"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-compaction-basic": "0.1.7-rc.2",
     "@deepseek-ai/dsh-scope": "0.1.7-rc.2",
     "@deepseek-ai/dsh-tool-bash": "0.1.7-rc.2",
     "@deepseek-ai/dsh-tool-fs": "0.1.7-rc.2",

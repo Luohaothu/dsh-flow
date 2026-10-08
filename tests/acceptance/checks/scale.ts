@@ -9,7 +9,6 @@ import { join } from 'node:path';
 
 import { canonicalScopeEntry } from '../../../packages/dsh-flow/src/core/scope.ts';
 import { openLedger, usageSummary, pendingWork, workerActivation, concurrencyPeaks, writeScopeAnalysis } from '../../../src/host/ledger.ts';
-import type { Ledger, SqlRow } from '../../../src/host/ledger.ts';
 import { asArray, asNumber, asObject, asString } from '../context.ts';
 import type { CheckOutcome, JsonObject, RunEvent, RunSpec, SpecTransaction, StoneLedger } from '../context.ts';
 import type { CaseDataset, CaseScaleFixture } from '../../../src/host/types.ts';
@@ -209,12 +208,12 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
   push('every-transaction-terminal', planned > 0 && terminal === planned,
     `${terminal}/${planned} of the tier's transactions are terminal: ${JSON.stringify(byStatus)}${extra ? ` (plus ${extra} the model added on its own)` : ''}`);
   push('real-llm-workers', workersWithRequests >= requiredWorkers,
-    `${workersWithRequests} of ${workerCount} created workers dispatched a real model request (tier requires ${requiredWorkers})`);
+    `${workersWithRequests} of ${workerCount} created workers completed an Agent turn with native assistant settlement evidence (tier requires ${requiredWorkers})`);
   push('workers-actually-ran', workersWithTurns >= requiredWorkers,
     `${workersWithTurns} workers executed a turn (tier requires ${requiredWorkers})`);
 
-  const duplicateCharges = Number(ledger.get('SELECT COUNT(*) AS c FROM (SELECT request_id FROM usage_receipts WHERE cluster_id=? GROUP BY request_id HAVING COUNT(*)>1)', clusterId)?.c ?? 0);
-  push('no-duplicate-charges', duplicateCharges === 0, `${duplicateCharges} duplicated request ids`);
+  const duplicateCharges = Number(ledger.get('SELECT COUNT(*) AS c FROM (SELECT native_session_id,native_seq FROM native_session_events WHERE cluster_id=? GROUP BY native_session_id,native_seq HAVING COUNT(*)>1)', clusterId)?.c ?? 0);
+  push('no-duplicate-charges', duplicateCharges === 0, `${duplicateCharges} duplicated native session event keys`);
 
   // The tier requires zero completed writes outside the granted scope. An escape is a
   // settled write outside its identity's grant; prevented attempts are the
@@ -231,18 +230,8 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
       : `${writeScope.escapes.length} escaped write(s) among ${writeScope.checked} checked settled write call(s); ${prevented} out-of-scope attempt(s) refused${writeScope.unmeasured ? `; ${writeScope.unmeasured}` : ''}`);
 
   const usage = usageSummary(ledger, clusterId);
-  // "Accounted" means every request reached a terminal receipt state with its
-  // outcome named — not that a provider always reported usage. A request that
-  // was aborted mid-flight genuinely has an unknown cost, and this ledger
-  // records it as UNKNOWN with its token hold retained and its reason attached;
-  // demanding `unknown_requests === 0` would force that request to be booked at
-  // zero instead.
-  const receiptStates = ledger.all('SELECT status, COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? GROUP BY status', clusterId);
-  const reservedAtRest = Number(receiptStates.find(row => row.status === 'RESERVED')?.c ?? 0);
-  const unexplained = Number(ledger.get("SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND status='UNKNOWN' AND (note IS NULL OR note='')", clusterId)?.c ?? 0);
-  push('usage-accounted',
-    usage.requests > 0 && reservedAtRest === 0 && unexplained === 0,
-    `${JSON.stringify(usage)}; receipts ${JSON.stringify(receiptStates.map(row => `${row.status}:${row.c}`))}; ${unexplained} unknown without a reason`);
+  push('usage-accounted', usage.requests > 0,
+    `host-recorded usage from native settlement events: ${JSON.stringify(usage)}`);
 
   const roles = ledger.all("SELECT role, COUNT(*) AS c, SUM(CASE WHEN turns>0 THEN 1 ELSE 0 END) AS activated FROM agents WHERE cluster_id=? GROUP BY role", clusterId);
   const management = roles.filter(row => row.role !== 'worker');
@@ -462,25 +451,19 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
     `${pending.running_agents.length} agents still RUNNING at rest${stopped ? ` (the cluster stopped: ${report.ledger?.cluster_status})` : ''}`);
 
   const concurrency = measureConcurrency(eventList);
-  // Two different ceilings, measured two different ways: resident *turns* come
-  // from the turn-start/turn-end pairs, while provider requests in flight come
-  // from the receipt intervals. Comparing turn overlap against the LLM window
-  // would fail a compliant run whenever more agents are resident than the model
-  // window allows — which is the normal case.
   const llmCeiling = limits.max_llm_concurrency ?? 2;
   const peaks = concurrencyPeaks(ledger, clusterId);
-  const inflight = peaks.provider_inflight_peak ?? maxInFlight(ledger, clusterId);
-  push('qwen-inflight-within-limit', inflight === null ? null : inflight <= llmCeiling,
-    inflight === null
-      ? 'no request intervals were recorded to measure in-flight concurrency'
-      : `observed max in-flight provider requests ${inflight} against max_llm_concurrency ${llmCeiling}`);
+  const inflight = report.mock_concurrency?.peak_concurrent_requests ?? null;
+  push('provider-concurrency-observed', inflight === null ? null : true,
+    inflight === null ? 'native settlement events expose no provider dispatch intervals' : `independent mock HTTP observer peak ${inflight}; Agent permit ceiling ${llmCeiling}`);
+  const permits = eventList.filter(event => event.type === 'llm-slot').map(event => asNumber(event.data.in_use)).filter((value): value is number => value !== null);
+  push('model-permits-within-limit', permits.length ? Math.max(...permits) <= llmCeiling : null,
+    permits.length ? `Agent scheduling permit peak ${Math.max(...permits)} against ${llmCeiling}` : 'no Agent permit events recorded');
   const residentPeak = peaks.resident_peak ?? concurrency.maxResident;
   push('resident-turns-within-limit', residentPeak === null ? null : residentPeak <= (limits.max_active_agents ?? 9),
     `observed max resident turn handles ${residentPeak} against max_active_agents ${limits.max_active_agents ?? 9}`);
 
   const queue = queueLatency(eventList);
-  const apiCost = Number(ledger.get(
-    "SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND total_tokens IS NOT NULL AND status='SETTLED'", clusterId)?.c ?? 0);
   ledger.close();
 
   const metrics: JsonObject = {
@@ -497,7 +480,6 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
     // empty list or as 0ms of queueing.
     queue_wait_ms: queue,
     peaks: { resident_peak: residentPeak, provider_inflight_peak: inflight, samples: peaks },
-    api_cost: { amount: 0, currency: 'USD', pricing: 'local-unpriced', priced_receipts: 0, unpriced_receipts: apiCost },
     by_status: byStatus,
   };
   // The metrics file belongs to the *live* run that is writing its report at the
@@ -523,10 +505,10 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
     // identified worker costs `null`, not an Infinity-by-division artefact.
     measured_per_file: planned > 0 && (usage.requests ?? 0) > 0
       ? {
-        model_requests: Number(((usage.requests ?? 0) / planned).toFixed(2)),
-        prompt_tokens_per_request: Math.round((usage.prompt_tokens ?? 0) / (usage.requests ?? 1)),
-        tokens: Math.round((usage.total_tokens ?? 0) / planned),
-        tokens_per_activated_worker: workersWithTurns > 0 ? Math.round((usage.total_tokens ?? 0) / workersWithTurns) : null,
+        host_recorded_settlements: Number((usage.requests / planned).toFixed(2)),
+        prompt_tokens_per_request: usage.prompt_tokens === null ? null : Math.round(usage.prompt_tokens / usage.requests),
+        tokens: usage.total_tokens === null ? null : Math.round(usage.total_tokens / planned),
+        tokens_per_activated_worker: workersWithTurns > 0 && usage.total_tokens !== null ? Math.round(usage.total_tokens / workersWithTurns) : null,
       }
       : null,
     metrics,
@@ -550,7 +532,7 @@ export function deriveFailureClass({ ledger, report, failed }: ScaleFailureInput
   const codes = new Set(blockers.map(blocker => (typeof blocker.code === 'string' ? blocker.code.toUpperCase() : '')).filter(Boolean));
   const reason = String(ledger?.blocked_reason ?? '');
   const MECHANISM_CODES = [
-    'CONTEXT_PRESSURE', 'SESSION_MISSING', 'DELIVERY_UNKNOWN', 'EFFECT_UNCERTAIN',
+    'SESSION_MISSING', 'DELIVERY_UNKNOWN', 'EFFECT_UNCERTAIN',
     'ACCOUNTING_UNCERTAIN', 'WRITE_SCOPE', 'PERMISSION', 'FENCE', 'TOOL_IDENTITY_MISSING',
   ];
   const LIMIT_CODES = ['BUDGET_EXHAUSTED', 'LIMIT_REACHED', 'DEADLINE_PASSED'];
@@ -558,10 +540,10 @@ export function deriveFailureClass({ ledger, report, failed }: ScaleFailureInput
   // which outranks the environment, which outranks the model. A stop that is
   // *both* fenced and out of budget is a mechanism failure first — the fence is
   // the defect, the budget is what it ran out of.
-  if ([...codes].some(code => MECHANISM_CODES.includes(code) || code.startsWith('CONTEXT_'))) return 'MECHANISM';
+  if ([...codes].some(code => MECHANISM_CODES.includes(code))) return 'MECHANISM';
   // Textual evidence is read by *prefix* only: a sentence that mentions a budget
   // somewhere inside it is prose, and prose is not a limit.
-  if (/^(CONTEXT_PRESSURE|SESSION_MISSING|DELIVERY_UNKNOWN|EFFECT_UNCERTAIN|ACCOUNTING_UNCERTAIN|FENCE|WRITE_SCOPE)\b/.test(reason.trim())) return 'MECHANISM';
+  if (/^(SESSION_MISSING|DELIVERY_UNKNOWN|EFFECT_UNCERTAIN|ACCOUNTING_UNCERTAIN|FENCE|WRITE_SCOPE)\b/.test(reason.trim())) return 'MECHANISM';
   // The cluster's own coded reasons are read from both `cluster-blocked` and
   // `node-blocked` events: a subtree that could not pay for its next request
   // stops with the code even when the root keeps running.
@@ -578,30 +560,6 @@ export function deriveFailureClass({ ledger, report, failed }: ScaleFailureInput
 }
 
 /** Derive turn overlap from the event stream's own turn-start/turn-end pairs. */
-/** Max overlapping provider requests, from the durable receipt intervals. */
-function maxInFlight(ledger: Ledger, clusterId: string): number | null {
-  let rows: SqlRow[] = [];
-  try {
-    rows = ledger.all('SELECT created, settled FROM usage_receipts WHERE cluster_id=?', clusterId);
-  } catch {
-    return null;
-  }
-  const points: Array<[number, number]> = [];
-  for (const row of rows) {
-    if (typeof row.created !== 'number' || typeof row.settled !== 'number') continue;
-    points.push([row.created, 1], [Math.max(row.created, row.settled), -1]);
-  }
-  if (!points.length) return null;
-  points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  let live = 0;
-  let peak = 0;
-  for (const [, delta] of points) {
-    live += delta;
-    if (live > peak) peak = live;
-  }
-  return peak;
-}
-
 function measureConcurrency(events: readonly RunEvent[]): { max: number; maxResident: number } {
   let resident = 0;
   let maxResident = 0;

@@ -18,8 +18,8 @@ import { classifyOutcome } from '../run.ts';
 import { deriveFailureClass, run as checkScale, scaleValidation } from '../checks/scale.ts';
 import { correctionWitness, deriveRunClass } from '../checks/recursion.ts';
 
-const budget = { tokens: 1000, model_requests: 10, wall_time_ms: 10_000 };
-const refusal = { scope: 'node abc', dimension: 'model_requests', agent_id: 'a1' };
+const budget = { tool_calls: 1000, wall_time_ms: 10_000 };
+const refusal = { scope: 'node abc', dimension: 'tool_calls', agent_id: 'a1' };
 
 test('a check-level mechanism failure is never relabelled by a spent budget', () => {
   const outcome = classifyOutcome({
@@ -27,7 +27,7 @@ test('a check-level mechanism failure is never relabelled by a spent budget', ()
     usage: { total_tokens: 1000, requests: 10 }, wallTimeMs: 10_000,
   });
   assert.equal(outcome.failure_class, 'MECHANISM');
-  assert.equal(outcome.limit_reached?.exhausted.tokens, true, 'the exhaustion is still recorded');
+  assert.equal(outcome.limit_reached?.exhausted.wall, true, 'the exhaustion is still recorded');
 });
 
 test('an unclassified scenario failure defaults from the structured facts', () => {
@@ -38,14 +38,13 @@ test('an unclassified scenario failure defaults from the structured facts', () =
   assert.equal(nothing.failure_class, 'MODEL_OUTPUT');
   assert.equal(nothing.limit_reached, null);
 
-  // 999 of 1000 tokens is proximity, not a denial: without a recorded refusal
-  // the cause is unchanged and the proximity is reported separately.
+  // Host-recorded token usage is observational and cannot create a budget stop.
   const spent = classifyOutcome({
     failureClass: 'MODEL_OUTPUT', scenarioStatus: 'FAILED', budget,
     usage: { total_tokens: 999, requests: 3 }, wallTimeMs: 1_000,
   });
   assert.equal(spent.failure_class, 'MODEL_OUTPUT', '99.9% usage alone does not change the cause');
-  assert.equal(spent.budget_proximity.tokens, 0.999);
+  assert.equal(spent.budget_proximity.wall, 0.1);
 
   const refused = classifyOutcome({
     failureClass: null, scenarioStatus: 'FAILED', budget,
@@ -90,15 +89,15 @@ test('wall time is judged against the measured clock, never against zero', () =>
     usage: { total_tokens: 1_000, requests: 10 }, wallTimeMs: 10_000,
   });
   assert.equal(passed.failure_class, null, 'a passed scenario keeps no failure class even when it spent everything');
-  assert.equal(passed.limit_reached?.exhausted.requests, true);
+  assert.equal(passed.limit_reached?.exhausted.wall, true);
 });
 
 test('a cluster stop reason is only budget evidence in its coded form', () => {
   const coded = classifyOutcome({
     failureClass: null, scenarioStatus: 'FAILED',
-    budget: { tokens: 1048576, model_requests: 192, wall_time_ms: 21600000 },
+    budget: { wall_time_ms: 21600000 },
     usage: { total_tokens: 420000, requests: 40 }, wallTimeMs: 118000,
-    clusterReason: 'BUDGET: allocator scope has no model_requests left',
+    clusterReason: 'BUDGET: allocator scope has no tool_calls left',
   });
   assert.equal(coded.failure_class, 'LIMIT_REACHED');
   assert.equal(coded.limit_reached?.blockedOnBudget, true);
@@ -106,22 +105,22 @@ test('a cluster stop reason is only budget evidence in its coded form', () => {
   // Model prose about "exhausting max_attempts" is not a budget denial.
   const prose = classifyOutcome({
     failureClass: null, scenarioStatus: 'FAILED',
-    budget: { tokens: 1048576, model_requests: 192, wall_time_ms: 21600000 },
+    budget: { wall_time_ms: 21600000 },
     usage: { total_tokens: 500000, requests: 48 }, wallTimeMs: 118000,
     clusterReason: 'orchestrator has been exhausting max_attempts=2 while retrying',
   });
   assert.equal(prose.failure_class, 'MODEL_OUTPUT', 'free text about exhaustion is not evidence');
   assert.equal(prose.limit_reached, null, 'no structured denial was recorded');
-  assert.equal(prose.budget_proximity.tokens, 0.4768, 'proximity is still reported');
+  assert.equal(prose.budget_proximity.wall, 0.0055, 'proximity is still reported');
 });
 
 test('the scale tier derives its own class from structured blockers', () => {
   const mechanism = deriveFailureClass({
-    ledger: { blockers: [{ code: 'CONTEXT_PRESSURE', reason: 'auditor holds 11340 tokens and compaction did not reduce it' }] },
+    ledger: { blockers: [{ code: 'SESSION_MISSING', reason: 'native session cannot be restored' }] },
     report: { limit_reached: { hitWall: false, refusals: [] } },
     failed: [{ name: 'real-llm-workers', passed: false }],
   });
-  assert.equal(mechanism, 'MECHANISM', 'context pressure is a mechanism failure, not a budget one');
+  assert.equal(mechanism, 'MECHANISM', 'missing native session is a mechanism failure, not a budget one');
 
   const limit = deriveFailureClass({
     ledger: { blockers: [], blocked_reason: null },
@@ -142,7 +141,7 @@ test('the scale tier derives its own class from structured blockers', () => {
   // that made the session unaffordable, and even when the block was recorded on
   // a child node (the root kept running, so there is no cluster-level reason).
   const nodeBudget = deriveFailureClass({
-    ledger: { blockers: [{ code: 'BUDGET_EXHAUSTED', reason: 'BUDGET: the session could not be compacted — {"before":124579}' }], blocked_reason: null },
+    ledger: { blockers: [{ code: 'BUDGET_EXHAUSTED', reason: 'BUDGET: tool allowance was exhausted' }], blocked_reason: null },
     report: { limit_reached: { hitWall: false, refusals: [] } },
     failed: [{ name: 'every-transaction-terminal', passed: false }],
   });
@@ -151,7 +150,7 @@ test('the scale tier derives its own class from structured blockers', () => {
   // Textual evidence uses the leading code as the cause. A mechanism prefix
   // outranks a budget token that appears later in the message.
   const wrapped = deriveFailureClass({
-    ledger: { blockers: [], blocked_reason: 'CONTEXT_PRESSURE: BUDGET: the session could not be compacted because the cluster budget is exhausted' },
+    ledger: { blockers: [], blocked_reason: 'SESSION_MISSING: BUDGET: native session is missing while tool budget is exhausted' },
     report: { limit_reached: null, wall_time_ms: 1000 },
     failed: [{ name: 'every-transaction-terminal', passed: false }],
   });
@@ -169,7 +168,7 @@ test('the scale tier derives its own class from structured blockers', () => {
   // the defect, the budget is only what it ran out of.
   const mixed = deriveFailureClass({
     ledger: { blockers: [{ code: 'FENCE', reason: 'an old epoch tried to publish' }, { code: 'BUDGET_EXHAUSTED', reason: 'BUDGET: nothing left' }] },
-    report: { limit_reached: { hitWall: false, refusals: [{ dimension: 'tokens' }] }, wall_time_ms: 1000 },
+    report: { limit_reached: { hitWall: false, refusals: [{ dimension: 'tool_calls' }] }, wall_time_ms: 1000 },
     failed: [{ name: 'every-transaction-terminal', passed: false }],
   });
   assert.equal(mixed, 'MECHANISM', 'mechanism outranks limit');
@@ -221,9 +220,9 @@ test('a case that fails while a coded limit is beaconed derives the limit, not t
   // With no coded limit, an unmet artifact requirement is the model's.
   assert.equal(deriveRunClass({ failed: ['deep-artifact-written'], limitCoded: false }), 'MODEL_OUTPUT');
   assert.equal(deriveRunClass({ failed: ['every-transaction-terminal'], mechanismCoded: true }),
-    'MECHANISM', 'a durable CONTEXT_PRESSURE node stop is not a model-output failure');
+    'MECHANISM', 'a durable SESSION_MISSING node stop is not a model-output failure');
   assert.equal(deriveRunClass({ failed: ['every-transaction-terminal'], mechanismCoded: true, limitCoded: true }),
-    'MECHANISM', 'a structural context stop outranks a coincident budget code');
+    'MECHANISM', 'a structural Session stop outranks a coincident budget code');
   // Nothing failed: no class at all.
   assert.equal(deriveRunClass({ failed: [], limitCoded: true }), null);
 });

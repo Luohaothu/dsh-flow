@@ -15,8 +15,6 @@
     "max_role_turns": 24
   },
   "budget": {
-    "tokens": 2097152,
-    "model_requests": 256,
     "tool_calls": 2048,
     "wall_time_ms": 1800000,
     "agents": 64,
@@ -49,7 +47,7 @@
     },
     {
       "id": "{{runId}}-r3",
-      "objective": "Use the flow_sum tool on [10] and [50] \u2014 the two numbers submitted by the other transactions \u2014 and submit their sum. Send one flow_communicate message to the worker that owns transaction {{runId}}-r4 stating your result.",
+      "objective": "Use the flow_sum tool on [10] and [50] — the two numbers submitted by the other transactions — and submit their sum. Send one flow_communicate message to the worker that owns transaction {{runId}}-r4 stating your result.",
       "acceptance_criteria": [
         "The submitted result contains the number 60"
       ],
@@ -66,7 +64,7 @@
   ],
   "acceptance_criteria": [
     "No committed result is recomputed after the restart",
-    "No model request is charged twice",
+    "No native Session event is projected twice after replay",
     "A message delivered across subtrees appears exactly once in the recipient session",
     "Stale leases from the previous process epoch are fenced"
   ],

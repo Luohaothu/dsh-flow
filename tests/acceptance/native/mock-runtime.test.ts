@@ -28,7 +28,7 @@ import type { MockScenarioHooks } from '../../../src/host/mock-scenarios.ts';
 import { inspectNativeSumRoundTrip } from '../qwen-smoke.ts';
 import { findSessionFile, readSessionEvents } from '../../../src/host/session-scan.ts';
 import type { SessionEvent } from '../../../src/host/session-scan.ts';
-import { openLedger } from '../../../src/host/ledger.ts';
+import { openLedger, usageSummary } from '../../../src/host/ledger.ts';
 import type { SqlRow } from '../../../src/host/ledger.ts';
 import { MOCK_API_KEY, MOCK_MODEL_ID, MOCK_PROVIDER, mockPatchText, ipcBridgePatchText, startAcceptanceHost } from '../run.ts';
 import { asArray, asObject, asString, decodeSingleReply, decodeStartReply, requiredString } from '../context.ts';
@@ -40,7 +40,6 @@ interface HarnessOptions {
   name: string;
   hooks?: MockScenarioHooks;
   caseId?: string;
-  independentSummary?: boolean;
   holdSummary?: boolean;
 }
 
@@ -57,7 +56,7 @@ interface LedgerView {
   transactions(): SqlRow[];
   allocations(): SqlRow[];
   usage(): SqlRow[];
-  receipts(): SqlRow[];
+  sessionEvents(): SqlRow[];
   budgets(): SqlRow[];
   toolCalls(): SqlRow[];
   close(): void;
@@ -73,7 +72,7 @@ interface ClusterSession {
 }
 
 /** One isolated native run: its own profile, home, data dir, workspace and mock. */
-async function harness(t: TestContext, { name, hooks, caseId = 'native', independentSummary = false, holdSummary = false }: HarnessOptions): Promise<HarnessResult> {
+async function harness(t: TestContext, { name, hooks, caseId = 'native', holdSummary = false }: HarnessOptions): Promise<HarnessResult> {
   sequence += 1;
   const runId = `native-${name}-${Date.now().toString(36)}-${sequence}`;
   const layout = createRunLayout(ARTIFACTS_ROOT, runId);
@@ -81,7 +80,6 @@ async function harness(t: TestContext, { name, hooks, caseId = 'native', indepen
   const profile = `dsh-flow-${runId}`;
   const overlay = join(layout.root, 'mock-model.patch.yml');
   const routes = [{ provider: MOCK_PROVIDER, model: MOCK_MODEL_ID }];
-  if (independentSummary) routes.push({ provider: 'mock-summary', model: 'summary-model' });
   const observer = resolve(PROJECT_ROOT, 'tests/acceptance/native/host-observer.ts');
   writeFileSync(overlay, `${mockPatchText(mock.baseURL, routes)}
 - insert:
@@ -92,17 +90,7 @@ async function harness(t: TestContext, { name, hooks, caseId = 'native', indepen
         workspace: ${JSON.stringify(layout.workspace)}
         provider: ${MOCK_PROVIDER}
         model: ${MOCK_MODEL_ID}
-${independentSummary ? `- id: compaction-basic
-  disabled: false
-  config:
-    summarizationProvider: mock-summary
-    summarizationModel: summary-model
-    thresholdRatio: 0.04
-    headroomTokens: 4096
-    retainTokens: 0
-    maxTokens: 777
-    compactionRetries: 0
-` : ''}`);
+`);
   const bridgeOverlay = join(layout.root, 'ipc-bridge.patch.yml');
   writeFileSync(bridgeOverlay, ipcBridgePatchText());
   const patches = [resolve(PROJECT_ROOT, 'examples/cluster.patch.yml'), overlay, bridgeOverlay];
@@ -118,6 +106,7 @@ ${independentSummary ? `- id: compaction-basic
     ...scenario,
     async respond(request) {
       if (request.classified.userText.includes('NATIVE-ORDINARY:')) return say('OK');
+      if (request.classified.userText.includes('NATIVE-RESUMED-COMPACTION:')) return say('RESUMED-COMPACTION-OK');
       const reply = await scenario.respond(request);
       return holdSummary && request.kind === 'compaction' && reply
         ? { ...reply, hold: 'native-summary-cancel' }
@@ -142,9 +131,9 @@ function ledgerOf(layout: RunLayout, clusterId: string): LedgerView {
     events: () => ledger.all('SELECT type,data FROM events WHERE cluster_id=? ORDER BY seq', clusterId),
     transactions: () => ledger.all('SELECT id,status,result FROM transactions WHERE cluster_id=?', clusterId),
     allocations: () => ledger.all('SELECT id,status,transaction_id FROM allocations WHERE cluster_id=?', clusterId),
-    usage: () => ledger.all('SELECT request_id,status,total_tokens FROM usage_receipts WHERE cluster_id=?', clusterId),
-    receipts: () => ledger.all('SELECT request_id,agent_id,role,kind,provider,model,status,reservation_tokens,total_tokens,budget_scope_id,note FROM usage_receipts WHERE cluster_id=? ORDER BY created', clusterId),
-    budgets: () => ledger.all('SELECT id,scope_kind,scope_id,tokens_limit,tokens_spent,tokens_reserved,requests_spent,requests_reserved FROM budgets WHERE cluster_id=?', clusterId),
+    usage: () => ledger.all("SELECT native_session_id,native_seq,agent_id,role,type,data,json_extract(data,'$.usage.totalTokens') AS total_tokens FROM native_session_events WHERE cluster_id=? AND type IN ('assistant/message','assistant/attempt','compaction/summary') ORDER BY native_session_id,native_seq", clusterId),
+    sessionEvents: () => ledger.all('SELECT native_session_id,native_seq,type,data FROM native_session_events WHERE cluster_id=? ORDER BY native_session_id,native_seq', clusterId),
+    budgets: () => ledger.all('SELECT * FROM budgets WHERE cluster_id=?', clusterId),
     toolCalls: () => ledger.all('SELECT tool,dispatch_status,error,result_body FROM tool_call_receipts WHERE cluster_id=? ORDER BY rowid', clusterId),
     close: () => ledger.close(),
   };
@@ -174,7 +163,7 @@ function toolResults(session: { events: readonly SessionEvent[] }): string[] {
 }
 
 
-const singleBudget = { tokens: 1_000_000, model_requests: 200, tool_calls: 200, wall_time_ms: 600_000, agents: 8, max_active_agents: 2 };
+const singleBudget = { tool_calls: 200, wall_time_ms: 600_000, agents: 8, max_active_agents: 2 };
 
 test('N0: a native single Worker sums through a real tool call and answers from its result', async t => {
   const { host, mock, layout } = await harness(t, {
@@ -539,7 +528,7 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
       workspace: layout.workspace,
       capabilities: ['fs_read'],
       limits: { max_children: 2, max_depth: 2, max_agents: 4, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 4, max_attempts: 1 },
-      budget: { ...singleBudget, model_requests: 40 },
+      budget: singleBudget,
       initial_transactions: [{ id, objective, acceptance_criteria: ['reported honestly'] }],
     };
     const created = decodeStartReply(await host.request('start', undefined, spec, 120_000));
@@ -549,45 +538,21 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
     try {
       const transactions = ledger.transactions();
       const events = ledger.events();
-      const receipts = ledger.receipts();
-      const budgets = ledger.budgets();
+      const usage = ledger.usage();
       assert.equal(transactions.filter(row => row.status === 'SUBMITTED' || row.status === 'ACCEPTED').length, 0,
         `${id}: a failed provider request must not produce a submitted result`);
-      assert.equal(events.filter(event => event.type === 'result-submitted').length, 0,
-        `${id}: no result may be published from a turn whose request failed`);
-      assert.ok(receipts.length >= 1, `${id}: the dispatched request is accounted`);
-      assert.equal(receipts.filter(row => row.status === 'RESERVED').length, 0, `${id}: no receipt is left reserved`);
-
-      // The Worker's own request is the one that failed. The harness reports a
-      // transport failure with a *zeroed* usage object, so a receipt that
-      // settles on it books a cost of zero and hands the token hold back as free
-      // capacity — the exact release `settleLlmRequest` refuses for an unknown
-      // outcome. The receipt must therefore be UNKNOWN, with its hold intact.
-      const workerReceipts = receipts.filter(row => row.kind === 'worker');
-      assert.ok(workerReceipts.length >= 1, `${id}: the Worker's request is recorded`);
-      for (const receipt of workerReceipts) {
-        assert.equal(receipt.status, 'UNKNOWN',
-          `${id}: an unaccounted failure is UNKNOWN, not settled at zero (${receipt.status}, total=${receipt.total_tokens})`);
-        assert.equal(receipt.total_tokens, null, `${id}: no zero total is booked for an unaccounted failure`);
-        assert.ok(Number(receipt.reservation_tokens) > 0, `${id}: the request reserved tokens`);
-        assert.ok(/failed after dispatch|unknown/.test(String(receipt.note ?? '')),
-          `${id}: the unknown outcome carries its reason: ${receipt.note}`);
+      assert.equal(events.filter(event => event.type === 'result-submitted').length, 0);
+      const attempts = usage.filter(row => row.role === 'worker' && row.type === 'assistant/attempt');
+      assert.ok(attempts.length > 0, `${id}: the host's failed attempt is retained`);
+      assert.ok(usage.some(row => row.role !== 'worker' && typeof row.total_tokens === 'number' && row.total_tokens > 0),
+        `${id}: successful management usage remains recorded`);
+      for (const budget of ledger.budgets()) {
+        assert.equal('tokens_reserved' in budget, false);
+        assert.equal('requests_reserved' in budget, false);
       }
-      // Reservation conservation: every retained hold is still held by the scope
-      // that paid for it, and the unknown request did not consume tokens.
-      const retained = workerReceipts
-        .filter(receipt => receipt.status === 'UNKNOWN')
-        .reduce((sum, receipt) => sum + Number(receipt.reservation_tokens), 0);
-      const held = budgets.reduce((sum, row) => sum + Number(row.tokens_reserved), 0);
-      assert.ok(held >= retained, `${id}: the retained holds stay reserved (held ${held} >= retained ${retained})`);
-      // The successful management turns are untouched: a real provider report is
-      // still a settled cost.
-      const roleReceipts = receipts.filter(row => row.kind !== 'worker' && row.status !== 'NOT_SENT');
-      assert.ok(roleReceipts.some(receipt => receipt.status === 'SETTLED' && Number(receipt.total_tokens) > 0),
-        `${id}: genuine usage still settles: ${JSON.stringify(roleReceipts.map(r => [r.status, r.total_tokens]))}`);
       const anomalies = events.filter(event => event.type === 'agent-anomaly');
       assert.ok(anomalies.length >= 1, `${id}: the failure is recorded as an anomaly`);
-      outcomes.push({ id, worker_receipts: workerReceipts.map(row => [row.status, row.reservation_tokens, row.total_tokens]), retained, held, anomalies: anomalies.length });
+      outcomes.push({ id, attempts: attempts.length, anomalies: anomalies.length });
     } finally {
       ledger.close();
     }
@@ -595,57 +560,34 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
   assert.equal(outcomes.length, 2);
 });
 
-test('F-budget: a Worker allowance of two requests refuses the third before the endpoint', async t => {
+test('N-no-model-limits: a native Worker continues beyond the former eight-request default', async t => {
+  const steps = new Map<string | null, number>();
   const { host, mock, layout } = await harness(t, {
-    name: 'f-budget',
-    hooks: {
-      worker(request) {
-        const c = request.classified;
-        // Every step asks for one more real tool call and never submits: the
-        // only thing that can stop the turn is the declared allowance.
-        return call('flow_sum', { values: [1, 1], attempt: (c.messageCount) });
-      },
-    },
+    name: 'no-model-limits',
+    hooks: { worker(request) {
+      const c = request.classified;
+      const step = steps.get(c.agentId) ?? 0;
+      steps.set(c.agentId, step + 1);
+      return step < 9 ? call('flow_sum', { values: [1, 1] })
+        : call('flow_transaction', { action: 'submit_result', params: { transaction_id: c.transactionId, result: { sum: 2 } } });
+    } },
   });
-  const spec = {
-    objective: 'Keep calling flow_sum without ever submitting a result.',
-    workspace: layout.workspace,
-    capabilities: ['fs_read'],
-    limits: {
-      max_children: 2, max_depth: 2, max_agents: 4, max_active_agents: 1,
-      max_llm_concurrency: 1, max_role_turns: 6, max_attempts: 1,
-      worker_model_requests: 2, worker_max_tokens: 512,
-    },
-    budget: { ...singleBudget, model_requests: 40 },
-    initial_transactions: [{ id: 'budget-worker', objective: 'Keep calling flow_sum without submitting.', acceptance_criteria: ['never submits'] }],
-  };
-  const created = decodeStartReply(await host.request('start', undefined, spec, 120_000));
-  if (!created) throw new Error('start reply carried no cluster');
-  await host.request('settle', created.cluster.id, { timeout_ms: 180_000, poll_ms: 300 }, 300_000);
-
-  const workerRequests = mock.requests.filter(entry => entry.kind === 'worker');
-  assert.equal(workerRequests.length, 2,
-    `the endpoint must see exactly the declared allowance: ${JSON.stringify(workerRequests.map(entry => entry.seq))}`);
-  const ledger = ledgerOf(layout, created.cluster.id);
+  const reply = decodeSingleReply(await host.request('single', undefined, {
+    objective: 'Call flow_sum nine times, then submit the total 2.',
+    workspace: layout.workspace, capabilities: ['fs_read'], budget: singleBudget,
+  }, 300_000));
+  assert.ok(reply);
+  assert.equal(reply.error, null);
+  assert.ok(mock.requests.filter(entry => entry.kind === 'worker').length >= 10);
+  const ledger = ledgerOf(layout, reply.cluster_id);
   try {
-    const refusals = ledger.events().filter(event => event.type === 'agent-anomaly' || event.type === 'result-withheld' || /refused/.test(asString(event.type) ?? ''));
-    assert.ok(refusals.length >= 1, `a durable refusal must be recorded: ${JSON.stringify(ledger.events().map(e => e.type))}`);
-    const stop = ledger.events()
-      .filter(event => event.type === 'turn-end')
-      .map(event => {
-        const data: unknown = JSON.parse(String(event.data));
-        return asString(asObject(asObject(data)?.stop_detail)?.message) ?? '';
-      })
-      .find(message => /allowance/.test(message));
-    assert.ok(stop, `the refusal names the allowance: ${JSON.stringify(ledger.events().map(e => e.type))}`);
-    const receiptStates = ledger.usage().map(row => row.status);
-    assert.equal(receiptStates.filter(status => status === 'RESERVED').length, 0, 'no receipt is left reserved');
-    assert.equal(ledger.transactions().filter(row => row.status === 'SUBMITTED' || row.status === 'ACCEPTED').length, 0,
-      'the Worker never submitted, so no transaction was published');
-  } finally {
-    ledger.close();
-  }
-  assert.equal(mock.errors.length, 0, `fixture errors: ${mock.errors.join('; ')}`);
+    assert.ok(ledger.usage().filter(row => row.role === 'worker').length >= 10);
+    assert.equal(ledger.transactions()[0]?.status, 'SUBMITTED');
+    for (const budget of ledger.budgets()) {
+      assert.equal('tokens_limit' in budget, false);
+      assert.equal('requests_limit' in budget, false);
+    }
+  } finally { ledger.close(); }
 });
 
 function txCount(events: readonly SqlRow[], type: string): number {
@@ -653,7 +595,7 @@ function txCount(events: readonly SqlRow[], type: string): number {
 }
 
 /** Fixture IPC is deliberately separate from the seven-method Flow service. */
-async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session'): Promise<Record<string, unknown>> {
+async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session' | 'resume-compacted', params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const child = host.child;
   assert.ok(child?.connected, 'the real host child must be connected');
   const requestId = randomUUID();
@@ -688,7 +630,7 @@ async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' |
   child.on('message', receive);
   child.once('exit', exited);
   deadline.addEventListener('abort', timedOut, { once: true });
-  child.send({ nativeObserver: true, requestId, operation });
+  child.send({ ...params, nativeObserver: true, requestId, operation });
   return promise;
 }
 
@@ -810,26 +752,25 @@ test('N-missing-capability: unavailable browser tools reject before the first mo
   assert.match(reply.error ?? '', /CAPABILITY_UNAVAILABLE|browser|capability/i);
   const ledger = ledgerOf(layout, reply.cluster_id);
   try {
-    assert.deepEqual(ledger.usage(), [], 'no request reservation is made for unavailable tools');
+    assert.deepEqual(ledger.usage(), [], 'no native model attempt occurs for unavailable tools');
     assert.deepEqual(ledger.effects(), [], 'no native effect was dispatched');
   } finally {
     ledger.close();
   }
 });
 
-test('N-summary-route: native compaction charges its independent route exactly once and excludes ordinary sessions', async t => {
+test('N-default-compaction: the native Loader composition installs one default backend and projects summaries once', async t => {
   const steps = new Map<string | null, number>();
   const { host, mock, layout } = await harness(t, {
     name: 'summary-route',
-    independentSummary: true,
     hooks: {
       worker(request) {
         const c = request.classified;
         const step = steps.get(c.agentId) ?? 0;
         steps.set(c.agentId, step + 1);
-        if (step === 0) return call('read', { file_path: 'pressure.txt' });
-        if (step === 1) return call('flow_sum', { values: [2, 3] });
-        if (step === 2) {
+        if (step < 4) return { ...call('read', { file_path: 'pressure.txt' }), usage: { prompt_tokens: 90_000, completion_tokens: 100, total_tokens: 90_100 } };
+        if (step === 4) return call('flow_sum', { values: [2, 3] });
+        if (step === 5) {
           const total = sumFromToolResult(c.lastToolResult);
           assert.equal(total, 5, 'submission consumes the real sum tool result');
           return call('flow_transaction', { action: 'submit_result', params: { transaction_id: c.transactionId, result: { sum: total } } });
@@ -838,7 +779,7 @@ test('N-summary-route: native compaction charges its independent route exactly o
       },
     },
   });
-  writeFileSync(join(layout.workspace, 'pressure.txt'), Array.from({ length: 600 }, (_, index) =>
+  writeFileSync(join(layout.workspace, 'pressure.txt'), Array.from({ length: 1600 }, (_, index) =>
     `line ${index}: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega`).join('\n'));
   const reply = decodeSingleReply(await host.request('single', undefined, {
     objective: 'Read pressure.txt, then call flow_sum [2,3] and submit its result.',
@@ -849,10 +790,10 @@ test('N-summary-route: native compaction charges its independent route exactly o
   const summaries = mock.requests.filter(request => request.kind === 'compaction');
   assert.ok(summaries.length > 0, 'a real native summarizer request reached the model endpoint');
   for (const request of summaries) {
-    assert.equal(request.model, 'summary-model');
+    assert.equal(request.model, MOCK_MODEL_ID);
     const body = asObject(request.body);
     assert.ok(body);
-    assert.equal(body.max_completion_tokens, 777, 'the summary provider cap is not overwritten by the Worker cap');
+    assert.equal(body.max_completion_tokens, 65_536, 'the official backend owns its default summary request allowance');
   }
   const envelopes = readFileSync(join(layout.logs, 'llm-envelopes.jsonl'), 'utf8').trim().split('\n')
     .map(line => { const value: unknown = JSON.parse(line); return asObject(value); });
@@ -860,64 +801,78 @@ test('N-summary-route: native compaction charges its independent route exactly o
   assert.equal(summaryEnvelopes.length, summaries.length);
   for (const envelope of summaryEnvelopes) {
     assert.ok(envelope);
-    assert.equal(envelope.provider, 'mock-summary');
-    assert.equal(envelope.model, 'summary-model');
+    assert.equal(envelope.provider, MOCK_PROVIDER);
+    assert.equal(envelope.model, MOCK_MODEL_ID);
     assert.equal(envelope.before, envelope.after, 'the summary messages/tools/reasoning envelope passes through unchanged');
   }
   const ledger = ledgerOf(layout, reply.cluster_id);
   let beforeOrdinary: SqlRow[];
   try {
-    const receipts = ledger.receipts();
-    const summaryReceipts = receipts.filter(row => row.kind === 'compaction');
-    assert.equal(summaryReceipts.length, summaries.length, 'every summary is charged exactly once');
-    assert.equal(new Set(receipts.map(row => row.request_id)).size, receipts.length);
-    for (const row of summaryReceipts) {
-      assert.equal(row.provider, 'mock-summary');
-      assert.equal(row.model, 'summary-model');
-      assert.equal(row.status, 'SETTLED');
-      assert.ok(typeof row.total_tokens === 'number' && row.total_tokens > 0);
+    const usage = ledger.usage();
+    const projected = usage.filter(row => row.type === 'compaction/summary');
+    const native = sessionsOf(layout, reply.cluster_id).flatMap(session => session.events).filter(event => event.type === 'compaction/summary');
+    assert.equal(projected.length, native.length, 'each durable native summary is projected once');
+    assert.ok(projected.length <= summaries.length, 'the official backend may retry an unlanded summary; only its durable summary events are counted');
+    const composition = readFileSync(join(layout.logs, 'llm-envelopes.jsonl.compaction.jsonl'), 'utf8').trim().split('\n').map(line => asObject(JSON.parse(line)));
+    assert.ok(composition.length > 0);
+    for (const row of composition) {
+      assert.equal(row?.private_backends, 1, 'exactly one official default backend is mounted for a Flow Agent');
+      assert.equal(row?.global_backends, 0, 'no host-plane listener also receives the same Agent');
+      assert.deepEqual(row?.config, {}, 'Flow supplies no compaction policy overrides');
     }
-    assert.equal(receipts.length, mock.requests.length, 'all actual cluster provider requests have one receipt');
-    assert.equal(receipts.filter(row => row.status === 'RESERVED').length, 0);
-    const budgetScopeIds = new Set(receipts.map(row => row.budget_scope_id));
-    assert.equal(budgetScopeIds.size, 1, 'all cluster provider requests debit the same owning node budget');
-    const budgetScopeId = receipts[0]?.budget_scope_id;
-    const clusterBudget = ledger.budgets().find(row => row.id === budgetScopeId);
-    assert.ok(clusterBudget);
-    assert.equal(clusterBudget.requests_spent, receipts.length);
-    const total = receipts.reduce((sum, row) => {
-      assert.equal(typeof row.total_tokens, 'number');
-      if (typeof row.total_tokens !== 'number') throw new Error('missing settled usage');
-      return sum + row.total_tokens;
-    }, 0);
-    assert.equal(clusterBudget.tokens_spent, total, 'summary usage is included in the real cluster token ledger');
-    for (const row of ledger.budgets()) {
-      assert.equal(row.tokens_reserved, 0, 'normal completion releases unused token reservations');
-      assert.equal(row.requests_reserved, 0, 'normal completion releases request reservations');
-    }
-    beforeOrdinary = receipts;
+    assert.equal(new Set(usage.map(row => `${row.native_session_id}:${row.native_seq}`)).size, usage.length);
+    for (const row of projected) assert.ok(typeof row.total_tokens === 'number' && row.total_tokens > 0);
+    beforeOrdinary = usage;
+
   } finally {
     ledger.close();
   }
+  const worker = sessionsOf(layout, reply.cluster_id).find(session => session.role === 'worker');
+  const sessionId = requiredString(worker?.session_id, 'compacted Worker session');
+  const resumed = await observerRequest(host, 'resume-compacted', { sessionId });
+  assert.equal(resumed.cold, true, 'the completed Worker handle has released its live Session');
+  assert.equal(resumed.checkpoint_in_history, true, 'native resume restores the durable compacted checkpoint into effective history');
+  assert.ok(typeof resumed.saved_summaries === 'number' && resumed.saved_summaries > 0);
+  assert.equal(resumed.final_text, 'RESUMED-COMPACTION-OK', 'the same compacted Session completes a later native request');
+  assert.equal(resumed.cursor, Number(resumed.native_seq) - 1, 'the resumed tail and passive cursor advance together');
+  assert.equal(resumed.replay_unchanged, true, 'two cold event replays retain exactly the same recorded usage');
+  assert.ok(mock.requests.some(request => request.classified.userText.includes('NATIVE-RESUMED-COMPACTION:')
+    && JSON.stringify(request.body).includes('<compacted-summary>')), 'the actual resumed provider request includes the saved checkpoint');
+  const resumedComposition = readFileSync(join(layout.logs, 'llm-envelopes.jsonl.compaction.jsonl'), 'utf8').trim().split('\n')
+    .map(line => asObject(JSON.parse(line))).filter(row => row?.session_id === sessionId);
+  assert.equal(resumedComposition.length, 2, 'creation and cold resume each publish their own native Agent scope');
+  assert.ok(resumedComposition.every(row => row?.private_backends === 1 && row.global_backends === 0), 'each scope owns one default backend');
+  const resumedLedger = ledgerOf(layout, reply.cluster_id);
+  try {
+    const afterResume = resumedLedger.usage();
+    assert.equal(afterResume.filter(row => row.type === 'compaction/summary').length,
+      beforeOrdinary.filter(row => row.type === 'compaction/summary').length, 'cold resume and replay never count prior summaries twice');
+    assert.equal(afterResume.length, beforeOrdinary.length + 1, 'one additional native assistant settlement is projected');
+    beforeOrdinary = afterResume;
+  } finally {
+    resumedLedger.close();
+  }
+  const requestsBeforeOrdinary = mock.requests.length;
   const ordinary = await observerRequest(host, 'ordinary');
   assert.equal(typeof ordinary.session_id, 'string');
+  assert.equal(ordinary.flow_compaction_backends, 0, 'the private compaction backend unloads with its native Agent scope');
   const after = ledgerOf(layout, reply.cluster_id);
   try {
-    assert.deepEqual(after.receipts(), beforeOrdinary, 'another real Session is never charged to this cluster');
+    assert.deepEqual(after.usage(), beforeOrdinary, 'an ordinary Session is excluded from this Flow projection');
   } finally {
     after.close();
   }
-  assert.equal(mock.requests.length, beforeOrdinary.length + 1, 'the ordinary Agent really made its independent request');
+  assert.equal(mock.requests.length, requestsBeforeOrdinary + 1, 'the ordinary Agent really made its independent request');
 });
 
-test('N-summary-cancel: native cancellation drains summary request slots and retains only unknown dispatched token cost', async t => {
+test('N-summary-cancel: native cancellation preserves incomplete compaction evidence without fabricated usage', async t => {
   const { host, mock, layout } = await harness(t, {
-    name: 'summary-cancel', independentSummary: true, holdSummary: true,
-    hooks: { worker(request) {
-      return request.classified.lastToolName ? say('read complete') : call('read', { file_path: 'pressure.txt' });
+    name: 'summary-cancel', holdSummary: true,
+    hooks: { worker() {
+      return { ...call('read', { file_path: 'pressure.txt' }), usage: { prompt_tokens: 90_000, completion_tokens: 100, total_tokens: 90_100 } };
     } },
   });
-  writeFileSync(join(layout.workspace, 'pressure.txt'), 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau\n'.repeat(900));
+  writeFileSync(join(layout.workspace, 'pressure.txt'), 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau\n'.repeat(1600));
   const created = decodeStartReply(await host.request('start', undefined, {
     objective: 'Read pressure.txt and report what it contains.',
     workspace: layout.workspace,
@@ -936,18 +891,30 @@ test('N-summary-cancel: native cancellation drains summary request slots and ret
   assert.equal(mock.heldCount('native-summary-cancel'), 0, 'the cluster turn abort disconnects its held summary stream');
   const ledger = ledgerOf(layout, clusterId);
   try {
-    const receipts = ledger.receipts();
-    const summaries = receipts.filter(row => row.kind === 'compaction');
-    assert.equal(summaries.length, 1);
-    assert.equal(summaries[0]?.status, 'UNKNOWN', 'a sent stream without usage is not fabricated as a free request');
-    assert.equal(receipts.filter(row => row.status === 'RESERVED').length, 0);
-    for (const row of ledger.budgets()) assert.equal(row.requests_reserved, 0, 'unconsumed request slots are released on cancel');
-    const unknown = summaries[0];
-    assert.ok(unknown);
-    const payingBudget = ledger.budgets().find(row => row.id === unknown.budget_scope_id);
-    assert.ok(payingBudget);
-    assert.equal(payingBudget.tokens_reserved, unknown.reservation_tokens, 'only the dispatched unknown token hold remains conserved');
+    const usage = ledger.usage();
+    assert.equal(usage.filter(row => row.type === 'compaction/summary').length, 0,
+      'a cancelled summary with no native usage is never fabricated as a request or a zero-cost summary');
+    const deadline = Date.now() + 10_000;
+    let native = sessionsOf(layout, clusterId).flatMap(session => session.events);
+    let projected = ledger.sessionEvents();
+    while ((!native.some(event => event.type === 'compaction/end') || !projected.some(event => event.type === 'compaction/end')) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      native = sessionsOf(layout, clusterId).flatMap(session => session.events);
+      projected = ledger.sessionEvents();
+    }
+    assert.ok(native.some(event => event.type === 'compaction/start'));
+    assert.ok(native.some(event => event.type === 'compaction/end' && typeof asObject(event.data)?.error === 'string'));
+    assert.ok(projected.some(event => event.type === 'compaction/end' && typeof asObject(JSON.parse(String(event.data)))?.error === 'string'),
+      'the durable Flow projection retains the native cancellation end event');
+    const facts = openLedger(join(layout.data, 'cluster.sqlite'));
+    try {
+      assert.equal(usageSummary(facts, clusterId).completeness, 'incomplete', 'the failed native compaction marks recorded usage incomplete');
+    } finally {
+      facts.close();
+    }
+    for (const row of ledger.budgets()) assert.equal('tokens_reserved' in row, false);
     assert.equal(ledger.transactions().filter(row => row.status === 'SUBMITTED' || row.status === 'ACCEPTED').length, 0);
+
   } finally {
     ledger.close();
   }

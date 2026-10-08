@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fromPartial } from '@total-typescript/shoehorn';
 import { buildScenario } from '../../../src/host/mock-scenarios.ts';
-import { asRecord } from '../../../src/host/mock-model.ts';
+import { asRecord, classifyRequest, DIGEST_MARKER } from '../../../src/host/mock-model.ts';
 import type { MockRequestRecord, MockScenarioReply } from '../../../src/host/mock-model.ts';
 
 function auditRequest(item: Record<string, unknown>, answer?: unknown): MockRequestRecord {
@@ -25,6 +25,23 @@ function command(reply: MockScenarioReply | null) {
   assert.ok(args);
   return { action: args.action, params: asRecord(args.params) ?? {} };
 }
+
+test('native notices preserve a fresh role digest while tool continuations yield', async () => {
+  const scenario=buildScenario({caseId:'native'});
+  const prompt={role:'user',content:`Role: allocator. Node: node (depth 0). Agent id: allocator.\n${DIGEST_MARKER}):\n${JSON.stringify({node:{max_children:4},pending_actions:[{action:'allocate_agent',transactions:['tx']}],children_of_node:[]})}`};
+  const notices={role:'user',content:'Current runtime context. Native sandbox policy and an inbox notice.'};
+  const messages:Record<string,unknown>[]=[prompt,notices];
+  const request=()=>fromPartial<MockRequestRecord>({body:{messages},classified:classifyRequest({messages})});
+  assert.equal(request().classified.fresh_digest,true,'a native notice does not hide the new scheduling prompt');
+  const first=await scenario.respond(request());
+  assert.equal(first?.toolCalls?.[0]?.name,'flow_allocation');
+  messages.push({role:'assistant',tool_calls:[{function:{name:'flow_allocation',arguments:'{}'}}]},{role:'tool',content:'{"ok":true}'},notices);
+  assert.equal(request().classified.fresh_digest,false,'a notice does not make an already acted-on digest fresh');
+  assert.equal((await scenario.respond(request()))?.toolCalls,undefined,'the completed allocation yields to the scheduler');
+  messages.push(prompt,notices);
+  assert.equal(request().classified.fresh_digest,true,'a later scheduling prompt is new state');
+  assert.equal((await scenario.respond(request()))?.toolCalls?.[0]?.name,'flow_allocation');
+});
 
 test('recursion retries failed corrections and suppresses only acknowledged unchanged evidence', async () => {
   const scenario = buildScenario({ caseId: 'recursion' });

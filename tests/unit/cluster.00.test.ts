@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
+import {fromPartial} from '@total-typescript/shoehorn';
+import type {SessionEvent} from '@deepseek-ai/dsh-session';
 
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
@@ -63,7 +65,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -125,7 +127,7 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -230,7 +232,7 @@ test('a deep role sees its real management ancestors without reading their priva
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime, {
     limits: { max_children: 4, max_depth: 4, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 4_000_000, model_requests: 1_000, tool_calls: 2_000,
+    budget: { tool_calls: 2_000,
       wall_time_ms: 3_600_000, agents: 64, max_active_agents: 4 },
   });
   let node = rootNode(runtime, clusterId);
@@ -265,7 +267,7 @@ test('a child role cannot select another domain through context or summary refer
   runtime.store.insertSummary({
     id: 'private-parent-summary', cluster_id: clusterId, node_id: root.id,
     transaction_id: parentTx.id, as_of_seq: runtime.store.latestEventSeq(clusterId),
-    data: { secret: 'only the parent may read this conclusion' },
+    data: { objective: 'only the parent may read this conclusion' },
   });
   runtime.store.insertIssue({
     id: 'root-private-issue', cluster_id: clusterId, node_id: root.id,
@@ -297,7 +299,7 @@ test('a child role cannot select another domain through context or summary refer
     error => rejectionStatus(error) === 403);
   const parentContext = runtime.query({ cluster_id: clusterId, role: 'user' }, 'context',
     { agent_id: rootAuditor.agent_id });
-  assert.equal(textOf(jsonObject(required(parentContext.summary, 'parent summary'), 'summary').secret, 'secret'),
+  assert.equal(textOf(jsonObject(required(parentContext.summary, 'parent summary'), 'summary').objective, 'objective'),
     'only the parent may read this conclusion');
   assert.equal(runtime.query(child, 'summary').summary, null);
 });
@@ -353,14 +355,15 @@ test('scoped transaction, audit, issue and usage pages do not lose a child behin
       runtime.store.setBlackboard(clusterId, `page/${String(index).padStart(3, '0')}`,
         { index }, null, childAgent.id);
     }
-    for (let index = 0; index < 55; index += 1) runtime.store.insertUsageReceipt({
-      request_id: `child-usage-${index}`, cluster_id: clusterId, agent_id: childAgent.id, node_id: child.id,
-      role: 'auditor', kind: 'role', status: 'SETTLED', total_tokens: 17,
-    });
-    for (let index = 0; index < 30; index += 1) runtime.store.insertUsageReceipt({
-      request_id: `root-usage-${index}`, cluster_id: clusterId, agent_id: rootAgent.id, node_id: root.id,
-      role: 'auditor', kind: 'role', status: 'SETTLED', total_tokens: 19,
-    });
+    for (const [agent, count, total] of [[childAgent, 55, 17], [rootAgent, 30, 19]] as const) {
+      runtime.store.projectNativeUsage({clusterId, nodeId:agent.node_id, agentId:agent.id,
+        role:agent.role, nativeSessionId:agent.session_id,
+        events:Array.from({length:count}, (_,index)=>fromPartial<SessionEvent>({
+          seq:index, type:'assistant/message', time:clock,
+          data:{message:{source:{provider:'fixture',model:'fixture'}},usage:{totalTokens:total}},
+        })),
+      });
+    }
   });
   const actor = actorFor(runtime, clusterId, 'auditor', child.id);
   const transactions = runtime.query(actor, 'transactions', { limit: 20, offset: 40 });
@@ -628,7 +631,7 @@ test('a role pages budget ledgers without forcing the whole tree into one model 
     for (let index = 0; index < 19; index += 1) createBudget(runtime.store, {
       cluster_id: clusterId, scope_kind: 'agent', scope_id: `budget-receipt-${index}`,
       node_id: root.id, parent_budget_id: parent.id,
-      limit: { tokens: 100 + index, model_requests: 2, tool_calls: 3 },
+      limit: { tool_calls: 3 },
     });
   });
   const first = runtime.query(actor, 'budgets', { limit: 100 });
@@ -636,8 +639,8 @@ test('a role pages budget ledgers without forcing the whole tree into one model 
   assert.equal(first.items.length, 6);
   assert.ok(JSON.stringify(first).length < 3_500, 'a role sees compact spendable balances rather than full five-dimensional ledgers');
   const firstBudget = jsonObject(firstOf(first.items, 'budget'), 'budget');
-  assert.ok(numberOf(jsonObject(firstBudget.available, 'available').tokens, 0, 1_000_000, 'tokens') >= 0, 'the Allocator can choose a source with sufficient tokens');
-  assert.equal(firstBudget.tokens, undefined, 'a role does not receive the redundant full budget accounting in a list');
+  assert.ok(numberOf(jsonObject(firstBudget.available, 'available').tool_calls, 0, 1_000_000, 'tool_calls') >= 0, 'the Allocator can choose a source with sufficient tokens');
+  assert.equal(firstBudget.tool_calls, undefined, 'a role does not receive the redundant full budget accounting in a list');
   const second = runtime.query(actor, 'budgets', pageParams00(first.next_offset));
   assert.equal(second.offset, 6);
   assert.equal(second.total, first.total);
@@ -649,9 +652,9 @@ test('a role pages budget ledgers without forcing the whole tree into one model 
   const nextPanel = runtime.query({ cluster_id: clusterId, role: 'user' }, 'budgets',
     { limit: 20, ...pageParams00(panel.next_offset) });
   assert.equal(nextPanel.total, panel.total);
-  assert.deepEqual([...panel.items, ...nextPanel.items].find(row => row.id === parent.id)?.tokens,
-    { limit: parent.tokens_limit, reserved: parent.tokens_reserved,
-      spent: parent.tokens_spent, available: parent.tokens_limit - parent.tokens_reserved - parent.tokens_spent },
+  assert.deepEqual([...panel.items, ...nextPanel.items].find(row => row.id === parent.id)?.tool_calls,
+    { limit: parent.tool_calls_limit, reserved: parent.tool_calls_reserved,
+      spent: parent.tool_calls_spent, available: parent.tool_calls_limit - parent.tool_calls_reserved - parent.tool_calls_spent },
   'the user can still inspect every dimension of a full budget row');
 });
 
@@ -921,8 +924,7 @@ test('an Auditor rejection during a Worker turn keeps its settled write and subm
     execute() { assert.fail('edit is not scripted in this fixture'); },
   });
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    maxTokens: 512, tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
+    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   const { promise: gate, resolve: release } = Promise.withResolvers<void>();
   t.after(async () => {
@@ -934,7 +936,7 @@ test('an Auditor rejection during a Worker turn keeps its settled write and subm
     objective: 'write one file while an Auditor rejects the active plan',
     workspace: dir, capabilities: ['fs_write'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2 },
-    budget: { tokens: 1_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 4 },
+    budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 4 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');

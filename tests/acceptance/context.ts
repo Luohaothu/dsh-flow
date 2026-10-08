@@ -110,8 +110,9 @@ export interface SingleUsage {
   readonly completion_tokens?: number | null;
   readonly cached_tokens?: number | null;
   readonly reasoning_tokens?: number | null;
-  readonly unknown_requests?: number | null;
-  readonly overshoot?: number | null;
+  readonly completeness?: 'complete' | 'incomplete' | 'unknown';
+  readonly cache_read_tokens?: number | null;
+  readonly cache_write_tokens?: number | null;
   readonly [key: string]: unknown;
 }
 
@@ -199,8 +200,9 @@ export interface LedgerUsage {
   completion_tokens: number | null;
   cached_tokens: number | null;
   reasoning_tokens: number | null;
-  unknown_requests: number | null;
-  overshoot: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  completeness: 'complete' | 'incomplete' | 'unknown';
 }
 
 /** The durable facts `readStoneLedger` reads straight out of one cluster. */
@@ -211,9 +213,7 @@ export interface StoneLedger {
   usage?: LedgerUsage | undefined;
   usage_by_role?: LedgerRow[] | undefined;
   usage_by_agent?: LedgerRow[] | undefined;
-  usage_states?: LedgerRow[] | undefined;
   usage_rows?: LedgerRow[] | undefined;
-  usage_unknown_without_note?: number | undefined;
   transactions_by_status?: LedgerRow[] | undefined;
   transactions_detail?: LedgerRow[] | undefined;
   agents?: LedgerRow | undefined;
@@ -264,15 +264,11 @@ export interface StoneLedger {
 
 /** How close one run came to each declared ceiling, as a ratio. */
 export interface BudgetProximity {
-  readonly tokens: number | null;
-  readonly requests: number | null;
   readonly wall: number | null;
 }
 
 /** Which consumable ceilings were actually reached. */
 export interface LimitExhausted {
-  readonly tokens: boolean;
-  readonly requests: boolean;
   readonly wall: boolean;
 }
 
@@ -282,8 +278,6 @@ export interface LimitReached {
   readonly blockedOnBudget: boolean;
   readonly refusals: readonly LedgerRow[];
   readonly exhausted: LimitExhausted;
-  readonly tokens: number;
-  readonly requests: number;
   readonly cluster_reason: string | null;
   readonly proximity: BudgetProximity;
 }
@@ -297,15 +291,6 @@ export interface ClassificationOutcome {
 
 // --------------------------------------------------------------- the report
 
-/** One receipt dispatched but not settled when the host was killed. */
-export interface RestartReceipt {
-  readonly request_id: string;
-  readonly agent_id: string | null;
-  readonly role: string | null;
-  readonly kind: string | null;
-  readonly created: number | null;
-}
-
 /** The durable facts captured on both sides of a mid-flight restart. */
 export interface RestartFacts {
   kill_after_ms: number;
@@ -318,7 +303,7 @@ export interface RestartFacts {
   accepted_at_crash: LedgerRow[] | null;
   uncertain_effects_at_crash: LedgerRow[] | null;
   leases_at_crash: LedgerRow[] | null;
-  receipts_in_flight_at_crash: RestartReceipt[] | null;
+  interrupted_agents_at_crash: LedgerRow[] | null;
   transactions_open_at_crash: LedgerRow[] | null;
   restarted: boolean;
 }
@@ -607,8 +592,9 @@ function isSingleUsage(value: unknown): value is SingleUsage {
   const row = asObject(value);
   return row !== null && [
     'requests', 'total_tokens', 'prompt_tokens', 'completion_tokens', 'cached_tokens',
-    'reasoning_tokens', 'unknown_requests', 'overshoot',
-  ].every(key => row[key] === undefined || row[key] === null || asNumber(row[key]) !== null);
+    'reasoning_tokens', 'cache_read_tokens', 'cache_write_tokens',
+  ].every(key => row[key] === undefined || row[key] === null || asNumber(row[key]) !== null)
+    && (row.completeness === undefined || ['complete','incomplete','unknown'].includes(String(row.completeness)));
 }
 
 /** Narrow one `read` reply into a snapshot view. */
@@ -740,7 +726,7 @@ function isCaseDefinition(value: unknown): value is CaseDefinition {
   if ('scale_fixture' in row) {
     const fixture = asObject(row.scale_fixture);
     if (!fixture || !optionalScalars(fixture, [],
-      ['workers', 'worker_model_requests', 'worker_max_tokens', 'concurrency_probe_window_ms', 'generated_tier'],
+      ['workers', 'concurrency_probe_window_ms', 'generated_tier'],
       ['concurrency_probe'])) return false;
   }
   if ('recovery' in row) {

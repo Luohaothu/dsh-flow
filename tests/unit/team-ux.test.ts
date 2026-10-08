@@ -47,7 +47,7 @@ function deferred<T>() {
   return {promise,resolve,reject};
 }
 const run:FlowTeamRun={id:'run',main_session_id:'main',name:'同一标题',state:'running',raw_state:'RUNNING',reason:null,created:1000,ended:null,updated:1000,version:1,result:null};
-const snapshot:FlowTeamSnapshot={run,agents:[],communications:[],tokens:{value:null,unit:'Token',scope:'self',estimated:false}};
+const snapshot:FlowTeamSnapshot={run,agents:[],communications:[],tokens:{value:null,unit:'Token',scope:'self',estimated:false,completeness:'unknown'}};
 test('a ready agent with completed turns stands by instead of appearing unstarted',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'flow-ready-display-'));
   const runtime=new ClusterRuntime(new Context(),{path:join(dir,'ledger.sqlite'),dataDir:dir,autoTick:false});
@@ -117,18 +117,27 @@ test('team rows display the latest recorded model per agent, preserving history 
   const lead=runtime.store.listAgents(team.cluster.id,{role:'orchestrator'})[0]!;
   const allocator=runtime.store.listAgents(team.cluster.id,{role:'allocator'})[0]!;
   const shown=(id:string)=>runtime.teamRead('main',team.cluster.id).agents.find(agent=>agent.id===id)!;
-  assert.equal(Reflect.get(shown(lead.id),'model'),'configured');
-  for(const [request_id,agent_id,model] of [['old',lead.id,'old-model'],['allocator',allocator.id,'allocator-model'],['new',lead.id,'actual-model']]) {
-    runtime.store.insertUsageReceipt({request_id:request_id!,cluster_id:team.cluster.id,agent_id:agent_id!,node_id:lead.node_id,role:'orchestrator',kind:'model',model:model!,reasoning_effort:'high',status:'SETTLED'});
+  assert.equal(shown(lead.id).model,null,'configuration is not evidence of an actual request');
+  assert.equal(shown(lead.id).configured_model,'configured');
+  const sequences=new Map<string,number>();
+  for(const [agent_id,model] of [[lead.id,'old-model'],[allocator.id,'allocator-model'],[lead.id,'actual-model']] as const) {
+    const identity=runtime.store.getAgent(agent_id!)!;
+    const seq=(sequences.get(identity.id)??-1)+1;sequences.set(identity.id,seq+1);
+    runtime.store.projectNativeUsage({clusterId:team.cluster.id,agentId:identity.id,nodeId:identity.node_id,role:identity.role,nativeSessionId:identity.session_id,events:[
+      fromPartial<SessionEvent<'request/header'>>({seq:SessionSeq(seq),time:100+seq,type:'request/header',data:{header:{config:{provider:'fixture',model,reasoningEffort:'high'}}}}),
+      fromPartial<SessionEvent<'assistant/message'>>({seq:SessionSeq(seq+1),time:101+seq,type:'assistant/message',data:{message:{source:{kind:'model',provider:'fixture',model}}}}),
+    ]});
   }
   runtime.teamSelectModel('main',{provider:'fixture',model:'next-route',reasoningEffort:'low'});
   assert.equal(Reflect.get(shown(lead.id),'model'),'actual-model','the next route does not relabel a recorded request');
   assert.equal(Reflect.get(shown(allocator.id),'model'),'allocator-model','model names cannot leak between agents');
   assert.equal(shown(lead.id).reasoning_effort,'high','a next-request preference cannot relabel recorded reasoning');
+  assert.equal(shown(lead.id).configured_model,'next-route');
+  assert.equal(shown(lead.id).configured_reasoning_effort,'low');
 });
 
 function agent(id:string,parent_id:string|null=null):FlowTeamAgent {
-  return {id,parent_id,run_id:run.id,role:'worker',session_id:`session-${id}`,name:'名称'.repeat(40),responsibility:'职责',state:'running',raw_state:'RUNNING',reason:null,waiting_for:null,waiting_since:null,recycled:false,created:1000,ended:null,version:1,tokens:{value:null,unit:'Token',scope:'self',estimated:false},model:null,reasoning_effort:null,allowances:[],context_used:null,context_limit:null,compacted_at:null};
+  return {id,parent_id,run_id:run.id,role:'worker',session_id:`session-${id}`,name:'名称'.repeat(40),responsibility:'职责',state:'running',raw_state:'RUNNING',reason:null,waiting_for:null,waiting_since:null,recycled:false,created:1000,ended:null,version:1,tokens:{value:null,unit:'Token',scope:'self',estimated:false,completeness:'unknown'},model:null,reasoning_effort:null,configured_model:null,configured_reasoning_effort:null,allowances:[],context_used:null,context_limit:null,compacted_at:null};
 }
 
 test('one command intent starts once, same-name runs stay separate and owning sessions fence reads',async t=>{
@@ -164,7 +173,7 @@ test('one command intent starts once, same-name runs stay separate and owning se
   assert.equal(runtime.teamRead('main',second.cluster.id).run.state,'running');
 });
 
-test('a later team cannot enlarge or drain another run model-request window',async t=>{
+test('a later team cannot enlarge or drain another run Agent scheduling permits',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'flow-team-slots-'));
   const runtime=new ClusterRuntime(new Context(),{path:join(dir,'ledger.sqlite'),dataDir:dir,autoTick:false,logger:{warn(){},error(){},info(){}}});
   t.after(async()=>{await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
@@ -225,12 +234,19 @@ test('agent compaction time comes from the native summary event rather than toke
   const id=runtime.startTeam('main','compaction-time','任务',dir).cluster.id;
   const agent=runtime.store.listAgents(id)[0]!;
   const read=()=>runtime.teamRead('main',id).agents.find(row=>row.id===agent.id)!;
-  runtime.store.appendEvent(id,'context-step',{agent_id:agent.id,compacted_at:6109,summary_seq:null,after:6109,context_limit:8192});
-  assert.equal(read().compacted_at,null,'a token anchor is never a timestamp');
-  const summary=runtime.store.appendEvent(id,'context-step',{agent_id:agent.id,compacted_at:3500,summary_seq:19,after:3500,context_limit:8192});
-  runtime.store.appendEvent(id,'context-step',{agent_id:agent.id,compacted_at:3500,summary_seq:null,after:5000,context_limit:8192});
-  assert.equal(read().compacted_at,summary.at);
-  assert.equal(read().context_used,5000,'later pressure updates do not change the compaction date');
+  runtime.store.projectNativeUsage({clusterId:id,agentId:agent.id,nodeId:agent.node_id,role:agent.role,nativeSessionId:agent.session_id,events:[
+    fromPartial<SessionEvent>({seq:SessionSeq(0),time:10,type:'request/context',data:{contextWindow:131072}}),
+  ]});
+  assert.equal(read().compacted_at,null,'native request context is not a compaction');
+  runtime.store.projectNativeUsage({clusterId:id,agentId:agent.id,nodeId:agent.node_id,role:agent.role,nativeSessionId:agent.session_id,events:[
+    fromPartial<SessionEvent>({seq:SessionSeq(1),time:20,type:'compaction/summary',data:{compactionId:'summary',summary:[{type:'text',text:'native checkpoint'}]}}),
+    fromPartial<SessionEvent>({seq:SessionSeq(2),time:25,type:'compaction/end',data:{compactionId:'summary'}}),
+    fromPartial<SessionEvent>({seq:SessionSeq(3),time:30,type:'request/context',data:{contextWindow:262144}}),
+  ]});
+  assert.equal(read().compacted_at,20);
+  assert.equal(read().context_limit,262144);
+  assert.equal(read().context_used,null,'Flow does not invent context token pressure');
+
 });
 
 test('ended waiting identities never receive instructions; all 601 live waiting identities do',async t=>{
@@ -258,9 +274,9 @@ test('authoritative budget block reasons survive the observing projection',async
   t.after(async()=>{await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
   const id=runtime.startTeam('main','block','任务',dir).cluster.id;
   const lead=runtime.store.listAgents(id,{role:'orchestrator'})[0]!;
-  runtime.blockNodeInternal(id,lead.node_id,'模型请求额度已耗尽','BUDGET_EXHAUSTED',{agent_id:lead.id});
+  runtime.blockNodeInternal(id,lead.node_id,'工具调用额度已耗尽','BUDGET_EXHAUSTED',{agent_id:lead.id});
   const view=runtime.teamRead('main',id);
-  assert.equal(view.run.reason,'模型请求额度已耗尽');
+  assert.equal(view.run.reason,'工具调用额度已耗尽');
   assert.equal(view.agents.find(agent=>agent.id===lead.id)?.reason,view.run.reason);
   assert.equal(view.agents.find(agent=>agent.id===lead.id)?.state,'blocked');
 });
@@ -327,9 +343,11 @@ test('1000 stable identities, depth 10, repeated 80-character titles and incompl
   const all=treeRows(agents);assert.equal(new Set(all.map(row=>row.agent.id)).size,1001);
   assert.equal(all.find(row=>row.agent.id==='agent-10')?.depth,10,'expansion restores the complete derivation depth');
   assert.equal(all.find(row=>row.agent.id==='orphan')?.incomplete,true);
-  assert.equal(formatMetric({value:0,unit:'Token',scope:'self',estimated:false}),'0');
-  assert.equal(formatMetric({value:null,unit:'Token',scope:'self',estimated:false}),'—');
-  assert.equal(formatMetric({value:1500,unit:'Token',scope:'descendants',estimated:true},'short'),'约 1.5k（含子代理）');
+  assert.equal(formatMetric({value:0,unit:'Token',scope:'self',estimated:false,completeness:'complete'}),'0');
+  assert.equal(formatMetric({value:null,unit:'Token',scope:'self',estimated:false,completeness:'complete'}),'—');
+  assert.equal(formatMetric({value:1500,unit:'Token',scope:'descendants',estimated:true,completeness:'complete'},'short'),'约 1.5k（含子代理）');
+  assert.equal(formatMetric({value:1500,unit:'Token',scope:'self',estimated:false,completeness:'incomplete'}),'1,500（可能不完整）');
+  assert.equal(formatMetric({value:null,unit:'Token',scope:'self',estimated:false,completeness:'incomplete'}),'未知（可能不完整）');
   assert.equal(duration(1000,5000,999999),'00:04');
 });
 

@@ -27,9 +27,3 @@
       danger-full-access: { sandbox: danger-full-access, approval: never }
       workspace-write-unattended: { sandbox: workspace-write, approval: never }
     defaultPreset: workspace-write-unattended
-
-# web 组合默认关闭宿主压缩；集群角色需要此服务压缩自己的会话。
-- id: compaction-basic
-  disabled: false
-  config:
-    maxTokens: 4096

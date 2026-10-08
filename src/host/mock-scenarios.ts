@@ -57,7 +57,7 @@ export function checkpointFor(classified: MockRequestClassification | null): str
   const objective = classified?.objective ?? null;
   const digest = classified?.digest ?? null;
   // Keep only the next step's domain state. Exclude the long `recent` list
-  // so the checkpoint remains within the identity's context budget.
+  // so the native checkpoint carries only the state needed for continuation.
   const carried = digest ? {
     ...(digest.cluster ? { cluster: { id: asRecord(digest.cluster)?.id ?? null, status: asRecord(digest.cluster)?.status ?? null } } : {}),
     ...(digest.node ? { node: digest.node } : {}),
@@ -97,7 +97,7 @@ export function checkpointFor(classified: MockRequestClassification | null): str
 interface MockBudgetRow {
   scope_kind: string;
   scope_id: string;
-  available: { tool_calls: number; model_requests: number };
+  available: { tool_calls: number };
 }
 
 /** The budget rows a `flow_query what:"budgets"` result carried, or none. */
@@ -119,7 +119,6 @@ function budgetRows(text: unknown): MockBudgetRow[] {
         scope_id: String(row.scope_id ?? ''),
         available: {
           tool_calls: Number(available.tool_calls ?? 0),
-          model_requests: Number(available.model_requests ?? 0),
         },
       };
     })
@@ -179,12 +178,15 @@ function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext)
     const custom = hook(request, item, ctx);
     if (custom) return custom;
   }
+  // A tool continuation carries the original role prompt. After its action,
+  // yield so the scheduler can supply current state on the next turn.
+  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
   switch (textOf(item.action)) {
     case 'dispatch':
     case 'replan-or-redispatch':
       // A node-level dispatch covers every DRAFT transaction it owns, so the
-      // whole tier becomes READY in one turn, preserving request capacity
-      // and making independent Workers available for concurrent scheduling.
+      // whole tier becomes READY in one turn, making independent Workers
+      // available for concurrent scheduling.
       return call('flow_transaction', {
         action: 'dispatch',
         params: { node_id: request.classified.nodeId, limit: 64 },
@@ -243,12 +245,8 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
     const rows = budgetRows(request.classified.lastToolResult);
     const richest = rows
       .filter(row => row.scope_kind === 'agent' && row.scope_id !== request.classified.agentId)
-      // Requests weigh more than tool calls here: a Worker with a full tool-call
-      // grant and no requests cannot start at all, and the ladder binds on
-      // whichever dimension runs out first.
-      .sort((a, b) => (b.available.model_requests * 2 + b.available.tool_calls)
-        - (a.available.model_requests * 2 + a.available.tool_calls))[0] ?? null;
-    if (!richest || (richest.available.tool_calls <= 0 && richest.available.model_requests <= 0)) return null;
+      .sort((a, b) => b.available.tool_calls - a.available.tool_calls)[0] ?? null;
+    if (!richest || richest.available.tool_calls <= 0) return null;
     const byStatus = asRecord(asRecord(request.classified.digest?.transactions)?.by_status);
     const frontier = Number(byStatus?.READY ?? 0);
     return call('flow_allocation', {
@@ -261,7 +259,6 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
           // most half of the source leaves the spending role with a working
           // allowance of its own. Draining it whole moved the starvation.
           tool_calls: Math.min(32 * frontier, Math.max(32, Math.floor(richest.available.tool_calls / 2))),
-          model_requests: Math.min(Math.max(2 * frontier, 32), Math.max(16, Math.floor(richest.available.model_requests / 2))),
         },
       },
     });
@@ -277,10 +274,10 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
   }
   const rebalance = rebalanceReply();
   if (rebalance) return rebalance;
+  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
   const digest: MockDigest = request.classified.digest ?? {};
   const actions = recordsOf(digest.pending_actions);
   const nodeToolCalls = Number(asRecord(digest.budget_available)?.tool_calls ?? Number.POSITIVE_INFINITY);
-  const nodeRequests = Number(asRecord(digest.budget_available)?.model_requests ?? Number.POSITIVE_INFINITY);
   const frontier = listOf(item.transactions).length;
   const isRoot = recordsOf(digest.ancestors).length === 0;
   const topUps = ctx.rebalanced.get(request.classified.nodeId ?? '') ?? 0;
@@ -295,31 +292,11 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
   const childLimit = Number(asRecord(digest.node)?.max_children ?? children.length) || children.length;
   const freeSlots = Math.max(0, childLimit - liveChildren.length);
 
-  // Only a cluster's own root *ladder* is topped up: a delegated node is funded
-  // down its ancestor chain. The question is not what the current window needs
-  // but what the node still owes — every remaining Worker needs a couple of
-  // requests and its designed tool-call allowance — so a node that can fill the
-  // window but not the work behind it is topped up before its Workers are born
-  // with an allowance of zero. Request capacity bounds this allocation batch.
   const owed = Number(actions.find(entry => entry.action === 'allocate_agent')?.unallocated_total ?? frontier);
-  // A Worker is funded from the node for its whole allowance, so the node must
-  // be able to pay for every Worker in the batch. Allocating more than it can
-  // fund leaves the last Workers of the wave with an allowance of zero — they
-  // cannot send even their first request, their turns fail, and the transaction
-  // ends FAILED. The batch is therefore sized by what the node can actually
-  // cover, and a node that can cover nothing is topped up first.
-  const perWorkerRequests = numberOf(asRecord(ctx.limits)?.worker_model_requests) || 8;
-  // Only requests bound the batch: a Worker's tool-call grant is generous and
-  // its unspent part returns to the node on release, while a Worker with no
-  // requests cannot start at all. The batch must preserve enough requests
-  // for the allocation turns themselves.
-  const affordable = Number.isFinite(nodeRequests)
-    ? Math.floor(nodeRequests / perWorkerRequests)
-    : Infinity;
-  const needsRequests = 2 * owed + 16;
-  const needsToolCalls = 32 * Math.min(owed, Math.max(1, freeSlots)) + 32;
-  if (isRoot && item.action === 'allocate_agent' && owed >= 8 && topUps < 3 && affordable <= 0
-    && (nodeRequests < needsRequests || nodeToolCalls < needsToolCalls)) {
+  const perWorkerTools = 32;
+  const affordable = Number.isFinite(nodeToolCalls) ? Math.floor(nodeToolCalls / perWorkerTools) : Infinity;
+  const needsToolCalls = perWorkerTools * Math.min(owed, Math.max(1, freeSlots)) + 32;
+  if (isRoot && item.action === 'allocate_agent' && owed >= 8 && topUps < 3 && affordable <= 0 && nodeToolCalls < needsToolCalls) {
     ctx.rebalanced.set(request.classified.nodeId ?? '', topUps + 1);
     return call('flow_query', { what: 'budgets', params: { limit: 50 } });
   }
@@ -400,7 +377,7 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
       // Moving an empty amount is a successful command that changes nothing, and
       // the hint then repeats until the Allocator has no turns left.
       const amounts = item.required ?? (starved.length
-        ? { tokens: 65_536, model_requests: 8, tool_calls: 32 }
+        ? { tool_calls: 32 }
         : {});
       return call('flow_allocation', {
         action: 'rebalance_budget',
@@ -421,6 +398,7 @@ function auditorReply(request: MockRequestRecord, ctx: MockScenarioContext): Moc
     const custom = hook(request, item, ctx);
     if (custom) return custom;
   }
+  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
   switch (textOf(item.action)) {
     case 'inspect_plan':
       return call('flow_audit', {
@@ -566,6 +544,7 @@ function workerReply(request: MockRequestRecord, ctx: MockScenarioContext): Mock
     if (custom) return custom;
   }
   const classified = request.classified;
+  if (classified.last_message_role === 'tool' && classified.lastToolName === WORKER_TOOL_NAME) return say(STATUS_LINE);
   // Only a task that asks for `flow_sum` is answered with it: a bracketed list
   // in some other objective is not a request to add.
   const wantsSum = /\bflow_sum\b/u.test(`${classified.objective ?? ''} ${classified.userText ?? ''}`);
@@ -641,6 +620,21 @@ export interface MockScenarioContext {
  * different.
  */
 const CASE_HOOKS: Record<string, (context: MockCaseContext) => MockScenarioHooks> = {
+  context: () => {
+    const reads = new Map<string, number>();
+    return { worker(request) {
+      const transaction = request.classified.transactionId ?? request.classified.agentId ?? '';
+      const count = reads.get(transaction) ?? 0;
+      if (count >= 4) return null;
+      reads.set(transaction, count + 1);
+      // Real read results create the long native history. The controlled
+      // provider's usage anchors the host meter; its default policy decides
+      // whether and where to compact, without Flow thresholds or overrides.
+      return call('read', { file_path: 'pressure.txt' }, {
+        usage: { prompt_tokens: 90_000, completion_tokens: 100, total_tokens: 90_100 },
+      });
+    } };
+  },
   /**
    * Observation acceptance needs a stable live team while the browser reads it.
    * Hold final closeout until the checker finishes; only test IPC performs cleanup.

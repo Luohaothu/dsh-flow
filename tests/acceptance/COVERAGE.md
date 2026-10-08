@@ -62,7 +62,7 @@ pnpm run accept:mock --case recovery
 | 命令回执绑定身份与请求，预算转移、结算和嵌套事务具有原子性 | [ledger-command-regression.test.ts](../unit/ledger-command-regression.test.ts)、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) |
 | 通信先验证全部目标，再原子记录消息和投递；flush 后确认收取；重试不重复投递 | [communication-regression.test.ts](../unit/communication-regression.test.ts)、`tests/unit/cluster.*.test.ts` 的消息持久化窗口测试；原生 recovery 场景检查接收方 Session 中的消息次数 |
 | Worker 工具由 capability 和授权范围约束；权限拒绝不能写文件或创建分配 | [core.test.ts](../unit/core.test.ts)、原生 `F-permission`、`N-missing-capability`、`N-identity`；声明写范围不等于操作系统文件锁 |
-| 模型请求、工具调用与压缩分别记账；未知成本保留对应预留；并发槽与预算不能重复占用 | `tests/unit/cluster.*.test.ts`、[context-trigger.test.ts](../unit/context-trigger.test.ts)、原生 `F-budget`、`F-transport`、`N-summary-route`、`N-summary-cancel` |
+| 原生事件被动计量；未知值保留，重放幂等；工具额度与副作用独立恢复 | 原生用量投影与默认压缩组合测试、工具预算与恢复单元测试 |
 | 取消、重启和卸载使失效身份失去执行权；依赖未就绪或恢复失败时不发布服务 | [lifecycle-regression.test.ts](../unit/lifecycle-regression.test.ts)、`tests/unit/cluster.*.test.ts`、原生 recovery 场景 |
 | 查询按域过滤后分页，按 id 可读完整证据；非法访问被拒绝 | `tests/unit/cluster.*.test.ts` 的 query、paging、domain 测试；页面 `authenticated-observer-route` |
 
@@ -72,16 +72,18 @@ pnpm run accept:mock --case recovery
 | --- | --- |
 | smoke | Worker 的独立 Session 中存在实际 `flow_sum` 调用和结果；提交值等于工具结果；事务独立审核后接受 |
 | recursion | 递归管理链与同层 Worker 同时执行；越界写入被拒；纠正由更高 revision 的完成结果及 Auditor 核销证明 |
-| recovery | 在持住的请求上终止并重启真实宿主；失效租约被隔离；UNKNOWN 收据与当时在途请求对应；消息不丢失或重复 |
-| context | 实际压缩发生并独立记账；压缩后的请求满足身份额度；任务仍按正确结果提交 |
+| recovery | 在持住的请求上终止并重启真实宿主；失效租约被隔离；原生事件游标和投影一致，失败窗口保留不完整状态；消息不丢失或重复 |
+| context | 原生默认压缩的持久化摘要；宿主用量投影不重复；任务仍按正确结果提交 |
 | browser | 真实 Playwright MCP 导航、引用点击和点击后快照；工具调用与持久效果收据一致 |
-| panel | 主 Agent 团队启动、原生成员会话、只读拓扑与检查器、分页、断线恢复、主题、响应式布局和设置持久化 |
-| scale16 / scale64 | 以冻结任务的文件分配为判据；成功 read 收据的路径、结果符号与行号匹配；每文件独立 Worker；请求并发和预算证据一致 |
+| panel | 主 Agent 团队启动、原生成员会话、只读拓扑与检查器、宿主用量及未知/不完整展示、配置与实际模型区分、分页、断线恢复、主题、响应式布局和设置持久化 |
+| scale16 / scale64 | 以冻结任务的文件分配为判据；成功 read 收据的路径、结果符号与行号匹配；每文件独立 Worker；Agent 调度许可、独立 HTTP 并发与工具预算分别有证据 |
 
 `website`、`research`、`refactor` 是面向真实模型的任务场景，分别验证网站交付、来源支撑的研究结果和跨包代码修改。检查器与通过条件以对应 `cases/*.json` 和 `checks/*.ts` 为准。
 
 ## 证据限制
 
 - 内部 flush 与 ACK 的多事务窗口由精确故障注入测试覆盖；原生报告中未命中的窗口保留 `not_exercised` 或 `UNKNOWN`。
-- 模型拒绝、上下文压力、宿主能力缺失与页面断言失败分别记录，不能用其中一类推断另一类通过。
+- 模型服务拒绝、宿主默认压缩失败、宿主能力缺失与页面断言失败分别记录，不能用其中一类推断另一类通过。
 - 任一失败或未执行检查都不能记为成功。通过声明应附本次运行的命令、范围与产物位置。
+
+模型统计来自 `native_session_events` 与宿主持久化 Session；以原生会话和 seq 去重。Worker 激活须有真实执行轮生命周期及原生 assistant 结算事实。模型调度许可由 `llm-slot` 事件证明；提供方并发只有独立 HTTP 观测才能证明，不从用量投影推导。上下文验收使用宿主模型适配器容量与官方默认策略，Flow 不设置阈值或主动压缩。

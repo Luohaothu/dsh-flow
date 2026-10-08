@@ -64,8 +64,7 @@ export const RUNNER_ENV_KEYS: readonly string[] = [
 ];
 
 export const CASE_ENV_KEYS: readonly string[] = [
-  'FLOW_CONTEXT_ROLE', 'FLOW_CONTEXT_WORKER', 'FLOW_CONTEXT_MODEL',
-  'FLOW_CONTEXT_TRIGGER', 'FLOW_CONTEXT_SERVER_INPUT',
+  'FLOW_CONTEXT_MODEL', // Native model adapter capacity, never a Flow window override.
 ];
 
 /** Where an acceptance host runs and what it points at. */
@@ -77,6 +76,8 @@ export interface DshHostOptions {
   readonly env: Record<string, string | undefined>;
   readonly logPath: string;
   readonly readyTimeoutMs?: number | undefined;
+  /** Optional line filter for real-provider logs; raw launch URLs stay in memory. */
+  readonly sanitizeLog?: ((line: string) => string) | undefined;
 }
 
 /** How to boot the host process. */
@@ -185,6 +186,8 @@ export class DshHost {
   #logStream: WriteStream | null = null;
   #socketDir: string | null = null;
   #startError: Error | null = null;
+  #sanitizeLog: ((line: string) => string) | undefined;
+  #logTail = '';
 
   constructor(options: DshHostOptions) {
     const patchList = options.patches ?? (options.patch ? [options.patch] : []);
@@ -194,6 +197,7 @@ export class DshHost {
     this.env = options.env;
     this.logPath = options.logPath;
     this.readyTimeoutMs = options.readyTimeoutMs ?? 120_000;
+    this.#sanitizeLog = options.sanitizeLog;
   }
 
   async start(options: DshHostStartOptions = {}): Promise<this> {
@@ -222,13 +226,13 @@ export class DshHost {
     this.#logStream = createWriteStream(this.logPath, { flags: 'a' });
     stdout.on('data', (chunk: string) => {
       this.stdout += chunk;
-      this.#logStream?.write(chunk);
+      this.#writeLog(chunk);
       const match = /dsh web: (http:\/\/\S+)/u.exec(this.stdout);
       const url = match?.[1];
       if (url) this.webUrl = url;
       this.#flush();
     });
-    stderr.on('data', (chunk: string) => { this.stderr += chunk; this.#logStream?.write(chunk); });
+    stderr.on('data', (chunk: string) => { this.stderr += chunk; this.#writeLog(chunk); });
     child.on('message', (raw: unknown) => {
       const message = asInbound(raw);
       if (!message) return;
@@ -248,6 +252,8 @@ export class DshHost {
     child.on('close', (code, signal) => {
       this.exitInfo = { code, signal };
       this.#removeSocketDir();
+      if (this.#logTail) this.#logStream?.write(this.#sanitizeLog?.(this.#logTail) ?? this.#logTail);
+      this.#logTail = '';
       this.#logStream?.end();
       for (const [, entry] of this.pending) entry.reject(new Error(`host exited (code=${code} signal=${signal}) before answering`));
       this.pending.clear();
@@ -295,6 +301,17 @@ export class DshHost {
 
   #flush(): void {
     for (const waiter of [...this.stdoutWaiters]) waiter();
+  }
+
+  #writeLog(chunk: string): void {
+    if (!this.#sanitizeLog) { this.#logStream?.write(chunk); return; }
+    // Filter complete lines so a credential or URL split between pipe chunks
+    // cannot bypass the real-provider runner's redaction.
+    this.#logTail += chunk;
+    const end = this.#logTail.lastIndexOf('\n');
+    if (end < 0) return;
+    this.#logStream?.write(this.#sanitizeLog(this.#logTail.slice(0, end + 1)));
+    this.#logTail = this.#logTail.slice(end + 1);
   }
 
   #removeSocketDir(): void {

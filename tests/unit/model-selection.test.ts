@@ -4,14 +4,19 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm';
+import { SessionSeq } from '@deepseek-ai/dsh-session';
+import type { SessionEvent } from '@deepseek-ai/dsh-session';
+import { fromPartial } from '@total-typescript/shoehorn';
 import { Context } from '@deepseek-ai/cordis';
+import { validateModelSelection } from '../../packages/dsh-flow/src/core/model-selection.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 
 function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), 'flow-model-selection-'));
   const runtime = new ClusterRuntime(new Context(), {
     path: join(dir, 'ledger.sqlite'), dataDir: dir, autoTick: false,
-    model: { provider: 'deployment', model: 'default', reasoningEffort: 'high', maxTokens: 4096 },
+    model: { provider: 'deployment', model: 'default', reasoningEffort: 'high' },
   });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
   const run = runtime.startTeam('main', 'launch', 'Check model selection', dir);
@@ -42,50 +47,57 @@ test('team model preparation stays bounded across member pages and reads current
   const large = read();
   assert.equal(large.team.agents.length, 506);
   assert.equal(large.traversals, small.traversals, 'reading more members does not repeat tree traversal');
-  assert.ok(large.team.agents.every(agent => agent.model === 'default'));
+  assert.ok(large.team.agents.every(agent => agent.configured_model === 'default'));
   runtime.teamSelectModel('main', { provider: 'owner', model: 'current' });
   const current = read();
   assert.equal(current.traversals, small.traversals);
-  assert.ok(current.team.agents.every(agent => agent.model === 'current' && agent.reasoning_effort === null));
+  assert.ok(current.team.agents.every(agent => agent.configured_model === 'current' && agent.configured_reasoning_effort === null));
 });
 
-test('execution and team projection preserve model precedence, worker caps and recorded reasoning', async t => {
+test('execution and team projection preserve model precedence, native recorded reasoning', async t => {
   const { runtime, id, lead, root } = fixture(t);
   assert.deepEqual(runtime.modelFor(lead), {
-    provider: 'deployment', model: 'default', reasoningEffort: 'high', maxTokens: 4096,
+    provider: 'deployment', model: 'default', reasoningEffort: 'high',
   });
   runtime.teamSelectModel('main', { provider: 'owner', model: 'team' });
-  assert.deepEqual(runtime.modelFor(lead), { provider: 'owner', model: 'team', maxTokens: 4096 });
+  assert.deepEqual(runtime.modelFor(lead), { provider: 'owner', model: 'team' });
   runtime.store.updateNode(root.id, { scope: {
     ...runtime.store.getNode(root.id)!.scope,
-    team_model_options: { reasoningEffort: 'medium', maxTokens: 2048 },
+    team_model_options: { reasoningEffort: 'medium' },
   } });
   assert.deepEqual(runtime.modelFor(lead), {
-    provider: 'owner', model: 'team', reasoningEffort: 'medium', maxTokens: 2048,
+    provider: 'owner', model: 'team', reasoningEffort: 'medium',
   });
-  const cluster = runtime.store.getCluster(id)!;
-  runtime.store.updateCluster(id, { limits: { ...cluster.limits, worker_max_tokens: 128 } });
   const worker = runtime.store.insertAgent({
     id: 'worker', cluster_id: id, node_id: root.id, role: 'worker', session_id: 'worker-session', status: 'READY',
-    meta: { parent_agent_id: lead.id, model: { provider: 'member', model: 'override', reasoningEffort: 'low', maxTokens: 512 } },
+    meta: { parent_agent_id: lead.id, model: { provider: 'member', model: 'override', reasoningEffort: 'low' } },
   })!;
   assert.deepEqual(runtime.modelFor(worker), {
-    provider: 'member', model: 'override', reasoningEffort: 'low', maxTokens: 128,
+    provider: 'member', model: 'override', reasoningEffort: 'low',
   });
-  assert.equal(runtime.modelFor(lead).maxTokens, 2048, 'the Worker cap does not affect management');
   const shown = () => runtime.teamRead('main', id).agents.find(agent => agent.id === worker.id)!;
-  assert.equal(shown().model, 'override');
-  assert.equal(shown().reasoning_effort, 'low');
-  runtime.store.insertUsageReceipt({
-    request_id: 'recorded', cluster_id: id, agent_id: worker.id, node_id: root.id,
-    role: 'worker', kind: 'model', model: 'recorded-model', reasoning_effort: 'high', status: 'SETTLED',
-  });
+  assert.equal(shown().model, null, 'configuration does not fabricate an actual request');
+  assert.equal(shown().configured_model, 'override');
+  assert.equal(shown().configured_reasoning_effort, 'low');
+  const facts = (model: string, reasoningEffort?: string): SessionEvent[] => [
+    fromPartial<SessionEvent<'request/header'>>({ type: 'request/header', seq: SessionSeq(0), time: 1,
+      data: { header: { config: { provider: 'member', model, ...(reasoningEffort ? { reasoningEffort } : {}) } } } }),
+    fromPartial<SessionEvent<'assistant/message'>>({ type: 'assistant/message', seq: SessionSeq(1), time: 2,
+      data: { turn: 1, step: 1, stream: [], message: createAssistantMessage({ content: [{ type: 'text', text: 'done' }], source: { provider: 'member', model } }) } }),
+  ];
+  runtime.store.projectNativeUsage({ clusterId: id, nodeId: root.id, agentId: worker.id, nativeSessionId: worker.session_id,
+    role: 'worker', events: facts('recorded-model', 'high') });
   assert.equal(shown().model, 'recorded-model');
   assert.equal(shown().reasoning_effort, 'high');
-  runtime.store.insertUsageReceipt({
-    request_id: 'recorded-without-effort', cluster_id: id, agent_id: worker.id, node_id: root.id,
-    role: 'worker', kind: 'model', model: 'recorded-default-effort', status: 'SETTLED',
-  });
+  runtime.store.projectNativeUsage({ clusterId: id, nodeId: root.id, agentId: worker.id, nativeSessionId: worker.session_id,
+    role: 'worker', events: facts('recorded-default-effort').map(event => ({ ...event, seq: SessionSeq(event.seq + 2), time: event.time + 2 })) });
   assert.equal(shown().model, 'recorded-default-effort');
   assert.equal(shown().reasoning_effort, null, 'current preferences do not relabel a recorded default');
+});
+
+
+test('model selection rejects deleted execution controls, including nested output settings', () => {
+  for (const fields of [{ maxTokens: 1 }, { max_tokens: 1 }, { context: {} }, { output: { maxTokens: 1 } }, { options: { max_tokens: 1 } }]) {
+    assert.throws(() => validateModelSelection({ provider: 'host', model: 'model', ...fields }), /Unsupported model selection field/);
+  }
 });

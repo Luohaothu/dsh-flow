@@ -1,11 +1,11 @@
 {
-  "title": "Forced context pressure: real compaction, not truncation",
-  "objective": "Produce two arithmetic results through the cluster, using the flow_sum tool for each, so the management sessions grow past a deliberately low compaction threshold.",
+  "title": "Official native compaction and durable usage",
+  "objective": "Produce two arithmetic results with flow_sum. Preserve independent review and durable conclusions; DSH owns context and automatic compaction.",
   "capabilities": [
     "fs_read"
   ],
   "env": {
-    "FLOW_CONTEXT_TRIGGER": "0.064"
+    "FLOW_CONTEXT_MODEL": "131072"
   },
   "limits": {
     "max_children": 4,
@@ -18,8 +18,6 @@
     "max_role_turns": 12
   },
   "budget": {
-    "tokens": 2097152,
-    "model_requests": 256,
     "tool_calls": 2048,
     "wall_time_ms": 900000,
     "agents": 32,
@@ -48,7 +46,7 @@
     }
   ],
   "acceptance_criteria": [
-    "At least one turn reports a real compaction with shadowed tokens",
+    "Native Session records an official compaction summary between assistant settlements",
     "An accepted transaction leaves a durable summary"
   ]
 }

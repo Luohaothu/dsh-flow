@@ -16,7 +16,7 @@ export default defineConfig({
   themeConfig: {
     siteTitle: '<span class="flow-lockup">dsh-flow<span class="flow-tag">智能体集群</span></span>',
     nav: [
-      { text: '入门', link: '/quick-start', activeMatch: '^/(quick-start|advanced|agents|hierarchy|dispatch|communication)' },
+      { text: '入门', link: '/quick-start', activeMatch: '^/(quick-start|step-by-step|advanced|agents|hierarchy|dispatch|communication)' },
       { text: '开发', link: '/development/', activeMatch: '^/development/(?!api|action-catalog|compatibility)' },
       { text: '参考', link: '/configuration/agents', activeMatch: '^/(configuration|development/(api|action-catalog|compatibility))' },
     ],
@@ -26,6 +26,7 @@ export default defineConfig({
         items: [
           { text: '欢迎', link: '/' },
           { text: '快速上手', link: '/quick-start' },
+          { text: 'DeepSeek 实战步骤', link: '/step-by-step' },
           { text: '高级使用', link: '/advanced' },
         ],
       },

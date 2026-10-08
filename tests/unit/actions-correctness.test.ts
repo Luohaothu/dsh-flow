@@ -59,8 +59,7 @@ function dimensionOf(key: BudgetDimension): DimensionSpec {
 }
 
 function dimensionMap(read: (key: BudgetDimension) => number): Record<BudgetDimension, number> {
-  return {
-    tokens: read('tokens'), model_requests: read('model_requests'), tool_calls: read('tool_calls'),
+  return { tool_calls: read('tool_calls'),
     agents: read('agents'), max_active_agents: read('max_active_agents'),
   };
 }
@@ -81,13 +80,13 @@ function fixture(t: TestContext): Fixture {
   const ctx: Context = fromAny({ logger: { warn() {}, error() {}, info() {} }, get() {} });
   const runtime = new ClusterRuntime(ctx, {
     path: join(dir, 'cluster.sqlite'), dataDir: dir, now: () => instant, autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
   });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
   const id = runtime.start({
     objective: 'check governance actions', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 5, max_depth: 5, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 8 },
-    budget: { tokens: 2_000_000, model_requests: 3000, tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
+    budget: { tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
   }).cluster.id;
   const root = must(runtime.store.listNodes(id, { parent_id: null })[0], 'root node');
   const role = (name: FlowAgentRole, node: NodeRecord = root): FlowAgentActor => {
@@ -108,7 +107,7 @@ function managementTree(f: Fixture) {
   f.send(f.role('orchestrator'), 'dispatch', { transaction_id: rootTx.id });
   const oldParent = recordOf(f.send(f.role('allocator'), 'spawn_management_node', {
     transaction_id: rootTx.id, scope: { objective: 'old parent' }, max_children: 5,
-    budget: { tokens: 500_000, model_requests: 400, tool_calls: 400, agents: 20, max_active_agents: 2 },
+    budget: { tool_calls: 400, agents: 20, max_active_agents: 2 },
   }), 'spawn_management_node');
   const newParent = recordOf(f.send(f.role('allocator'), 'spawn_management_node', {
     transaction_id: rootTx.id, scope: { objective: 'new parent' }, max_children: 5,
@@ -134,7 +133,7 @@ function managementTree(f: Fixture) {
   };
 }
 
-test('reparent reissues all five unused grants on the new branch and preserves the earliest deadline', t => {
+test('reparent reissues all retained unused grants on the new branch and preserves the earliest deadline', t => {
   const f = fixture(t);
   const { oldNode, newNode, movingNode } = managementTree(f);
   const store = f.runtime.store;
@@ -149,7 +148,7 @@ test('reparent reissues all five unused grants on the new branch and preserves t
     store.updateBudget(target.id, patch);
   });
   const grant = dimensionMap(key => dimensionAvailable(must(store.getBudget(moved.id), 'moved budget'), key));
-  assert.ok(grant.tokens > 0);
+  assert.ok(grant.tool_calls > 0);
   const baseline = dimensionMap(key => store.listBudgets(f.id).reduce((sum, row) => sum + row[dimensionOf(key).limit], 0));
   const oldBefore = must(store.getBudget(old.id), 'old budget');
   const targetBranchBefore = dimensionMap(key => store.listBudgets(f.id).filter(row => row.node_id === newNode.id)
@@ -177,10 +176,10 @@ test('an underfunded new parent rolls back every reparent budget and topology ch
   const target = must(store.budgetForScope(f.id, 'node', newNode.id), 'target budget');
   store.tx(() => {
     const row = must(store.getBudget(target.id), 'target budget');
-    store.updateBudget(target.id, { tokens_limit: row.tokens_reserved + row.tokens_spent });
+    store.updateBudget(target.id, { tool_calls_limit: row.tool_calls_reserved + row.tool_calls_spent });
     for (const agent of store.listAgents(f.id, { node_id: newNode.id })) {
       const grant = store.budgetForScope(f.id, 'agent', agent.id);
-      if (grant) store.updateBudget(grant.id, { tokens_limit: grant.tokens_spent + grant.tokens_reserved });
+      if (grant) store.updateBudget(grant.id, { tool_calls_limit: grant.tool_calls_spent + grant.tool_calls_reserved });
     }
   });
   const before = store.listBudgets(f.id).map(row => [row.id, row.parent_budget_id, ...DIMENSIONS.map(dim => row[dim.limit])]);
@@ -188,7 +187,7 @@ test('an underfunded new parent rolls back every reparent budget and topology ch
   // A funding shortfall is raised by the ledger's own local `BudgetError`
   // (409 + LIMIT_REACHED), not by the command vocabulary's `flow/rejected`.
   assert.throws(() => f.send(f.role('allocator'), 'reparent', { node_id: movingNode.id, new_parent_id: newNode.id }),
-    error => error instanceof BudgetError && error.status === 409 && /tokens|fund/.test(messageOf(error)));
+    error => error instanceof BudgetError && error.status === 409 && /tool_calls|fund/.test(messageOf(error)));
   assert.deepEqual(store.listBudgets(f.id).map(row => [row.id, row.parent_budget_id, ...DIMENSIONS.map(dim => row[dim.limit])]), before);
   assert.equal(must(store.getNode(movingNode.id), 'moving node').path, path);
 });
@@ -333,13 +332,13 @@ test('allocate_budget moves capacity from the node scope to an identity, and ref
   const nodeBudget = must(store.budgetForScope(f.id, 'node', f.root.id), 'node budget');
   const agentBudget = must(store.budgetForScope(f.id, 'agent', agentId), 'agent budget');
   const before = {
-    agent: agentBudget.tokens_limit, node: nodeBudget.tokens_limit - nodeBudget.tokens_spent - nodeBudget.tokens_reserved,
+    agent: agentBudget.tool_calls_limit, node: nodeBudget.tool_calls_limit - nodeBudget.tool_calls_spent - nodeBudget.tool_calls_reserved,
   };
-  const granted = f.send(allocator, 'allocate_budget', { scope: { kind: 'agent', id: agentId }, amounts: { tokens: 50_000, requests: 5 } });
+  const granted = f.send(allocator, 'allocate_budget', { scope: { kind: 'agent', id: agentId }, amounts: {tool_calls: 50} });
   const grantedBudget = recordOf(recordOf(granted, 'allocate_budget').budget, 'budget');
-  assert.equal(recordOf(grantedBudget.tokens, 'granted tokens').limit, before.agent + 50_000, 'the identity grant grew by exactly the amount');
+  assert.equal(recordOf(grantedBudget.tool_calls, 'granted tokens').limit, before.agent + 50, 'the identity grant grew by exactly the amount');
   const afterNode = must(store.getBudget(nodeBudget.id), 'node budget');
-  assert.equal(afterNode.tokens_limit - afterNode.tokens_spent - afterNode.tokens_reserved, before.node - 50_000,
+  assert.equal(afterNode.tool_calls_limit - afterNode.tool_calls_spent - afterNode.tool_calls_reserved, before.node - 50,
     'and the node it came from gave up exactly that amount');
 
   // A scope outside the actor's domain is refused before anything moves.
@@ -350,9 +349,9 @@ test('allocate_budget moves capacity from the node scope to an identity, and ref
   const otherNodeId = textOf(other.node_id, 'other node id');
   const otherBudget = must(store.budgetForScope(f.id, 'node', otherNodeId), 'other budget');
   assert.throws(() => f.send(f.role('allocator', must(store.getNode(otherNodeId), 'other node')), 'allocate_budget', {
-    scope: { kind: 'node', id: f.root.id }, amounts: { tokens: 1000 },
+    scope: { kind: 'node', id: f.root.id }, amounts: {},
   }), error => rejectionStatus(error) === 403, 'a child Allocator cannot move capacity out of its domain');
-  assert.equal(must(store.getBudget(otherBudget.id), 'other budget').tokens_limit, otherBudget.tokens_limit);
+  assert.equal(must(store.getBudget(otherBudget.id), 'other budget').tool_calls_limit, otherBudget.tool_calls_limit);
 });
 
 test('reject_result records a durable issue and refuses anything not awaiting a verdict', t => {

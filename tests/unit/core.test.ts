@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { fromAny } from '@total-typescript/shoehorn';
 
 import { Context } from '@deepseek-ai/cordis';
+import { Session, SessionId } from '@deepseek-ai/dsh-session';
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm';
 import { ClusterStore } from '../../packages/dsh-flow/src/core/store.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import {
@@ -14,16 +16,14 @@ import {
   CAPABILITY_TOOLS,
 } from '../../packages/dsh-flow/src/core/protocol.ts';
 import {
-  DIMENSIONS, createBudget, budgetView, reserveChain, settleChain, releaseChain, transferBudget,
+  createBudget, budgetView, reserveChain, settleChain, releaseChain, transferBudget,
   effectiveDeadline, exhausted, BudgetError,
 } from '../../packages/dsh-flow/src/core/budget.ts';
-import type { BudgetDimension, DimensionSpec } from '../../packages/dsh-flow/src/core/budget.ts';
 import { communicate } from '../../packages/dsh-flow/src/core/communication.ts';
 import type {
   CommunicationActor, CommunicationGroupMembersResult, CommunicationPublishResult,
   CommunicationResult, CommunicationSendResult, CommunicationSubscriptionResult,
 } from '../../packages/dsh-flow/src/core/communication.ts';
-import { reserveLlmRequest, settleLlmRequest, releaseLlmRequest } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { checkWriteAccess, canonicalScope } from '../../packages/dsh-flow/src/core/scope.ts';
 import type { WriteDecision } from '../../packages/dsh-flow/src/core/scope.ts';
 import type { ClusterRecord, FlowActor, FlowAgentActor } from '../../packages/dsh-flow/src/core/model.ts';
@@ -37,12 +37,6 @@ const now = () => clock;
 function must<T>(value: T | null | undefined, label: string): T {
   if (value === null || value === undefined) throw new Error(`fixture: ${label} is missing`);
   return value;
-}
-
-function dimensionOf(key: BudgetDimension): DimensionSpec {
-  const spec = DIMENSIONS.find(candidate => candidate.key === key);
-  if (!spec) throw new Error(`unknown budget dimension ${key}`);
-  return spec;
 }
 
 /** The projected view of a budget row the fixture just created. */
@@ -89,7 +83,7 @@ function seedCluster(store: ClusterStore, overrides: Record<string, unknown> = {
   const spec = validateSpec({
     objective: 'test objective', workspace: '/tmp/ws',
     capabilities: ['fs_read', 'fs_write'], limits: { max_children: 4, max_active_agents: 4 },
-    budget: { tokens: 1000, model_requests: 10, tool_calls: 100, agents: 16, max_active_agents: 4 },
+    budget: { tool_calls: 100, agents: 16, max_active_agents: 4 },
     ...overrides,
   });
   return must(store.createCluster({
@@ -106,16 +100,16 @@ test('store rejects unsupported schema versions and workflow databases', t => {
   const db = new DatabaseSync(newer);
   db.exec('PRAGMA user_version=99');
   db.close();
-  assert.throws(() => new ClusterStore(newer), /newer than supported/);
+  assert.throws(() => new ClusterStore(newer), /use a new dataDir/);
 
   const workflow = join(dir, 'workflow.sqlite');
   const workflowDb = new DatabaseSync(workflow);
   workflowDb.exec('CREATE TABLE workflows(id TEXT PRIMARY KEY)');
   workflowDb.close();
-  assert.throws(() => new ClusterStore(workflow), /workflow database.*not supported/);
+  assert.throws(() => new ClusterStore(workflow), /use a new dataDir/);
 });
 
-test('schema-2 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
+test('schema-3 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-inputs-'));
   const path = join(dir, 'cluster.sqlite');
   const open = () => new ClusterRuntime(new Context(), {
@@ -139,7 +133,7 @@ test('schema-2 transaction JSON inputs survive creation, updates and reopened co
   const snapshot = runtime.start({
     objective: 'preserve transaction inputs', workspace: dir,
     capabilities: ['fs_read'],
-    budget: { tokens: 100_000, model_requests: 100, tool_calls: 100, agents: 16, max_active_agents: 4 },
+    budget: { tool_calls: 100, agents: 16, max_active_agents: 4 },
     initial_transactions: samples.map((inputs, index) => ({
       id: `json-input-${index}`, objective: `payload ${index}`, inputs,
     })),
@@ -258,8 +252,73 @@ test('schema-2 transaction JSON inputs survive creation, updates and reopened co
   checkConsumers();
   await runtime.dispose();
   runtime = open();
-  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 2);
+  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 3);
   checkConsumers();
+});
+
+test('read, report and scoped usage/context queries expose the same native recorded facts', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'flow-query-native-'));
+  const runtime = new ClusterRuntime(new Context(), { path: join(dir, 'flow.sqlite'), dataDir: dir, autoTick: false });
+  t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
+  const started = runtime.start({ objective: 'native query facts', workspace: dir, capabilities: [], budget: { tool_calls: 20 } });
+  const clusterId = started.cluster.id;
+  const identities = runtime.store.listAgents(clusterId);
+  const agent = must(identities[0], 'native query identity');
+  const other = must(identities[1], 'second native query identity');
+  for (const identity of [agent, other]) {
+    const session = Session.create(SessionId(identity.session_id));
+    const events = [session.append('assistant/message', {
+      turn: 1, step: 1, message: createAssistantMessage({ source: { provider: 'recorded', model: 'actual-model' }, content: [{ type: 'text', text: 'result' }] }), stream: [],
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+    }, { surfaceOp: 'append' })];
+    runtime.store.projectNativeUsage({ clusterId, nodeId: identity.node_id, agentId: identity.id, role: identity.role, nativeSessionId: identity.session_id, events });
+  }
+  assert.equal(runtime.read(clusterId).usage.total_tokens, 14);
+  assert.equal(runtime.report(clusterId).mechanism.usage.total_tokens, 14);
+  const actor = { role: 'user' as const, cluster_id: clusterId };
+  const usage = runtime.query(actor, 'usage', { agent_id: agent.id });
+  assert.equal(usage.usage.total_tokens, 7, 'a member filter selects the same facts for items and totals');
+  assert.equal(usage.items.length, 1);
+  const context = runtime.query(actor, 'context', { agent_id: agent.id });
+  assert.equal(context.context.model, 'actual-model');
+  assert.equal(context.context.context_used, null);
+  assert.equal(context.context.context_limit, null);
+});
+
+test('context and summary queries decode transaction acceptance and node summaries without losing unknown usage', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'flow-context-summary-'));
+  const runtime = new ClusterRuntime(new Context(), { path: join(dir, 'flow.sqlite'), dataDir: dir, autoTick: false });
+  t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
+  const clusterId = runtime.start({ objective: 'summary decoding', workspace: dir, capabilities: [] }).cluster.id;
+  const agent = must(runtime.store.listAgents(clusterId, { role: 'orchestrator' })[0], 'summary identity');
+  const auditor = must(runtime.store.listAgents(clusterId, { role: 'auditor' })[0], 'summary auditor');
+  const orchestratorActor: FlowAgentActor = {
+    role: agent.role, cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id, session_id: agent.session_id,
+  };
+  const auditorActor: FlowAgentActor = {
+    role: auditor.role, cluster_id: clusterId, agent_id: auditor.id, node_id: auditor.node_id, session_id: auditor.session_id,
+  };
+  runtime.command(orchestratorActor, { command_id: 'create-summary-work', action: 'create_transaction',
+    params: { objective: 'accepted summary fixture', acceptance_criteria: ['the check passes'] } });
+  const transaction = must(runtime.store.listTransactions({ cluster_id: clusterId }).find(tx => tx.objective === 'accepted summary fixture'), 'summary transaction');
+  runtime.command(orchestratorActor, { command_id: 'dispatch-summary-work', action: 'dispatch', params: { transaction_id: transaction.id } });
+  runtime.store.updateTransaction(transaction.id, { status: 'SUBMITTED', result: { summary: 'the result is recorded' } });
+  runtime.command(orchestratorActor, { command_id: 'validate-summary-work', action: 'validate', params: {
+    transaction_id: transaction.id, accepted: true, checks: [{ criterion: 'the check passes', passed: true, evidence: 'verified fixture' }],
+  } });
+  runtime.command(auditorActor, { command_id: 'accept-summary-work', action: 'inspect_validation', params: {
+    transaction_id: transaction.id, decision: 'approve',
+  } });
+  const actor = { role: 'user' as const, cluster_id: clusterId };
+  const accepted = runtime.query(actor, 'context', { agent_id: agent.id, transaction_id: transaction.id }).summary;
+  assert.equal(accepted?.evidence?.[0]?.transaction_id, transaction.id);
+  assert.equal(accepted?.evidence?.[0]?.evidence, 'verified fixture');
+  const node = runtime.query(actor, 'context', { agent_id: agent.id }).summary;
+  assert.equal(node?.conclusions?.[0]?.transaction_id, transaction.id);
+  assert.match(node?.conclusions?.[0]?.result ?? '', /the result is recorded/);
+  assert.equal(node?.evidence?.[0]?.transaction_id, transaction.id);
+  assert.equal(node?.resource_state?.total_tokens, null);
+  assert.equal(node?.resource_state?.completeness, 'unknown');
 });
 
 test('commands are idempotent per command_id and reject a conflicting payload', t => {
@@ -340,32 +399,25 @@ test('allocation write scopes overlap by file or by directory', () => {
   assert.ok(!scopesOverlap(['srcs'], ['src/a.ts']));
 });
 
-test('budget reserves, settles consumption and blocks an exhausted scope', t => {
+test('budget reserves, settles tool consumption and blocks an exhausted scope', t => {
   const store = tempStore(t);
   const cluster = seedCluster(store);
   const root = createBudget(store, {
     cluster_id: cluster.id, scope_kind: 'root', scope_id: cluster.id,
     limit: cluster.budget, wall_limit_ms: 60_000,
   });
-
-  reserveChain(store, [root.id], { tokens: 300, model_requests: 1 });
-  assert.equal(viewOf(store, root.id).tokens.available, 700);
-
-  settleChain(store, [root.id], { reservedAmounts: { tokens: 300, model_requests: 1 }, consumed: { tokens: 260, model_requests: 1 } });
-  const after = viewOf(store, root.id);
-  assert.deepEqual(
-    { tokens: after.tokens, requests: after.model_requests },
-    { tokens: { limit: 1000, reserved: 0, spent: 260, available: 740 }, requests: { limit: 10, reserved: 0, spent: 1, available: 9 } },
-  );
-
-  reserveChain(store, [root.id], { tokens: 700 });
-  assert.throws(() => reserveChain(store, [root.id], { tokens: 41 }), error => error instanceof BudgetError && error.code === 'LIMIT_REACHED');
-  releaseChain(store, [root.id], { tokens: 700 });
-  assert.doesNotThrow(() => reserveChain(store, [root.id], { tokens: 740 }));
-  releaseChain(store, [root.id], { tokens: 740 });
+  reserveChain(store, [root.id], { tool_calls: 30 });
+  assert.equal(viewOf(store, root.id).tool_calls.available, 70);
+  settleChain(store, [root.id], { reservedAmounts: { tool_calls: 30 }, consumed: { tool_calls: 26 } });
+  assert.deepEqual(viewOf(store, root.id).tool_calls, { limit: 100, reserved: 0, spent: 26, available: 74 });
+  reserveChain(store, [root.id], { tool_calls: 70 });
+  assert.throws(() => reserveChain(store, [root.id], { tool_calls: 5 }), error => error instanceof BudgetError && error.code === 'LIMIT_REACHED');
+  releaseChain(store, [root.id], { tool_calls: 70 });
+  assert.doesNotThrow(() => reserveChain(store, [root.id], { tool_calls: 74 }));
+  releaseChain(store, [root.id], { tool_calls: 74 });
 });
 
-test('budget transfers move only unused unreserved budget and never reverse spend', t => {
+test('budget transfers move only unused unreserved tool budget and never reverse spend', t => {
   const store = tempStore(t);
   const cluster = seedCluster(store);
   const root = createBudget(store, {
@@ -373,16 +425,14 @@ test('budget transfers move only unused unreserved budget and never reverse spen
     limit: cluster.budget,
   });
   const child = createBudget(store, { cluster_id: cluster.id, scope_kind: 'node', scope_id: 'n1', parent_budget_id: root.id, wall_limit_ms: 120_000 });
-
-  store.tx(() => transferBudget(store, root.id, child.id, { tokens: 400, model_requests: 4 }));
-  assert.equal(viewOf(store, child.id).tokens.limit, 400);
-  assert.equal(viewOf(store, root.id).tokens.limit, 600);
-  assert.throws(() => store.tx(() => transferBudget(store, root.id, child.id, { tokens: 601 })), /only 600 unused-unreserved remains/);
-
-  store.tx(() => settleChain(store, [child.id], { consumed: { tokens: 100 } }));
-  store.tx(() => reserveChain(store, [child.id], { tokens: 50 }));
-  assert.throws(() => store.tx(() => transferBudget(store, child.id, root.id, { tokens: 251 })), /only 250 unused-unreserved remains/);
-  assert.equal(viewOf(store, child.id).tokens.spent, 100);
+  transferBudget(store, root.id, child.id, { tool_calls: 40 });
+  assert.equal(viewOf(store, child.id).tool_calls.limit, 40);
+  assert.equal(viewOf(store, root.id).tool_calls.limit, 60);
+  assert.throws(() => transferBudget(store, root.id, child.id, { tool_calls: 61 }), /only 60 unused-unreserved remains/);
+  settleChain(store, [child.id], { consumed: { tool_calls: 10 } });
+  reserveChain(store, [child.id], { tool_calls: 5 });
+  assert.throws(() => transferBudget(store, child.id, root.id, { tool_calls: 26 }), /only 25 unused-unreserved remains/);
+  assert.equal(viewOf(store, child.id).tool_calls.spent, 10);
 });
 
 test('wall deadlines take the earliest ancestor deadline and never reset', t => {
@@ -390,117 +440,13 @@ test('wall deadlines take the earliest ancestor deadline and never reset', t => 
   const cluster = seedCluster(store);
   const root = createBudget(store, { cluster_id: cluster.id, scope_kind: 'root', scope_id: cluster.id, limit: cluster.budget, wall_limit_ms: 1000 });
   const child = createBudget(store, { cluster_id: cluster.id, scope_kind: 'node', scope_id: 'n1', parent_budget_id: root.id, wall_limit_ms: 60_000 });
-  store.tx(() => transferBudget(store, root.id, child.id, { tokens: 100, model_requests: 1 }));
+  transferBudget(store, root.id, child.id, { tool_calls: 10 });
   assert.equal(effectiveDeadline(store, must(store.getBudget(child.id), 'child budget')), now() + 1000);
-
   clock += 1500;
   assert.ok(exhausted(store, must(store.getBudget(child.id), 'child budget')));
-  assert.throws(() => reserveChain(store, [child.id], { tokens: 1, model_requests: 1 }),
+  assert.throws(() => reserveChain(store, [child.id], { tool_calls: 1 }),
     error => error instanceof BudgetError && error.code === 'LIMIT_REACHED' && error.dimension === 'wall_time_ms');
   clock -= 1500;
-});
-
-test('provider admission refuses a second funded scope when actual usage already consumed its cluster reserve', t => {
-  const store = tempStore(t);
-  const cluster = seedCluster(store);
-  const root = createBudget(store, { cluster_id: cluster.id, scope_kind: 'root', scope_id: cluster.id, limit: cluster.budget });
-  const first = createBudget(store, { cluster_id: cluster.id, scope_kind: 'node', scope_id: 'first', parent_budget_id: root.id });
-  const second = createBudget(store, { cluster_id: cluster.id, scope_kind: 'node', scope_id: 'second', parent_budget_id: root.id });
-  store.tx(() => {
-    transferBudget(store, root.id, first.id, { tokens: 900, model_requests: 1 });
-    transferBudget(store, root.id, second.id, { tokens: 100, model_requests: 1 });
-  });
-  const initial = reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'first-worker', node_id: 'first', transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [first.id], reservationTokens: 50, turn_seq: 1,
-  });
-  settleLlmRequest(store, {
-    cluster_id: cluster.id, reservation: initial,
-    usage: { inputTokens: 900, outputTokens: 50, totalTokens: 950 },
-  });
-  assert.throws(() => reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'second-worker', node_id: 'second', transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [second.id], reservationTokens: 80, turn_seq: 1,
-  }), error => error instanceof BudgetError && error.code === 'LIMIT_REACHED' && error.scope === cluster.id
-    && error.dimension === 'tokens' && error.requested === 80 && error.available === 50);
-  assert.equal(must(store.getBudget(second.id), 'second budget').tokens_reserved, 0, 'refused requests leave no hold');
-  assert.equal(store.countUsageReceipts(cluster.id, 'second-worker'), 0, 'and no dispatchable receipt');
-});
-
-test('a replayed settlement moves no budget, and an unknown outcome keeps its token hold', t => {
-  const store = tempStore(t);
-  const cluster = seedCluster(store);
-  const root = createBudget(store, {
-    cluster_id: cluster.id, scope_kind: 'root', scope_id: cluster.id, wall_limit_ms: 60_000,
-    limit: { tokens: 1_000_000, model_requests: 100, tool_calls: 100, agents: 16, max_active_agents: 4 },
-  });
-  const dimensionSnapshot = (key: BudgetDimension): { reserved: number; spent: number | undefined } => {
-    const spec = dimensionOf(key);
-    const row = must(store.getBudget(root.id), 'root budget');
-    return { reserved: row[spec.reserved], spent: spec.spent === null ? undefined : row[spec.spent] };
-  };
-  const snapshot = (): Record<BudgetDimension, { reserved: number; spent: number | undefined }> => ({
-    tokens: dimensionSnapshot('tokens'),
-    model_requests: dimensionSnapshot('model_requests'),
-    tool_calls: dimensionSnapshot('tool_calls'),
-    agents: dimensionSnapshot('agents'),
-    max_active_agents: dimensionSnapshot('max_active_agents'),
-  });
-
-  // Two outstanding reservations on the same scope.
-  const a = reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'agent-a', node_id: null, transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [root.id], reservationTokens: 10_000, turn_seq: 1,
-  });
-  const b = reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'agent-b', node_id: null, transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [root.id], reservationTokens: 20_000, turn_seq: 1,
-  });
-  assert.equal(snapshot().tokens.reserved, 30_000);
-
-  settleLlmRequest(store, {
-    cluster_id: cluster.id, reservation: a, budgetIds: [root.id],
-    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-  });
-  const afterFirst = snapshot();
-  assert.deepEqual({ tokens: afterFirst.tokens, requests: afterFirst.model_requests },
-    { tokens: { reserved: 20_000, spent: 150 }, requests: { reserved: 1, spent: 1 } });
-
-  // Replaying A must not touch B's reservation nor spend A's usage again.
-  settleLlmRequest(store, {
-    cluster_id: cluster.id, reservation: a, budgetIds: [root.id],
-    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-  });
-  assert.deepEqual(snapshot(), afterFirst, 'a replayed settlement must be a no-op');
-
-  settleLlmRequest(store, {
-    cluster_id: cluster.id, reservation: b, budgetIds: [root.id],
-    usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
-  });
-  const afterSecond = snapshot();
-  assert.deepEqual(afterSecond.tokens, { reserved: 0, spent: 170 });
-  assert.deepEqual(afterSecond.model_requests, { reserved: 0, spent: 2 });
-
-  // An unknown outcome consumes the attempt but keeps the token hold.
-  const c = reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'agent-c', node_id: null, transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [root.id], reservationTokens: 5_000, turn_seq: 1,
-  });
-  releaseLlmRequest(store, { cluster_id: cluster.id, reservation: c, budgetIds: [root.id], dispatched: true, note: 'stream ended without usage' });
-  const afterUnknown = snapshot();
-  assert.deepEqual(afterUnknown.tokens, { reserved: 5_000, spent: 170 }, 'an unknown outcome must retain its token hold');
-  assert.deepEqual(afterUnknown.model_requests, { reserved: 0, spent: 3 });
-  assert.equal(must(store.getUsageReceipt(c.request_id), 'usage receipt').status, 'UNKNOWN');
-
-  // A request that provably never left the client releases both dimensions.
-  const d = reserveLlmRequest(store, {
-    cluster_id: cluster.id, agent_id: 'agent-d', node_id: null, transaction_id: null, role: 'worker', kind: 'worker',
-    model: 'm', provider: 'p', budgetIds: [root.id], reservationTokens: 5_000, turn_seq: 1,
-  });
-  releaseLlmRequest(store, { cluster_id: cluster.id, reservation: d, budgetIds: [root.id], dispatched: false, note: 'dispatch failed' });
-  assert.deepEqual(snapshot().tokens, { reserved: 5_000, spent: 170 });
-  assert.deepEqual(snapshot().model_requests, { reserved: 0, spent: 3 }, 'a never-sent request must not consume an attempt');
-  assert.equal(must(store.getUsageReceipt(d.request_id), 'usage receipt').status, 'NOT_SENT');
 });
 
 test('write isolation is enforced on the canonical target, not the scope string', t => {

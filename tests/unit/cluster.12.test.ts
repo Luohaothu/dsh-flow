@@ -20,9 +20,8 @@ import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
-import { DEFAULT_CONTEXT_LIMITS } from '../../packages/dsh-flow/src/core/protocol.ts';
 import type { FlowActor, FlowAgentActor, FlowCommandOutcome, NodeRecord } from '../../packages/dsh-flow/src/core/model.ts';
-import type { FlowAgentRole, FlowContextLimits } from '../../packages/dsh-flow/src/types.ts';
+import type { FlowAgentRole } from '../../packages/dsh-flow/src/types.ts';
 
 // ---------------------------------------------------------------- test harness
 
@@ -68,11 +67,6 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
   readonly result: Record<string, unknown>
 }
 
-/** Fill a partial per-role context limit set from the deployment defaults. */
-function contextLimits(overrides: Partial<FlowContextLimits>): FlowContextLimits {
-  return { ...DEFAULT_CONTEXT_LIMITS, ...overrides };
-}
-
 function actorFor(runtime: ClusterRuntime, clusterId: string, role: FlowAgentRole, nodeId: string): FlowAgentActor {
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: nodeId, role, limit: 5 }), `agent ${role}`);
   return { cluster_id: clusterId, agent_id: agent.id, node_id: nodeId, role, session_id: agent.session_id };
@@ -113,15 +107,14 @@ test('a parent waits for its delegated children before it can be run or accepted
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a parent waits for its children', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
+    budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
@@ -180,7 +173,7 @@ test('a parent waits for its delegated children before it can be run or accepted
   assert.equal(earlyStarts.length, 0, 'no turn ran for it');
   assert.equal(required(runtime.store.getTransaction(earlyId), 'transaction').attempts ?? 0, 0, 'no attempt was spent');
   assert.equal(Number(runtime.store.get(
-    "SELECT COUNT(*) AS c FROM usage_receipts WHERE cluster_id=? AND transaction_id=?", clusterId, earlyId)?.c ?? 0), 0,
+    "SELECT COUNT(*) AS c FROM native_session_events WHERE cluster_id=? AND transaction_id=?", clusterId, earlyId)?.c ?? 0), 0,
     'and no provider request was made for it');
   void earlyChild;
 
@@ -292,15 +285,14 @@ test('a role grant is sized for the turns the deployment gives it, not three', a
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'tool grants match the run', workspace: dir, capabilities: [],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6, max_llm_concurrency: 2, max_role_turns: 24, max_agents: 64 },
-    budget: { tokens: 8_388_608, model_requests: 1_024, tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
+    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const roles = runtime.store.listAgents(clusterId, { node_id: root.id, limit: 5 }).filter(agent => agent.role !== 'worker');
@@ -326,16 +318,15 @@ test('the correction budget counts failed rounds, not opened issues', async t =>
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'issues are not rounds', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     // The recursion case's own budget: two correction rounds.
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 24, max_corrections: 2 },
-    budget: { tokens: 8_388_608, model_requests: 1_024, tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
+    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -393,15 +384,14 @@ test('a rejected repair costs one round, re-reviewing it costs none', async t =>
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a round is a repair, not a call', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 24, max_corrections: 2 },
-    budget: { tokens: 8_388_608, model_requests: 1_024, tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
+    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -462,15 +452,14 @@ test('a node whose roles have never run is served before busy branches', async t
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a deep node must not starve behind busy branches', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
-    budget: { tokens: 4_000_000, model_requests: 400, tool_calls: 4_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 2 },
+    budget: { tool_calls: 4_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 2 },
   }, { delegation: [{ scope: 'deep/', objective: 'own the deep branch', max_children: 4, spawn_children: 2 }] }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -540,15 +529,14 @@ test('a mistaken issue can be dismissed without any revision and without blockin
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'an issue raised in error can be withdrawn', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
+    budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -600,15 +588,14 @@ test('a plan audit carries the criteria it is judging, not just where to look', 
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'an audit names what it judges', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
+    budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
@@ -635,15 +622,14 @@ test('a spawned node is never born with a scrap tool allowance', async t => {
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'tool allowances are shared fairly', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6, max_llm_concurrency: 2, max_role_turns: 24, max_agents: 64 },
-    budget: { tokens: 8_388_608, model_requests: 1_024, tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
+    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -669,25 +655,11 @@ test('a spawned node is never born with a scrap tool allowance', async t => {
     assert.ok(endowment >= Math.floor(8_192 / 8),
       `a child is not born with a scrap allowance: ${endowment}`);
   }
-  // The same fair share funds a node's management turns and Worker wave
-  // across tokens, model requests and tool calls.
-  for (const nodeId of spawned) {
-    const budget = required(runtime.store.getBudget(required(runtime.store.budgetForScope(clusterId, 'node', nodeId), 'node budget').id), 'node budget');
-    const roles = firstOf(runtime.store.all(
-      "SELECT SUM(tokens_limit) AS t, SUM(requests_limit) AS r FROM budgets WHERE scope_kind='agent' AND node_id=?", nodeId), 'agent budget sums');
-    assert.ok(Number(budget.tokens_limit) + Number(roles.t ?? 0) >= Math.floor(8_388_608 / 8),
-      `a deep node can fund its own roles: ${Number(budget.tokens_limit) + Number(roles.t ?? 0)}`);
-    assert.ok(Number(budget.requests_limit) + Number(roles.r ?? 0) >= Math.floor(1_024 / 8),
-      `and their requests: ${Number(budget.requests_limit) + Number(roles.r ?? 0)}`);
-  }
   const declared = 8_192;
   const total = required(runtime.store.get(
     "SELECT SUM(tool_calls_limit) AS c FROM budgets WHERE cluster_id=? AND scope_kind IN ('node','agent')", clusterId), 'tool budget total').c;
   assert.ok(Number(total) <= declared, `the distribution stays inside the declaration: ${total} of ${declared}`);
-  const declaredTokens = 8_388_608;
-  const totalTokens = required(runtime.store.get(
-    "SELECT SUM(tokens_limit) AS c FROM budgets WHERE cluster_id=? AND scope_kind IN ('node','agent')", clusterId), 'token budget total').c;
-  assert.ok(Number(totalTokens) <= declaredTokens, `and the token distribution too: ${totalTokens} of ${declaredTokens}`);
+
 });
 
 test('a management send yields its native turn after delivery so the recipient can act', async t => {
@@ -696,15 +668,14 @@ test('a management send yields its native turn after delivery so the recipient c
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'deliver an allocation request', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
-    budget: { tokens: 1_000_000, model_requests: 100, tool_calls: 100, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 100, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
@@ -735,15 +706,14 @@ test('the dismissal and the acceptance chain run through scheduled roles and the
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'roles act through their own tools', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 12 },
-    budget: { tokens: 4_000_000, model_requests: 400, tool_calls: 4_000, wall_time_ms: 900_000, agents: 32, max_active_agents: 3 },
+    budget: { tool_calls: 4_000, wall_time_ms: 900_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -841,15 +811,14 @@ test('an Auditor reviews unchanged issues without a preselected verdict', async 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'review both a real missing file and a mistaken issue', workspace: dir, capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 12 },
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 200, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    budget: { tool_calls: 200, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
@@ -901,15 +870,14 @@ test('an unchanged issue does not manufacture endless Auditor turns', async t =>
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'a stuck issue does not spin the Auditor', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tokens: 2_000_000, model_requests: 200, tool_calls: 200, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
+    budget: { tool_calls: 200, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);

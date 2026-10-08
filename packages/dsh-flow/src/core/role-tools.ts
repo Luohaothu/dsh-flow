@@ -17,6 +17,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { strictTool } from '../tool-arguments.ts';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 
 import { fail } from '../errors.ts';
@@ -33,7 +34,7 @@ const ROLE_TOOL_DESCRIPTIONS: Record<string, string> = {
     'Orchestrator: plan, decompose, dispatch, validate and aggregate. '
     + 'Worker: only submit_result for the transaction allocated to you; no planning or delegation actions.',
   flow_allocation:
-    'Allocator control: agent identity, write scopes, budget ledger, concurrency and scaling inside your own management domain.',
+    'Allocator control: agent identity, write scopes, tool-call and capacity budgets, Agent scheduling concurrency and scaling inside your own management domain.',
   flow_audit:
     'Auditor control: plan supervision, independent result acceptance and durable correction requests inside your own management domain.',
 };
@@ -55,7 +56,7 @@ export function registerRoleTools(agentCtx: Context, runtime: ClusterRuntime, ro
 
 /** The role's command surface: one action plus the parameters it consumes. */
 function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolName: string): void {
-  agentCtx.tools.register(defineTool({
+  agentCtx.tools.register(strictTool(defineTool({
     name: toolName,
     description: ROLE_TOOL_DESCRIPTIONS[toolName] ?? 'Cluster command surface.',
     parameters: {
@@ -88,12 +89,12 @@ function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolNam
         ok: true, action: args.action, deduped: outcome.deduped, revision: outcome.revision, result: outcome.result,
       });
     },
-  }));
+  })));
 }
 
 /** Cluster messaging, groups and the blackboard. */
 function registerCommunicationTool(agentCtx: Context, runtime: ClusterRuntime): void {
-  agentCtx.tools.register(defineTool({
+  agentCtx.tools.register(strictTool(defineTool({
     name: 'flow_communicate',
     description: `Cluster communication: send/multicast messages to any agent in the cluster, manage groups, and read or publish blackboard keys. For send/multicast, explicitly choose category: ${COMMUNICATION_CATEGORIES.join(', ')}. Use result_report for outputs/evidence, review_feedback for audit decisions/corrections, progress_update for interim progress, task_instruction for revised requirements/rework, collaboration_request for questions/dependencies, blocker_report for failures/escalation, resource_coordination for budgets/models/tools, discussion for other conversation.`,
     parameters: {
@@ -118,12 +119,12 @@ function registerCommunicationTool(agentCtx: Context, runtime: ClusterRuntime): 
       }
       return JSON.stringify({ ok: true, action: args.action, result });
     },
-  }));
+  })));
 }
 
 /** The read-only, domain-scoped view of the cluster. */
 function registerQueryTool(agentCtx: Context, runtime: ClusterRuntime): void {
-  agentCtx.tools.register(defineTool({
+  agentCtx.tools.register(strictTool(defineTool({
     name: 'flow_query',
     description: 'Read-only cluster state scoped to your domain: cluster, nodes, node, transactions, transaction, agents, allocations, budgets, issues, issue, audits, audit, effects, effect, usage, summary, blackboard. Lists are paged references; transactions {parent_id} filters delegated children. Transaction {id} includes its current result and validation; aggregate child results and historical audit/issue evidence are referenced by id. Read the child transaction {id}, audit {id}, issue {id}, or effect {call_id} for complete evidence.',
     parameters: {
@@ -136,12 +137,12 @@ function registerQueryTool(agentCtx: Context, runtime: ClusterRuntime): void {
       const actor = actorFor(runtime, exec, { requireLease: false });
       return JSON.stringify(runtime.query(actor, args.what, coerceParams(args.params)));
     },
-  }));
+  })));
 }
 
 /** The deterministic local helper the acceptance fixtures assert on. */
 function registerSumTool(agentCtx: Context): void {
-  agentCtx.tools.register(defineTool({
+  agentCtx.tools.register(strictTool(defineTool({
     name: 'flow_sum',
     description: 'Add a list of finite numbers. Deterministic local tool used to verify the host tool-call round trip.',
     parameters: { values: { type: 'array', items: { type: 'number' }, required: true } },
@@ -153,7 +154,7 @@ function registerSumTool(agentCtx: Context): void {
       }
       return args.values.reduce((total, value) => total + value, 0);
     },
-  }));
+  })));
 }
 
 /**

@@ -11,7 +11,6 @@ import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 
-import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,14 +21,11 @@ import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/clust
 import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
-import { ClusterStore } from '../../packages/dsh-flow/src/core/store.ts';
-import { reserveLlmRequest } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { dimensionAvailable, transferBudget } from '../../packages/dsh-flow/src/core/budget.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
-import { DEFAULT_CONTEXT_LIMITS } from '../../packages/dsh-flow/src/core/protocol.ts';
 import type { FlowActor, FlowAgentActor, FlowCommandOutcome, FlowRuntimeConfig, NodeRecord } from '../../packages/dsh-flow/src/core/model.ts';
-import type { FlowAgentRole, FlowContextLimits, FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
+import type { FlowAgentRole, FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
 
 // ---------------------------------------------------------------- test harness
 
@@ -67,7 +63,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -118,18 +114,13 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
   readonly result: Record<string, unknown>
 }
 
-/** Fill a partial per-role context limit set from the deployment defaults. */
-function contextLimits(overrides: Partial<FlowContextLimits>): FlowContextLimits {
-  return { ...DEFAULT_CONTEXT_LIMITS, ...overrides };
-}
-
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -256,14 +247,14 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
     });
   }
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000, context: contextLimits({ role: 8192, worker: 16384 }),
+    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
+    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'one worker transaction', workspace: dir, capabilities: ['fs_read'],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_attempts: 2, max_corrections: 1, max_role_turns: 2, worker_model_requests: 2, worker_max_tokens: 512 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
+    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_attempts: 2, max_corrections: 1, max_role_turns: 2,},
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
@@ -358,7 +349,7 @@ test('recovery requeues a RUNNING transaction that still holds its allocation', 
   assert.equal(allocation.status, 'ACTIVE', 'and it keeps the identity that owns it');
   const claimable = runtime.store.readyForWorker(clusterId, { limit: 10 });
   assert.equal(claimable.length, 1, 'the scheduler can claim it');
-  assert.equal(required(runtime.store.getBudget(required(runtime.store.budgetForScope(clusterId, 'agent', allocation.agent_id), 'agent budget').id), 'agent budget').tokens_reserved, 0,
+  assert.equal(required(runtime.store.getBudget(required(runtime.store.budgetForScope(clusterId, 'agent', allocation.agent_id), 'agent budget').id), 'agent budget').tool_calls_reserved, 0,
     'stray reservations from the previous process are returned');
 });
 
@@ -495,91 +486,6 @@ test('a full node is not offered an allocation it cannot perform', t => {
   assert.equal(listOf04(afterHint.transactions, 'transactions').length, 1, 'and it names only what fits');
 });
 
-test('a Worker grant never exceeds the run-wide per-Worker request allowance', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime, { limits: {
-    max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2,
-    max_corrections: 2, max_role_turns: 6, worker_model_requests: 2,
-  } });
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const allocated = command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  const agentId = allocationOf04(allocated).agent_id;
-  const grant = required(runtime.store.budgetForScope(clusterId, 'agent', agentId), 'agent budget');
-  // The node can afford more than the allowance; handing a Worker eight requests
-  // when the run declared two parks capacity the next Worker needs. Measured at
-  // 64 files, the last 50 Workers were born with an allocation of zero requests
-  // and could not send even their first one. The grant is the allowance plus the
-  // one separately-accounted compaction request; the ordinary ceiling is enforced
-  // per request, not by the size of the grant.
-  assert.equal(runtime.workerRequestAllowance(required(runtime.store.getAgent(agentId), 'worker')), 2);
-  assert.ok(Number(grant.requests_limit) <= 3,
-    `the grant is bounded by the declared allowance, not by the node's ${grant.requests_limit}`);
-  assert.ok(Number(grant.tool_calls_limit) > 0, 'and still funds the work itself');
-
-  // Without a declared allowance the deployment's own working grant applies.
-  const open = makeRuntime(t);
-  const openCluster = startCluster(open);
-  const openRoot = rootNode(open, openCluster);
-  const openOrchestrator = actorFor(open, openCluster, 'orchestrator', openRoot.id);
-  const openAllocator = actorFor(open, openCluster, 'allocator', openRoot.id);
-  const openTx = firstOf(open.store.listTransactions({ cluster_id: openCluster }), 'root transaction');
-  command(open, openOrchestrator, 'dispatch', { transaction_id: openTx.id });
-  const openAllocated = command(open, openAllocator, 'allocate_agent', { transaction_id: openTx.id });
-  const openAgentId = allocationOf04(openAllocated).agent_id;
-  const openGrant = required(open.store.budgetForScope(openCluster, 'agent', openAgentId), 'open agent budget');
-  assert.ok(Number(openGrant.requests_limit) >= 2, `an undeclared allowance keeps the deployment grant: ${openGrant.requests_limit}`);
-});
-
-test('a Worker at its request allowance can still be funded for its final tool call', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime, { limits: {
-    max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2,
-    max_corrections: 2, max_role_turns: 6, worker_model_requests: 2,
-  } });
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const allocated = allocationOf04(command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id }));
-  const worker = required(runtime.store.getAgent(allocated.agent_id), 'worker');
-  const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-  const chain = runtime.agentBudgetChain(cluster, worker);
-  const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', worker.id), 'agent budget');
-  const nodeBudget = runtime.fundingBudget(cluster, worker);
-  assert.ok(agentBudget && nodeBudget, 'the identity and its funder exist');
-
-  // Spend the Worker's whole request allowance, then empty its tool-call grant —
-  // the state the ladder reaches when a Worker must still submit its result.
-  for (let index = 0; index < 2; index += 1) {
-    reserveLlmRequest(runtime.store, {
-      cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-      role: 'worker', kind: 'worker', model: 'm', provider: 'p', budgetIds: chain,
-      reservationTokens: 100, turn_seq: 1, maxRequests: runtime.workerRequestAllowance(worker),
-    });
-  }
-  assert.equal(runtime.store.countWorkerRequests(clusterId, worker.id), 2, 'the allowance is spent');
-  const row = required(runtime.store.getBudget(agentBudget.id), 'agent budget');
-  transferBudget(runtime.store, agentBudget.id, nodeBudget.id, { tool_calls: row.tool_calls_limit - row.tool_calls_spent });
-  assert.equal(dimensionAvailable(required(runtime.store.getBudget(agentBudget.id), 'agent budget'), 'tool_calls'), 0, 'the tool-call grant is empty');
-
-  // The final submission is a tool call, not a request: it is funded.
-  const granted = runtime.topUpBudgetForAgent(worker, { tool_calls: 1 });
-  assert.ok(granted, 'a tool-only refill is not blocked by the request allowance');
-  assert.ok(dimensionAvailable(required(runtime.store.getBudget(agentBudget.id), 'agent budget'), 'tool_calls') >= 1,
-    'the refill funds the call the Worker still owes');
-
-  // The request ceiling itself is still final.
-  assert.equal(runtime.topUpBudgetForAgent(worker, { model_requests: 1 }), null,
-    'a third request is still refused at the allowance');
-  assert.equal(runtime.topUpBudgetForAgent(worker, { tokens: 1000, model_requests: 1 }), null,
-    'and a mixed refill does not smuggle one in');
-});
-
 test('an unsafe reparent is refused without touching the turn or the ledger', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
@@ -598,7 +504,7 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
   const other = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
     transaction_id: tx.id, scope: { objective: 'second domain' }, max_children: 4,
   }));
-  const budgetsBefore = runtime.store.listBudgets(clusterId).map(row => `${row.id}:${row.tokens_limit}:${row.parent_budget_id}`).sort();
+  const budgetsBefore = runtime.store.listBudgets(clusterId).map(row => `${row.id}:${row.tool_calls_limit}:${row.parent_budget_id}`).sort();
   const pathsBefore = runtime.store.nodesInSubtree(clusterId, null).map(node => `${node.id}:${node.path}:${node.depth}`).sort();
 
   // A live turn inside the subtree: the move must be refused *before* anything
@@ -621,7 +527,7 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
   );
   assert.equal(originalAbort.called, false);
   assert.equal(required(runtime.store.getAgent(childAgent.id), 'child agent').status, 'RUNNING', 'a refused reparent drains nothing');
-  assert.deepEqual(runtime.store.listBudgets(clusterId).map(row => `${row.id}:${row.tokens_limit}:${row.parent_budget_id}`).sort(), budgetsBefore);
+  assert.deepEqual(runtime.store.listBudgets(clusterId).map(row => `${row.id}:${row.tool_calls_limit}:${row.parent_budget_id}`).sort(), budgetsBefore);
   assert.deepEqual(runtime.store.nodesInSubtree(clusterId, null).map(node => `${node.id}:${node.path}:${node.depth}`).sort(), pathsBefore);
 
   // With the lease gone and the delegated assignments settled the move
@@ -643,8 +549,6 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
     const otherBudget = required(runtime.store.budgetForScope(clusterId, 'node', other.node_id), 'other node budget');
     const row = required(runtime.store.getBudget(otherBudget.id), 'other node budget');
     runtime.store.updateBudget(otherBudget.id, {
-      tokens_limit: Number(row.tokens_limit) + 2_000_000,
-      requests_limit: Number(row.requests_limit) + 200,
       tool_calls_limit: Number(row.tool_calls_limit) + 200,
     });
   });
@@ -674,49 +578,6 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
   const childBudget = required(runtime.store.budgetForScope(clusterId, 'node', child.node_id), 'child node budget');
   const otherBudget = required(runtime.store.budgetForScope(clusterId, 'node', other.node_id), 'other node budget');
   assert.equal(childBudget.parent_budget_id, otherBudget.id);
-});
-
-test('a version-1 cluster database is migrated in place, and a newer one is refused', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-migrate-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const path = join(dir, 'cluster.sqlite');
-  const first = new ClusterStore(path, { now });
-  first.close();
-
-  // Present the file as a version-1 database: the columns this session added
-  // are gone and the recorded schema version is older.
-  const db = new DatabaseSync(path);
-  for (const [table, column] of [
-    ['checkpoints', 'events_seq'],
-    ['transactions', 'pre_pause_status'],
-    ['transactions', 'pre_pause_revision'],
-    ['transactions', 'result_staged_agent'],
-  ]) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
-  db.exec('PRAGMA user_version=1');
-  db.close();
-
-  // Opening it migrates the columns back and records the new version.
-  const migrated = new ClusterStore(path, { now });
-  assert.equal(Number(required(migrated.get('PRAGMA user_version'), 'user_version').user_version), 2);
-  for (const [table, column] of [
-    ['checkpoints', 'events_seq'],
-    ['transactions', 'pre_pause_status'],
-    ['transactions', 'pre_pause_revision'],
-    ['transactions', 'result_staged_agent'],
-    ['tool_call_receipts', 'dispatch_status'],
-    ['health', 'scores'],
-  ]) {
-    const columns = migrated.all(`PRAGMA table_info(${table})`).map(row => row.name);
-    assert.ok(columns.includes(column), `${table}.${column} must exist after the migration`);
-  }
-
-  // A database newer than this implementation is still refused, not migrated
-  // downwards.
-  migrated.close();
-  const future = new DatabaseSync(path);
-  future.exec('PRAGMA user_version=99');
-  future.close();
-  assert.throws(() => new ClusterStore(path, { now }), /newer than supported/);
 });
 
 test('node ownership is derived from the tree and reported by the public query', t => {
@@ -766,50 +627,6 @@ test('node ownership is derived from the tree and reported by the public query',
   })), error => /declares owner/.test(messageOf(error)));
 });
 
-test('an existing database normalises node and transaction ownership on open, idempotently', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-owner-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const path = join(dir, 'cluster.sqlite');
-  const first = new ClusterStore(path, { now });
-  const clusterId = 'owner-cluster';
-  first.tx(() => {
-    first.createCluster({
-      id: clusterId, objective: 'legacy cluster', workspace: '/tmp/w', capabilities: [], limits: {},
-      budget: { tokens: 100_000, model_requests: 10, tool_calls: 20 },
-    }, {});
-    first.insertNode({ id: 'mgmt', cluster_id: clusterId, parent_id: null, kind: 'management', depth: 0, status: 'ACTIVE', scope: {}, capabilities: [], path: '0' });
-    first.insertNode({ id: 'mgmt-child', cluster_id: clusterId, parent_id: 'mgmt', kind: 'management', depth: 1, status: 'ACTIVE', scope: {}, capabilities: [], path: '0.0' });
-    first.insertNode({ id: 'worker', cluster_id: clusterId, parent_id: 'mgmt-child', kind: 'worker', depth: 2, status: 'ACTIVE', scope: {}, capabilities: [], path: '0.0.0' });
-    first.insertTransaction({
-      id: 'tx', cluster_id: clusterId, node_id: 'mgmt-child', owner_management_id: 'mgmt', objective: 'legacy row',
-    });
-  });
-  // Rows an earlier schema could write: an owner column that only ever held
-  // what the caller supplied, and a transaction pointing at the branch above
-  // the node that hosts it.
-  first.run("UPDATE nodes SET owner_management_id=NULL WHERE id IN ('mgmt','mgmt-child')");
-  first.run("UPDATE nodes SET owner_management_id='mgmt' WHERE id='worker'");
-  const legacy = required(first.getTransaction('tx'), 'legacy transaction');
-  first.close();
-
-  const second = new ClusterStore(path, { now });
-  assert.equal(required(second.getNode('mgmt'), 'management node').owner_management_id, 'mgmt');
-  assert.equal(required(second.getNode('mgmt-child'), 'management child').owner_management_id, 'mgmt-child');
-  assert.equal(required(second.getNode('worker'), 'worker node').owner_management_id, 'mgmt-child');
-  assert.equal(required(second.getTransaction('tx'), 'transaction').owner_management_id, 'mgmt-child');
-  second.close();
-
-  // Reopening a normalised database changes nothing: the repair is a
-  // normalisation, not a version bump or a re-write of business state.
-  const third = new ClusterStore(path, { now });
-  assert.equal(required(third.getNode('worker'), 'worker node').owner_management_id, 'mgmt-child');
-  assert.equal(required(third.getTransaction('tx'), 'transaction').owner_management_id, 'mgmt-child');
-  const after = required(third.getTransaction('tx'), 'transaction');
-  assert.equal(after.revision, legacy.revision);
-  assert.equal(after.status, legacy.status);
-  assert.equal(Number(required(third.get('PRAGMA user_version'), 'user_version').user_version), 2);
-});
-
 test('a completed delegated node returns its unspent role and node grants to its parent', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
@@ -823,7 +640,7 @@ test('a completed delegated node returns its unspent role and node grants to its
   const childBudget = required(runtime.store.budgetForScope(clusterId, 'node', child.node_id), 'child node budget');
   const childRoles = runtime.store.listAgents(clusterId, { node_id: child.node_id });
   const roleBudgets = childRoles.map(role => required(runtime.store.budgetForScope(clusterId, 'agent', role.id), 'role budget'));
-  const available = (budget: BudgetRecord) => budget.requests_limit - budget.requests_spent - budget.requests_reserved;
+  const available = (budget: BudgetRecord) => budget.tool_calls_limit - budget.tool_calls_spent - budget.tool_calls_reserved;
   const expectedReturn = available(childBudget) + roleBudgets.reduce((sum, budget) => sum + available(budget), 0);
   assert.ok(expectedReturn > 0, 'a completed branch still holds unused requests');
   const before = available(parentBudget);
@@ -845,54 +662,6 @@ test('a completed delegated node returns its unspent role and node grants to its
     'a completed branch cannot return its grant twice');
 });
 
-test('a measured child request can draw missing tokens down its ancestor path, not sibling grants', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: original.id, scope: { objective: 'fund a child request' },
-  }));
-  const grandchild = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: child.delegated_transaction_id, node_id: child.node_id,
-    scope: { objective: 'fund a grandchild request' },
-  }));
-  const parentBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'parent node budget');
-  const intermediateBudget = required(runtime.store.budgetForScope(clusterId, 'node', child.node_id), 'intermediate node budget');
-  const childBudget = required(runtime.store.budgetForScope(clusterId, 'node', grandchild.node_id), 'child node budget');
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: grandchild.node_id, role: 'auditor' }), 'grandchild Auditor');
-  const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', agent.id), 'agent budget');
-  const budget = (id: string) => required(runtime.store.getBudget(id), 'budget');
-  const childFree = dimensionAvailable(childBudget, 'tokens');
-  assert.ok(childFree > 0);
-  transferBudget(runtime.store, childBudget.id, intermediateBudget.id, { tokens: childFree });
-  const intermediateFree = dimensionAvailable(budget(intermediateBudget.id), 'tokens');
-  transferBudget(runtime.store, intermediateBudget.id, parentBudget.id, { tokens: intermediateFree });
-  const parent = budget(parentBudget.id);
-  const requestCount = parent.requests_limit - parent.requests_spent - parent.requests_reserved;
-  const beforeTokens = parent.tokens_limit - parent.tokens_spent - parent.tokens_reserved;
-  const otherRoleTokens = runtime.store.listAgents(clusterId, { node_id: grandchild.node_id })
-    .filter(role => role.id !== agent.id)
-    .reduce((sum, role) => sum + dimensionAvailable(
-      required(runtime.store.budgetForScope(clusterId, 'agent', role.id), 'role budget'), 'tokens',
-    ), 0);
-  const reserve = dimensionAvailable(agentBudget, 'tokens') + otherRoleTokens + 10_000;
-  assert.ok(beforeTokens >= reserve, 'the ancestor can pay even after local grants are exhausted');
-  assert.ok(runtime.topUpBudgetForAgent(agent, { tokens: reserve, model_requests: 1 }));
-  const funded = budget(agentBudget.id);
-  assert.ok(funded.tokens_limit - funded.tokens_spent - funded.tokens_reserved >= reserve);
-  assert.ok(funded.requests_limit - funded.requests_spent - funded.requests_reserved >= 1);
-  assert.equal(budget(parentBudget.id).requests_limit
-    - budget(parentBudget.id).requests_spent, requestCount,
-  'request allowances in the ancestor are not moved when the child only lacks tokens');
-  assert.ok(budget(parentBudget.id).tokens_limit
-    - budget(parentBudget.id).tokens_spent < beforeTokens,
-  'unallocated ancestor tokens follow the ownership path to the requester');
-  assert.equal(dimensionAvailable(budget(intermediateBudget.id), 'tokens'), 0,
-    'the intermediate node forwards the measured grant; it cannot retain a second copy');
-});
-
 test('a descendant request reclaims idle ancestor roles before declaring their node empty', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
@@ -907,32 +676,28 @@ test('a descendant request reclaims idle ancestor roles before declaring their n
   const sourceRole = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor' }), 'root Auditor');
   const sourceGrant = required(runtime.store.budgetForScope(clusterId, 'agent', sourceRole.id), 'source role budget');
   const budget = (id: string) => required(runtime.store.getBudget(id), 'budget');
-  runtime.grantBudget(parent, sourceGrant, { tokens: 50_000 });
-  assert.ok(dimensionAvailable(budget(sourceGrant.id), 'tokens') >= 50_000);
-  transferBudget(runtime.store, childBudget.id, parent.id, {
-    tokens: dimensionAvailable(childBudget, 'tokens'),
-  });
+  runtime.grantBudget(parent, sourceGrant, {tool_calls:50});
+  assert.ok(dimensionAvailable(budget(sourceGrant.id), 'tool_calls') >= 50);
+  transferBudget(runtime.store, childBudget.id, parent.id, {tool_calls: dimensionAvailable(budget(childBudget.id), 'tool_calls')});
   const rootScope = required(runtime.store.budgetForScope(clusterId, 'root', clusterId), 'root budget');
-  transferBudget(runtime.store, parent.id, rootScope.id, {
-    tokens: dimensionAvailable(budget(parent.id), 'tokens'),
-  });
+  transferBudget(runtime.store, parent.id, rootScope.id, {tool_calls: dimensionAvailable(budget(parent.id), 'tool_calls')});
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: child.node_id, role: 'auditor' }), 'child Auditor');
   const own = required(runtime.store.budgetForScope(clusterId, 'agent', agent.id), 'child Auditor budget');
   const otherTokens = runtime.store.listAgents(clusterId, { node_id: child.node_id })
     .filter(role => role.id !== agent.id)
     .reduce((sum, role) => sum + dimensionAvailable(
-      required(runtime.store.budgetForScope(clusterId, 'agent', role.id), 'role budget'), 'tokens',
+      required(runtime.store.budgetForScope(clusterId, 'agent', role.id), 'role budget'), 'tool_calls',
     ), 0);
-  const envelope = dimensionAvailable(own, 'tokens') + otherTokens + 10_000;
-  const roleBefore = dimensionAvailable(budget(sourceGrant.id), 'tokens');
-  const rootBefore = dimensionAvailable(budget(rootScope.id), 'tokens');
-  assert.ok(runtime.topUpBudgetForAgent(agent, { tokens: envelope, model_requests: 1 }),
+  const envelope = dimensionAvailable(own, 'tool_calls') + otherTokens + 5;
+  const roleBefore = dimensionAvailable(budget(sourceGrant.id), 'tool_calls');
+  const rootBefore = dimensionAvailable(budget(rootScope.id), 'tool_calls');
+  assert.ok(runtime.topUpBudgetForAgent(agent, {tool_calls:envelope}),
     'the measured shortfall is fundable by an idle role in the parent node');
-  assert.ok(dimensionAvailable(budget(own.id), 'tokens') >= envelope);
-  assert.equal(dimensionAvailable(budget(sourceGrant.id), 'tokens')
-    + dimensionAvailable(budget(parent.id), 'tokens'), roleBefore - 10_000,
+  assert.ok(dimensionAvailable(budget(own.id), 'tool_calls') >= envelope);
+  assert.equal(dimensionAvailable(budget(sourceGrant.id), 'tool_calls')
+    + dimensionAvailable(budget(parent.id), 'tool_calls'), roleBefore - 5,
   'the ancestor retains every token not needed by this measured request');
-  assert.equal(dimensionAvailable(budget(rootScope.id), 'tokens'), rootBefore,
+  assert.equal(dimensionAvailable(budget(rootScope.id), 'tool_calls'), rootBefore,
     'the descendant cannot raid a root or sibling grant');
 });
 
@@ -942,7 +707,7 @@ test('a delegated node waits for its Auditor to score final health after accepti
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
     dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
@@ -950,7 +715,7 @@ test('a delegated node waits for its Auditor to score final health after accepti
     objective: 'close a completed delegated branch while the parent still works',
     workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 4 },
-    budget: { tokens: 1_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
+    budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
@@ -1004,14 +769,13 @@ test('a root closes after its final Orchestrator turn and scored Auditor closeou
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    maxTokens: 512, tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
+    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'finish after accepted work', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 2, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 8 },
-    budget: { tokens: 1_000_000, model_requests: 200, tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
+    budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);

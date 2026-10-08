@@ -21,12 +21,10 @@ import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/clust
 import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
-import { reserveLlmRequest } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
 import { integer, objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
-import { DEFAULT_CONTEXT_LIMITS } from '../../packages/dsh-flow/src/core/protocol.ts';
 import type { FlowActor, FlowAgentActor, FlowCommandOutcome, FlowRuntimeConfig, NodeRecord } from '../../packages/dsh-flow/src/core/model.ts';
-import type { FlowAgentRole, FlowContextLimits, FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
+import type { FlowAgentRole, FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
 
 // ---------------------------------------------------------------- test harness
 
@@ -64,7 +62,7 @@ function makeRuntime(t: TestContext, overrides: FlowRuntimeConfig = {}, services
     dataDir: dir,
     now,
     autoTick: false,
-    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off', maxTokens: 512 },
+    model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
     ...overrides,
   });
   if (services.sessionPersistence !== undefined) runtime.attachPersistence(services.sessionPersistence);
@@ -120,18 +118,13 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
   readonly result: Record<string, unknown>
 }
 
-/** Fill a partial per-role context limit set from the deployment defaults. */
-function contextLimits(overrides: Partial<FlowContextLimits>): FlowContextLimits {
-  return { ...DEFAULT_CONTEXT_LIMITS, ...overrides };
-}
-
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   });
   return snapshot.cluster.id;
@@ -180,7 +173,7 @@ function startClusterWithInternals05(
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'] as const,
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
-    budget: { tokens: 1_000_000, model_requests: 1000, tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
+    budget: { tool_calls: 1000, wall_time_ms: 3_600_000, agents: 32, max_active_agents: 4 },
     ...overrides,
   };
   const snapshot = runtime.start(request, internals);
@@ -469,79 +462,6 @@ test('Auditor observations and recommendations are durable and routed without cr
   void allocator;
 });
 
-test('a per-identity context budget is honoured by the next turn', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-ctxbudget-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost({
-    tokenMeter: { measure: () => ({ totalTokens: host.sessionTokens, logRevision: 1 }) },
-    compaction: { async compactNow() { return null; }, async compactIfNeeded() { return null; } },
-  });
-  host.setSessionTokens(30_000);
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-    context: { role: 100_000, worker: 16384, compaction_threshold: 0.8, model: 131072, server_input: 142074 },
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'one worker transaction', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 4, max_attempts: 1, max_corrections: 1, max_role_turns: 2, worker_model_requests: 2, worker_max_tokens: 512 },
-    budget: { tokens: 2_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 4 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, role('orchestrator'), 'dispatch', { transaction_id: tx.id });
-  command(runtime, role('allocator'), 'allocate_agent', { transaction_id: tx.id });
-  const worker = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
-  const stepsOf = () => runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'context-step');
-  const waitForNewStep = async (since: number, deadlineMs: number) => {
-    const deadline = Date.now() + deadlineMs;
-    for (;;) {
-      const workerSteps = stepsOf().filter(event => jsonObject(event.data, 'context-step data').role === 'worker');
-      if (workerSteps.length > since) return workerSteps.at(-1);
-      if (Date.now() > deadline) return null;
-      // eslint-disable-next-line no-await-in-loop
-      await runtime.tick();
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-    }
-  };
-
-  // A session beyond the Worker's declared context limit is refused when
-  // compaction cannot shrink it, even if the provider itself has room.
-  host.setScript(async turn => {
-    if (!(turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker')) return;
-    await turn.preStep({ step: 1 });
-  });
-  runtime.enableScheduling();
-  const firstStep = await waitForNewStep(0, 5_000);
-  assert.ok(firstStep, 'the Worker turn measured its first step');
-  const firstStepData = jsonObject(firstStep.data, 'first context step');
-  assert.equal(firstStepData.context_limit, 16384, 'the Worker default is the yardstick');
-  assert.equal(firstStepData.decision, 'reject');
-
-  // The Allocator raises this identity's own budget: the same session now fits.
-  const raised = command(runtime, role('allocator'), 'set_context_budget', {
-    agent_id: worker.id, context_limit: 65_536, compression_threshold: 0.9, retention_policy: 'keep-last-turn',
-  });
-  assert.equal(numberOf(jsonObject(raised.result.context, 'raised context').limit, 0, 1e9, 'context limit'), 65_536);
-  assert.equal(required(runtime.store.getAgent(worker.id), 'worker agent').meta.context?.trigger, 0.9);
-  runtime.store.tx(() => {
-    runtime.store.updateTransaction(tx.id, { status: 'READY' });
-    runtime.store.updateAgent(worker.id, { status: 'READY' });
-    runtime.store.updateNode(root.id, { status: 'ACTIVE' });
-    runtime.store.updateCluster(clusterId, { status: 'RUNNING' });
-  });
-  const soFar = stepsOf().filter(event => jsonObject(event.data, 'context-step data').role === 'worker').length;
-  const secondStep = await waitForNewStep(soFar, 5_000);
-  assert.ok(secondStep, 'the Worker measured another step');
-  const secondStepData = jsonObject(secondStep.data, 'second context step');
-  assert.equal(secondStepData.context_limit, 65_536, 'the identity override is what the next turn measures against');
-  assert.equal(secondStepData.decision, 'proceed');
-  assert.equal(required(runtime.store.getAgent(worker.id), 'worker agent').meta.context?.retention, 'keep-last-turn');
-});
-
 test('a delegation chain descends one level per spawn, and the instruction wins', t => {
   const runtime = makeRuntime(t);
   const clusterId = startClusterWithInternals05(runtime, {
@@ -603,7 +523,7 @@ test('a delegated parent does not spend Worker attempts before its required mana
   const clusterId = startClusterWithInternals05(runtime, {
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6,
       max_llm_concurrency: 2, max_role_turns: 24, max_agents: 64 },
-    budget: { tokens: 4_194_304, model_requests: 512, tool_calls: 4096,
+    budget: { tool_calls: 4096,
       wall_time_ms: 1_800_000, agents: 64, max_active_agents: 6 },
   }, {
     delegation: [{ scope: 'deep/', objective: 'finish deep/nested/result.txt', spawn_children: 3 }],
@@ -805,15 +725,14 @@ test('a turn that stops making progress is aborted, not left holding its transac
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
   const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', maxTokens: 512,
+    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000, maxTurnMs: 1_000,
-    context: contextLimits({ role: 8192, worker: 16384 }),
   });
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'one worker transaction', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 2, max_llm_concurrency: 1, max_attempts: 1, max_corrections: 1, max_role_turns: 2, worker_max_tokens: 512 },
-    budget: { tokens: 1_000_000, model_requests: 40, tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 2 },
+    limits: { max_children: 4, max_depth: 3, max_active_agents: 2, max_llm_concurrency: 1, max_attempts: 1, max_corrections: 1, max_role_turns: 2,},
+    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 2 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
@@ -890,125 +809,5 @@ test('a RUNNING transaction whose turn vanished is returned to the scheduler', a
   const strandedIds = runtime.store.readEvents(clusterId, { limit: 500 })
     .filter(event => event.type === 'transaction-stranded').map(event => jsonObject(event.data, 'transaction-stranded data').transaction_id);
   assert.equal(strandedIds.includes(second), false, `the leased transaction is never named stranded: ${JSON.stringify(strandedIds)}`);
-});
-
-test('a request that needs more than its grant is funded inside the reservation', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  const allocated = jsonObject(firstOf(arrayOf05(command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id }).result.allocations, 'allocations'), 'worker allocation'), 'worker allocation');
-  const worker = required(runtime.store.getAgent(textOf(allocated.agent_id, 'agent_id')), 'worker agent');
-  const agentBudget = required(runtime.store.budgetForScope(clusterId, 'agent', worker.id), 'agent budget');
-  // A grant far smaller than one request, with a node that can cover it.
-  runtime.store.tx(() => runtime.store.updateBudget(agentBudget.id, { tokens_limit: 1_000, tokens_spent: 0, tokens_reserved: 0 }));
-
-  // The funder closes the gap inside the same transaction, so the reservation
-  // sees the funded grant: no race with whatever settled in between.
-  const fundCalls: { dimension: string | undefined; requested: number | undefined }[] = [];
-  const reserve = reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-    role: 'worker', kind: 'worker', model: 'm', provider: 'p',
-    budgetIds: runtime.agentBudgetChain(required(runtime.store.getCluster(clusterId), 'cluster'), worker),
-    reservationTokens: 400_000, turn_seq: 1, maxRequests: null,
-    fund: error => {
-      fundCalls.push({ dimension: error.dimension, requested: error.requested });
-      return runtime.topUpBudgetForAgent(worker, {
-        [error.dimension ?? 'model_requests']: numberOf(error.requested, 0, 1e9, 'requested'),
-        ...(error.dimension === 'tokens' ? { model_requests: 1 } : {}),
-      });
-    },
-  });
-  assert.ok(reserve.request_id, 'the request is funded and reserved');
-  assert.equal(fundCalls.length, 1, `the funder ran exactly once: ${JSON.stringify(fundCalls)}`);
-  assert.equal(firstOf(fundCalls, 'budget funding call').dimension, 'tokens');
-  assert.equal(reserve.tokens, 400_000);
-  const after = required(runtime.store.getBudget(agentBudget.id), 'funded agent budget');
-  assert.equal(after.tokens_reserved, 400_000, 'the reservation is held in the identity it was funded for');
-
-  // A shortfall the node cannot cover is refused, not papered over.
-  const drained = runtime.store.listBudgets(clusterId);
-  runtime.store.tx(() => {
-    // Exhaust the capacity without destroying it: a scope that has *spent* its
-    // limit is exhausted, while a scope whose limit was lowered is a different
-    // (and unrealistic) state.
-    for (const row of drained) {
-      if (row.tokens_limit <= 0) continue;
-      runtime.store.updateBudget(row.id, { tokens_spent: Math.max(row.tokens_spent, row.tokens_limit - row.tokens_reserved) });
-    }
-  });
-  assert.throws(() => reserveLlmRequest(runtime.store, {
-    cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id, transaction_id: tx.id,
-    role: 'worker', kind: 'worker', model: 'm', provider: 'p',
-    budgetIds: runtime.agentBudgetChain(required(runtime.store.getCluster(clusterId), 'cluster'), worker),
-    reservationTokens: 400_000, turn_seq: 1, maxRequests: null,
-    fund: () => runtime.topUpBudgetForAgent(worker, { tokens: 400_000, model_requests: 1 }),
-  }), error => error instanceof Error && 'code' in error && error.code === 'LIMIT_REACHED');
-});
-
-test('the compaction pool is funded from the node when its earmark cannot cover a summary', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const poolId = required(runtime.compactionBudgetId(clusterId), 'compaction budget id');
-  const pool = required(runtime.store.getBudget(poolId), 'compaction budget');
-
-  // The earmark is a share, so a long run exhausts it: the summary request then
-  // has to be funded from the node, or the session it must shrink can never be
-  // shrunk.
-  const need = pool.tokens_limit + 5_000;
-  const granted = runtime.store.tx(() => runtime.topUpCompactionPool(clusterId, { tokens: need, model_requests: 1 }));
-  assert.ok(granted, `the pool is funded: ${JSON.stringify(granted)}`);
-  assert.equal(numberOf(jsonObject(granted, 'compaction pool grant').tokens, 0, 1e9, 'tokens'), 5_000, 'exactly the gap');
-  const after = required(runtime.store.getBudget(poolId), 'compaction budget');
-  assert.ok(after.tokens_limit - after.tokens_reserved - after.tokens_spent >= need, 'the pool can now cover the request');
-
-  // Idle identities' grants are reclaimed first: the capacity they hold is
-  // capacity the node no longer has.
-  const auditor = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
-  const auditorBudget = required(runtime.store.budgetForScope(clusterId, 'agent', auditor.id), 'auditor budget');
-  const node = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'node budget');
-  runtime.store.tx(() => runtime.store.updateBudget(node.id, { tokens_spent: Math.max(node.tokens_spent, node.tokens_limit - node.tokens_reserved) }));
-  const reclaimed = runtime.store.tx(() => runtime.topUpCompactionPool(clusterId, { tokens: after.tokens_limit + 1_000 }));
-  assert.ok(reclaimed, 'the pool is still funded after the node was drained directly');
-  assert.ok(required(runtime.store.getBudget(auditorBudget.id), 'auditor budget').tokens_limit <= auditorBudget.tokens_limit, 'an idle identity gave capacity back');
-});
-
-test('a cluster that cannot pay for its next request stops with the budget reason', async t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-
-  // Every scope that could fund a request is spent: the work is READY, the
-  // cluster is RUNNING, and each pass refuses the next request.
-  runtime.store.tx(() => {
-    for (const row of runtime.store.listBudgets(clusterId)) {
-      if (row.tokens_limit <= 0) continue;
-      runtime.store.updateBudget(row.id, { tokens_spent: Math.max(row.tokens_spent, row.tokens_limit - row.tokens_reserved) });
-    }
-  });
-  const agent = firstOf(runtime.store.listAgents(clusterId, { role: 'orchestrator' }), 'orchestrator agent');
-  runtime.recordBudgetRefusal(agent, 'model request refused: nothing left', {
-    scope: root.id, dimension: 'tokens', requested: 10_000, available: 0,
-  });
-  runtime.enableScheduling();
-  await runtime.tick();
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'BLOCKED', 'the cluster stops instead of spinning');
-  const blockedEvents = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'cluster-blocked');
-  const blockedData = jsonObject(firstOf(blockedEvents.slice(-1), 'cluster-blocked event').data, 'cluster-blocked data');
-  assert.equal(blockedData.code, 'BUDGET_EXHAUSTED');
-  assert.match(String(blockedData.reason), /^BUDGET:/);
 });
 

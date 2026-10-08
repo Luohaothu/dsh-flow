@@ -15,13 +15,13 @@ import type {
   FlowBudget,
   FlowBudgetInput,
   FlowCapability,
-  FlowContextLimits,
   FlowJsonValue,
   FlowLimits,
   FlowLimitsInput,
   FlowStartRequest,
 } from './types.ts';
 import { fail } from './errors.ts';
+import { validateModelSelection } from './core/model-selection.ts';
 import {
   integer,
   isFlowJsonValue,
@@ -31,7 +31,6 @@ import {
   validateLimits,
 } from './validation.ts';
 import {
-  DEFAULT_CONTEXT_LIMITS,
   DEFAULT_LIMITS,
   validateDelegation,
   validateMessageFixture,
@@ -66,14 +65,10 @@ export interface Config {
   readonly model?: string | null
   /** Optional reasoning effort; an omitted value is not written into the agent's options. */
   readonly reasoningEffort?: string | null
-  /** Maximum output tokens per model request. */
-  readonly maxTokens?: number | null
   /** New teams follow the main conversation unless an explicit route is saved. */
   readonly defaultModel?: { provider: string; model: string } | null
   readonly defaultReasoningEffort?: 'inherit' | 'off' | 'low' | 'medium' | 'high' | null
   readonly defaultDispatchMode?: 'parallel' | 'serial' | null
-  /** Per-role context pressure thresholds. */
-  readonly context?: ConfigContext | null
   /** Scheduler tick interval. */
   readonly tickMs?: number | null
   /** Age at which unfinished work is reported stale. */
@@ -94,15 +89,6 @@ export interface Config {
   readonly defaultLimits?: FlowLimitsInput | null
 }
 
-/** Per-role context thresholds as a patch writes them. */
-export interface ConfigContext {
-  readonly role?: number | null
-  readonly worker?: number | null
-  readonly model?: number | null
-  readonly compaction_threshold?: number | null
-  readonly server_input?: number | null
-}
-
 /** {@link Config} after the schema has applied every declared default. */
 export interface ResolvedConfig {
   readonly dataDir: string
@@ -110,11 +96,9 @@ export interface ResolvedConfig {
   readonly provider: string
   readonly model: string
   readonly reasoningEffort: string | undefined
-  readonly maxTokens: Volatile<number>
   readonly defaultModel: Volatile<{ provider: string; model: string } | null>
   readonly defaultReasoningEffort: Volatile<'inherit' | 'off' | 'low' | 'medium' | 'high'>
   readonly defaultDispatchMode: Volatile<'parallel' | 'serial'>
-  readonly context: FlowContextLimits
   readonly tickMs: number
   readonly staleMs: number
   readonly maxTurnMs: number
@@ -130,15 +114,10 @@ export interface ResolvedConfig {
  * The interactive envelope a cluster started from a page gets when it names
  * none, and the limits its management tree needs to close out.
  *
- * Sized for an interactive task rather than a tier: enough tokens and requests
- * for a management tree to decompose, run its Workers and close out, with the
- * Worker request allowance the scheduler needs (the default `0` would refuse a
- * Worker's first request and a `tool_calls`-only task could never submit).
+ * Gives a management tree enough tools, identities and runtime to close out.
  * Every value is overridable per start.
  */
 export const INTERACTIVE_BUDGET: FlowBudget = {
-  tokens: 2_097_152,
-  model_requests: 256,
   tool_calls: 2048,
   wall_time_ms: 900_000,
   agents: 64,
@@ -155,19 +134,16 @@ export const INTERACTIVE_LIMITS: FlowLimits = {
   max_attempts: 2,
   max_corrections: 2,
   max_role_turns: 12,
-  worker_model_requests: 8,
-  worker_max_tokens: 4096,
+  max_tool_calls_per_turn: DEFAULT_LIMITS.max_tool_calls_per_turn,
 };
 
 const CAPABILITY_NAMES: readonly FlowCapability[] = ['fs_read', 'fs_write', 'shell', 'web_fetch', 'browser'];
 
 // Every member carries its interactive default so a deployment may state only
 // the dimensions it wants to change: a schema object with required members
-// would reject `defaultBudget: {model_requests: 37}` outright, which is the
+// would reject `defaultBudget: {tool_calls: 37}` outright, which is the
 // documented "the rest keep their usual values" spelling.
 const budgetSchema = Schema.object({
-  tokens: Schema.number().step(1).min(1).max(2 ** 40).default(INTERACTIVE_BUDGET.tokens),
-  model_requests: Schema.number().step(1).min(1).max(2 ** 40).default(INTERACTIVE_BUDGET.model_requests),
   tool_calls: Schema.number().step(1).min(1).max(2 ** 40).default(INTERACTIVE_BUDGET.tool_calls),
   wall_time_ms: Schema.number().step(1).min(1).max(2 ** 40).default(INTERACTIVE_BUDGET.wall_time_ms),
   agents: Schema.number().step(1).min(1).max(2 ** 40).default(INTERACTIVE_BUDGET.agents),
@@ -185,8 +161,6 @@ const limitsSchema = Schema.object({
   max_role_turns: Schema.number().step(1).min(1).max(512).default(INTERACTIVE_LIMITS.max_role_turns),
   max_tool_calls_per_turn: Schema.number().step(1).min(1).max(4096).default(DEFAULT_LIMITS.max_tool_calls_per_turn),
   max_scale_batch: Schema.number().step(1).min(1).max(100_000),
-  worker_model_requests: Schema.number().step(1).min(1).max(64).default(INTERACTIVE_LIMITS.worker_model_requests),
-  worker_max_tokens: Schema.number().step(64).min(64).max(32_768).default(INTERACTIVE_LIMITS.worker_max_tokens),
 });
 
 /**
@@ -196,29 +170,15 @@ const limitsSchema = Schema.object({
  * route cannot be guessed, and the shipped bundle row derives them from the
  * host's default-model provider rather than from a local constant.
  */
-export const Config: Schema<Config, ResolvedConfig> = Schema.object({
+const deploymentSchema: Schema<Config, ResolvedConfig> = Schema.object({
   dataDir: Schema.string().default('.dsh-flow'),
   workspace: Schema.string().default('.'),
   provider: Schema.string().required(),
   model: Schema.string().required(),
   reasoningEffort: Schema.union([Schema.string(), Schema.const(undefined)]),
-  maxTokens: Schema.number().step(1).min(1).max(2 ** 31).default(4096).volatile(),
   defaultModel: Schema.union([Schema.object({ provider: Schema.string().required(), model: Schema.string().required() }), Schema.const(null)]).default(null).volatile(),
   defaultReasoningEffort: Schema.union(['inherit', 'off', 'low', 'medium', 'high']).default('inherit').volatile(),
   defaultDispatchMode: Schema.union(['parallel', 'serial']).default('parallel').volatile(),
-  context: Schema.object({
-    role: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.role),
-    worker: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.worker),
-    model: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.model),
-    compaction_threshold: Schema.number().min(0).max(1).default(DEFAULT_CONTEXT_LIMITS.compaction_threshold),
-    server_input: Schema.number().step(1).min(1).default(DEFAULT_CONTEXT_LIMITS.server_input),
-  }).default({
-    role: DEFAULT_CONTEXT_LIMITS.role,
-    worker: DEFAULT_CONTEXT_LIMITS.worker,
-    model: DEFAULT_CONTEXT_LIMITS.model,
-    compaction_threshold: DEFAULT_CONTEXT_LIMITS.compaction_threshold,
-    server_input: DEFAULT_CONTEXT_LIMITS.server_input,
-  }),
   tickMs: Schema.number().step(1).min(1).default(250),
   staleMs: Schema.number().step(1).min(1).default(120_000),
   maxTurnMs: Schema.number().step(1).min(1).default(900_000),
@@ -228,6 +188,43 @@ export const Config: Schema<Config, ResolvedConfig> = Schema.object({
   defaultCapabilities: Schema.array(Schema.union(CAPABILITY_NAMES)).default(['fs_read', 'fs_write']),
   defaultBudget: budgetSchema.default({ ...INTERACTIVE_BUDGET }).volatile(),
   defaultLimits: limitsSchema.default({ ...INTERACTIVE_LIMITS }).volatile(),
+});
+
+/** Reject retired controls before schema defaults or Loader can hide them. */
+export function rejectRemovedConfig(input: unknown): void {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return;
+  const fields = input as Record<string, unknown>;
+  for (const key of ['maxTokens', 'context']) {
+    if (Object.hasOwn(fields, key)) fail(`Removed configuration field: ${key}`);
+  }
+  const defaultModel = fields.defaultModel;
+  if (defaultModel !== undefined && defaultModel !== null) {
+    const model = typeof defaultModel === 'object' && 'get' in defaultModel && typeof defaultModel.get === 'function'
+      ? defaultModel.get() : defaultModel;
+    if (model !== null && model !== undefined) validateModelSelection(model, 'defaultModel');
+  }
+  for (const name of ['defaultBudget', 'defaultLimits']) {
+    const nested = fields[name];
+    if (nested === null || typeof nested !== 'object' || Array.isArray(nested) || 'get' in nested) continue;
+    const removed = name === 'defaultBudget' ? ['tokens', 'model_requests', 'requests'] : ['worker_max_tokens', 'worker_model_requests'];
+    for (const key of removed) {
+      if (Object.hasOwn(nested, key)) fail(`Removed configuration field: ${name}.${key}`);
+    }
+  }
+}
+
+// Preserve the native object schema and its fixed Volatile paths. Callable
+// validation checks the raw row first; Loader-normalized input is checked again
+// in resolveConfig, including live budget/limit values on every new start.
+export const Config: Schema<Config, ResolvedConfig> = new Proxy(deploymentSchema, {
+  apply(schema, receiver, args) {
+    rejectRemovedConfig(args[0]);
+    return Reflect.apply(schema, receiver, args);
+  },
+  construct(schema, args) {
+    rejectRemovedConfig(args[0]);
+    return Reflect.construct(schema, args);
+  },
 });
 
 /**
@@ -255,9 +252,7 @@ export interface RuntimeSettings {
     readonly provider: string
     readonly model: string
     readonly reasoningEffort: string | undefined
-    readonly maxTokens: number
   }
-  readonly context: FlowContextLimits
   readonly tickMs: number
   readonly staleMs: number
   readonly maxTurnMs: number
@@ -281,18 +276,11 @@ export function resolveConfig(
   config: ResolvedConfig,
   { cwd = process.cwd(), logger }: { cwd?: string; logger?: FlowLogger } = {},
 ): ResolvedDeployment {
+  rejectRemovedConfig(config);
   const dataDir = resolve(cwd, textField(config.dataDir, 'dataDir', 4096));
   const workspace = resolve(cwd, textField(config.workspace, 'workspace', 4096));
   const provider = textField(config.provider, 'provider', 512);
   const model = textField(config.model, 'model', 512);
-
-  const context: FlowContextLimits = {
-    role: integer(config.context.role, 1, 2 ** 31, 'context.role'),
-    worker: integer(config.context.worker, 1, 2 ** 31, 'context.worker'),
-    model: integer(config.context.model, 1, 2 ** 31, 'context.model'),
-    compaction_threshold: threshold(config.context.compaction_threshold, 'context.compaction_threshold'),
-    server_input: integer(config.context.server_input, 1, 2 ** 31, 'context.server_input'),
-  };
 
   const heartbeatMs = integer(config.heartbeatMs, 1, 2 ** 31, 'heartbeatMs');
   const leaseTtlMs = integer(config.leaseTtlMs, 1, 2 ** 31, 'leaseTtlMs');
@@ -320,13 +308,14 @@ export function resolveConfig(
         const budget = completeBudget(config.defaultBudget.get(), 'defaultBudget');
         const limits = completeLimits(config.defaultLimits.get(), 'defaultLimits');
         const serial = config.defaultDispatchMode.get() === 'serial';
-        const route = config.defaultModel.get() ?? null;
+        const configured = config.defaultModel.get() ?? null;
+        const route = configured === null ? null : validateModelSelection(configured, 'defaultModel');
         const effort = config.defaultReasoningEffort.get();
         return {
           start: { workspace, capabilities: defaultCapabilities, budget: serial ? { ...budget, max_active_agents: 1 } : budget,
             limits: serial ? { ...limits, max_active_agents: 1, max_llm_concurrency: 1 } : limits },
           model: route === null ? null : { provider: textField(route.provider, 'defaultModel.provider', 512), model: textField(route.model, 'defaultModel.model', 512) },
-          options: { maxTokens: config.maxTokens.get(), ...(effort === 'inherit' ? {} : { reasoningEffort: effort }) },
+          options: effort === 'inherit' ? {} : { reasoningEffort: effort },
           dispatchMode: serial ? 'serial' : 'parallel',
         };
       },
@@ -334,9 +323,7 @@ export function resolveConfig(
         provider,
         model,
         reasoningEffort: config.reasoningEffort,
-        maxTokens: integer(config.maxTokens.get(), 1, 2 ** 31, 'maxTokens'),
       },
-      context,
       tickMs: integer(config.tickMs, 1, 2 ** 31, 'tickMs'),
       staleMs: integer(config.staleMs, 1, 2 ** 31, 'staleMs'),
       maxTurnMs: integer(config.maxTurnMs, 1, 2 ** 31, 'maxTurnMs'),
@@ -355,7 +342,7 @@ export function resolveConfig(
  * explicit illegal value is refused by the same validator a command path uses.
  * `capabilities: []` is a named empty set and stays empty; `budget` and
  * `limits` merge key by key rather than wholesale, so naming one dimension
- * keeps the other five.
+ * keeps the other dimensions.
  * @param request - the caller's request.
  * @param defaults - the deployment's defaults.
  * @param internals - development-only reproducible fixtures.
@@ -366,6 +353,7 @@ export function resolveStartRequest(
   defaults: FlowStartDefaults,
   internals: FlowStartInternals = {},
 ): FlowStartSpec {
+  rejectRemovedConfig(request);
   const objective = validateText(request.objective, 'spec.objective', 16_384);
 
   const workspace = request.workspace === undefined
@@ -405,17 +393,10 @@ export function resolveStartRequest(
   };
 }
 
-function threshold(value: number, label: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1) {
-    fail(`Invalid ${label}: expected a finite number in (0, 1]`);
-  }
-  return value;
-}
-
 /**
  * A deployment's budget defaults, completed against the interactive envelope.
  *
- * A profile row may name one dimension (`defaultBudget: {model_requests: 37}`)
+ * A profile row may name one dimension (`defaultBudget: {tool_calls: 37}`)
  * and mean "this, and the usual values for the rest": the schema fills each
  * omitted member with the interactive default, and this pass keeps an explicit
  * value over it. Nothing is invented beyond the documented defaults.
@@ -423,8 +404,6 @@ function threshold(value: number, label: string): number {
 function completeBudget(input: FlowBudgetInput, label: string): FlowBudget {
   const validated = validateBudget({ ...input }, label);
   return {
-    tokens: validated.tokens ?? INTERACTIVE_BUDGET.tokens,
-    model_requests: validated.model_requests ?? INTERACTIVE_BUDGET.model_requests,
     tool_calls: validated.tool_calls ?? INTERACTIVE_BUDGET.tool_calls,
     wall_time_ms: validated.wall_time_ms ?? INTERACTIVE_BUDGET.wall_time_ms,
     agents: validated.agents ?? INTERACTIVE_BUDGET.agents,
@@ -438,23 +417,11 @@ function completeBudget(input: FlowBudgetInput, label: string): FlowBudget {
  * `DEFAULT_LIMITS` is the protocol's own fallback for a request that names no
  * limits at all (a directly constructed runtime, a pure business test); a
  * deployment that names some limits means the interactive envelope with those
- * replaced — otherwise `worker_model_requests` would fall back to the
- * protocol's `0` and refuse a Worker its first request.
+ * replaced, with omitted collaboration limits keeping their interactive value.
  */
 function completeLimits(input: FlowLimitsInput, label: string): FlowLimits {
   const merged = { ...INTERACTIVE_LIMITS, ...validateLimits({ ...input }, label) };
-  return {
-    max_children: merged.max_children,
-    max_depth: merged.max_depth,
-    max_agents: merged.max_agents,
-    max_active_agents: merged.max_active_agents,
-    max_llm_concurrency: merged.max_llm_concurrency,
-    max_attempts: merged.max_attempts,
-    max_corrections: merged.max_corrections,
-    max_role_turns: merged.max_role_turns,
-    worker_model_requests: merged.worker_model_requests,
-    worker_max_tokens: merged.worker_max_tokens,
-  };
+  return { ...merged };
 }
 
 function validateAcceptanceCriteria(value: unknown): readonly string[] | undefined {

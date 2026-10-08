@@ -25,7 +25,7 @@ export function legalHostUsage(): {
   answered: number
   status: FlowSnapshot['cluster']['status']
 } {
-  const request: FlowStartRequest = { objective: 'ship it', budget: { tokens: 100_000 } };
+  const request: FlowStartRequest = { objective: 'ship it', budget: { tool_calls: 1000 } };
 
   // `start` resolves the rest of the envelope from the deployment configuration.
   const snapshot = ctx.flow.start(request);
