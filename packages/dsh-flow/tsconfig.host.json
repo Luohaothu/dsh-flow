@@ -14,6 +14,7 @@
     "src/index.ts",
     "src/config.ts",
     "src/identity.ts",
+    "src/agent-session.ts",
     "src/messages.ts",
     "src/errors.ts",
     "src/service.ts",

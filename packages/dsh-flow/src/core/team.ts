@@ -9,6 +9,7 @@ import { budgetView } from './budget.ts';
 import { fail } from '../errors.ts';
 import { agentGivenName, ROLE_LABELS as ROLES } from '../identity.ts';
 import { communicationCategory, communicationContent } from '../messages.ts';
+import { projectAgentSession } from '../agent-session.ts';
 import type { FlowJsonValue, FlowAgentSession, FlowTeamAgent, FlowTeamAllowance, FlowTeamCreateRequest, FlowTeamMetric, FlowTeamRun, FlowTeamSnapshot, FlowTeamState } from '../types.ts';
 import { validateBudget, validateCapabilities, textField, isFlowJsonValue } from '../validation.ts';
 import { validateLimits } from './protocol.ts';
@@ -282,9 +283,7 @@ export function agentSession(runtime: ClusterRuntime, sessionId: string): FlowAg
   const team = readTeam(runtime, String(owner.main_session_id), identity.cluster_id);
   const agent = team.agents.find(agent => agent.id === identity.id);
   if (!agent) return null;
-  const reason = agent.recycled ? '该智能体已回收，不再接受消息。可在这里查看完整执行记录。'
-    : TERMINAL.has(team.run.raw_state) ? '团队已结束，不再接受消息。历史对话和轨迹仍可查看。' : null;
-  return {run:team.run,agent,can_message:reason === null,message_block_reason:reason};
+  return projectAgentSession(team.run, agent);
 }
 /** Human input targets only the selected Agent and stays under Flow scheduling. */
 export function promptAgent(runtime: ClusterRuntime, sessionId: string, requestId: string, content: string, clientTimeZone?: string, mode: 'queue' | 'steer' = 'queue'): void {

@@ -14,6 +14,7 @@ import {createUserMessage,ToolCallId} from '@deepseek-ai/dsh-llm';
 import type {ToolDefinition,ToolRunContext} from '@deepseek-ai/dsh-tools';
 import {Config,resolveConfig} from '../../packages/dsh-flow/src/config.ts';
 import {ClusterRuntime} from '../../packages/dsh-flow/src/core/cluster.ts';
+import {projectAgentSession} from '../../packages/dsh-flow/src/agent-session.ts';
 import {registerTeamTools,pollTeam} from '../../packages/dsh-flow/src/team-tools.ts';
 import type {FlowTeamCreateRequest} from '../../packages/dsh-flow/src/types.ts';
 
@@ -140,3 +141,26 @@ test('a selected native Agent receives one human prompt, with retry and recyclin
   assert.throws(()=>f.runtime.promptAgent(selected.session_id,'new-rpc','New input'),/回收/);
   assert.equal(f.runtime.store.all("SELECT id FROM messages WHERE id LIKE 'human:%'").length,1);
 });
+
+for (const status of ['RUNNING','PAUSED','BLOCKED','COMPLETED','FAILED','CANCELLED'] as const) {
+  test(`native continuation and browser seeding agree for a ${status} team and completed Agent`,async t=>{
+    const f=fixture(t),created=await f.call('agent_team_create',{launch_id:'launch',...f.request});
+    const selected=f.runtime.store.listAgents(created.run_id,{role:'auditor'})[0]!;
+    f.runtime.store.updateAgent(selected.id,{status:'COMPLETED'});
+    f.runtime.store.updateCluster(created.run_id,{status});
+    const team=f.runtime.teamRead('main',created.run_id),agent=team.agents.find(agent=>agent.id===selected.id)!;
+    const terminal=['COMPLETED','FAILED','CANCELLED'].includes(status);
+    const expected={run:team.run,agent,can_message:!terminal,message_block_reason:terminal?'团队已结束，不再接受消息。历史对话和轨迹仍可查看。':null};
+    assert.equal(agent.state,'completed');assert.equal(agent.recycled,false);
+    assert.deepEqual(f.runtime.agentSession(selected.session_id),expected);
+    assert.deepEqual(projectAgentSession(team.run,agent),expected);
+
+    f.runtime.store.recordTeamEnd(selected,'COMPLETED');
+    f.runtime.store.updateAgent(selected.id,{status:'TERMINATED'});
+    const recycled=f.runtime.teamRead('main',created.run_id),retained=recycled.agents.find(agent=>agent.id===selected.id)!;
+    const history={run:recycled.run,agent:retained,can_message:false,message_block_reason:'该智能体已回收，不再接受消息。可在这里查看完整执行记录。'};
+    assert.equal(retained.state,'completed');assert.equal(retained.recycled,true);
+    assert.deepEqual(f.runtime.agentSession(selected.session_id),history,'resource recycling determines the message even for a terminal team');
+    assert.deepEqual(projectAgentSession(recycled.run,retained),history);
+  });
+}

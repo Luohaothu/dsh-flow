@@ -78,10 +78,10 @@ export function duration(start: number, end: number | null, now = Date.now()): s
 export interface LocalView {
   selected: string | null; inspector: boolean; collapsed: Set<string>;
   view: 'graph' | 'list'; zoom: number; x: number; y: number;
-  interacted: boolean; positions: Map<string, { x: number; y: number }>;
+  interacted: boolean;
   showEnded: boolean; detailsTab: 'conversation' | 'information'; page: number; manualNarrow: boolean;
 }
 export function createLocalView(view: 'graph' | 'list'): LocalView {
   return { selected: null, inspector: false, collapsed: new Set(), view,
-    zoom: 1, x: 80, y: 80, interacted: false, positions: new Map(), showEnded: true, detailsTab: 'conversation', page: 100, manualNarrow: false };
+    zoom: 1, x: 80, y: 80, interacted: false, showEnded: true, detailsTab: 'conversation', page: 100, manualNarrow: false };
 }

@@ -11,6 +11,7 @@ packages/dsh-flow/
     config.ts              配置解析与启动参数合并
     service.ts             集群操作与主会话团队绑定
     types.ts               宿主端、远程接口、浏览器端共享的传输类型
+    agent-session.ts       成员会话输入资格与禁用原因的共享投影
     validation.ts          输入校验
     errors.ts              公共错误构造
     command.ts             /agent-team skill 注册、启动意图与主会话公告

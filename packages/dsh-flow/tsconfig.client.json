@@ -12,6 +12,7 @@
   },
   "files": [
     "src/client.ts",
+    "src/agent-session.ts",
     "src/client/communication.tsx",
     "src/messages.ts",
     "src/client/team-view.tsx",

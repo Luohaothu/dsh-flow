@@ -17,6 +17,7 @@ import { PreferenceStore } from './client/preferences.ts';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
 import { AgentSessionSource } from './client/agent-session.ts';
+import { projectAgentSession } from './agent-session.ts';
 import { createElement } from 'react';
 import type { LocalView } from './client/tree.ts';
 import { createReader, ReadOnlyConversation, NativeReadOnlyTranscript } from './client/reader.tsx';
@@ -120,7 +121,7 @@ const teamUiPlugin = {
         observer:observer(id),preferences,local,reader:sessionId=>createReader(ctx,sessionId),sidebar:agent=>openAgentSidebar(ctx,agent.session_id,agent.name),
         openAgent:agent=>{
           const team=observer(id).getSnapshot().team;
-          if(team)for(const member of team.agents){agentSource(member.session_id).seed({run:team.run,agent:member,can_message:!member.recycled&&!['completed','failed','cancelled'].includes(team.run.state),message_block_reason:member.recycled?'该智能体已回收，不再接受消息。可在这里查看完整执行记录。':['completed','failed','cancelled'].includes(team.run.state)?'团队已结束，不再接受消息。历史对话和轨迹仍可查看。':null});}
+          if(team)for(const member of team.agents)agentSource(member.session_id).seed(projectAgentSession(team.run,member));
           ctx.uiWorkspace.openSession(SessionId(agent.session_id),{allowUnlisted:true,observationOnly:true});
         },
         main:()=>{ctx.uiWorkspace.openSession(id);const binding=ctx.sessions.binding(id);if(binding)requestAnimationFrame(()=>ctx.conversation.input.for(binding.ctx).focus());},
