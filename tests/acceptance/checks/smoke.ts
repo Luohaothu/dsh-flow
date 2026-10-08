@@ -4,6 +4,7 @@
  * independent acceptance, no duplicated accounting.
  */
 import { join } from 'node:path';
+import { completeBuildHashes } from '../build-fingerprint.ts';
 
 import { findSessionFile, readSessionEvents } from '../../../src/host/session-scan.ts';
 import type { SessionEvent } from '../../../src/host/session-scan.ts';
@@ -168,22 +169,10 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   // publishes the drift it measured *before* the checks (`build_drift`), and that
   // is what is asserted.
   const hashes = report.build_hashes ?? null;
-  const hashKeys = [
-    'plugin_source', 'lib_index', 'lib_client', 'lib_command', 'lib_web',
-    'typert_host', 'typert_host_types', 'typert_remote_client', 'typert_remote_client_types',
-    'host_source', 'acceptance_source', 'case_file',
-  ];
-  const hashesComplete = hashes !== null
-    && hashKeys.every(key => key in hashes && hashes[key] !== null && hashes[key] !== undefined)
-    && ['plugin_source', 'host_source', 'acceptance_source'].every(key => {
-      const tree = asObject(hashes[key]);
-      return typeof tree?.digest === 'string' && typeof tree.files === 'number' && tree.files > 0;
-    })
-    && (asArray(hashes.patches)?.length ?? 0) > 0;
+  const hashesComplete = completeBuildHashes(hashes);
   // Three explicit cases, never conflated: an incomplete fingerprint is a
-  // failure, a report that predates the measurement is UNKNOWN, a measured equal
-  // fingerprint passes and a measured *different* one fails. Collapsing the last
-  // two into "not null" turned a detected mismatch into "unmeasured".
+  // failure, a report without the measurement is UNKNOWN, a measured equal
+  // fingerprint passes and a measured different one fails.
   const measured = report.build_drift !== undefined;
   const hashPassed = !hashesComplete ? false : (measured ? report.build_drift === null : null);
   checks.push(check('build-hashes-recorded', hashPassed,

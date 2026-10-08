@@ -13,6 +13,7 @@
  * it. The guards are checks, not casts: a malformed reply throws or yields
  * `null` at the boundary instead of being read as if it had the expected shape.
  */
+import type { BuildHashes } from './build-fingerprint.ts';
 import type { DshHost } from '../../src/host/host.ts';
 import type { MockModelHandle } from '../../src/host/mock-model.ts';
 import type { CaseDefinition, RunLayout } from '../../src/host/types.ts';
@@ -159,42 +160,6 @@ export interface RunSpec {
   delegation?: readonly JsonObject[];
   message_fixture?: readonly JsonObject[];
   notes?: string;
-  [key: string]: unknown;
-}
-
-// --------------------------------------------------------------- fingerprint
-
-/** One hashed source tree: the digest and how many files fed it. */
-export interface HashTree {
-  readonly digest: string | null;
-  readonly files: number;
-}
-
-/** One hashed file, named by the path it was read from. */
-export interface HashEntry {
-  readonly path: string;
-  readonly digest: string | null;
-}
-
-/**
- * The code fingerprint of one run. The key set is open by design: the
- * `build-hashes-recorded` check enumerates it, so an entry the runner adds is
- * measured rather than silently ignored.
- */
-export interface BuildHashes {
-  plugin_source: HashTree;
-  host_source: HashTree;
-  lib_index: string | null;
-  lib_client: string | null;
-  lib_command: string | null;
-  lib_web: string | null;
-  typert_host: string | null;
-  typert_host_types: string | null;
-  typert_remote_client: string | null;
-  typert_remote_client_types: string | null;
-  acceptance_source: HashTree;
-  case_file: string | null;
-  patches: readonly HashEntry[];
   [key: string]: unknown;
 }
 

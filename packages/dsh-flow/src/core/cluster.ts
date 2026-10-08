@@ -2430,7 +2430,6 @@ case 'effects': {
       ...rotate(withFreshRoles, rotation),
       ...rotate(nodes.filter(node => !withFreshRoles.includes(node)), rotation),
     ];
-    const refusalsBefore = this.#refusals.get(id) ?? 0;
     let registered = 0;
 
     // Management and Worker turns share the active window. Reserve a slot
@@ -2510,7 +2509,6 @@ case 'effects': {
     this.#publishLoad(cluster, limits);
 
     this.#rotation.set(id, (rotation + 1) % Math.max(1, ordered.length));
-    void refusalsBefore;
     if (!registered) this.evaluateCompletion(id);
     else if (this.#activeTurns.size === 0) this.wake();
   }
@@ -4733,7 +4731,6 @@ case 'effects': {
 
   recordBudgetRefusal(agent: AgentRecord | null, reason: string, facts: BudgetRefusalFacts = {}): unknown {
     if (!agent?.cluster_id) return null;
-    this.#refusals.set(agent.cluster_id, (this.#refusals.get(agent.cluster_id) ?? 0) + 1);
     // A cluster that cannot fund one complete request must stop rather than
     // keep dispatching requests that will fail until its wall deadline.
     if (facts.dimension === 'tokens' && facts.available === 0) {
@@ -5881,9 +5878,6 @@ case 'effects': {
   }
 
   #auditCursor = new Map();
-  /** Structured refusals per cluster, so a pass can tell "nothing to do" from
-   *  "everything was refused". */
-  #refusals = new Map();
 
   #rolePrompt(cluster: ClusterRecord, node: NodeRecord, agent: AgentRecord, role: FlowAgentRole, pending: readonly PendingAction[]): string {
     // Prompts carry pending actions and references. Models load full evidence

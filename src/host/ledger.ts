@@ -44,27 +44,12 @@ export interface WorkerActivation {
   with_turns: number;
 }
 
-/** One worker's provider-request coverage. */
-export interface WorkerRequestCoverageRow {
-  agent_id: string | null;
-  node_id: string | null;
-  turns: number;
-  requests: number;
-  not_sent: number;
-}
-
 /** Two independently measured concurrency ceilings. */
 export interface ConcurrencyPeaks {
   resident_peak: number | null;
   provider_inflight_peak: number | null;
   resident_samples: number;
   provider_samples: number;
-}
-
-/** A status histogram row. */
-export interface StatusCountRow {
-  status: string | null;
-  c: number;
 }
 
 /** One recipient's record of a message, with its occurrence count. */
@@ -173,22 +158,6 @@ export function workerActivation(ledger: Ledger, clusterId: string): WorkerActiv
   };
 }
 
-/** Compact (worker agent, transaction) pairs with their provider request counts. */
-export function workerRequestCoverage(ledger: Ledger, clusterId: string): WorkerRequestCoverageRow[] {
-  return ledger.all(
-    `SELECT a.id AS agent_id, a.node_id, a.turns,
-            (SELECT COUNT(*) FROM usage_receipts u WHERE u.agent_id=a.id AND u.kind='worker') AS requests,
-            (SELECT COUNT(*) FROM usage_receipts u WHERE u.agent_id=a.id AND u.kind='worker' AND u.status='NOT_SENT') AS not_sent
-     FROM agents a WHERE a.cluster_id=? AND a.role='worker'`, clusterId)
-    .map(row => ({
-      agent_id: textOf(row, 'agent_id'),
-      node_id: textOf(row, 'node_id'),
-      turns: countOf(row, 'turns'),
-      requests: countOf(row, 'requests'),
-      not_sent: countOf(row, 'not_sent'),
-    }));
-}
-
 /**
  * Two different ceilings, measured two different ways:
  * `resident_peak` is the peak of locally registered live turn handles (from
@@ -225,11 +194,6 @@ export function concurrencyPeaks(ledger: Ledger, clusterId: string): Concurrency
   };
 }
 
-export function transactionStatusCounts(ledger: Ledger, clusterId: string): StatusCountRow[] {
-  return ledger.all('SELECT status, COUNT(*) AS c FROM transactions WHERE cluster_id=? GROUP BY status', clusterId)
-    .map(row => ({ status: textOf(row, 'status'), c: countOf(row, 'c') }));
-}
-
 export function deliveryCounts(ledger: Ledger, clusterId: string): DeliveryCountRow[] {
   return ledger.all(
     `SELECT r.recipient, r.message_id, r.status, COUNT(*) AS c
@@ -241,11 +205,6 @@ export function deliveryCounts(ledger: Ledger, clusterId: string): DeliveryCount
       status: textOf(row, 'status'),
       c: countOf(row, 'c'),
     }));
-}
-
-export function effectCounts(ledger: Ledger, clusterId: string): StatusCountRow[] {
-  return ledger.all('SELECT status, COUNT(*) AS c FROM effects WHERE cluster_id=? GROUP BY status', clusterId)
-    .map(row => ({ status: textOf(row, 'status'), c: countOf(row, 'c') }));
 }
 
 export function pendingWork(ledger: Ledger, clusterId: string): {

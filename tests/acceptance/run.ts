@@ -17,11 +17,13 @@ import { copyFileSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writ
 import type { Dirent } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DshHost, buildHostEnv, CASE_ENV_KEYS, createRunLayout, ensureProfile, WEB_PROFILE_BUNDLES, PROJECT_ROOT } from '../../src/host/host.ts';
 import { openLedger, writeScopeAnalysis } from '../../src/host/ledger.ts';
+import { buildDrift, computeBuildHashes, hashFile } from './build-fingerprint.ts';
+import type { BuildHashes } from './build-fingerprint.ts';
 import { startMockModel } from '../../src/host/mock-model.ts';
 import { buildScenario } from '../../src/host/mock-scenarios.ts';
 import type { MockModelHandle } from '../../src/host/mock-model.ts';
@@ -32,8 +34,8 @@ import {
   asArray, asNumber, asObject, asString, decodeCaseDefinition, decodeCheckOutcome, decodeLiveChecks, decodeEventsPage, decodeSingleReply, decodeSnapshot, decodeStartReply, messageOf,
 } from './context.ts';
 import type {
-  AcceptanceReport, BeforeCheckContext, BudgetProximity, BuildHashes, CheckContext, CheckOutcome, ChecksModule,
-  ClassificationOutcome, HashTree, JsonObject, KillTrigger, LedgerLayout, LedgerRow, LedgerUsage, LimitExhausted, LimitReached,
+  AcceptanceReport, BeforeCheckContext, BudgetProximity, CheckContext, CheckOutcome, ChecksModule,
+  ClassificationOutcome, JsonObject, KillTrigger, LedgerLayout, LedgerRow, LedgerUsage, LimitExhausted, LimitReached,
   LiveCheckContext, LiveCheckReport, LiveChecks, MechanismReport, ModelRoute, MockRequestSummary, Preparation,
   RestartFacts, RunArgs, RunEvent, RunSpec, RunSnapshot, SingleReply, SpecTransaction, StoneLedger,
 } from './context.ts';
@@ -255,98 +257,6 @@ export async function runLiveChecks<T extends LiveCheckTarget>(
     throw error;
   }
   return outcome;
-}
-
-function hashText(text: string | Buffer): string {
-  return `sha256:${createHash('sha256').update(text).digest('hex')}`;
-}
-
-function hashFile(path: string): string | null {
-  return existsSync(path) ? hashText(readFileSync(path)) : null;
-}
-
-/**
- * One digest over every file of one or more source trees, plus the file count.
- *
- * Paths are made relative to the tree, so the fingerprint describes the sources
- * and their layout rather than the directory this checkout happens to live in:
- * the same commit verified from a second checkout must produce the same digest,
- * and an absolute path would make every recorded hash unverifiable anywhere
- * else. An `extra` tree is folded into the same digest under its own prefix, so
- * sources that live in a second directory are still covered — and a name in one
- * tree never aliases a name in the other.
- */
-export function hashTree(root: string, extra: readonly { prefix: string; root: string }[] = [], filter?: (relativePath: string) => boolean): HashTree {
-  const files: Array<{ path: string; digest: string | null }> = [];
-  for (const tree of [{ prefix: '', root }, ...extra]) {
-    if (!existsSync(tree.root)) return { digest: null, files: 0 };
-    for (const entry of walk(tree.root, ['node_modules'])) {
-      const path = relative(tree.root, entry.path).split(sep).join('/');
-      if (filter && !filter(path)) continue;
-      files.push({ path: tree.prefix ? `${tree.prefix}/${path}` : path, digest: hashFile(entry.path) });
-    }
-  }
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  const digest = hashText(files.map(entry => `${entry.path}:${entry.digest}`).join('\n'));
-  return { digest, files: files.length };
-}
-
-/**
- * Which part of the build fingerprint moved between two samples, or null when
- * the run describes one single build. Kept as a named function because the
- * claim "this report describes one build" is only checkable if the rule that
- * decides it is itself checkable.
- */
-export function buildDrift(before: BuildHashes | null | undefined, after: BuildHashes | null | undefined): string | null {
-  if (!before || !after) return 'the fingerprint was never taken';
-  const changed = [];
-  for (const key of [
-    'plugin_source', 'lib_index', 'lib_client', 'lib_command', 'lib_web',
-    'typert_host', 'typert_host_types', 'typert_remote_client', 'typert_remote_client_types',
-    'host_source', 'acceptance_source', 'case_file',
-  ]) {
-    if (JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null)) changed.push(key);
-  }
-  const beforePatches = JSON.stringify(before.patches ?? []);
-  if (beforePatches !== JSON.stringify(after.patches ?? [])) changed.push('patches');
-  return changed.length ? changed.join(', ') : null;
-}
-
-/** The package that carries the plugin's sources and build outputs. */
-const PLUGIN_ROOT = join(PROJECT_ROOT, 'packages/dsh-flow');
-
-/**
- * The code fingerprint of one run: the plugin sources, its built entry points,
- * both generated Typert artifact pairs, the dev chain, the case file and every
- * patch the host loads. It is what makes "the same build" a checkable claim
- * instead of an assumption.
- */
-export function computeBuildHashes(caseDef: CaseDefinition, patches: readonly string[]): BuildHashes {
-  const lib = join(PLUGIN_ROOT, 'lib');
-  return {
-    // The plugin's own sources: every `.ts`/`.tsx` the package is built from.
-    plugin_source: hashTree(join(PLUGIN_ROOT, 'src'), [], path => path.endsWith('.ts') || path.endsWith('.tsx')),
-    host_source: hashTree(join(PROJECT_ROOT, 'src/host'), [
-      { prefix: 'scripts', root: join(PROJECT_ROOT, 'scripts') },
-    ], path => path.endsWith('.ts')),
-    lib_index: hashFile(join(lib, 'index.js')),
-    lib_client: hashFile(join(lib, 'client.js')),
-    lib_command: hashFile(join(lib, 'command.js')),
-    lib_web: hashFile(join(lib, 'web.js')),
-    typert_host: hashFile(join(lib, 'typert.host.js')),
-    typert_host_types: hashFile(join(lib, 'typert.host.d.ts')),
-    typert_remote_client: hashFile(join(lib, 'typert.remote-client.js')),
-    typert_remote_client_types: hashFile(join(lib, 'typert.remote-client.d.ts')),
-    // The acceptance code is part of the experiment: a checker or a scenario
-    // that changed mid-run would make the report describe two different tests.
-    // Host drivers, mock scenarios and ledger checks share this fingerprint.
-    // The `host/` prefix identifies their files within the combined namespace.
-    acceptance_source: hashTree(join(PROJECT_ROOT, 'tests/acceptance'), [
-      { prefix: 'host', root: join(PROJECT_ROOT, 'src/host') },
-    ]),
-    case_file: caseDef.id ? hashFile(join(CASES_DIR, `${caseDef.id}.json`)) : null,
-    patches: (patches ?? []).map(path => ({ path, digest: hashFile(path) })),
-  };
 }
 
 function loadCase(name: string | null): CaseDefinition {
@@ -1939,12 +1849,11 @@ function listSessions(layout: RunLayout): SessionFile[] {
   return walk(root).slice(0, 500);
 }
 
-function walk(root: string, excludedDirectories: readonly string[] = []): SessionFile[] {
+function walk(root: string): SessionFile[] {
   const out: SessionFile[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (excludedDirectories.includes(entry.name)) continue;
     const full = join(root, entry.name);
-    if (entry.isDirectory()) out.push(...walk(full, excludedDirectories));
+    if (entry.isDirectory()) out.push(...walk(full));
     else out.push({ path: full, bytes: statSync(full).size });
   }
   return out;

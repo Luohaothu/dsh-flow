@@ -14,8 +14,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createRunLayout, buildHostEnv, inheritEnv, HOST_ENV_ALLOWLIST, RUNNER_ENV_KEYS } from '../../../src/host/host.ts';
-import { namespaceFixtures, assertTierBudget, validateCaseEnv, modelRouteFromEnv, computeBuildHashes, buildDrift, hashTree, CASE_ENV_KEYS, readStoneLedger, mechanismVerdict, measureRun, classifyOutcome, waitForKillEvent } from '../run.ts';
+import { namespaceFixtures, assertTierBudget, validateCaseEnv, modelRouteFromEnv, CASE_ENV_KEYS, readStoneLedger, mechanismVerdict, measureRun, classifyOutcome, waitForKillEvent } from '../run.ts';
 import type { MeasuredRun } from '../run.ts';
+import { computeBuildHashes, buildDrift, hashTree } from '../build-fingerprint.ts';
 import type { JsonObject, MechanismReport, StoneLedger } from '../context.ts';
 import { asObject, decodeCaseDefinition, decodeSingleReply, decodeSnapshot, decodeLiveChecks, decodeCheckOutcome } from '../context.ts';
 import { DatabaseSync } from 'node:sqlite';

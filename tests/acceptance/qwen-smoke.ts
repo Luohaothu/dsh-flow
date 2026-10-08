@@ -14,7 +14,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DshHost, buildHostEnv, createRunLayout, ensureProfile, WEB_PROFILE_BUNDLES, PROJECT_ROOT } from '../../src/host/host.ts';
-import { computeBuildHashes, ipcBridgePatchText, startAcceptanceHost } from './run.ts';
+import { ipcBridgePatchText, startAcceptanceHost } from './run.ts';
+import { computeBuildHashes } from './build-fingerprint.ts';
 import { findSessionFile, readSessionEvents } from '../../src/host/session-scan.ts';
 import type { RunLayout } from '../../src/host/types.ts';
 import type { SessionEvent, SessionReadResult } from '../../src/host/session-scan.ts';
