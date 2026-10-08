@@ -27,6 +27,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import type {} from '@deepseek-ai/dsh-tools';
 import type { ToolDispatchExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 import { registerRoleTools } from './role-tools.ts';
+import { prepareModelSelection } from './model-selection.ts';
 
 import { ClusterStore, decodeJson } from './store.ts';
 import type { CommandApplyResult } from './store.ts';
@@ -5380,13 +5381,8 @@ case 'effects': {
 
   modelFor(agent: AgentRecord): FlowModelSelection {
     const root=this.store.nodesInSubtree(agent.cluster_id,null).find(node=>node.parent_id===null);
-    const route=root?.scope?.team_model;
-    const base = { ...(route?{maxTokens:this.config.model.maxTokens,...route}:this.config.model), ...(root?.scope?.team_model_options ?? {}), ...(agent.meta?.model ?? {}) };
-    // A scale tier may cap generated tokens per Worker; management keeps the
-    // configured budget, since its planning and audit turns are longer.
-    const cap = Number(this.store.getCluster(agent.cluster_id)?.limits?.worker_max_tokens) || null;
-    if (cap && agent.role === 'worker') return { ...base, maxTokens: Math.min(base.maxTokens ?? cap, cap) };
-    return base;
+    return prepareModelSelection(this.config.model, root?.scope,
+      this.store.getCluster(agent.cluster_id)?.limits.worker_max_tokens)(agent);
   }
 
   /**

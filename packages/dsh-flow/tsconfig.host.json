@@ -29,6 +29,7 @@
     "src/core/cluster.ts",
     "src/core/communication.ts",
     "src/core/model.ts",
+    "src/core/model-selection.ts",
     "src/core/protocol.ts",
     "src/core/role-tools.ts",
     "src/core/runtime.ts",

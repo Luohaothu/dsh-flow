@@ -5,6 +5,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-session-projection';
 import type { ClusterRuntime } from './cluster.ts';
 import type { FlowModelSelection } from './model.ts';
+import { prepareModelSelection } from './model-selection.ts';
 import { budgetView } from './budget.ts';
 import { fail } from '../errors.ts';
 import { agentGivenName, ROLE_LABELS as ROLES } from '../identity.ts';
@@ -171,6 +172,9 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
       if (page.length < 500) break;
     }
     const nodes = new Map(store.nodesInSubtree(runId, null).map(node => [node.id, node]));
+    const root = [...nodes.values()].find(node => node.parent_id === null);
+    const modelFor = prepareModelSelection(runtime.config.model, root?.scope,
+      store.getCluster(runId)?.limits.worker_max_tokens);
     const allowances = store.listBudgets(runId).flatMap(row => {
       const view = budgetView(row);
       if (!view) return [];
@@ -220,6 +224,8 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
       const parent = text(field(meta, 'parent_agent_id')) ?? text(field(meta, 'allocated_by'));
       const relationKnown = Reflect.has(meta, 'parent_agent_id') || Reflect.has(meta, 'allocated_by');
       const model=models.get(agent.id);
+      const recordedModel = text(model?.model);
+      const selectedModel = recordedModel === null ? modelFor(agent) : null;
       const session=runtime.ctx.get('sessions')?.get(SessionId(agent.session_id));
       const lastUsed=session?runtime.ctx.get('sessionProjections')?.stateOf(session,'modelSelection')?.lastUsed:null;
       return {
@@ -232,8 +238,8 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
         recycled: agent.status === 'TERMINATED' || allocations.get(agent.id) === 'RELEASED',
         created: agent.created, ended: number(observation?.ended), version: run.version,
         tokens: metric(tokens),
-        model: text(model?.model) ?? runtime.modelFor(agent).model ?? null,
-        reasoning_effort: model ? text(model.reasoning_effort) ?? lastUsed?.reasoningEffort ?? null : runtime.modelFor(agent).reasoningEffort ?? null,
+        model: recordedModel ?? selectedModel?.model ?? null,
+        reasoning_effort: model ? text(model.reasoning_effort) ?? lastUsed?.reasoningEffort ?? null : selectedModel?.reasoningEffort ?? null,
         allowances: allowances.filter(({row}) => row.scope_kind === 'agent' ? row.scope_id === agent.id : row.scope_kind === 'node' && row.scope_id === agent.node_id).flatMap(({entries}) => entries),
         context_used: number(field(context, 'after')), context_limit: number(field(context, 'context_limit')),
         compacted_at: compactions.get(agent.id) ?? null,

@@ -33,6 +33,7 @@ packages/dsh-flow/
     core/
       protocol.ts          角色权限、动作、状态、能力映射
       model.ts             内部对象类型与组件接口
+      model-selection.ts   团队与成员模型选择的合并及输出限制
       cluster.ts           控制循环、调度、完成收尾、恢复及查询
       actions.ts           任务单元、分配和审查动作处理
       role-tools.ts        智能体作用域内的模型工具

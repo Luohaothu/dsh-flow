@@ -74,6 +74,7 @@ export interface TurnIdentity {
  */
 export interface NodeScope {
   readonly team_model?: FlowModelSelection
+  readonly team_model_options?: FlowModelSelection
   readonly transaction_id?: string | null
   readonly objective?: string
   readonly root?: boolean
