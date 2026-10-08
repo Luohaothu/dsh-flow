@@ -25,27 +25,6 @@ import type {
   MockScenarioReply,
 } from './mock-model.ts';
 
-/**
- * The first string value under `field`, at any depth of a decoded tool result.
- * A verdict's payload nests differently per action (`request_replan` reports the
- * issue under `result`, a rejection reports it beside the audit id), so the id is
- * looked up by name rather than by a shape the fixture would have to guess.
- */
-export function firstStringField(value: unknown, field: string, depth = 0): string | null {
-  if (!value || typeof value !== 'object' || depth > 6) return null;
-  const record = asRecord(value);
-  if (record) {
-    const direct = record[field];
-    if (typeof direct === 'string') return direct;
-  }
-  const children = Array.isArray(value) ? listOf(value) : Object.values(value);
-  for (const child of children) {
-    const found = firstStringField(child, field, depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
-
 const ROLE_TOOL_NAME: Record<string, string> = { orchestrator: 'flow_transaction', allocator: 'flow_allocation', auditor: 'flow_audit' };
 const WORKER_TOOL_NAME = 'flow_transaction';
 
@@ -726,11 +705,13 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
     // Per transaction: how many submissions existed when its issue was raised. A
     // correction is verified only against work that came after.
     raisedFor: new Map<unknown, number>(),
-    // The issue a verdict raised, per transaction. Its id only ever comes back
-    // in that verdict's own result, so it is remembered from there and verified
-    // explicitly before the replacement is approved.
-    issueIdByTx: new Map<unknown, string>(),
-    verificationSent: new Set<string>(),
+    // Each successful correction retains its own evidence window until the
+    // corresponding explicit verification succeeds.
+    issuesByTx: new Map<unknown, Map<string, number>>(),
+    correctionAttempts: new Map<string, { action: string; transaction: string; key: string; after: number }>(),
+    confirmedCorrections: new Set<string>(),
+    verificationAttempts: new Map<string, string>(),
+    verifiedIssues: new Set<string>(),
     // Why each open issue was or was not verified, in order: the decision this
     // fixture makes must be visible in the report, not inferred from a missing
     // receipt afterwards.
@@ -916,25 +897,42 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
           return null;
         }
       })();
-      // The issue an earlier verdict raised: its id comes back inside that
-      // verdict's own result, whose nesting differs per action (`request_replan`
-      // nests it under `result`), so the id is found wherever it sits.
-      const raisedIssue = auditAnswer ? firstStringField(auditAnswer, 'issue_id') : null;
-      const raisedTx = auditAnswer
-        ? firstStringField(auditAnswer, 'transaction_id') ?? request.classified.transactionId ?? null
-        : null;
-      if (raisedIssue && raisedTx) state.issueIdByTx.set(raisedTx, raisedIssue);
+      const agentId = request.classified.agentId ?? '';
+      const result = asRecord(auditAnswer?.result);
+      const issueId = textOf(result?.issue_id);
+      const attempt = state.correctionAttempts.get(agentId);
+      if (auditAnswer?.ok === true && attempt && auditAnswer.action === attempt.action
+        && result?.transaction_id === attempt.transaction && issueId) {
+        const issues = state.issuesByTx.get(attempt.transaction) ?? new Map<string, number>();
+        if (!issues.has(issueId)) issues.set(issueId, attempt.after);
+        state.issuesByTx.set(attempt.transaction, issues);
+        state.confirmedCorrections.add(attempt.key);
+      }
+      if (auditAnswer?.ok === true && auditAnswer.action === 'verify_correction'
+        && issueId && result?.status === 'CORRECTED' && state.verificationAttempts.get(agentId) === issueId) {
+        state.verifiedIssues.add(issueId);
+      }
+      const correctionKey = JSON.stringify([txKey, item.action, item.refusal_seqs ?? item.refusal_seq,
+        item.audit_id, item.target_revision, item.reason, item.required_change]);
+      const beginCorrection = (): boolean => {
+        if (state.confirmedCorrections.has(correctionKey)) return false;
+        state.correctionAttempts.set(agentId, {
+          action: String(item.action), transaction: String(txKey), key: correctionKey, after: submissions.length,
+        });
+        state.raisedFor.set(txKey, submissions.length);
+        return true;
+      };
       // Any corrective action this Auditor takes starts the evidence window for
       // that transaction: from here, only work submitted later can answer it.
       if (item.transaction_id && ['request_correction', 'request_replan', 'request_revalidation'].includes(textOf(item.action) ?? '')) {
-        state.raisedFor.set(txKey, submissions.length);
+        if (!beginCorrection()) return say(`The correction for transaction ${txKey} is recorded; waiting for replacement work. ${STATUS_LINE}`);
       }
       if (item.action === 'inspect_validation') {
         const outstanding = state.needsRevision === txKey;
         if (outstanding) {
           const latest = submissions[submissions.length - 1] ?? null;
           // From here on, only work submitted *after* this point can answer it.
-          state.raisedFor.set(txKey, submissions.length);
+          if (!beginCorrection()) return say(`The rejected result for transaction ${txKey} already has a recorded issue. ${STATUS_LINE}`);
           return call('flow_audit', {
             action: 'inspect_validation',
             params: {
@@ -955,8 +953,9 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
         // (`reason: accepted-result-after-issue`), which is exactly the route the
         // case must not certify: the correction has to be verified, by name,
         // against the replacement work.
-        const openIssue = state.issueIdByTx.get(txKey) ?? null;
-        const required = state.raisedFor.get(txKey) ?? null;
+        const open = [...(state.issuesByTx.get(txKey) ?? [])].find(([id]) => !state.verifiedIssues.has(id));
+        const openIssue = open?.[0] ?? null;
+        const required = open?.[1] ?? null;
         const answered = required !== null
           && submissions.length > required
           && submissions.slice(required).some(entry => entry.completed === true);
@@ -965,10 +964,11 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
           transaction_id: textOf(txKey),
           openIssue,
           answered,
-          already_sent: Boolean(openIssue) && state.verificationSent.has(openIssue ?? ''),
+          already_sent: openIssue !== null && state.verificationAttempts.get(agentId) === openIssue,
         });
-        if (openIssue && answered && !state.verificationSent.has(openIssue)) {
-          state.verificationSent.add(openIssue);
+        if (openIssue && !answered) return say(`Issue ${openIssue} has no replacement Worker result yet; leaving it open. ${STATUS_LINE}`);
+        if (openIssue && answered) {
+          state.verificationAttempts.set(agentId, openIssue);
           return call('flow_audit', {
             action: 'verify_correction',
             params: {
@@ -992,7 +992,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
       }
       if (item.action === 'verify_correction' || item.action === 'review_issue') {
         const issueId = item.issue_id;
-        const required = state.raisedFor.get(txKey) ?? null;
+        const required = state.issuesByTx.get(txKey)?.get(String(issueId)) ?? state.raisedFor.get(txKey) ?? null;
         // A verdict needs the replacement work itself: a submission for this
         // issue's transaction, observed by the fixture *after* the issue was
         // raised, that did not report itself incomplete. The fixture issuing a
@@ -1013,6 +1013,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
         if (!published) {
           return say(`Issue ${issueId}: transaction ${item.transaction_id} is ${queriedTransaction.status} with no later published result; leaving it open. ${STATUS_LINE}`);
         }
+        state.verificationAttempts.set(agentId, String(issueId));
         return call('flow_audit', {
           action: 'verify_correction',
           params: {
@@ -1030,7 +1031,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
     reportEvidence: () => ({
       submissions: Object.fromEntries([...state.submissions].map(([tx, list]) => [String(tx).slice(-14), list])),
       raised_for: Object.fromEntries([...state.raisedFor].map(([tx, count]) => [String(tx).slice(-14), count])),
-      issues: [...state.issueIdByTx].map(([tx, issue]) => [String(tx).slice(-14), issue.slice(0, 8)]),
+      issues: [...state.issuesByTx].flatMap(([tx, issues]) => [...issues.keys()].map(issue => [String(tx).slice(-14), issue.slice(0, 8)])),
       verification_log: state.verificationLog.map(entry => ({ ...entry, transaction_id: String(entry.transaction_id ?? '').slice(-14) })),
       owes_revision: state.needsRevision ? String(state.needsRevision).slice(-14) : null,
     }),
