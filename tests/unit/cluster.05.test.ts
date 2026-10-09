@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -121,6 +122,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -148,7 +150,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -305,7 +307,7 @@ test('a delegated parent is not stale while its child is still advancing', async
     objective: 'unassigned sibling', acceptance_criteria: ['this one did not move'],
   }).result.transaction_id, 'unrelated transaction');
   for (const id of [parent.id, child, unrelated]) {
-    command(runtime, orchestrator, 'dispatch', { transaction_id: id });
+    if (id !== parent.id) command(runtime, orchestrator, 'dispatch', { transaction_id: id });
     command(runtime, auditor, 'inspect_plan', { transaction_id: id, decision: 'approve' });
   }
   assert.equal(runtime.store.parentsAwaitingChildren(clusterId, root.id).includes(parent.id), true);
@@ -400,7 +402,6 @@ test('transaction-scoped lifecycle control stays inside one subtree', t => {
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const parent = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'parent transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: parent.id });
   const child = textOf(jsonObject(firstOf(arrayOf05(command(runtime, orchestrator, 'decompose', {
     transaction_id: parent.id,
     children: [{ objective: 'child work', acceptance_criteria: ['done'] }],
@@ -479,34 +480,34 @@ test('a delegation chain descends one level per spawn, and the instruction wins'
   // One pending instruction per level: a node that owes a delegation gets
   // exactly one, and the caller's number is ignored while it owes one.
   assert.equal(runtime.delegationInstructions(clusterId, root.id).length, 1);
-  const first = command(runtime, allocator, 'spawn_management_node', {
+  const first = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: rootTx.id, scope: { objective: 'level 1' }, spawn_children: 99,
   }).result;
   const firstNodeId = textOf(first.node_id, 'node_id');
   const level1 = required(runtime.store.getNode(firstNodeId), 'level 1 node');
   assert.equal(level1.scope?.spawn_children, 2, 'the inherited depth wins over the caller\'s override');
 
-  const second = command(runtime, actorFor(runtime, clusterId, 'allocator', firstNodeId), 'spawn_management_node', {
+  const second = command(runtime, actorFor(runtime, clusterId, 'allocator', firstNodeId), 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: textOf(first.delegated_transaction_id, 'delegated_transaction_id'), node_id: firstNodeId, scope: { objective: 'level 2' }, spawn_children: 0,
   }).result;
   const secondNodeId = textOf(second.node_id, 'node_id');
   const level2 = required(runtime.store.getNode(secondNodeId), 'level 2 node');
   assert.equal(level2.scope?.spawn_children, 1, 'a caller cannot stop a chain the fixture still asks for');
 
-  const third = command(runtime, actorFor(runtime, clusterId, 'allocator', secondNodeId), 'spawn_management_node', {
+  const third = command(runtime, actorFor(runtime, clusterId, 'allocator', secondNodeId), 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: textOf(second.delegated_transaction_id, 'delegated_transaction_id'), node_id: secondNodeId, scope: { objective: 'level 3' },
   }).result;
   const thirdNodeId = textOf(third.node_id, 'node_id');
   const level3 = required(runtime.store.getNode(thirdNodeId), 'level 3 node');
   assert.equal(level3.scope?.spawn_children, 0, 'and the chain ends when the depth reaches zero');
   const leaf = required(runtime.store.getTransaction(textOf(third.delegated_transaction_id, 'delegated_transaction_id')), 'leaf transaction');
-  assert.equal(leaf.objective, 'deep branch',
-    'the final node receives the delegated task, not its ancestor’s instructions to spawn more nodes');
+  assert.equal(leaf.objective, required(runtime.store.getPlan(required(runtime.store.getTransaction(textOf(second.delegated_transaction_id, 'parent transaction')), 'parent transaction').current_plan_ref), 'parent plan').assignment,
+    'the final node receives the saved manager assignment');
   assert.equal(jsonObject(leaf.inputs, 'leaf transaction inputs').management_levels_remaining, 0,
     'the Worker can distinguish a leaf assignment from an unfinished management chain');
   // A node with no budget left owes nothing, so a caller may then pass its own
   // number: the fixture no longer has an opinion about that level.
-  const extra = command(runtime, actorFor(runtime, clusterId, 'allocator', thirdNodeId), 'spawn_management_node', {
+  const extra = command(runtime, actorFor(runtime, clusterId, 'allocator', thirdNodeId), 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: textOf(third.delegated_transaction_id, 'delegated_transaction_id'), node_id: thirdNodeId, scope: { objective: 'level 4' },
   }).result;
   const extraNode = required(runtime.store.getNode(textOf(extra.node_id, 'node_id')), 'level 4 node');
@@ -531,11 +532,11 @@ test('a delegated parent does not spend Worker attempts before its required mana
   const root = rootNode(runtime, clusterId);
   const rootTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   const first = command(runtime, actorFor(runtime, clusterId, 'allocator', root.id),
-    'spawn_management_node', { transaction_id: rootTx.id }).result;
+    'spawn_management_node', { fixture_prepare_management: true, transaction_id: rootTx.id }).result;
   const child = required(runtime.store.getNode(textOf(first.node_id, 'node_id')), 'delegated child');
   const delegatedId = textOf(first.delegated_transaction_id, 'delegated_transaction_id');
   command(runtime, actorFor(runtime, clusterId, 'orchestrator', child.id),
-    'dispatch', { transaction_id: delegatedId });
+    'dispatch', { transaction_id: delegatedId, fixture_execution: 'management' });
   assert.equal(required(runtime.store.getTransaction(delegatedId), 'delegated transaction').status, 'READY');
   const allocator = actorFor(runtime, clusterId, 'allocator', child.id);
   const pending = runtime.pendingFor('allocator', child, required(runtime.store.getCluster(clusterId), 'cluster'),
@@ -545,9 +546,9 @@ test('a delegated parent does not spend Worker attempts before its required mana
     && 'transactions' in action && arrayOf05(action.transactions, 'allocatable transactions').includes(delegatedId)), false,
   'the branch owes its next management child before any Worker can run its parent');
   assert.throws(() => command(runtime, allocator, 'allocate_agent', { transaction_id: delegatedId }),
-    error => rejectionStatus(error) === 409 && /delegat|child/i.test(messageOf(error)));
+    error => rejectionStatus(error) === 409 && /delegat|child|management execution/i.test(messageOf(error)));
   assert.equal(runtime.store.activeAllocationForTransaction(delegatedId), null);
-  const second = command(runtime, allocator, 'spawn_management_node', {
+  const second = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: delegatedId, node_id: child.id,
   }).result;
   assert.equal(required(runtime.store.getNode(textOf(second.node_id, 'node_id')), 'second child').depth, 2);
@@ -746,7 +747,7 @@ test('a turn that stops making progress is aborted, not left holding its transac
   // A turn that never returns: it holds its lease, its model permit and the
   // transaction at RUNNING.
   host.setScript(async turn => {
-    if (!(turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker')) return;
+    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'worker') return;
     await new Promise(() => {});
   });
   runtime.enableScheduling();

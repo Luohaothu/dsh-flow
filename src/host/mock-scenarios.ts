@@ -2,7 +2,7 @@
  * Scripted model behaviour for the deterministic acceptance runs.
  *
  * One scenario drives one case. Each provider request is answered from the
- * request's own facts — the role line, the domain digest, the newest tool
+ * request's own facts — the trusted native identity, scoped task queries and the newest tool
  * result — so the script is keyed by *identity and state*, never by arrival
  * order: two concurrent Workers interleave freely and still get the answer
  * their own transaction owes.
@@ -15,10 +15,10 @@
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
-import { ROLE_LINE, WORKER_HEADER, COMPACTION_MARKER, DIGEST_LINE_MARKER } from './mock-model.ts';
+import { COMPACTION_MARKER } from './mock-model.ts';
 import { asRecord, listOf, recordsOf, textOf, numberOf } from './mock-model.ts';
 import type {
-  MockDigest,
+  MockWorkContext,
   MockRequestClassification,
   MockRequestRecord,
   MockScenario,
@@ -38,58 +38,27 @@ export function say(text: string, extra: MockScenarioReply = {}): MockScenarioRe
   return { text, ...extra };
 }
 
-const STATUS_LINE = 'STATUS: the requested action was submitted; the durable result is in the ledger.';
+const STATUS_LINE = 'The durable action has been recorded.';
 
-/**
- * The checkpoint the harness's compaction engine requires: plain Markdown with
- * the exact sections its validator accepts, and no tool call.
- *
- * It also carries the identity and the plugin's own domain digest, because a
- * native compaction replaces the shadowed span — including the original prompt
- * — with this text. Without them the continuation request would address nobody.
- */
+/** Native compaction preserves business context; live work is queried again. */
 export function checkpointFor(classified: MockRequestClassification | null): string {
-  const role = classified?.role ?? null;
-  const nodeId = classified?.nodeId ?? null;
-  const agentId = classified?.agentId ?? null;
-  const depth = classified?.depth ?? null;
-  const transactionId = classified?.transactionId ?? null;
-  const objective = classified?.objective ?? null;
-  const digest = classified?.digest ?? null;
-  // Keep only the next step's domain state. Exclude the long `recent` list
-  // so the native checkpoint carries only the state needed for continuation.
-  const carried = digest ? {
-    ...(digest.cluster ? { cluster: { id: asRecord(digest.cluster)?.id ?? null, status: asRecord(digest.cluster)?.status ?? null } } : {}),
-    ...(digest.node ? { node: digest.node } : {}),
-    ...(digest.ancestors ? { ancestors: digest.ancestors } : {}),
-    ...(Array.isArray(digest.pending_actions) ? { pending_actions: listOf(digest.pending_actions).slice(0, 8) } : {}),
-    ...(Array.isArray(digest.unread_notifications) ? { unread_notifications: listOf(digest.unread_notifications).slice(0, 8) } : {}),
-    ...(digest.transactions ? { transactions: { by_status: asRecord(digest.transactions)?.by_status ?? {} } } : {}),
-    ...(Array.isArray(digest.issues) ? { issues: listOf(digest.issues).slice(0, 8) } : {}),
-    ...(digest.children_of_node ? { children_of_node: digest.children_of_node } : {}),
-    ...(digest.budget_available ? { budget_available: digest.budget_available } : {}),
-    ...(digest.limits ? { limits: digest.limits } : {}),
-  } : null;
   return [
     '## Primary Request and Intent',
-    `Continue the cluster work for ${role ?? 'worker'} on node ${nodeId ?? 'unknown'}.`,
+    'Continue the assigned work and preserve its formal requirements.',
     '## Key Technical Concepts',
-    '插件; one transaction per Worker; independent validation.',
+    'Worker delivery, Orchestrator validation and independent governance review.',
     '## Files and Code',
-    'No file content is summarised here; read the transaction detail before acting.',
+    'Read concrete inputs through the authorised tools when needed.',
     '## Errors and Fixes',
-    'None recorded in the shadowed region.',
+    'The durable records contain any outstanding correction.',
     '## Pending Jobs',
-    'Continue with the pending actions carried in the critical context below.',
+    'Read the bound assignment and the role agenda before continuing.',
     '## Current Work',
-    'The turn was interrupted by context pressure; the durable ledger is authoritative.',
+    classified?.objective ?? 'The native turn was interrupted by context pressure.',
     '## Next Step',
-    'Read the current domain state and perform the first pending action.',
+    'Query the current assignment and relevant object fields.',
     '## Critical Context',
-    ...(role ? [`Role: ${role}. Node: ${nodeId} (depth ${depth ?? 0}). Agent id: ${agentId}.`] : []),
-    ...(transactionId ? [`Transaction id: ${transactionId}`] : []),
-    ...(objective ? [`Objective: ${objective}`] : []),
-    ...(digest ? [`${DIGEST_LINE_MARKER}${JSON.stringify(carried)}`] : []),
+    'The host retains identity and input bindings outside this checkpoint.',
   ].join('\n');
 }
 
@@ -130,46 +99,257 @@ function signatureOf(item: Record<string, unknown>): string {
   return `${item.action}:${item.transaction_id ?? item.node_id ?? ''}`;
 }
 
-/**
- * The pending action this step should perform.
- *
- * When the digest came from a *checkpoint*, the turn is continuing after a
- * mid-turn compaction: the action this identity already performed is still
- * listed as pending in the digest the checkpoint preserved. Re-issuing it would
- * be refused (nothing changed) and the turn would be booked as stagnation, so
- * the script moves to the next distinct item — which is what the same model
- * would do from the same memory.
- */
+interface QueriedWork {
+  assignment?: Record<string, unknown>;
+  agenda?: Record<string, unknown>;
+  transaction?: Record<string, unknown>;
+  node?: Record<string, unknown>;
+  children?: Record<string, unknown>[];
+  childrenNext?: number | null;
+  budgets?: Record<string, unknown>[];
+  budgetNext?: number | null;
+  transactions?: Record<string, unknown>[];
+  transactionNext?: number | null;
+  effects?: Record<string, unknown>[];
+  effectDetails?: Record<string, Record<string, unknown>>;
+  expansion?: { what: unknown; params: Record<string, unknown>; field: string; text: string; answer: Record<string, unknown> };
+}
+
+/** All scripted decisions read the same scoped tools available to real members. */
+function readWork(request: MockRequestRecord, work: Map<string, QueriedWork>, caseId: string): MockScenarioReply | null {
+  const c = request.classified;
+  if (c.kind !== 'role' && c.kind !== 'worker') return null;
+  const key = `${c.agentId}:${c.identity.epoch ?? 0}:${c.identity.turnSeq ?? 0}`;
+  let state = work.get(key);
+  const freshTurn = !state;
+  if (!state) { state = {}; work.set(key, state); }
+  const queried = !freshTurn && c.lastToolName === 'flow_query' && (c.kind === 'role' || !state.assignment) ? c.lastToolArguments : null;
+  if (queried) {
+    let answer: Record<string, unknown> | null = null;
+    try { answer = asRecord(JSON.parse(c.lastToolResult ?? 'null')); } catch { /* Report a failed query without inventing work. */ }
+    if (!answer || answer.error) return say('The required task query failed; waiting for current task information.');
+    if (state.expansion && queried.what === state.expansion.what && asRecord(queried.params)?.content_field === state.expansion.field) {
+      const expansion = state.expansion;
+      const page = asRecord(answer[expansion.field]);
+      if (!page || typeof page.content !== 'string') return say('The requested content page was unavailable.');
+      expansion.text += page.content;
+      if (page.next_offset !== null) return call('flow_query', { what: expansion.what, params: { ...expansion.params, content_offset: page.next_offset } });
+      let complete: unknown = expansion.text;
+      if (page.encoding === 'json') { try { complete = JSON.parse(expansion.text); } catch { return say('The complete queried field was not valid JSON.'); } }
+      answer = { ...expansion.answer, [expansion.field]: complete };
+      delete state.expansion;
+    }
+    const large = Object.entries(answer).find(([, value]) => asRecord(value)?.complete === false && asRecord(asRecord(value)?.read));
+    if (large) {
+      const [field, value] = large;
+      const read = asRecord(asRecord(value)?.read) ?? {};
+      const params = asRecord(read.params) ?? {};
+      state.expansion = { what: read.what, params, field, text: '', answer };
+      return call('flow_query', { what: read.what, params });
+    }
+    switch (queried.what) {
+      case 'assignment': state.assignment = answer; break;
+      case 'agenda': state.agenda = answer; break;
+      case 'transaction': state.transaction = answer; break;
+      case 'node': state.node = answer; break;
+      case 'nodes': {
+        const offset = Number(asRecord(queried.params)?.offset ?? 0);
+        state.children = [...(offset ? state.children ?? [] : []), ...recordsOf(answer.items)];
+        state.childrenNext = typeof answer.next_offset === 'number' ? answer.next_offset : null;
+        break;
+      }
+      case 'budgets': {
+        const offset = Number(asRecord(queried.params)?.offset ?? 0);
+        state.budgets = [...(offset ? state.budgets ?? [] : []), ...recordsOf(answer.items)];
+        state.budgetNext = typeof answer.next_offset === 'number' ? answer.next_offset : null;
+        break;
+      }
+      case 'transactions': {
+        const offset = Number(asRecord(queried.params)?.offset ?? 0);
+        state.transactions = [...(offset ? state.transactions ?? [] : []), ...recordsOf(answer.items)];
+        state.transactionNext = typeof answer.next_offset === 'number' ? answer.next_offset : null;
+        break;
+      }
+      case 'effects': state.effects = recordsOf(answer.items); break;
+      case 'effect': state.effectDetails = { ...state.effectDetails, [String(asRecord(queried.params)?.call_id)]: answer }; break;
+    }
+  }
+  const roleFields = c.role === 'worker'
+    ? ['brief', 'requirements', 'constraints', 'inputs', 'allocation']
+    : c.role === 'auditor' ? ['brief', 'requirements', 'plan', 'validation', 'audit']
+      : ['brief', 'requirements', 'constraints', 'inputs', 'plan'];
+  if (!state.assignment) return call('flow_query', { what: 'assignment', params: { fields: roleFields } });
+  const assignment = state.assignment;
+  const binding = asRecord(assignment.binding);
+  const requirements = asRecord(assignment.requirements);
+  c.transactionId = textOf(binding?.transaction_id);
+  c.objective = textOf(requirements?.objective) ?? textOf(assignment.brief) ?? textOf(assignment.title);
+  c.identity.transactionId = c.transactionId;
+  c.identity.objective = c.objective;
+  request.transaction_id = c.transactionId;
+  if (c.kind === 'worker') { c.context = assignment; return null; }
+  if (!state.agenda) return call('flow_query', { what: 'agenda', params: { limit: 8 } });
+  const actions = recordsOf(state.agenda.items).map(item => ({ ...asRecord(item.details), ...item }));
+  const selected = actions.find(item => item.action !== 'inbox');
+  const targetId = textOf(selected?.transaction_id);
+  if (targetId && !state.transaction) {
+    const fields = c.role === 'auditor' ? ['requirements', 'plan', 'validation', 'result', 'audits', 'issues', 'evidence']
+      : c.role === 'allocator' ? ['requirements', 'inputs', 'plan', 'allocation']
+        : ['requirements', 'constraints', 'inputs', 'plan', 'result', 'validation', 'evidence'];
+    return call('flow_query', { what: 'transaction', params: { id: targetId, fields } });
+  }
+  if (c.role === 'orchestrator' && selected?.action === 'validate') {
+    const record = asRecord(state.transaction?.result);
+    if (asRecord(record?.result)?.completed === true && typeof asRecord(record?.result)?.file === 'string' && record?.producer_agent_id) {
+      if (!state.effects) return call('flow_query', { what: 'effects', params: { agent_id: record.producer_agent_id, limit: 20 } });
+      const pending = state.effects.find(effect => !state.effectDetails?.[String(effect.call_id)]);
+      if (pending) return call('flow_query', { what: 'effect', params: { call_id: pending.call_id, fields: ['args', 'body', 'status', 'tool', 'agent_id', 'turn_seq'] } });
+    }
+  }
+  if (c.role === 'orchestrator' && selected?.action === 'finish_cluster') {
+    if (!state.transactions) return call('flow_query', { what: 'transactions', params: { node_id: c.nodeId, limit: 4 } });
+    if (state.transactionNext !== null && state.transactionNext !== undefined)
+      return call('flow_query', { what: 'transactions', params: { node_id: c.nodeId, limit: 4, offset: state.transactionNext } });
+  }
+  if (c.role === 'allocator' && (selected?.action === 'allocate_agent' || caseId === 'scale')) {
+    if (!state.node) return call('flow_query', { what: 'node', params: { id: c.nodeId, full: true, limit: 3 } });
+    if (!state.children) return call('flow_query', { what: 'nodes', params: { parent_id: c.nodeId, limit: 8 } });
+    if (state.childrenNext !== null && state.childrenNext !== undefined)
+      return call('flow_query', { what: 'nodes', params: { parent_id: c.nodeId, limit: 8, offset: state.childrenNext } });
+    if (!state.budgets) return call('flow_query', { what: 'budgets', params: { limit: 6 } });
+    const managementAgents = recordsOf(asRecord(state.node.agents)?.items).filter(agent => agent.role !== 'worker');
+    const knownBudgets = state.budgets;
+    const missingRoleBudget = managementAgents.some(agent => !knownBudgets.some(row => row.scope_kind === 'agent' && row.scope_id === agent.id));
+    const missingNodeBudget = !knownBudgets.some(row => row.scope_kind === 'node' && row.scope_id === c.nodeId);
+    if ((missingRoleBudget || missingNodeBudget) && state.budgetNext !== null && state.budgetNext !== undefined)
+      return call('flow_query', { what: 'budgets', params: { limit: 6, offset: state.budgetNext } });
+  }
+  const nodeBudget = state.budgets?.find(row => row.scope_kind === 'node' && row.scope_id === c.nodeId);
+  c.context = {
+    ...assignment,
+    work_items: actions,
+    transaction: state.transaction,
+    node: state.node?.node ?? { delegated_transaction_id: binding?.transaction_id },
+    ancestors: state.node?.ancestors ?? (c.depth === 0 ? [] : [{ kind: 'management', depth: (c.depth ?? 1) - 1 }]),
+    children_of_node: state.children ?? [],
+    budget_available: nodeBudget?.available,
+    budget_rows: state.budgets, node_agents: state.node?.agents,
+    execution_effects: Object.values(state.effectDetails ?? {}),
+    transactions: { by_status: Object.fromEntries(['ACCEPTED', 'DRAFT', 'READY', 'RUNNING', 'SUBMITTED', 'VALIDATING', 'REJECTED', 'FAILED', 'CANCELLED'].map(status => [status, state.transactions?.filter(tx => tx.status === status).length ?? 0])) },
+  };
+  return null;
+}
+
+/** Select a work item returned by the actor-scoped agenda query. */
 function pickAction(request: MockRequestRecord, ctx: MockScenarioContext): Record<string, unknown> | null {
-  const digest = request.classified.digest;
-  if (!digest) return null;
-  const actions = recordsOf(digest.pending_actions)
+  const contextFacts = request.classified.context;
+  if (!contextFacts) return null;
+  const actions = recordsOf(contextFacts.work_items)
     .filter(item => item.action && item.action !== 'inbox');
   if (!actions.length) return null;
-  const last = ctx.lastIssued.get(request.classified.agentId ?? '') ?? null;
-  const chosen = request.classified.digest_source === 'checkpoint' && last
-    ? (actions.find(item => signatureOf(item) !== last) ?? null)
-    : (actions[0] ?? null);
+  const chosen = actions[0] ?? null;
   if (chosen) ctx.lastIssued.set(request.classified.agentId ?? '', signatureOf(chosen));
   return chosen;
 }
 
 /** The closest management ancestor a delegated transaction reports to. */
-function nearestAncestor(digest: MockDigest | null): Record<string, unknown> | null {
-  const management = recordsOf(digest?.ancestors).filter(entry => entry.kind === 'management');
+function nearestAncestor(contextFacts: MockWorkContext | null): Record<string, unknown> | null {
+  const management = recordsOf(contextFacts?.ancestors).filter(entry => entry.kind === 'management');
   return management.sort((a, b) => Number(b.depth) - Number(a.depth))[0] ?? null;
 }
 
-/**
- * Orchestrator policy: perform the plugin's own first pending action. The
- * digest is the plugin's statement of what this identity owes, so the script
- * never invents work — it only decides *how* to answer the action.
- *
- * A digest that came out of a checkpoint rather than the current prompt is the
- * state the compacted span was acting on, not the state now. Answering from it
- * would re-issue an action that has already happened, so such a step ends the
- * turn instead and lets the scheduler prompt this identity with fresh state.
- */
+function dispatchParams(request: MockRequestRecord, item: Record<string, unknown>, ctx: MockScenarioContext): Record<string, unknown> {
+  const detail = asRecord(request.classified.context?.transaction) ?? {};
+  const tx = asRecord(detail.transaction) ?? {};
+  const requirements = asRecord(detail.requirements) ?? {};
+  if (tx.current_plan_ref) return { transaction_id: item.transaction_id };
+  const criteria = listOf(requirements.acceptance_criteria);
+  const objective = textOf(requirements.objective) ?? textOf(item.objective) ?? request.classified.objective ?? '';
+  const expectedOutput = textOf(requirements.expected_output) || 'the result requested by this task';
+  const management = ctx.caseId === 'recursion' && objective.includes('deep/') && (request.classified.depth ?? 0) < 3;
+  return {
+    transaction_id: item.transaction_id,
+    expected_transaction_revision: tx.revision ?? item.revision,
+    plan: {
+      understanding: `Deliver ${objective}. The formal output is ${expectedOutput}.`,
+      execution: management ? 'management' : 'worker',
+      rationale: management ? 'This explicitly delegated domain needs its own planning and coordination.' : 'One execution unit covers this objective; its result will be checked by the coordinating agent.',
+      assignment: `${objective}\nDeliver ${expectedOutput}, with execution evidence and any limitations. Preserve all formal constraints.`,
+      ...(management ? { integration: 'Receive the accepted delegated result, check inherited requirements and record parent validation.' } : {}),
+      criterion_responsibilities: criteria.map((_criterion, index) => ({
+        criterion: { transaction_id: 'self', criterion_index: index },
+        evidence_provider: management ? 'orchestrator' : 'worker', validated_by: 'orchestrator', applies_to: ['worker', 'orchestrator'],
+      })),
+    },
+  };
+}
+
+/** The fixture's arithmetic check and evidence inspection actually run here. */
+function validationParams(request: MockRequestRecord, item: Record<string, unknown>): Record<string, unknown> {
+  const detail = asRecord(request.classified.context?.transaction) ?? {};
+  const tx = asRecord(detail.transaction) ?? {};
+  const requirements = asRecord(detail.requirements) ?? {};
+  const plan = asRecord(detail.plan) ?? {};
+  const planRef = asRecord(plan.ref) ?? asRecord(tx.current_plan_ref) ?? {};
+  const record = asRecord(detail.result) ?? {};
+  const result = asRecord(record.result) ?? {};
+  const values = Array.isArray(result.values) ? result.values.map(Number) : sumValues(requirements.objective) ?? [];
+  const actual = values.reduce((sum, value) => sum + value, 0);
+  const hasSum = typeof result.sum === 'number';
+  const passed = result.completed !== false && result.status !== 'blocked' && (!hasSum || (values.length > 0 && actual === result.sum));
+  const observation = hasSum ? `Adding the submitted operands ${values.join(' + ')} gives ${actual}; the submitted sum is ${result.sum}.`
+    : `Inspected this publication and its execution evidence: ${JSON.stringify(result)}.`;
+  const checks = listOf(requirements.acceptance_criteria).map((criterion, index) => ({
+    criterion_ref: { transaction_id: item.transaction_id, prepared_revision: planRef.prepared_revision, criterion_index: index },
+    criterion,
+    method: hasSum ? 'Recompute addition from the submitted operands and inspect the bound execution records.' : 'Compare the published deliverable and its bound execution records against the formal criterion.',
+    observation, passed,
+    evidence: JSON.stringify({ result_ref: record.ref, producer_agent_id: record.producer_agent_id, turn_seq: record.turn_seq, execution: detail.evidence }),
+    evidence_refs: [{ kind: 'result', ref: record.ref ?? tx.current_result_ref }],
+  }));
+  return { transaction_id: item.transaction_id, expected_transaction_revision: tx.revision ?? item.revision, accepted: passed, checks };
+}
+
+function auditEvidence(request: MockRequestRecord, item: Record<string, unknown>, kind: 'plan' | 'validation', approved: boolean): Record<string, unknown> {
+  const detail = asRecord(request.classified.context?.transaction) ?? {};
+  const record = asRecord(detail[kind]) ?? {};
+  const ref = item[`${kind}_ref`] ?? record.ref;
+  const rules = kind === 'plan' ? ['goal_coverage', 'responsibility', 'dependencies', 'handoff', 'acceptance_arrangement']
+    : ['standard_coverage', 'checks_performed', 'evidence_applicability', 'conclusion_support', 'authority'];
+  return { checks: rules.map((rule, index) => ({ rule,
+    method: kind === 'plan' ? 'Compare the manager plan, responsibility map and handoff to the immutable task requirements.'
+      : 'Inspect the coordinating agent checks, recorded observations and publication references against the formal requirements.',
+    observation: JSON.stringify({ rule, requirements: detail.requirements, record }),
+    passed: approved || index !== 0,
+    evidence_refs: [{ kind, ref }],
+  })) };
+}
+
+function enrichMockReply(request: MockRequestRecord, reply: MockScenarioReply | null): MockScenarioReply | null {
+  if (!reply?.toolCalls) return reply;
+  return { ...reply, toolCalls: reply.toolCalls.map(spec => {
+    let args: Record<string, unknown> | null = null;
+    try { args = asRecord(JSON.parse(String(spec.arguments))); } catch { return spec; }
+    if (!args) return spec;
+    const params = asRecord(args.params);
+    if (!params) return spec;
+    const action = textOf(args.action);
+    const item = recordsOf(request.classified.context?.work_items).find(entry => entry.transaction_id === params.transaction_id) ?? {};
+    if (spec.name === 'flow_audit' && (action === 'inspect_plan' || action === 'inspect_validation')) {
+      const supplied = asRecord(params.evidence) ?? {};
+      if (!Array.isArray(supplied.checks)) params.evidence = { ...supplied,
+        ...auditEvidence(request, item, action === 'inspect_plan' ? 'plan' : 'validation', params.decision === 'approve') };
+      if (!params.audit_id && item.audit_id) params.audit_id = item.audit_id;
+    }
+    if (spec.name === 'flow_transaction' && ['adjust_transaction', 'set_dependency'].includes(action ?? '') && params.expected_transaction_revision === undefined) {
+      const tx = asRecord(asRecord(request.classified.context?.transaction)?.transaction);
+      if (tx && tx.id === params.transaction_id) params.expected_transaction_revision = tx.revision;
+    }
+    return { ...spec, arguments: JSON.stringify({ ...args, params }) };
+  }) };
+}
+
+/** Choose an execution design and validate the queried formal work. */
 function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext): MockScenarioReply {
   const item = pickAction(request, ctx);
   if (!item) return say(`No pending action for node ${request.classified.nodeId}. ${STATUS_LINE}`);
@@ -180,35 +360,26 @@ function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext)
   }
   // A tool continuation carries the original role prompt. After its action,
   // yield so the scheduler can supply current state on the next turn.
-  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
+
   switch (textOf(item.action)) {
+    case 'prepare-plan':
     case 'dispatch':
     case 'replan-or-redispatch':
-      // A node-level dispatch covers every DRAFT transaction it owns, so the
-      // whole tier becomes READY in one turn, making independent Workers
-      // available for concurrent scheduling.
+      // The specific agenda reference owns its own execution decision.
       return call('flow_transaction', {
         action: 'dispatch',
-        params: { node_id: request.classified.nodeId, limit: 64 },
+        params: dispatchParams(request, item, ctx),
       });
     case 'revise-plan':
     case 'correct-result':
       return call('flow_transaction', {
         action: 'adjust_transaction',
-        params: ctx.revisionFor(item) ?? { transaction_id: item.transaction_id, priority: 0 },
+        params: { expected_transaction_revision: asRecord(asRecord(request.classified.context?.transaction)?.transaction)?.revision ?? item.revision, ...(ctx.revisionFor(item) ?? { transaction_id: item.transaction_id, priority: 0 }) },
       });
     case 'validate':
       return call('flow_transaction', {
         action: 'validate',
-        params: {
-          transaction_id: item.transaction_id,
-          accepted: true,
-          checks: [{
-            criterion: String(item.objective ?? 'the transaction objective is satisfied'),
-            passed: true,
-            evidence: 'the submitted result and the tool results recorded in this session',
-          }],
-        },
+        params: validationParams(request, item),
       });
     case 'aggregate':
       return call('flow_transaction', { action: 'aggregate', params: { transaction_id: item.transaction_id } });
@@ -219,7 +390,7 @@ function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext)
     case 'finish_cluster':
       return call('flow_transaction', { action: 'finish_cluster', params: {} });
     case 'report-to-parent': {
-      const parent = nearestAncestor(request.classified.digest);
+      const parent = nearestAncestor(request.classified.context);
       if (!parent) return say(`Delegated transaction ${item.transaction_id} is ${item.status}. ${STATUS_LINE}`);
       return call('flow_communicate', {
         action: 'send',
@@ -236,19 +407,21 @@ function orchestratorReply(request: MockRequestRecord, ctx: MockScenarioContext)
   }
 }
 
-/** Allocator policy: identity, topology and funding, again from the digest. */
+/** Allocator policy: identity, topology and funding, again from the contextFacts. */
 function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): MockScenarioReply {
   // The answer to a ledger read that this turn opened: the turn may have no
   // pending action of its own, and the rebalance is the action it exists for.
   const rebalanceReply = (): MockScenarioReply | null => {
-    if (request.classified.lastToolName !== 'flow_query') return null;
+    if (request.classified.lastToolName !== 'flow_query' || request.classified.lastToolArguments?.what !== 'budgets'
+      || !ctx.rebalanced.get(request.classified.nodeId ?? '')) return null;
     const rows = budgetRows(request.classified.lastToolResult);
     const richest = rows
       .filter(row => row.scope_kind === 'agent' && row.scope_id !== request.classified.agentId)
       .sort((a, b) => b.available.tool_calls - a.available.tool_calls)[0] ?? null;
     if (!richest || richest.available.tool_calls <= 0) return null;
-    const byStatus = asRecord(asRecord(request.classified.digest?.transactions)?.by_status);
-    const frontier = Number(byStatus?.READY ?? 0);
+    const allocations = recordsOf(request.classified.context?.work_items).filter(item => item.action === 'allocate_agent');
+    const frontier = Number(allocations[0]?.unallocated_total ?? allocations.length);
+    if (frontier <= 0) return null;
     return call('flow_allocation', {
       action: 'rebalance_budget',
       params: {
@@ -274,12 +447,22 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
   }
   const rebalance = rebalanceReply();
   if (rebalance) return rebalance;
-  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
-  const digest: MockDigest = request.classified.digest ?? {};
-  const actions = recordsOf(digest.pending_actions);
-  const nodeToolCalls = Number(asRecord(digest.budget_available)?.tool_calls ?? Number.POSITIVE_INFINITY);
+
+  const contextFacts: MockWorkContext = request.classified.context ?? {};
+  if (ctx.caseId === 'scale') {
+    const rows = recordsOf(contextFacts.budget_rows);
+    const roles = recordsOf(asRecord(contextFacts.node_agents)?.items).filter(row => row.role !== 'worker');
+    const source = rows.find(row => row.scope_kind === 'node' && row.scope_id === request.classified.nodeId);
+    const needy = rows.find(row => row.scope_kind === 'agent' && roles.some(role => role.id === row.scope_id)
+      && Number(asRecord(row.available)?.tool_calls ?? Infinity) < 64);
+    if (source && needy && Number(asRecord(source.available)?.tool_calls ?? 0) >= 128) return call('flow_allocation', { action: 'rebalance_budget',
+      params: { from: { kind: 'node', id: source.scope_id }, to: { kind: 'agent', id: needy.scope_id }, amounts: { tool_calls: 128 } } });
+  }
+
+  const actions = recordsOf(contextFacts.work_items);
+  const nodeToolCalls = Number(asRecord(contextFacts.budget_available)?.tool_calls ?? Number.POSITIVE_INFINITY);
   const frontier = listOf(item.transactions).length;
-  const isRoot = recordsOf(digest.ancestors).length === 0;
+  const isRoot = recordsOf(contextFacts.ancestors).length === 0;
   const topUps = ctx.rebalanced.get(request.classified.nodeId ?? '') ?? 0;
 
   // A node can only host as many Workers as it has free child slots. Allocating
@@ -287,9 +470,9 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
   // `reached max_children` and leaves the rest of the tier unable to start; the
   // ladder has to go in waves, releasing each wave's finished Workers so their
   // slots — and their nodes — are reused.
-  const children = recordsOf(digest.children_of_node);
+  const children = recordsOf(contextFacts.children_of_node);
   const liveChildren = children.filter(child => child.status !== 'RELEASED');
-  const childLimit = Number(asRecord(digest.node)?.max_children ?? children.length) || children.length;
+  const childLimit = Number(asRecord(contextFacts.node)?.max_children ?? children.length) || children.length;
   const freeSlots = Math.max(0, childLimit - liveChildren.length);
 
   const owed = Number(actions.find(entry => entry.action === 'allocate_agent')?.unallocated_total ?? frontier);
@@ -306,7 +489,7 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
     if (release) {
       return call('flow_allocation', {
         action: 'release_agent',
-        params: { allocations: release.allocations ?? [] },
+        params: release.all === true ? { all: true, node_id: release.node_id } : { allocations: release.allocations ?? [] },
       });
     }
     return say(`Node ${request.classified.nodeId} has no free child slot and nothing to release yet. ${STATUS_LINE}`);
@@ -325,7 +508,7 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
       // booked as stagnation. The batch is also bounded by what the node can
       // fund for each of them.
       const room = Number.isFinite(affordable) ? Math.max(1, Math.min(freeSlots, affordable)) : freeSlots;
-      const batch = listOf(item.transactions).slice(0, room);
+      const batch = (item.transaction_id ? [item.transaction_id] : listOf(item.transactions)).slice(0, room);
       if (!batch.length) return say(`Nothing unallocated on node ${request.classified.nodeId}. ${STATUS_LINE}`);
       return call('flow_allocation', {
         action: 'allocate_agent',
@@ -339,16 +522,17 @@ function allocatorReply(request: MockRequestRecord, ctx: MockScenarioContext): M
       // like work and changes nothing.
       return call('flow_allocation', {
         action: 'release_agent',
-        params: { allocations: item.allocations ?? [] },
+        params: item.all === true ? { all: true, node_id: item.node_id } : { allocations: item.allocations ?? [] },
       });
     case 'spawn_management_node': {
       const instruction = asRecord(item.instruction) ?? {};
-      const transactionId = asRecord(digest.node)?.delegated_transaction_id ?? null;
+      const transactionId = item.transaction_id ?? asRecord(contextFacts.node)?.delegated_transaction_id ?? null;
       if (!transactionId) return say(`No delegated transaction to delegate from on node ${request.classified.nodeId}. ${STATUS_LINE}`);
       return call('flow_allocation', {
         action: 'spawn_management_node',
         params: {
           transaction_id: transactionId,
+          plan_ref: asRecord(asRecord(contextFacts.transaction)?.plan)?.ref,
           node_id: request.classified.nodeId,
           scope: instruction.scope ?? { objective: instruction.objective ?? 'delegated domain' },
           max_children: instruction.max_children ?? 4,
@@ -398,7 +582,7 @@ function auditorReply(request: MockRequestRecord, ctx: MockScenarioContext): Moc
     const custom = hook(request, item, ctx);
     if (custom) return custom;
   }
-  if (request.classified.fresh_digest === false) return say(STATUS_LINE);
+
   switch (textOf(item.action)) {
     case 'inspect_plan':
       return call('flow_audit', {
@@ -415,6 +599,7 @@ function auditorReply(request: MockRequestRecord, ctx: MockScenarioContext): Moc
           ...(item.target_revision === undefined ? {} : { target_revision: item.target_revision }),
           decision: 'approve',
           notes: 'the plan states a checkable objective',
+          evidence: auditEvidence(request, item, 'plan', true),
         },
       });
     case 'inspect_validation':
@@ -426,6 +611,7 @@ function auditorReply(request: MockRequestRecord, ctx: MockScenarioContext): Moc
           ...(item.target_revision === undefined ? {} : { target_revision: item.target_revision }),
           decision: ctx.validationDecision(request, item),
           notes: 'decision recorded against the exact result revision',
+          evidence: auditEvidence(request, item, 'validation', ctx.validationDecision(request, item) === 'approve'),
         },
       });
     case 'request_correction':
@@ -569,6 +755,7 @@ function workerReply(request: MockRequestRecord, ctx: MockScenarioContext): Mock
 
 /** One part of a case's own script. */
 export interface MockScenarioHooks {
+  observe?: (request: MockRequestRecord) => void;
   orchestrator?: (request: MockRequestRecord, item: Record<string, unknown>, ctx: MockScenarioContext) => MockScenarioReply | null;
   allocator?: (request: MockRequestRecord, item: Record<string, unknown>, ctx: MockScenarioContext) => MockScenarioReply | null;
   auditor?: (request: MockRequestRecord, item: Record<string, unknown>, ctx: MockScenarioContext) => MockScenarioReply | null;
@@ -594,7 +781,7 @@ export interface MockScenarioSeen {
   compaction: number;
   role: Record<string, number>;
   worker: Record<string, number>;
-  digest_missing: number;
+  query_missing: number;
 }
 
 /** Everything the shared policy functions may consult. */
@@ -645,7 +832,7 @@ const CASE_HOOKS: Record<string, (context: MockCaseContext) => MockScenarioHooks
     const stoppedForQuestion=new Set<string>();
     return {orchestrator:(request,item)=>{
       const id=request.classified.agentId??'';
-      if(request.classified.userText.includes('UX native')&&!questioned.has(id)) {
+      if(`${request.classified.objective ?? ''} ${request.classified.userText}`.includes('UX native')&&!questioned.has(id)) {
         questioned.add(id);return call('flow_transaction',{action:'request_user',params:{question:'请确认使用当前工作区'}});
       }
       if(request.classified.lastToolResult?.includes('waiting_user')&&!stoppedForQuestion.has(id)){stoppedForQuestion.add(id);return say('等待主会话答复');}
@@ -680,7 +867,7 @@ interface VerificationLogEntry {
  * real correction round.
  *
  * Every step is keyed by the identity the plugin itself reports — the node's
- * digest, the transaction objective in the Worker prompt, the allocation's
+ * contextFacts, the transaction objective in the Worker prompt, the allocation's
  * granted paths — never by arrival order. The fixture ids come from the runner's
  * own namespace map, so the script names the same transactions the case does.
  */
@@ -706,6 +893,9 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
     confirmedCorrections: new Set<string>(),
     verificationAttempts: new Map<string, string>(),
     verifiedIssues: new Set<string>(),
+    complianceIssues: new Set<string>(),
+    faultyValidations: new Set<string>(),
+
     // Why each open issue was or was not verified, in order: the decision this
     // fixture makes must be visible in the report, not inferred from a missing
     // receipt afterwards.
@@ -718,49 +908,105 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
   };
   const target = join(workspace, 'deep/nested/result.txt');
   const refused = (text: unknown): boolean => /outside|refus|denied|not allowed|is not permitted|cannot write|scope/i.test(String(text ?? ''));
+  const observeAudit = (request: MockRequestRecord): void => {
+    if (request.classified.lastToolName !== 'flow_audit') return;
+    let answer: Record<string, unknown> | null = null;
+    try { answer = asRecord(JSON.parse(request.classified.lastToolResult ?? 'null')); } catch { return; }
+    if (answer?.ok !== true) return;
+    const result = asRecord(answer.result);
+    const issueId = textOf(result?.issue_id);
+    const agentId = request.classified.agentId ?? '';
+    const attempt = state.correctionAttempts.get(agentId);
+    if (attempt && answer.action === attempt.action && result?.transaction_id === attempt.transaction && issueId) {
+      const issues = state.issuesByTx.get(attempt.transaction) ?? new Map<string, number>();
+      if (!issues.has(issueId)) issues.set(issueId, attempt.after);
+      state.issuesByTx.set(attempt.transaction, issues);
+      state.confirmedCorrections.add(attempt.key);
+      if (answer.action === 'inspect_validation') state.complianceIssues.add(issueId);
+    }
+    if (answer.action === 'verify_correction' && issueId && result?.status === 'CORRECTED' && state.verificationAttempts.get(agentId) === issueId) state.verifiedIssues.add(issueId);
+  };
+
 
   return {
+    observe: observeAudit,
     /** Record the objective of every transaction the role is about to dispatch. */
     orchestrator(request, item) {
       const c = request.classified;
-      const digest = c.digest ?? {};
-      const isRoot = recordsOf(digest.ancestors).length === 0;
+      const contextFacts = c.context ?? {};
+      const isRoot = recordsOf(contextFacts.ancestors).length === 0;
       // The verifier must count a fixed corpus: make its dependency explicit
       // before any dispatch, instead of relying on the order workers happen to
       // finish in.
       if (isRoot && !state.dependencySet) {
+        const tx = asRecord(asRecord(c.context?.transaction)?.transaction);
+        if (tx?.id !== verifyTx) return call('flow_query', { what: 'transaction', params: { id: verifyTx, fields: ['requirements'] } });
         state.dependencySet = true;
         return call('flow_transaction', {
           action: 'set_dependency',
-          params: { transaction_id: verifyTx, depends_on: [deepTx, flatTx] },
+          params: { transaction_id: verifyTx, expected_transaction_revision: tx?.revision, depends_on: [deepTx, flatTx] },
         });
+      }
+      const detail = asRecord(c.context?.transaction) ?? {};
+      const publication = asRecord(detail.result) ?? {};
+      const value = asRecord(publication.result) ?? {};
+      if (item.action === 'validate' && item.transaction_id === state.needsRevision) {
+        const txId = String(item.transaction_id);
+        if (!state.faultyValidations.has(txId)) {
+          state.faultyValidations.add(txId);
+          // A declared fixture fault: the manager observed a blocked publication
+          // yet proposes acceptance. The independent audit must refuse this conclusion.
+          const params = validationParams(request, item);
+          return call('flow_transaction', { action: 'validate', params: { ...params, accepted: true,
+            checks: recordsOf(params.checks).map(check => ({ ...check, passed: true })) } });
+        }
+        if ((state.issuesByTx.get(txId)?.size ?? 0) > 0) return call('flow_transaction', { action: 'adjust_transaction',
+          params: { transaction_id: txId, expected_transaction_revision: asRecord(detail.transaction)?.revision, inputs: { write_scope: ['deep/'] } } });
+      }
+      if (item.action === 'validate' && value.completed === true && typeof value.file === 'string') {
+        const receipts = recordsOf(c.context?.execution_effects).map((receipt): Record<string, unknown> & { args: Record<string, unknown> | null; body: Record<string, unknown> | null } => {
+          let args = asRecord(receipt.args); let body = asRecord(receipt.body);
+          try { if (!args && typeof receipt.args === 'string') args = asRecord(JSON.parse(receipt.args)); } catch { /* Invalid records do not prove work. */ }
+          try { if (!body && typeof receipt.body === 'string') body = asRecord(JSON.parse(receipt.body)); } catch { /* Invalid records do not prove work. */ }
+          return { ...receipt, args, body };
+        });
+        const write = receipts.find(receipt => receipt.tool === 'write' && receipt.status === 'SETTLED' && receipt.body?.isError === false
+          && String(receipt.args?.file_path ?? '').endsWith(String(value.file)));
+        const params = validationParams(request, item);
+        return call('flow_transaction', { action: 'validate', params: { ...params, accepted: Boolean(write),
+          checks: recordsOf(params.checks).map(check => ({ ...check, passed: Boolean(write),
+            method: 'Inspect the persisted successful write receipt, exact file path and bytes for this publication and execution.',
+            observation: JSON.stringify(write ?? { limitation: 'No successful matching write receipt was found' }),
+            evidence: JSON.stringify({ publication: publication.ref, receipt: write }),
+            evidence_refs: [...listOf(check.evidence_refs), ...(write ? [{ kind: 'effect', call_id: write.call_id }] : [])] })) } });
       }
       if (state.needsRevision && item.action === 'correct-result' && item.transaction_id === state.needsRevision) {
         // The deepest branch was granted `deep/staging` for a deliverable at
         // `deep/nested`; the correction is to give it the scope the work needs.
         return call('flow_transaction', {
           action: 'adjust_transaction',
-          params: { transaction_id: item.transaction_id, inputs: { write_scope: ['deep/'] } },
+          params: { transaction_id: item.transaction_id, expected_transaction_revision: asRecord(asRecord(c.context?.transaction)?.transaction)?.revision, inputs: { write_scope: ['deep/'] } },
         });
       }
       return null;
     },
     allocator(request, _item) {
       const c = request.classified;
-      const digest = c.digest ?? {};
-      const pending = recordsOf(digest.pending_actions).filter(entry => entry.action === 'spawn_management_node');
+      const contextFacts = c.context ?? {};
+      const pending = recordsOf(contextFacts.work_items).filter(entry => entry.action === 'spawn_management_node');
       if (!pending.length) return null;
       const instruction = asRecord(pending[0]?.instruction) ?? {};
       // The delegation has to happen before the allocator hands the same
       // transaction to a Worker: a delegated parent waits for its children, and
       // a Worker allocated first would take the branch the fixture delegates.
-      const isRoot = recordsOf(digest.ancestors).length === 0;
-      const transactionId = isRoot ? deepTx : asRecord(digest.node)?.delegated_transaction_id;
+      const isRoot = recordsOf(contextFacts.ancestors).length === 0;
+      const transactionId = _item.transaction_id ?? (isRoot ? deepTx : asRecord(contextFacts.node)?.delegated_transaction_id);
       if (!transactionId) return null;
       return call('flow_allocation', {
         action: 'spawn_management_node',
         params: {
           transaction_id: transactionId,
+          plan_ref: asRecord(asRecord(contextFacts.transaction)?.plan)?.ref,
           node_id: c.nodeId,
           scope: { objective: instruction.objective ?? 'delegated deep branch' },
           max_children: instruction.max_children ?? 4,
@@ -771,7 +1017,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
     worker(request) {
       const c = request.classified;
       const objective = c.objective ?? '';
-      const scopeLine = /You own these paths \(do not write outside them\): (.+)/u.exec(c.userText ?? '')?.[1] ?? '';
+      const scopeLine = listOf(asRecord(c.context?.allocation)?.write_scope).map(String).join(', ');
       const scopeEntries = scopeLine.split(',').map(entry => entry.trim()).filter(Boolean);
       const lastTool = c.lastToolName;
       const lastResult = c.lastToolResult ?? '';
@@ -931,6 +1177,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
             action: 'inspect_validation',
             params: {
               transaction_id: item.transaction_id,
+              ...(item.audit_id ? { audit_id: item.audit_id } : {}),
               decision: 'reject',
               required_change: 'grant the deepest branch a write scope that covers deep/nested/result.txt and produce the file there',
               evidence: {
@@ -961,7 +1208,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
           already_sent: openIssue !== null && state.verificationAttempts.get(agentId) === openIssue,
         });
         if (openIssue && !answered) return say(`Issue ${openIssue} has no replacement Worker result yet; leaving it open. ${STATUS_LINE}`);
-        if (openIssue && answered) {
+        if (openIssue && answered && !state.complianceIssues.has(openIssue)) {
           state.verificationAttempts.set(agentId, openIssue);
           return call('flow_audit', {
             action: 'verify_correction',
@@ -979,6 +1226,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
           action: 'inspect_validation',
           params: {
             transaction_id: item.transaction_id,
+            ...(item.audit_id ? { audit_id: item.audit_id } : {}),
             decision: 'approve',
             evidence: { reason: 'the recorded result revision satisfies the acceptance criteria for this transaction' },
           },
@@ -1038,7 +1286,7 @@ function recursionHooks(context: MockCaseContext): MockScenarioHooks {
  * Two fixture-owned constraints make the crash land where the case says it
  * does. The Orchestrator makes `r4` depend on `r3`, so the receiving Worker
  * cannot start before the message that crosses subtrees has been delivered;
- * and the Auditor's validation review of `r4` is held on a named barrier, so
+ * and the receiving Worker's sum call is held after native admission, so
  * the runner can kill the host while that identity is genuinely in flight.
  */
 function recoveryHooks(context: MockCaseContext): MockScenarioHooks {
@@ -1050,13 +1298,15 @@ function recoveryHooks(context: MockCaseContext): MockScenarioHooks {
   const state = { dependencySet: false, published: false, held: false };
   return {
     orchestrator(request) {
-      const digest = request.classified.digest ?? {};
-      const statuses = asRecord(asRecord(digest.transactions)?.by_status) ?? {};
+      const contextFacts = request.classified.context ?? {};
+      const statuses = asRecord(asRecord(contextFacts.transactions)?.by_status) ?? {};
       if (!state.dependencySet && r3 && r4) {
+        const tx = asRecord(asRecord(request.classified.context?.transaction)?.transaction);
+        if (tx?.id !== r4) return call('flow_query', { what: 'transaction', params: { id: r4, fields: ['requirements'] } });
         state.dependencySet = true;
         return call('flow_transaction', {
           action: 'set_dependency',
-          params: { transaction_id: r4, depends_on: [r3] },
+          params: { transaction_id: r4, expected_transaction_revision: tx?.revision, depends_on: [r3] },
         });
       }
       // The case's own instruction names the blackboard key the run owes: it is
@@ -1074,20 +1324,11 @@ function recoveryHooks(context: MockCaseContext): MockScenarioHooks {
       }
       return null;
     },
-    auditor(_request, item) {
-      if (item.action !== 'inspect_validation') return null;
-      if (r4 && item.transaction_id !== r4) return null;
-      if (state.held) return null;
-      // Held exactly once: after the restart the same review must be answerable,
-      // or the cluster could never finish the work the crash interrupted.
+    worker(request) {
+      const c = request.classified;
+      if (c.transactionId !== r4 || state.held || c.lastToolName !== 'flow_query') return null;
       state.held = true;
-      return {
-        ...call('flow_audit', {
-          action: 'inspect_validation',
-          params: { transaction_id: item.transaction_id, decision: 'approve', evidence: { note: 'result revision checked against the recorded tool result' } },
-        }),
-        hold: 'recovery-r4-validation',
-      };
+      return { ...call('flow_sum', { values: sumValues(c.objective) ?? [] }), hold: 'recovery-r4-execution' };
     },
   };
 }
@@ -1123,6 +1364,21 @@ function scaleHooks(context: MockCaseContext): MockScenarioHooks {
   };
   const relativeOf = (objective: unknown): string | null => /Read the file (\S+) \(relative to the workspace\)/u.exec(String(objective ?? ''))?.[1] ?? null;
   return {
+    orchestrator(request, item) {
+      if (item.action !== 'validate') return null;
+      const detail = asRecord(request.classified.context?.transaction) ?? {};
+      const inputs = asRecord(detail.inputs) ?? {};
+      const publication = asRecord(detail.result) ?? {};
+      const result = asRecord(publication.result) ?? {};
+      const expected = parse(inputs.source_excerpt);
+      const passed = result.file === inputs.file && expected.symbol !== null && result.symbol === expected.symbol && result.line === expected.line;
+      const params = validationParams(request, item);
+      return call('flow_transaction', { action: 'validate', params: { ...params, accepted: passed,
+        checks: recordsOf(params.checks).map(check => ({ ...check, passed,
+          method: 'Parse the declaration and its exact line from the formally supplied source excerpt and compare the current publication.',
+          observation: JSON.stringify({ file: inputs.file, source_hash: inputs.hash, expected, submitted: result }),
+          evidence: JSON.stringify({ source_excerpt: inputs.source_excerpt, source_hash: inputs.hash, publication: publication.ref }) })) } });
+    },
     worker(request) {
       const c = request.classified;
       const relative = relativeOf(c.objective);
@@ -1188,7 +1444,7 @@ function browserHooks(): MockScenarioHooks {
       const url = raw ? raw.replace(/[),.;:!?]+$/u, '') : null;
       const last = c.lastToolName;
       if (!url) return null;
-      if (!last) return call(NAV, { url });
+      if (!last || last === 'flow_query') return call(NAV, { url });
       if (last === NAV) return call(SNAPSHOT, {});
       if (last === CLICK) return call(SNAPSHOT, {});
       if (last === SNAPSHOT) {
@@ -1263,8 +1519,9 @@ export function buildScenario({
   const resolvedHooks = hooks && Object.keys(hooks).length
     ? hooks
     : caseHooks(caseId, { fixtureIds, workspace, layout, runId, limits });
-  const seen: MockScenarioSeen = { compaction: 0, role: {}, worker: {}, digest_missing: 0 };
+  const seen: MockScenarioSeen = { compaction: 0, role: {}, worker: {}, query_missing: 0 };
   const problems: string[] = [];
+  const work = new Map<string, QueriedWork>();
   const ctx: MockScenarioContext = {
     caseId,
     layout,
@@ -1284,9 +1541,7 @@ export function buildScenario({
     seen,
     problems,
   };
-  return {
-    name: `mock:${caseId}`,
-    respond(request) {
+  const respondRequest = (request: MockRequestRecord): MockScenarioReply | null => {
       const classified = request.classified;
       // Initial Flow tasks use native user provenance, which also enables
       // the host's ordinary first-prompt session-title provider.
@@ -1322,21 +1577,16 @@ export function buildScenario({
         seen.compaction += 1;
         return say(checkpointFor(classified));
       }
+      resolvedHooks.observe?.(request);
+      const queryReply = readWork(request, work, caseId);
+      if (queryReply) return queryReply;
       if (classified.kind === 'role') {
+        if (classified.lastToolName && classified.lastToolName !== 'flow_query' && /^Error:/u.test(classified.lastToolResult ?? '')) return say(`The action was refused: ${classified.lastToolResult}. I need a valid updated task before retrying.`);
         const role = classified.role;
         const key = `${role}:${classified.agentId}`;
         seen.role[key] = (seen.role[key] ?? 0) + 1;
         if (!role || !ROLE_TOOL_NAME[role]) {
           throw new Error(`unknown cluster role ${JSON.stringify(classified.role)} in the role prompt`);
-        }
-        if (!classified.digest) {
-          // A native compaction can shadow the prompt that carried the digest,
-          // and the harness's own checkpoint does not restore it. The honest
-          // answer is to end the turn: the scheduler re-prompts this identity
-          // with current state. Inventing an action from nothing would be the
-          // fixture deciding the plugin's work.
-          seen.digest_missing += 1;
-          return say(`The ${classified.role} prompt arrived without a domain digest after compaction. ${STATUS_LINE}`);
         }
         if (role === 'orchestrator') return orchestratorReply(request, ctx);
         if (role === 'allocator') return allocatorReply(request, ctx);
@@ -1347,8 +1597,11 @@ export function buildScenario({
         seen.worker[key] = (seen.worker[key] ?? 0) + 1;
         return workerReply(request, ctx);
       }
-      throw new Error(`unrecognised model request: no role line, no worker header and no compaction directive (${classified.messageCount} messages)`);
-    },
+      throw new Error(`unrecognised model request: no authenticated native identity (${classified.messageCount} messages)`);
+  };
+  return {
+    name: `mock:${caseId}`,
+    respond(request) { return enrichMockReply(request, respondRequest(request)); },
     finish() {
       const issues = [...problems];
       for (const [key, expected] of Object.entries(expectations.requests ?? {})) {
@@ -1363,7 +1616,7 @@ export function buildScenario({
         compaction_requests: seen.compaction,
         role_requests: { ...seen.role },
         worker_requests: { ...seen.worker },
-        digest_missing: seen.digest_missing,
+        query_missing: seen.query_missing,
         checks: [],
         problems: issues,
         ...(ctx.hooks.reportEvidence ? { fixture_evidence: ctx.hooks.reportEvidence() } : {}),
@@ -1372,4 +1625,4 @@ export function buildScenario({
   };
 }
 
-export { ROLE_LINE, WORKER_HEADER, COMPACTION_MARKER, ROLE_TOOL_NAME };
+export { COMPACTION_MARKER, ROLE_TOOL_NAME };

@@ -205,6 +205,8 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
     clusterId, ...tierIds)?.c ?? 0);
 
   push('fixture-planned', planned === tier, `${planned} of the tier's ${tier} transactions exist in the cluster`);
+  const clusterStatus=asString(ledger.get('SELECT status FROM clusters WHERE id=?',clusterId)?.status);
+  push('cluster-completed',clusterStatus==='COMPLETED',`The complete operational closeout is ${clusterStatus}; accepted file results alone do not complete the team.`);
   push('every-transaction-terminal', planned > 0 && terminal === planned,
     `${terminal}/${planned} of the tier's transactions are terminal: ${JSON.stringify(byStatus)}${extra ? ` (plus ${extra} the model added on its own)` : ''}`);
   push('real-llm-workers', workersWithRequests >= requiredWorkers,

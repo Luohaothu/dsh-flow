@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams, prepareFixtureTask } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -117,6 +118,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -153,7 +155,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -275,7 +277,7 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
   });
 
   host.setScript(async turn => {
-    if (!(turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker')) return;
+    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'worker') return;
     await turn.request({ purpose: 'worker' });
     await turn.callTool('read', { file_path: 'x' });
     await turn.request({ purpose: 'worker' });
@@ -286,7 +288,7 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
     await runtime.tick();
-    const turn = host.turns.find(candidate => (candidate.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker'));
+    const turn = host.turns.find(candidate => runtime.store.getAgentBySession(candidate.session.id)?.role === 'worker');
     if ((turn && turn.toolCalls.includes('read')) || Date.now() > deadline) break;
     // eslint-disable-next-line no-await-in-loop
     await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
@@ -494,15 +496,17 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id, fixture_execution: 'management' });
   if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
     command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   }
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
+  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: tx.id, scope: { objective: 'child domain' }, max_children: 4,
   }));
-  const other = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: tx.id, scope: { objective: 'second domain' }, max_children: 4,
+  const otherWork = commandId04(command(runtime, orchestrator, 'create_transaction', { objective: 'second domain', acceptance_criteria: ['observable result'] }), 'transaction_id');
+  command(runtime, orchestrator, 'dispatch', { transaction_id: otherWork, fixture_execution: 'management' });
+  const other = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
+    transaction_id: otherWork, scope: { objective: 'second domain' }, max_children: 4,
   }));
   const budgetsBefore = runtime.store.listBudgets(clusterId).map(row => `${row.id}:${row.tool_calls_limit}:${row.parent_budget_id}`).sort();
   const pathsBefore = runtime.store.nodesInSubtree(clusterId, null).map(node => `${node.id}:${node.path}:${node.depth}`).sort();
@@ -539,8 +543,11 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
       runtime.store.updateTransaction(delegatedId, { status: 'ACCEPTED' });
     }
   });
-  const grandchild = managementNodeOf04(command(runtime, actorFor(runtime, clusterId, 'allocator', child.node_id), 'spawn_management_node', {
-    transaction_id: child.delegated_transaction_id, scope: { objective: 'grandchild domain' }, max_children: 4,
+  const childLead = actorFor(runtime, clusterId, 'orchestrator', child.node_id);
+  const grandchildWork = commandId04(command(runtime, childLead, 'create_transaction', { objective: 'grandchild domain', acceptance_criteria: ['observable result'] }), 'transaction_id');
+  command(runtime, childLead, 'dispatch', { transaction_id: grandchildWork, fixture_execution: 'management' });
+  const grandchild = managementNodeOf04(command(runtime, actorFor(runtime, clusterId, 'allocator', child.node_id), 'spawn_management_node', { fixture_prepare_management: true,
+    transaction_id: grandchildWork, scope: { objective: 'grandchild domain' }, max_children: 4,
   }));
   runtime.store.tx(() => runtime.store.updateTransaction(grandchild.delegated_transaction_id, { status: 'ACCEPTED' }));
   // The new parent must be able to fund the subtree it takes on — that check has
@@ -587,8 +594,8 @@ test('node ownership is derived from the tree and reported by the public query',
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const rootTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: rootTx.id });
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
+  command(runtime, orchestrator, 'dispatch', { transaction_id: rootTx.id, fixture_execution: 'management' });
+  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: rootTx.id, scope: { objective: 'descendant domain' }, max_children: 2,
   }));
   const work = commandId04(command(runtime, orchestrator, 'create_transaction', {
@@ -633,7 +640,7 @@ test('a completed delegated node returns its unspent role and node grants to its
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
+  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: original.id, scope: { objective: 'finish delegated work' },
   }));
   const parentBudget = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'parent node budget');
@@ -668,7 +675,7 @@ test('a descendant request reclaims idle ancestor roles before declaring their n
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
+  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: original.id, scope: { objective: 'child needs a request' },
   }));
   const parent = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'parent node budget');
@@ -713,6 +720,7 @@ test('a delegated node waits for its Auditor to score final health after accepti
   t.after(async () => { await runtime.dispose(); });
   const clusterId = runtime.start({
     objective: 'close a completed delegated branch while the parent still works',
+    acceptance_criteria: ['child complete'],
     workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 4 },
     budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
@@ -720,11 +728,12 @@ test('a delegated node waits for its Auditor to score final health after accepti
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', {
+  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: original.id, scope: { objective: 'finish child result' },
   }));
   const childOrchestrator = actorFor(runtime, clusterId, 'orchestrator', child.node_id);
   const childAuditor = actorFor(runtime, clusterId, 'auditor', child.node_id);
+  prepareFixtureTask(runtime, child.delegated_transaction_id);
   runtime.store.tx(() => runtime.store.updateTransaction(child.delegated_transaction_id, {
     status: 'SUBMITTED', result: { evidence: 'child complete' }, __bump_revision: false,
   }));
@@ -760,7 +769,7 @@ test('a delegated node waits for its Auditor to score final health after accepti
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'COMPLETED',
     'only the scored Auditor decision permits child finalization');
-  assert.equal(required(runtime.store.getTransaction(original.id), 'parent transaction').status, 'DRAFT',
+  assert.equal(required(runtime.store.getTransaction(original.id), 'parent transaction').status, 'READY',
     'the unfinished parent is not accepted by closing the child');
 });
 

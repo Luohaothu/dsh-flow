@@ -109,6 +109,8 @@ const roots = result.value.data.items;
 
 | `what` | 常用参数 | 读取内容 |
 |---|---|---|
+| `assignment` | 成员工具：`fields?` | 本轮实际绑定的一个工作对象；始终含计划、修订及失效提示；宿主不能伪造成员绑定 |
+| `agenda` | 成员工具：`limit?`、`snapshot_id?`、`offset?` | 按角色筛选的问题、业务标题、变化原因和正式引用；后续分页使用同一 actor 快照 |
 | `cluster` | `{}` | 集群配置、状态和计数 `counts` |
 | `nodes` | `parent_id?`、分页 | 树节点引用；`parent_id: null` 取根，省略则不限父节点 |
 | `node` | `id`；`full?` | 节点、祖先拓扑、任务单元与智能体分页，以及子树数量 |
@@ -129,7 +131,19 @@ const roots = result.value.data.items;
 
 列表统一携带 `items`、`total`、`offset`、`limit`、`next_offset`。继续读取直到 `next_offset` 为 `null`；不要把分页结果当完整子树。
 
-角色工具 `flow_query` 使用相同的查询名，但读取范围由调用身份决定，返回的信息也更精简。它直接返回该分支数据，不使用公共 API 的外层 `{what, data}`；例如 `{what:'transaction', params:{id:'...'}}` 读取结果中的 `transaction`、`result` 和 `validation`。执行智能体不能借 `full` 扩大权限；需要历史详情时，应按审查、纠正问题或副作用回执的标识分别查询。
+角色工具 `flow_query` 的范围由原生调用身份决定，直接返回该分支数据，不使用公共 API 的外层 `{what, data}`。对象支持各自声明的 `fields` 白名单；默认投影只含必要信息，`projection: true` 和 `available_fields` 提示未返回字段仍存在。大字段返回长度、完整性及继续读取参数；用 `content_field/content_offset/content_limit` 分页读取，不能把部分内容视为完整约束。未知字段明确返回可选项。`context` 保留宿主上下文与压缩信息的含义。
+
+```json
+{"what":"assignment","params":{"fields":["brief","requirements","constraints","inputs"]}}
+{"what":"agenda","params":{"limit":3}}
+{"what":"transaction","params":{"id":"<transaction_id>","fields":["requirements","plan","result","validation"]}}
+```
+
+`assignment.binding` 保留本轮实际输入对象，发生新事件不会切换目标。后续 agenda 页必须带原 `snapshot_id`；快照过期要求重新查询，稳定列表不授予动作权限。权限不足、对象不存在和状态冲突分别返回错误。
+
+`transaction`、`audit` 和 `assignment` 的 `fields:["evidence"]` 提供 `native_tools` 引用页。完整读取时保留返回的 `read.params`，包括 `native_session_id`、`native_call_id` 和 `native_call_seq`；它们定位真实原生工具调用与返回。产物按真实生产者和轮次关联，校验按成功创建该记录的原生调用关联。输入绑定只说明当轮接收的对象，不代替工具的业务含义。`effects` 只记录外部副作用，空列表不表示没有纯计算工具调用。尚未持久化或无法唯一配对的回执保持未知。
+
+验收的 `result_ref` 及 `evidence_refs` 中的 `kind:"result"` 始终指向当前产物。需要检查纠正前的候选时，可用 `kind:"historical_result"`；其引用必须是同一任务已发布的更早产物，并以确切对象引用写入当前正式计划输入。历史证据不能充当当前产物，其他任务或临时声明的旧记录会被拒绝。
 
 ## 主会话命令与执行工具
 
@@ -164,6 +178,8 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 
 命令工具统一接收 `{action, params, expected_revision?}`。顶层 `expected_revision` 比较的是**集群版本**，而非任务单元版本或黑板条目版本。`command_id` 由工具根据原生调用身份产生，无需模型提交。
 
+任务变更在 `params.expected_transaction_revision` 中比较读取到的事务修订号。相同基准修订和内容的计划操作在新 call ID 下也幂等；相同语义键的不同内容返回冲突。`dispatch` 批量使用 `transactions: [{transaction_id, expected_transaction_revision, plan?}]`，每个目标分别需要有效计划；`limit` 不能代替明确目标。
+
 ### 从创建任务单元到正式接受结果
 
 以下片段应由相应角色在满足状态要求时分别调用，不能由同一智能体越权依次执行。`<transaction_id>` 和 `<audit_id>` 必须替换为前序返回或查询得到的真实标识。
@@ -185,7 +201,25 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 编排智能体派发任务单元，再由资源分配智能体建立执行分配：
 
 ```json
-{ "action": "dispatch", "params": { "transaction_id": "<transaction_id>" } }
+{
+  "action": "dispatch",
+  "params": {
+    "transaction_id": "<transaction_id>",
+    "expected_transaction_revision": 1,
+    "plan": {
+      "understanding": "读取模块导出并形成可核对的接口说明",
+      "execution": "worker",
+      "rationale": "一个执行者可完成源码梳理与交付",
+      "assignment": "请读取指定模块，向我交付接口说明，每个导出附源码位置；仅使用读取权限。",
+      "criterion_responsibilities": [{
+        "criterion": {"transaction_id": "self", "criterion_index": 0},
+        "evidence_provider": "worker",
+        "validated_by": "orchestrator",
+        "applies_to": ["worker"]
+      }]
+    }
+  }
+}
 ```
 
 ```json
@@ -213,9 +247,18 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
   "action": "validate",
   "params": {
     "transaction_id": "<transaction_id>",
+    "expected_transaction_revision": 4,
     "accepted": true,
     "checks": [
-      { "criterion": "每个导出接口附对应源码位置", "passed": true, "evidence": "实际读取结果或验证记录的引用" }
+      {
+        "criterion_ref": {"transaction_id": "<transaction_id>", "prepared_revision": 2, "criterion_index": 0},
+        "criterion": "每个导出接口附对应源码位置",
+        "method": "逐项读取所引用的源码并与导出列表核对",
+        "observation": "实际检查的导出项及其位置均对应本次交付",
+        "passed": true,
+        "evidence": "实际读取的行与观察记录",
+        "evidence_refs": [{"kind": "result", "ref": {"transaction_id": "<transaction_id>", "publication_event_seq": 42}}]
+      }
     ]
   }
 }
@@ -226,11 +269,26 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 ```json
 {
   "action": "inspect_validation",
-  "params": { "audit_id": "<audit_id>", "decision": "APPROVED", "evidence": { "note": "独立核对的事实与记录引用" } }
+  "params": {
+    "audit_id": "<audit_id>",
+    "decision": "APPROVED",
+    "evidence": {
+      "checks": [
+        {"rule":"standard_coverage","method":"逐项比对正式标准与检查引用","observation":"全部标准均有对应检查，未被放宽","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
+        {"rule":"checks_performed","method":"核对检查方法、观察与执行记录","observation":"源码读取及逐项比对实际完成","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
+        {"rule":"evidence_applicability","method":"核对产物发布与所引记录身份","observation":"证据对应本次交付和执行轮次","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
+        {"rule":"conclusion_support","method":"检查观察是否支持逐项通过判断","observation":"对应源码与导出项支持记录的验收结论","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
+        {"rule":"authority","method":"核对正式任务、分配及调度作者","observation":"校验范围及作者符合本管理域权限","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]}
+      ],
+      "issues": []
+    }
+  }
 }
 ```
 
-示例中的 `evidence` 字符串只用于说明参数位置，实际调用必须填写可核对的证据。`inspect_validation` 审查指定版本的结果，批准后直接触发正式接受。规划审查不阻塞任务派发，但结果审查仍不可省略。
+示例中的版本与发布事件序号仅说明参数位置，须用查询返回的真实引用替换。正向验收必须覆盖所有标准，实际填写方法、观察及证据。`inspect_validation` 审查调度 Agent 的验收行为，合规决定只能接受匹配的正向验收记录。驳回验收依据时保留结果并返回 `SUBMITTED`，由总协调补充校验；产物有缺陷才安排 Worker 返工。规划审核继续异步监督。
+
+审核记录的 `checks` 必须覆盖固定治理规则。计划规则为 `goal_coverage`、`responsibility`、`dependencies`、`handoff`、`acceptance_arrangement`；验收规则为上述五项。每项写明方法、实际观察、判断和匹配的计划或验收引用。批准需全部通过，拒绝需指出具体失败项和补正事项；服务端记录真实审核作者、适用规则及合规结论。
 
 通信的参数与示例见 [通信组件](/development/components/communication)。`flow_sum` 参数为 `{values: [15, 40]}`，返回数值 `55`；它只检查原生工具调用能否往返完成，不验证智能体的业务工作质量。
 

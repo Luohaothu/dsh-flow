@@ -108,7 +108,83 @@ export type FlowHealthMetric =
 export type FlowQueryKind =
   | 'cluster' | 'nodes' | 'node' | 'transactions' | 'transaction' | 'audit' | 'agents' | 'allocations'
   | 'budgets' | 'issues' | 'issue' | 'audits' | 'effects' | 'effect' | 'usage' | 'deliveries'
-  | 'context' | 'health' | 'summary' | 'blackboard';
+  | 'context' | 'health' | 'summary' | 'blackboard' | 'assignment' | 'agenda';
+
+/** Immutable references to the contract actually used for planning and delivery. */
+export interface FlowPlanRef {
+  readonly transaction_id: string
+  readonly prepared_revision: number
+}
+export interface FlowCriterionRef extends FlowPlanRef {
+  readonly criterion_index: number
+}
+export interface FlowValidationRef {
+  readonly transaction_id: string
+  readonly result_revision: number
+}
+export interface FlowResultRef {
+  readonly transaction_id: string
+  readonly publication_event_seq: number
+}
+
+/** The server-selected input of a real native member turn. */
+export interface FlowAssignmentBinding {
+  readonly agent_id: string
+  readonly turn_seq: number
+  /** Actual lease epoch captured before native admission, when recorded. */
+  readonly epoch?: number | null
+  readonly object: { readonly kind: string; readonly id: string }
+  readonly transaction_id: string | null
+  readonly allocation_id: string | null
+  readonly plan_ref: FlowPlanRef | null
+  readonly validation_ref: FlowValidationRef | null
+  readonly revision: number | null
+  readonly read_version: number
+  readonly stale: boolean
+  readonly current_revision: number | null
+  readonly current_plan_ref: FlowPlanRef | null
+}
+
+/** A selected answer never implies that unreturned requirements do not exist. */
+export interface FlowQueryProjection {
+  readonly projection: boolean
+  readonly fields: readonly string[]
+  readonly available_fields: readonly string[]
+}
+export interface FlowClusterAssignmentQueryData extends FlowQueryProjection {
+  readonly binding: FlowAssignmentBinding
+  readonly title: string
+  readonly content_snapshot_id?: string
+  readonly brief?: FlowJsonValue
+  readonly requirements?: FlowJsonValue
+  readonly constraints?: FlowJsonValue
+  readonly inputs?: FlowJsonValue
+  readonly plan?: FlowJsonValue
+  readonly allocation?: FlowJsonValue
+  readonly result?: FlowJsonValue
+  readonly validation?: FlowJsonValue
+  readonly audit?: FlowJsonValue
+  readonly issue?: FlowJsonValue
+  readonly changes?: FlowJsonValue
+  readonly evidence?: FlowJsonValue
+}
+export type FlowAgendaKind = 'prepare_plan' | 'arrange_execution' | 'review_plan' | 'validate_result'
+  | 'review_validation' | 'correction' | 'aggregate' | 'closeout' | 'notification' | 'resources';
+export interface FlowAgendaItem {
+  readonly kind: FlowAgendaKind
+  readonly object: { readonly kind: string; readonly id: string }
+  readonly title: string
+  readonly reason: string
+  readonly transaction_id: string | null
+  readonly revision: number | null
+  readonly plan_ref: FlowPlanRef | null
+  readonly validation_ref: FlowValidationRef | null
+  readonly details: FlowJsonValue
+}
+export interface FlowClusterAgendaQueryData extends FlowPage<FlowAgendaItem> {
+  readonly snapshot_id: string
+  readonly read_version: number
+}
 
 // ------------------------------------------------------------------ budgets
 
@@ -267,6 +343,9 @@ export interface FlowTransactionReference {
   readonly status: FlowTransactionStatus
   readonly revision: number
   readonly result_revision: number | null
+  readonly current_plan_ref?: FlowPlanRef | null
+  readonly current_result_ref?: FlowResultRef | null
+  readonly current_validation_ref?: FlowValidationRef | null
   readonly priority: number
   readonly parent_transaction_id: string | null
   readonly objective: string
@@ -388,6 +467,8 @@ export interface FlowAuditRecord {
   readonly auditor_agent_id: string | null
   readonly kind: FlowAuditKind
   readonly target_revision: number | null
+  readonly plan_ref?: FlowPlanRef | null
+  readonly validation_ref?: FlowValidationRef | null
   readonly decision: FlowAuditDecision
   readonly evidence: FlowJsonValue
   readonly created: number
@@ -414,6 +495,7 @@ export interface FlowAllocationRecord {
   readonly node_id: string
   readonly agent_id: string
   readonly transaction_id: string | null
+  readonly plan_ref?: FlowPlanRef | null
   readonly capabilities: readonly FlowCapability[]
   readonly write_scope: readonly string[]
   readonly write_scope_canonical: readonly string[]
@@ -699,6 +781,9 @@ export interface FlowTransactionRecord {
   readonly capabilities: readonly FlowCapability[]
   readonly status: FlowTransactionStatus
   readonly revision: number
+  readonly current_plan_ref?: FlowPlanRef | null
+  readonly current_result_ref?: FlowResultRef | null
+  readonly current_validation_ref?: FlowValidationRef | null
   readonly attempts: number
   readonly result: FlowJsonValue
   readonly result_revision: number | null
@@ -881,6 +966,10 @@ export interface FlowQueryParams {
   readonly offset?: number
   readonly id?: string
   readonly call_id?: string
+  /** Read one native call/result pair returned by the object's evidence projection. */
+  readonly native_call_id?: string
+  readonly native_session_id?: string
+  readonly native_call_seq?: number
   readonly agent_id?: string
   readonly node_id?: string
   readonly transaction_id?: string
@@ -889,6 +978,19 @@ export interface FlowQueryParams {
   readonly role?: FlowAgentRole
   readonly prefix?: string
   readonly full?: boolean
+  /** Per-object allowlisted projection. Omitted fields do not imply absence. */
+  readonly fields?: readonly string[]
+  /** Continue the same actor-bound agenda snapshot. */
+  readonly snapshot_id?: string
+  /** Read the complete serialized value of one selected large field in pages. */
+  readonly content_field?: string
+  readonly content_offset?: number
+  readonly content_limit?: number
+  /** Actor-bound immutable content snapshot for subsequent field pages. */
+  readonly content_snapshot_id?: string
+  readonly plan_ref?: FlowPlanRef
+  readonly validation_ref?: FlowValidationRef
+  readonly result_ref?: FlowResultRef
   readonly cluster_id?: string
 }
 
@@ -936,6 +1038,16 @@ export interface FlowClusterTransactionQueryData {
   readonly validation: FlowJsonValue
   readonly result: FlowJsonValue
   readonly result_revision: number | null
+  readonly projection?: boolean
+  readonly fields?: readonly string[]
+  readonly available_fields?: readonly string[]
+  readonly binding?: FlowJsonValue
+  readonly requirements?: FlowJsonValue
+  readonly constraints?: FlowJsonValue
+  readonly inputs?: FlowJsonValue
+  readonly plan?: FlowJsonValue
+  readonly evidence?: FlowJsonValue
+  readonly content_snapshot_id?: string
 }
 
 /** The extra transaction fields a model role may read. */
@@ -969,6 +1081,13 @@ export interface FlowAllocationReference {
 /** One audit record by id. */
 export interface FlowClusterAuditQueryData {
   readonly audit: FlowAuditRecord
+  readonly projection?: boolean
+  readonly fields?: readonly string[]
+  readonly available_fields?: readonly string[]
+  readonly requirements?: FlowJsonValue
+  readonly plan?: FlowJsonValue
+  readonly validation?: FlowJsonValue
+  readonly evidence?: FlowJsonValue
 }
 
 /** Agents inside the actor's domain. */
@@ -1010,6 +1129,11 @@ export interface FlowClusterIssuesQueryData {
 /** One issue by id, with its evidence. */
 export interface FlowClusterIssueQueryData {
   readonly issue: FlowIssueRecord
+  readonly projection?: boolean
+  readonly fields?: readonly string[]
+  readonly available_fields?: readonly string[]
+  readonly required_change?: FlowJsonValue
+  readonly evidence?: FlowJsonValue
 }
 
 /** Audits still awaiting a decision. */
@@ -1089,6 +1213,8 @@ export interface FlowClusterBlackboardQueryData {
  * consumer narrows `data` by branch instead of asserting the shape it expected.
  */
 export type FlowQueryResult =
+  | { readonly what: 'assignment'; readonly data: FlowClusterAssignmentQueryData }
+  | { readonly what: 'agenda'; readonly data: FlowClusterAgendaQueryData }
   | { readonly what: 'cluster'; readonly data: FlowClusterQueryData }
   | { readonly what: 'nodes'; readonly data: FlowClusterNodesQueryData }
   | { readonly what: 'node'; readonly data: FlowClusterNodeQueryData }

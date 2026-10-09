@@ -77,7 +77,8 @@ export function notificationCategory(subject: string): FlowCommunicationCategory
     case 'blackboard': return 'collaboration_request';
     case 'escalation': case 'child-blocked': case 'transaction-stale': case 'result-withheld':
     case 'agent-anomaly': return 'blocker_report';
-    case 'budget-refused': case 'context-pressure': case 'context-pressure-notice': return 'resource_coordination';
+    case 'budget-refused': case 'context-pressure': case 'context-pressure-notice':
+    case 'management-domain-draining': return 'resource_coordination';
     default: return 'discussion';
   }
 }
@@ -90,6 +91,7 @@ export const NOTIFICATION_LABELS: Readonly<Record<string, string>> = {
   'blackboard': '共享信息已更新', 'escalation': '请求上级处理', 'child-blocked': '下级执行受阻',
   'transaction-stale': '任务长期未推进', 'result-withheld': '任务结果暂未发布', 'agent-anomaly': '智能体执行异常',
   'budget-refused': '资源额度不足', 'context-pressure': '需要处理上下文压力', 'context-pressure-notice': '上下文压力提醒',
+  'management-domain-draining': '请回收已结束管理域的资源',
 };
 
 /** Stable incoming proof marker, retained when messages are delivered separately. */

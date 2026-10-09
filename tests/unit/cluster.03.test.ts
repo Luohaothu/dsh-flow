@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams, fixturePlan, prepareFixtureTask, publishFixtureResult } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -122,6 +123,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -149,7 +151,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -274,7 +276,7 @@ async function driveWorkerOnce(t: TestContext, {
     // eslint-disable-next-line no-await-in-loop
     await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
   }
-  const workerTurn = host.turns.find(turn => (turn.prompt?.content?.[0]?.text ?? '').startsWith('You are a Worker'));
+  const workerTurn = host.turns.find(turn => runtime.store.getAgentBySession(turn.session.id)?.role === 'worker');
   const workerAgent = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
   const eventsOf = (type: string): StreamEventRow[] => runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === type);
   return { runtime, host, clusterId, tx, workerTurn, workerAgent, eventsOf };
@@ -371,11 +373,11 @@ test('a management action yields its model turn so delegated work can be schedul
   }).cluster.id;
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
   host.setScript(async turn => {
-    if (!(turn.prompt?.content?.[0]?.text ?? '').includes('Role: orchestrator.')) return;
+    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'orchestrator') return;
     await turn.request({ purpose: 'role' });
     await turn.callTool('flow_query', { what: 'transaction', params: { id: tx.id } });
     if (!turn.concluded) {
-      await turn.callTool('flow_transaction', { action: 'dispatch', params: { transaction_id: tx.id } });
+      await turn.callTool('flow_transaction', { action: 'dispatch', params: fixtureParams(runtime, actorFor(runtime, clusterId, 'orchestrator', tx.node_id), 'dispatch', { transaction_id: tx.id }) });
     }
     // A non-yielding role keeps querying until the model chooses to stop;
     // that holds a management slot while child roles wait to start.
@@ -387,7 +389,7 @@ test('a management action yields its model turn so delegated work can be schedul
     await runtime.tick();
     await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
   }
-  const turn = host.turns.find(entry => (entry.prompt?.content?.[0]?.text ?? '').includes('Role: orchestrator.'));
+  const turn = host.turns.find(entry => runtime.store.getAgentBySession(entry.session.id)?.role === 'orchestrator');
   assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'READY');
   assert.equal(turn?.concluded, true, 'successful control mutation yields the native turn');
   assert.equal(turn.requests.length, 1, 'no second provider request polls the changed state');
@@ -424,35 +426,42 @@ test('a blocked Worker submission durably records the unsatisfied result for ind
   assert.equal(submittedData.revision, required(runtime.store.getTransaction(tx.id), 'transaction').revision);
 });
 
-test('a later-revision issue consumes the earlier incomplete Worker event without hiding a new incomplete result', t => {
+test('a rejected validation consumes the earlier incomplete result without hiding a new publication', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const blockedRevision = tx.revision;
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
+  const blockedRevision = required(runtime.store.getTransaction(tx.id), 'transaction').revision;
+  runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { completed: false, status: 'blocked' }, __bump_revision: false });
   runtime.store.tx(() => runtime.store.appendEvent(clusterId, 'result-submitted', {
     node_id: root.id, transaction_id: tx.id, revision: blockedRevision,
     result_completed: false, result_status: 'blocked',
   }));
-  const pending = () => runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
-    .filter(item => item.action === 'request_correction' && item.transaction_id === tx.id);
-  assert.equal(pending().length, 1, 'the actual blocked result first reaches independent review');
+  publishFixtureResult(runtime, tx.id);
+  const pending = () => runtime.pendingFor('orchestrator', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(orchestrator.agent_id))
+    .filter(item => item.action === 'validate' && item.transaction_id === tx.id);
+  assert.equal(pending().length, 1, 'the blocked publication reaches the actual business validator');
+  assert.equal(runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
+    .some(item => item.action === 'request_correction'), false, 'Worker metadata alone does not give governance a business verdict');
+  command(runtime, orchestrator, 'validate', { transaction_id: tx.id, accepted: false,
+    checks: [{ passed: false, evidence: 'The published Worker outcome states that the requested output could not be written.' }] });
+  assert.equal(pending().length, 0, 'a recorded rejection completes this validation attempt');
   command(runtime, orchestrator, 'adjust_transaction', { transaction_id: tx.id, inputs: { write_scope: ['output'] } });
   const correctedRevision = required(runtime.store.getTransaction(tx.id), 'transaction').revision;
   assert.ok(correctedRevision > blockedRevision);
-  const issueId = textOf(command(runtime, auditor, 'request_correction', {
-    transaction_id: tx.id, required_change: 'replace the Worker grant and write output',
-  }).result.issue_id, 'issue_id');
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').target_revision, correctedRevision);
-  assert.equal(pending().length, 0,
-    'an issue opened after the blocked event is already its review even if its target_revision advanced');
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
+  runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { completed: false, status: 'blocked', reason: 'the new attempt still lacks output' }, __bump_revision: false });
   runtime.store.tx(() => runtime.store.appendEvent(clusterId, 'result-submitted', {
     node_id: root.id, transaction_id: tx.id, revision: correctedRevision,
     result_completed: false, result_status: 'blocked',
   }));
-  assert.equal(pending().length, 1, 'a distinct later Worker attempt still needs its own review');
+  publishFixtureResult(runtime, tx.id);
+  assert.equal(pending().length, 1, 'a distinct later publication still needs its own business validation');
 });
 
 test('an Auditor cannot dismiss a recorded blocked Worker result as an imaginary defect', async t => {
@@ -482,8 +491,8 @@ test('an Auditor cannot dismiss a recorded blocked Worker result as an imaginary
   assert.equal(pendingVerdicts().length, 0, 'a plan edit alone has not replaced the Worker grant that blocked');
   assert.throws(() => command(runtime, auditor, 'verify_correction', {
     issue_id: issueId, decision: 'verified', evidence: { checked: 'the transaction inputs changed' },
-  }), error => rejectionStatus(error) === 409 && /allocat|worker|result/i.test(messageOf(error)),
-  'the old allocation still cannot execute the revised plan');
+  }), error => rejectionStatus(error) === 409 && /validation|allocat|worker|result/i.test(messageOf(error)),
+  'a plan edit supplies neither a new result nor independently approved validation');
   assert.throws(dismiss, error => rejectionStatus(error) === 409 && /blocked|incomplete/i.test(messageOf(error)),
     'a later plan change does not retroactively make the original blocked result false');
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
@@ -497,48 +506,50 @@ test('an Auditor cannot dismiss a recorded blocked Worker result as an imaginary
   assert.equal(jsonObject(required(pendingVerdicts()[0], 'pending verdict'), 'pending verdict').changed_since_issue, true,
     'the fresh grant makes review possible but does not pre-approve the correction');
   assert.equal(required(runtime.store.getIssue(issueId), 'issue').status, 'OPEN', 'the Auditor still owns the independent verdict');
+  assert.throws(() => command(runtime, auditor, 'verify_correction', {
+    issue_id: issueId, decision: 'VERIFIED', evidence: { granted: granted.allocation_id },
+  }), /new matching validation record and independent approval/, 'a replacement grant is progress, not accepted business evidence');
 });
 
-test('an incomplete Worker outcome wakes the Auditor even without a completed flag', async t => {
+test('an incomplete Worker outcome wakes the Orchestrator for actual validation even without a completed flag', async t => {
   for (const result of [
     { outcome: 'blocked', reason: 'the allocated write scope excludes the required output' },
     { status: 'blocked_by_topology', reason: 'the Worker cannot create a management child' },
   ]) {
     await t.test(result.outcome ?? result.status, async child => {
       let offered = false;
-      const { runtime, clusterId, tx, eventsOf } = await driveWorkerOnce(child, {
-        result, approvePlan: true,
-        onAuditor: async (turn, state) => {
-          const prompt = turn.prompt?.content?.[0]?.text ?? '';
-          if (!prompt.includes('Worker submitted a result explicitly marked incomplete')) return;
-          offered = true;
-          const submittedRow = required(state.runtime.store.get(
-            `SELECT data FROM events WHERE cluster_id=? AND type='result-submitted'
-              AND json_extract(data,'$.transaction_id')=? ORDER BY seq DESC LIMIT 1`,
-            state.clusterId, state.tx.id), 'submitted event row');
-          await turn.request({ purpose: 'role' });
-          await turn.callTool('flow_audit', {
-            action: 'request_correction',
-            params: { transaction_id: state.tx.id, target_revision: jsonObject(JSON.parse(textOf(submittedRow.data, 'event data')), 'result-submitted').revision,
-              required_change: 'allocate a Worker able to satisfy the original output' },
-          });
-        },
+      const { runtime, host, clusterId, tx, eventsOf } = await driveWorkerOnce(child, { result, approvePlan: true });
+      const root = rootNode(runtime, clusterId);
+      const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+      host.setScript(async turn => {
+        if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'orchestrator') return;
+        const assignment = jsonObject(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: { fields: ['requirements'] } })).value)), 'assignment');
+        assert.equal(jsonObject(assignment.binding, 'binding').transaction_id, tx.id);
+        const detail = jsonObject(JSON.parse(String((await turn.callTool('flow_query', { what: 'transaction', params: { id: tx.id, fields: ['result'] } })).value)), 'publication detail');
+        assert.deepEqual(jsonObject(detail.result, 'published result').result, result, 'the validator reads the exact published business outcome');
+        offered = true;
+        await turn.callTool('flow_transaction', { action: 'validate', params: fixtureParams(runtime, orchestrator, 'validate', {
+          transaction_id: tx.id, accepted: false, checks: [{ passed: false, evidence: 'The actual published outcome reports that the requested deliverable could not be produced.' }],
+        }) });
       });
       const submitted = firstOf(eventsOf('result-submitted'), 'result-submitted');
       const submittedData = jsonObject(submitted.data, 'event.data');
       assert.equal(submittedData.result_completed, false);
       assert.equal(submittedData.result_status, result.outcome ?? result.status);
       const deadline = Date.now() + 5_000;
-      while (runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length === 0 && Date.now() < deadline) {
+      while (required(runtime.store.getTransaction(tx.id), 'transaction').status !== 'REJECTED' && Date.now() < deadline) {
         await runtime.tick();
         await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
       }
-      assert.equal(offered, true, `the Auditor was shown the incomplete Worker result: ${JSON.stringify({
+      assert.equal(offered, true, `the Orchestrator was shown the incomplete Worker result: ${JSON.stringify({
         turnActions: eventsOf('turn-actions').filter(event => jsonObject(event.data, 'event.data').role === 'auditor').map(event => ({ seq: event.seq, actions: jsonObject(event.data, 'event.data').actions })),
         turnEnds: eventsOf('turn-end').filter(event => jsonObject(event.data, 'event.data').role === 'auditor').map(event => ({ seq: event.seq, reason: jsonObject(event.data, 'event.data').stop_reason })),
         tx: required(runtime.store.getTransaction(tx.id), 'transaction').status,
       })}`);
-      assert.equal(runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length, 1);
+      const rejected = required(runtime.store.getTransaction(tx.id), 'transaction');
+      assert.equal(rejected.status, 'REJECTED');
+      assert.equal(runtime.store.getValidation(rejected.current_validation_ref)?.accepted, false);
+      assert.equal(runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length, 0, 'governance never substitutes a raw outcome for the business validation');
     });
   }
 });
@@ -574,7 +585,7 @@ test('a transport failure still notifies the Allocator when no request was refus
   assert.equal(jsonObject(required(events.find(event => event.type === 'agent-anomaly'), 'agent-anomaly').data, 'agent-anomaly data').code, 'TRANSPORT');
 });
 
-test('an Auditor can correct a blocked result after the Orchestrator has already revised its plan', async t => {
+test('the Orchestrator can inspect the immutable blocked publication after revising its plan', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-blocked-review-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = createFakeHost();
@@ -594,7 +605,9 @@ test('an Auditor can correct a blocked result after the Orchestrator has already
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
   command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  const blockedRevision = required(runtime.store.getTransaction(tx.id), 'transaction').revision;
+  const original = required(runtime.store.getTransaction(tx.id), 'transaction');
+  const originalPlan = required(original.current_plan_ref, 'original plan');
+  const blockedRevision = original.revision;
   runtime.store.tx(() => {
     runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { completed: false, status: 'blocked' }, __bump_revision: false });
     runtime.store.appendEvent(clusterId, 'result-submitted', {
@@ -602,33 +615,39 @@ test('an Auditor can correct a blocked result after the Orchestrator has already
       result_completed: false, result_status: 'blocked',
     });
   });
+  publishFixtureResult(runtime, tx.id);
+  const originalResult = required(required(runtime.store.getTransaction(tx.id), 'transaction').current_result_ref, 'original publication');
   command(runtime, orchestrator, 'adjust_transaction', { transaction_id: tx.id, objective: 'fund a writable allocation' });
   assert.ok(required(runtime.store.getTransaction(tx.id), 'transaction').revision > blockedRevision);
   let offered = false;
   host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'auditor') return;
-    if (!runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
-      .some(action => action.transaction_id === tx.id && action.target_revision === blockedRevision)) return;
+    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'orchestrator') return;
+    const current = jsonObject(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: { fields: ['requirements'] } })).value)), 'assignment');
+    assert.equal(jsonObject(current.requirements, 'requirements').objective, 'fund a writable allocation');
+    const history = jsonObject(JSON.parse(String((await turn.callTool('flow_query', { what: 'transaction', params: {
+      id: tx.id, plan_ref: originalPlan, result_ref: originalResult, fields: ['requirements', 'result'],
+    } })).value)), 'original publication');
+    assert.equal(jsonObject(history.binding, 'binding').stale, true);
+    assert.equal(jsonObject(history.requirements, 'original requirements').objective, original.objective);
+    assert.deepEqual(jsonObject(history.result, 'original result').result, { completed: false, status: 'blocked' });
     offered = true;
-    await turn.request({ purpose: 'role' });
-    await turn.callTool('flow_audit', {
-      action: 'request_correction', params: {
-        transaction_id: tx.id, target_revision: blockedRevision,
-        required_change: 'fund an allocation whose write scope covers the required output',
-      },
-    });
+    const revised = required(runtime.store.getTransaction(tx.id), 'revised task');
+    await turn.callTool('flow_transaction', { action: 'dispatch', params: {
+      transaction_id: tx.id, expected_transaction_revision: revised.revision, plan: fixturePlan(revised),
+    } });
   });
   runtime.enableScheduling();
   const deadline = Date.now() + 5_000;
-  while (runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length === 0 && Date.now() < deadline) {
+  while (!offered && Date.now() < deadline) {
     await runtime.tick();
     await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
   }
-  const issue = runtime.store.openIssues(clusterId, { transaction_id: tx.id })[0];
-  assert.equal(offered, true, 'the Auditor received the original blocked revision as actionable work');
-  assert.ok(issue, 'the Auditor opened a durable correction issue');
-  assert.equal(issue.reporter_agent_id, auditor.agent_id);
-  assert.equal(issue.target_revision, blockedRevision, 'the plan revision did not erase the original defect');
+  await runtime.activeTurnFor(orchestrator.agent_id)?.promise;
+  assert.equal(offered, true, 'the manager reads the original publication while repairing the current plan');
+  assert.deepEqual(runtime.store.getResult(originalResult)?.plan_ref, originalPlan, 'business revision preserves the publication and its original contract');
+  assert.equal(runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length, 0, 'raw incomplete result events do not manufacture Auditor correction duties');
+  assert.equal(runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
+    .some(action => action.action === 'request_correction' && action.target_revision === blockedRevision), false);
 });
 
 test('one scheduling pass fills the active window exactly, never one slot short', async t => {
@@ -677,6 +696,7 @@ test('every eligible identity is claimed, not just the first page of transaction
   runtime.store.tx(() => {
     runtime.store.run("UPDATE transactions SET status='READY' WHERE cluster_id=?", clusterId);
   });
+  prepareFixtureTask(runtime, 'page-200');
   const last = required(runtime.store.getTransaction('page-200'), 'page-200');
   const agent = required(runtime.store.insertAgent({
     id: 'page-worker', cluster_id: clusterId, node_id: root.id, role: 'worker',
@@ -684,7 +704,7 @@ test('every eligible identity is claimed, not just the first page of transaction
   }), 'page worker');
   runtime.store.insertAllocation({
     id: 'page-allocation', cluster_id: clusterId, node_id: root.id, agent_id: agent.id,
-    transaction_id: last.id, capabilities: [], write_scope: [], write_scope_canonical: [], status: 'ACTIVE',
+    transaction_id: last.id, plan_ref: last.current_plan_ref, capabilities: [], write_scope: [], write_scope_canonical: [], status: 'ACTIVE',
   });
   const claimable = runtime.store.readyForWorker(clusterId, { limit: 100 });
   assert.equal(claimable.length, 1, 'the eligible set is defined by SQL, not by a page of READY rows');

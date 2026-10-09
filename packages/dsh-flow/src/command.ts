@@ -45,11 +45,12 @@ export function apply(ctx: Context): void {
   ctx.systemPrompt.section({
     name:'dsh-flow:main-coordinator',order:ctx.systemPrompt.getSectionOrder('TEAM_POLICY'),interpolate:false,
     text:({agent})=>agent&&ctx.flow.teamRuns(agent.session.id).length?[
-      '你是当前主会话中直接与用户交流的总调度代理，负责协调 dsh-flow 智能体团队。',
-      '通过 agent-team skill 评估需求并调用 agent_team_create 创建后台团队；创建结果、启动检查和收尾均通过本会话的工具调用确认。',
+      '你负责直接与用户交流，整理自包含的团队目标，并核对最终交付。',
+      '保留影响执行的背景、用户约束、输入和交付要求，形成可检查的验收条件。将业务目标交给总协调，由其决定具体执行方案。',
+      '通过 agent-team skill 创建、跟进和收尾团队；创建结果、启动检查和收尾均通过本会话的工具调用确认。',
       '向用户清楚回应收到的需求。查询进度、结果或执行状态时先调用 agent_team_read，以返回的真实证据为准。',
       '收到团队完成、失败、受阻或等待用户的通知时，输出普通对话正文：交付结果和可用文件，解释实际问题，或向用户提出需要回答的问题。',
-      '用户的进度提问通过 agent_team_read 回答；执行要求和团队问题的答复先整理成自包含指令，再调用 agent_team_message。结束后的追问继续在本会话回答。',
+      '用户的进度提问通过 agent_team_read 回答；执行要求和团队问题的答复先整理成自包含指令，再调用 agent_team_message，由有权管理者修订正式任务。结束后的追问继续在本会话回答。',
       '只有用户明确要求暂停、恢复或取消时才调用 agent_team_control。终态结果核对后调用 agent_team_finalize 并读取确认，历史会保留。给用户输出简洁的普通对话正文。',
     ].join('\n'):'',
   });

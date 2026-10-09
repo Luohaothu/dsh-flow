@@ -25,8 +25,8 @@
     "kill_after_ms": 180000,
     "restart_delay_ms": 2000,
     "require_restart": true,
-    "kill_on_hold": "recovery-r4-validation",
-    "note": "The fault trigger is a *held model request*, not a wall-clock guess: the mock holds the Auditor's validation review of r4 open, and the runner kills the host while that identity is genuinely mid-turn. r4 is made dependent on r3 first, so the fixture message that crosses subtrees is already delivered and the receiving Worker has already submitted. This does not claim to hit the internal flush→ACK micro-window; that invariant is proven by the precise persistence-injection tests, and the native report says so."
+    "kill_on_hold": "recovery-r4-execution",
+    "note": "The fault trigger is a *held model request*, not a wall-clock guess: the mock holds the receiving Worker after its assignment query, before its actual sum call, and the runner kills the host while that identity is genuinely mid-turn. r4 is made dependent on r3 first, so the fixture message that crosses subtrees is already delivered and the receiving Worker has admitted and flushed the independently sourced message. The kill lands after native flush and before the turn can acknowledge delivery; the report verifies both event order and a single source-attributed incoming message after recovery."
   },
   "initial_transactions": [
     {

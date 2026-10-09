@@ -18,8 +18,11 @@ import type {
   AgentRecord, AllocationRecord, AuditRecord, BudgetRecord, ClusterRecord,
   FlowActor, FlowAgentActor, FlowValidationCheck, IssueRecord, NodeRecord,
   TransactionRecord,
+  PlanRecord, CriterionRef, ValidationRecord,
 } from './model.ts';
+import { assertExpectedTransaction, savePlan, sameRef, validPlan, retainsConstraints } from './contracts.ts';
 import type { ClusterStore } from './store.ts';
+import { memberBriefing } from './briefing.ts';
 import {
   AGENT_TERMINAL, TRANSACTION_TERMINAL, assertTransition, scopesOverlap,
   validateWriteScope,
@@ -136,6 +139,13 @@ function optionalText(value: unknown): string | null {
 /** A JSON object value, or null when the value is not one. */
 function evidenceObject(value: FlowJsonValue): { readonly [key: string]: FlowJsonValue } {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+/** Only an explicit JSON object reference can bind historical evidence. */
+function containsObjectReference(value: FlowJsonValue, ref: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(item => containsObjectReference(item, ref));
+  return sameRef(value, ref) || Object.values(value).some(item => containsObjectReference(item, ref));
 }
 
 /**
@@ -278,6 +288,169 @@ function bumpRevision(rt: ClusterRuntimePort, tx: TransactionRecord, patch: Reco
   return rt.store.updateTransaction(tx.id, patch) ?? fail('Transaction not found', 404);
 }
 
+function semanticKey(actor: ActionActor, tx: TransactionRecord, action: string, base: unknown): string {
+  return JSON.stringify([actor.role, actor.agent_id ?? null, tx.id, base, action]);
+}
+
+function requestPlanAudit(rt: ClusterRuntimePort, cluster: ClusterRecord, actor: ActionActor, tx: TransactionRecord, plan: PlanRecord): AuditRecord {
+  const existing = rt.store.findAudit(cluster.id, tx.id, 'plan', plan.ref.prepared_revision);
+  const audit = existing ?? rt.store.insertAudit({
+    id: randomUUID(), cluster_id: cluster.id, transaction_id: tx.id, node_id: tx.node_id,
+    kind: 'plan', target_revision: plan.ref.prepared_revision, plan_ref: plan.ref,
+    decision: 'PENDING', evidence: { requested_by: actor.agent_id ?? null },
+  }) ?? fail('Failed to record audit', 500);
+  rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'auditor')?.id, {
+    subject: 'plan-audit-requested', payload: { audit_id: audit.id, transaction_id: tx.id },
+  });
+  return audit;
+}
+
+function assertRevisionSafe(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord, keepChildren: readonly string[] = []): TransactionRecord[] {
+  const keep = new Set(keepChildren);
+  const replaced = transactionSubtree(rt, cluster.id, tx.id).filter(id => id !== tx.id && !keep.has(id))
+    .map(id => txOf(rt, id)).filter(child => !['CANCELLED', 'SUPERSEDED', 'FAILED'].includes(child.status));
+  const agents = new Set<string>();
+  const ownAllocation = rt.store.activeAllocationForTransaction(tx.id);
+  if (ownAllocation) agents.add(ownAllocation.agent_id);
+  for (const child of replaced) {
+    const allocation = rt.store.activeAllocationForTransaction(child.id);
+    if (allocation) agents.add(allocation.agent_id);
+    if (child.node_id !== tx.node_id) for (const agent of rt.store.agentsInSubtree(cluster.id, child.node_id)) agents.add(agent.id);
+  }
+  for (const id of agents) {
+    const lease = rt.store.leaseForAgent(id);
+    if (rt.activeTurnFor(id) || (lease && lease.expires > rt.timestamp())) fail(`cannot revise while ${id} holds an active turn or lease; wait for its original work to drain`, 409);
+    if (rt.store.get("SELECT call_id FROM effects WHERE agent_id=? AND status IN ('STARTED','UNKNOWN','EFFECT_UNCERTAIN') LIMIT 1", id)) fail('cannot revise while original execution effects are unsettled', 409);
+  }
+  return replaced;
+}
+
+function savePreparedPlan(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord, plan: PlanRecord): TransactionRecord {
+  const replaced = assertRevisionSafe(rt, cluster, tx, plan.child_transaction_ids);
+  for (const child of replaced) {
+    rt.store.updateTransaction(child.id, { status: 'SUPERSEDED', validation: null, current_validation_ref: null, __bump_revision: false });
+    rt.store.appendEvent(cluster.id, 'child-work-superseded', { transaction_id: child.id, parent_transaction_id: tx.id, replacement_plan_ref: jsonValue(plan.ref, 'plan_ref') });
+    const node = rt.store.getNode(child.node_id);
+    if (node?.kind === 'management' && node.delegated_transaction_id === child.id && node.status !== 'RELEASED') {
+      rt.store.updateNode(node.id, { status: 'DRAINING' });
+      rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'allocator')?.id, {
+        subject: 'management-domain-draining', payload: { node_id: node.id, transaction_id: child.id },
+      });
+    }
+  }
+  return savePlan(rt.store, tx, plan);
+}
+
+/** Allocator-owned retirement returns unused grants while retaining histories and spent usage. */
+function releaseDrainingDomain(rt: ClusterRuntimePort, cluster: ClusterRecord, node: NodeRecord): JsonValue {
+  const nodes = rt.store.nodesInSubtree(cluster.id, node.id);
+  for (const agent of rt.store.agentsInSubtree(cluster.id, node.id)) {
+    const lease = rt.store.leaseForAgent(agent.id);
+    if (rt.activeTurnFor(agent.id) || (lease && lease.expires > rt.timestamp())) fail('management domain still has a live turn or lease', 409);
+    if (rt.store.get("SELECT call_id FROM effects WHERE agent_id=? AND status IN ('STARTED','UNKNOWN','EFFECT_UNCERTAIN') LIMIT 1", agent.id)) fail('management domain still has unsettled effects', 409);
+  }
+  const releases = rt.store.allocationsInSubtree(cluster.id, node.id, { status: 'ACTIVE' })
+    .map(allocation => releaseAllocation(rt, cluster, allocation, 'superseded management domain'));
+  for (const agent of rt.store.agentsInSubtree(cluster.id, node.id)) {
+    const grant = rt.store.budgetForScope(cluster.id, 'agent', agent.id);
+    if (grant?.parent_budget_id) {
+      const give = Object.fromEntries(DIMENSIONS.map(dim => [dim.key, dimensionAvailable(grant, dim.key)]).filter(([, amount]) => Number(amount) > 0));
+      if (Object.keys(give).length) transferBudget(rt.store, grant.id, grant.parent_budget_id, give);
+    }
+    rt.store.updateAgent(agent.id, { status: 'TERMINATED' });
+  }
+  for (const child of nodes.sort((left, right) => right.depth - left.depth)) {
+    const budget = rt.store.budgetForScope(cluster.id, 'node', child.id);
+    if (budget?.parent_budget_id) {
+      const give = Object.fromEntries(DIMENSIONS.map(dim => [dim.key, dimensionAvailable(budget, dim.key)]).filter(([, amount]) => Number(amount) > 0));
+      if (Object.keys(give).length) transferBudget(rt.store, budget.id, budget.parent_budget_id, give);
+    }
+    rt.store.updateNode(child.id, { status: 'RELEASED' });
+  }
+  rt.store.appendEvent(cluster.id, 'management-domain-released', { node_id: node.id });
+  return jsonValue({ node_id: node.id, released: releases }, 'released domain');
+}
+
+function reopenValidation(rt: ClusterRuntimePort, cluster: ClusterRecord, actor: ActionActor,
+  tx: TransactionRecord, params: Record<string, unknown>, decision: 'CORRECTION_REQUESTED' | 'REVALIDATION_REQUESTED',
+): JsonValue {
+  if (!['SUBMITTED', 'VALIDATING', 'ACCEPTED'].includes(tx.status) || !rt.store.getResult(tx.current_result_ref)) fail('validation correction requires a published result', 409);
+  assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
+  const validation = rt.store.getValidation(tx.current_validation_ref);
+  const issue = openIssue(rt, cluster, actor, {
+    transaction_id: tx.id, node_id: tx.node_id, target_revision: validation?.ref.result_revision ?? tx.revision,
+    severity: params.severity ?? 'MINOR', evidence: {
+      kind: 'validation-compliance', validation_ref: validation ? jsonValue(validation.ref, 'validation_ref') : null,
+      responsible_agent_id: validation?.author_agent_id ?? rt.roleAgentOf(cluster.id, tx.node_id, 'orchestrator')?.id ?? null,
+      audit_evidence: jsonValue(params.evidence ?? {}, 'audit evidence'),
+    },
+    required_change: params.required_change ?? 'the Orchestrator must check the published result and submit corrected validation evidence',
+  });
+  if (validation) {
+    const audit = rt.store.findAudit(cluster.id, tx.id, 'validation', validation.ref.result_revision);
+    if (audit?.decision === 'PENDING') rt.store.decideAudit(audit.id, decision, actor.agent_id ?? null, { issue_id: issue.id });
+  }
+  if (tx.status !== 'SUBMITTED') setStatus(rt, tx, 'SUBMITTED');
+  rt.store.updateTransaction(tx.id, { validation: null, current_validation_ref: null, __bump_revision: false });
+  if (tx.status === 'ACCEPTED') {
+    rt.store.insertSummary({ id: randomUUID(), cluster_id: cluster.id, node_id: tx.node_id, transaction_id: tx.id,
+      as_of_seq: rt.store.latestEventSeq(cluster.id), data: { transaction_id: tx.id, status: 'SUBMITTED', invalidated_by_issue: issue.id } });
+    writeNodeSummary(rt, cluster, tx.node_id);
+    pauseDependents(rt, cluster, tx);
+  }
+  invalidateAncestorResults(rt, cluster, tx, issue.id);
+  return { issue_id: issue.id, transaction_id: tx.id, status: 'SUBMITTED' };
+}
+
+function invalidateAncestorResults(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord, issueId: string): void {
+  let parentId = tx.parent_transaction_id;
+  const seen = new Set<string>();
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = rt.store.getTransaction(parentId);
+    if (!parent) break;
+    if (parent.current_result_ref && !['CANCELLED', 'SUPERSEDED', 'FAILED'].includes(parent.status)) {
+      rt.store.updateTransaction(parent.id, { status: 'READY', result: null, current_result_ref: null,
+        result_revision: null, validation: null, current_validation_ref: null, __bump_revision: false });
+      rt.store.insertSummary({ id: randomUUID(), cluster_id: cluster.id, node_id: parent.node_id, transaction_id: parent.id,
+        as_of_seq: rt.store.latestEventSeq(cluster.id), data: { transaction_id: parent.id, status: 'READY', invalidated_by_child_issue: issueId } });
+      rt.store.appendEvent(cluster.id, 'aggregate-invalidated', { transaction_id: parent.id, child_transaction_id: tx.id, issue_id: issueId });
+      writeNodeSummary(rt, cluster, parent.node_id);
+      pauseDependents(rt, cluster, parent, false);
+    }
+    parentId = parent.parent_transaction_id;
+  }
+}
+
+const PLAN_AUDIT_RULES = ['goal_coverage', 'responsibility', 'dependencies', 'handoff', 'acceptance_arrangement'] as const;
+const VALIDATION_AUDIT_RULES = ['standard_coverage', 'checks_performed', 'evidence_applicability', 'conclusion_support', 'authority'] as const;
+
+/** Records governance work; the model still judges the adequacy of its observations. */
+function checkedAuditEvidence(actor: ActionActor, audit: AuditRecord, decision: 'APPROVED' | 'REJECTED', value: unknown): FlowJsonValue {
+  const evidence = objectField(value, 'audit.evidence');
+  const rules = audit.kind === 'plan' ? PLAN_AUDIT_RULES : VALIDATION_AUDIT_RULES;
+  if (!Array.isArray(evidence.checks) || evidence.checks.length === 0) fail('independent audit needs actual checks, observations and object references');
+  const checks = evidence.checks.map((entry, index) => {
+    const check = objectField(entry, `audit.evidence.checks[${index}]`);
+    if (typeof check.rule !== 'string' || !rules.some(rule => rule === check.rule)) fail(`audit rule must be one of ${rules.join(', ')}`);
+    if (typeof check.method !== 'string' || !check.method.trim() || typeof check.observation !== 'string' || !check.observation.trim()
+      || typeof check.passed !== 'boolean' || !Array.isArray(check.evidence_refs) || check.evidence_refs.length === 0) fail('each audit check requires a method, observation, judgment and evidence_refs');
+    for (const refValue of check.evidence_refs) {
+      const ref = objectField(refValue, 'audit evidence_ref');
+      if (ref.kind === 'plan' && sameRef(ref.ref, audit.plan_ref)) continue;
+      if (ref.kind === 'validation' && audit.kind === 'validation' && sameRef(ref.ref, audit.validation_ref)) continue;
+      fail('audit evidence references must identify the audit bound plan or validation record', 409);
+    }
+    return check;
+  });
+  for (const rule of rules) if (!checks.some(check => check.rule === rule)) fail(`independent audit omits required governance rule ${rule}`);
+  if (decision === 'APPROVED' && checks.some(check => check.passed !== true)) fail('compliance approval requires every governance check to pass');
+  if (decision === 'REJECTED' && checks.every(check => check.passed === true)) fail('audit rejection must identify a failed governance check');
+  if (evidence.issues !== undefined && (!Array.isArray(evidence.issues) || evidence.issues.some(issue => typeof issue !== 'string'))) fail('audit issues must be a list of concrete findings');
+  return jsonValue({ ...evidence, rules, checks, author_role: actor.role, author_agent_id: actor.agent_id ?? null,
+    conclusion: decision === 'APPROVED' ? 'compliant' : 'noncompliant' }, 'audit evidence');
+}
+
 function openIssue(rt: ClusterRuntimePort, cluster: ClusterRecord, actor: ActionActor, params: Record<string, unknown>): IssueRecord {
   const issue: IssueRecord = rt.store.insertIssue({
     id: randomUUID(), cluster_id: cluster.id,
@@ -315,6 +488,8 @@ function createWorkerForTransaction(
 ): WorkerAllocation {
   const limits = cluster.limits;
   if (tx.status !== 'READY') fail(`transaction ${tx.id} is ${tx.status}; only READY transactions are allocated`, 409);
+  const plan = validPlan(rt.store, tx, 'worker');
+  if (params.plan_ref !== undefined && !sameRef(params.plan_ref, plan.ref)) fail('allocation plan_ref is stale', 409);
   // Authorization to supervise a subtree does not transfer ownership of its
   // transactions. A root Allocator that names a delegated transaction without
   // `node_id` otherwise creates a root Worker whose write effect cannot belong
@@ -336,10 +511,7 @@ function createWorkerForTransaction(
   // Delegation changes a parent's completion path permanently: after the
   // last child is accepted, aggregate its evidence rather than spending a
   // Worker attempt on the already-delegated structural objective.
-  if (rt.store.get(
-    'SELECT 1 FROM transactions WHERE cluster_id=? AND parent_transaction_id=? LIMIT 1',
-    cluster.id, tx.id,
-  )) {
+  if (rt.store.currentChildrenOfTransaction(cluster.id, tx.id).length > 0) {
     fail(`${tx.id} has delegated children; aggregate their results instead of allocating a Worker`, 409);
   }
   const existingAllocation: AllocationRecord | null = rt.store.activeAllocationForTransaction(tx.id);
@@ -413,14 +585,14 @@ function createWorkerForTransaction(
   if (nodeBudget) rt.grantAgentBudget(cluster.id, workerNode, nodeBudget, agent, 'worker');
   const allocation: AllocationRecord = rt.store.insertAllocation({
     id: randomUUID(), cluster_id: cluster.id, node_id: node.id, agent_id: agent.id,
-    transaction_id: tx.id, capabilities, write_scope: writeScope, write_scope_canonical: canonical, status: 'ACTIVE',
+    transaction_id: tx.id, plan_ref: plan.ref, capabilities, write_scope: writeScope, write_scope_canonical: canonical, status: 'ACTIVE',
   }) ?? fail('Failed to create allocation', 500);
   const requestedBudget = params.budget == null ? null : objectField(params.budget, 'budget');
   const budget = params.budget === undefined ? null : rt.store.budgetForScope(cluster.id, 'agent', agent.id);
   if (requestedBudget && budget) applyBudgetGrant(rt, nodeBudget, budget, requestedBudget);
   rt.store.updateNode(workerNode.id, { status: 'ACTIVE' });
   rt.store.appendEvent(cluster.id, 'agent-allocated', {
-    agent_id: agent.id, node_id: node.id, transaction_id: tx.id, write_scope: writeScope, capabilities,
+    agent_id: agent.id, node_id: node.id, transaction_id: tx.id, plan_ref: jsonValue(plan.ref, 'plan_ref'), write_scope: writeScope, capabilities,
   });
   return { allocation, agent, node: workerNode };
 }
@@ -586,13 +758,25 @@ function addTransactionDependency(rt: ClusterRuntimePort, cluster: ClusterRecord
   rt.store.addDependency(transactionId, dependencyId);
 }
 
-function pauseDependents(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord): void {
-  for (const dependentId of rt.store.dependentsOf(tx.id)) {
+function pauseDependents(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord, includeChildren = true): void {
+  const queue = [tx.id];
+  const visited = new Set<string>(queue);
+  while (queue.length) {
+    const source = queue.shift() ?? '';
+    const downstream = [...rt.store.dependentsOf(source), ...(includeChildren ? rt.store.childrenOfTransaction(cluster.id, source).map(child => child.id) : [])];
+    for (const dependentId of downstream) {
+    if (visited.has(dependentId)) continue;
+    visited.add(dependentId);
+    queue.push(dependentId);
     const dependent: TransactionRecord | null = rt.store.getTransaction(dependentId);
-    if (!dependent || TRANSACTION_TERMINAL.has(dependent.status)) continue;
+    if (!dependent || ['CANCELLED', 'SUPERSEDED', 'FAILED'].includes(dependent.status)) continue;
     if (dependent.status === 'PAUSED') continue;
-    rt.store.updateTransaction(dependent.id, { status: 'PAUSED', validation: null });
+    rt.store.updateTransaction(dependent.id, { status: 'PAUSED', pre_pause_status: dependent.status,
+      pre_pause_revision: dependent.revision + 1, validation: null, current_validation_ref: null });
     rt.store.appendEvent(cluster.id, 'downstream-paused', { transaction_id: dependent.id, because_of: tx.id });
+    const allocation = rt.store.activeAllocationForTransaction(dependent.id);
+    if (allocation) rt.activeTurnFor(allocation.agent_id)?.ac.abort(new Error(`parent plan ${tx.id} requires correction`));
+    }
   }
 }
 
@@ -641,6 +825,7 @@ export const HANDLERS = {
     if (params.parent_transaction_id !== undefined && params.parent_transaction_id !== null) {
       const parent = assertTransactionDomain(rt, cluster, actor, params.parent_transaction_id);
       if (['ACCEPTED', 'CANCELLED', 'SUPERSEDED'].includes(parent.status)) fail(`cannot add children to a ${parent.status} transaction`, 409);
+      if (parent.current_plan_ref) fail('prepared task child assignments must be changed through atomic decompose or management delegation', 409);
     }
     const tx = rt.createTransactionInternal(cluster.id, node, {
       objective: params.objective,
@@ -658,46 +843,73 @@ export const HANDLERS = {
 
   decompose(rt, cluster, actor, params) {
     const parent = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
-    if (['ACCEPTED', 'CANCELLED', 'SUPERSEDED'].includes(parent.status)) fail(`cannot decompose a ${parent.status} transaction`, 409);
+    const key = semanticKey(actor, parent, 'decompose', params.expected_transaction_revision);
+    const retry = rt.store.semanticReceipt(key, params);
+    if (retry) return retry;
+    assertExpectedTransaction(parent, params.expected_transaction_revision);
+    if (parent.status !== 'DRAFT') fail(`cannot decompose a ${parent.status} transaction; revise the task first`, 409);
+    assertTransactionWorkerDrained(rt, parent);
     if (!Array.isArray(params.children) || !params.children.length || params.children.length > 64) fail('decompose requires 1..64 children');
     const node = nodeOf(rt, parent.node_id);
-    const created: TransactionRecord[] = [];
-    for (const child of params.children) {
+    const created = new Map<string, TransactionRecord>();
+    const entries = params.children.map((entry, index) => {
+      const child = objectField(entry, `children[${index}]`);
+      const childKey = need(child, 'key');
+      if (created.has(childKey)) fail(`duplicate child key ${childKey}`);
+      const constraints = child.constraints ?? parent.constraints;
+      if (!retainsConstraints(jsonValue(constraints, 'child.constraints'), parent.constraints)) fail('child task must retain parent constraints', 409);
       const tx = rt.createTransactionInternal(cluster.id, node, {
-        objective: child.objective, inputs: child.inputs, constraints: child.constraints,
+        objective: child.objective, inputs: child.inputs, constraints,
         expected_output: child.expected_output, acceptance_criteria: child.acceptance_criteria ?? [],
         capabilities: child.capabilities ?? parent.capabilities, priority: child.priority,
         parent_transaction_id: parent.id,
       }, { parent: parent.id, local: false });
-      created.push(tx);
-    }
-    for (const [index, child] of (params.children ?? []).entries()) {
-      const deps: string[] = [];
-      for (const ref of child.depends_on ?? []) {
-        if (typeof ref === 'number' && Number.isInteger(ref)) {
-          const target = created[ref];
-          if (target === undefined) fail(`child depends_on index ${ref} is out of range`);
-          deps.push(target.id);
-        } else deps.push(String(ref));
-      }
-      for (const index2 of child.after ?? []) {
-        const target = typeof index2 === 'number' && Number.isInteger(index2) ? created[index2] : undefined;
-        if (target === undefined) fail(`child after index ${index2} is out of range`);
-        deps.push(target.id);
-      }
-      const createdTx = created[index];
-      if (createdTx === undefined) fail(`decomposed child index ${index} is out of range`);
-      for (const dep of deps) {
-        addTransactionDependency(rt, cluster, createdTx.id, dep);
+      created.set(childKey, tx);
+      return { child, childKey, tx };
+    });
+    for (const { child, tx } of entries) {
+      const refs = child.depends_on ?? child.after ?? [];
+      if (!Array.isArray(refs)) fail('child depends_on must use stable child keys or transaction references');
+      for (const dependency of refs) {
+        if (typeof dependency !== 'string') fail('child dependency must be a stable key or transaction ID');
+        addTransactionDependency(rt, cluster, tx.id, created.get(dependency)?.id ?? dependency);
       }
     }
-    rt.store.appendEvent(cluster.id, 'decomposed', { parent: parent.id, children: created.map(tx => tx.id) });
+    for (const { childKey, tx } of entries) created.set(childKey, rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404));
+    const parentPlan = memberBriefing.preparePlan(rt.store, parent, actor, params.plan, { children: created });
+    if (parentPlan.execution !== 'decompose') fail('decompose requires parent plan.execution decompose');
+    for (const { childKey, tx } of entries) {
+      if (parentPlan.contract.acceptance_criteria.length > 0 && !parentPlan.criterion_responsibilities.some(item => item.evidence_provider === tx.id)) {
+        fail(`parent plan must declare the criteria covered by child ${childKey}: add a criterion_responsibilities entry with evidence_provider:"${childKey}", criterion:{transaction_id:"self",criterion_index:<applicable parent standard index>}, validated_by:"orchestrator". applies_to alone does not assign evidence responsibility. The child plan must cover that same index via transaction_id:"parent" and cover every child self criterion.`);
+      }
+    }
+    savePreparedPlan(rt, cluster, parent, parentPlan);
+    const children = entries.map(({ child, tx }) => {
+      const live = rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404);
+      const plan = memberBriefing.preparePlan(rt.store, live, actor, child.plan, { parentPlan, inherited: parentPlan.contract });
+      const covered = parentPlan.criterion_responsibilities.filter(item => item.evidence_provider === tx.id);
+      if (covered.some(item => !plan.criterion_responsibilities.some(candidate => sameRef(candidate.criterion, item.criterion)))) {
+        fail(`child ${tx.id} plan must retain its declared parent criterion references`);
+      }
+      const updated = savePreparedPlan(rt, cluster, live, plan);
+      return { transaction_id: updated.id, revision: updated.revision, plan_ref: plan.ref };
+    });
+    const liveParent = rt.store.getTransaction(parent.id) ?? fail('Transaction not found', 404);
+    setStatus(rt, liveParent, 'READY');
+    const audit = requestPlanAudit(rt, cluster, actor, liveParent, parentPlan);
+    rt.store.appendEvent(cluster.id, 'decomposed', { parent: parent.id, plan_ref: jsonValue(parentPlan.ref, 'plan_ref'), children: children.map(tx => tx.transaction_id) });
     notifyTransactionModified(rt, cluster, actor, rt.store.getTransaction(parent.id), 'decomposed');
-    return { parent_transaction_id: parent.id, children: created.map(tx => ({ transaction_id: tx.id, revision: tx.revision })) };
+    const result = jsonValue({ parent_transaction_id: parent.id, parent_plan_ref: parentPlan.ref, audit_id: audit.id, children }, 'decompose result');
+    rt.store.saveSemanticReceipt(key, cluster.id, params, result);
+    return result;
   },
 
   set_dependency(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
+    assertExpectedTransaction(tx, params.expected_transaction_revision);
+    assertRevisionSafe(rt, cluster, tx);
+    if (TRANSACTION_TERMINAL.has(tx.status)) fail('cannot change dependencies of a terminal transaction', 409);
+    if (tx.status !== 'DRAFT') setStatus(rt, tx, 'DRAFT');
     const rawAdd = params.depends_on ?? params.after ?? params.needs ?? [];
     const add = Array.isArray(rawAdd) ? rawAdd : [rawAdd];
     const remove = Array.isArray(params.remove) ? params.remove : params.remove === undefined ? [] : [params.remove];
@@ -722,59 +934,68 @@ export const HANDLERS = {
   },
 
   dispatch(rt, cluster, actor, params) {
-    const targets: TransactionRecord[] = [];
-    if (params.transaction_id) {
-      const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
+    const requests: Record<string, unknown>[] = params.transaction_id ? [params]
+      : Array.isArray(params.transactions) ? params.transactions.map(entry => typeof entry === 'string'
+        ? { transaction_id: entry } : objectField(entry, 'dispatch target')) : [];
+    if (!requests.length) fail('dispatch requires explicitly referenced prepared targets or an individual plan for each target', 409);
+    const outcomes: JsonValue[] = [];
+    for (const request of requests) {
+      let tx = assertTransactionDomain(rt, cluster, actor, need(request, 'transaction_id'));
+      const key = semanticKey(actor, tx, 'dispatch-plan', request.expected_transaction_revision);
+      const retry = request.plan === undefined ? null : rt.store.semanticReceipt(key, request);
+      if (retry) { outcomes.push(retry); continue; }
       if (TRANSACTION_TERMINAL.has(tx.status)) fail(`cannot dispatch a ${tx.status} transaction`, 409);
-      targets.push(tx);
-    } else {
-      const nodeId = params.node_id ?? actor.node_id;
-      assertDomain(rt, cluster, actor, nodeId);
-      const limit = numberOr(params.limit, 64);
-      targets.push(...rt.store.listTransactions({ cluster_id: cluster.id, node_id: typeof nodeId === 'string' ? nodeId : undefined, status: 'DRAFT', limit }));
-    }
-    if (!targets.length) fail('no DRAFT transaction to dispatch', 409);
-    const audits: JsonValue[] = [];
-    for (const tx of targets) {
-      // A correction cannot be answered by dispatching the same plan again:
-      // that would reopen a Worker under the restriction the Auditor rejected.
-      const issueQuery = { transaction_id: tx.id, status: 'OPEN' };
-      const openIssues: IssueRecord[] = rt.store.openIssues(cluster.id, issueQuery);
+      let plan: PlanRecord;
+      if (request.plan !== undefined) {
+        assertExpectedTransaction(tx, request.expected_transaction_revision);
+        if (tx.status !== 'DRAFT') fail('new dispatch plan requires DRAFT; revise the transaction explicitly', 409);
+        plan = memberBriefing.preparePlan(rt.store, tx, actor, request.plan);
+        if (plan.execution === 'decompose') fail('decompose plans must be saved with their children atomically');
+        tx = savePreparedPlan(rt, cluster, tx, plan);
+      } else {
+        plan = validPlan(rt.store, tx);
+        if (request.plan_ref !== undefined && !sameRef(request.plan_ref, plan.ref)) fail('dispatch plan_ref is stale', 409);
+        if (request.expected_transaction_revision !== undefined) assertExpectedTransaction(tx, request.expected_transaction_revision);
+      }
+      if (plan.execution === 'decompose' && plan.child_transaction_ids.length === 0) {
+        fail('this prepared decompose task has no declared children; call decompose on this task with actual children before dispatching it. Keep integration in the parent plan.integration.', 409);
+      }
+      const dispatchKey = JSON.stringify(['dispatch', tx.id, plan.ref]);
+      const previous = rt.store.semanticReceipt(dispatchKey, plan.ref);
+      if (previous) { outcomes.push(previous); continue; }
+      if (tx.status !== 'DRAFT') fail(`cannot dispatch a ${tx.status} transaction`, 409);
+      const openIssues = rt.store.openIssues(cluster.id, { transaction_id: tx.id, status: 'OPEN' });
       const unanswered = openIssues.find(issue => !rt.issueProgressed(cluster.id, issue).progressed);
-      if (unanswered) fail(`transaction ${tx.id} has open issue ${unanswered.id}; revise the plan or dismiss the mistaken issue before redispatch`, 409);
-      const existing = rt.store.findAudit(cluster.id, tx.id, 'plan', tx.revision);
-      // Only a pending audit can supervise a new dispatch. A previously
-      // approved/rejected audit is history, even when its issue was dismissed.
-      const audit = existing && existing.decision === 'PENDING' ? existing : rt.store.insertAudit({
-        id: randomUUID(), cluster_id: cluster.id, transaction_id: tx.id, node_id: tx.node_id,
-        kind: 'plan', target_revision: tx.revision, decision: 'PENDING', evidence: { requested_by: actor.agent_id ?? null },
-      }) ?? fail('Failed to record audit', 500);
-      audits.push({ audit_id: audit.id, transaction_id: tx.id, target_revision: tx.revision, decision: audit.decision });
-      // The Orchestrator makes the plan dispatchable while the Auditor supervises
-      // it independently. A pending audit permits execution; rejection returns
-      // the transaction for correction.
-      setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), 'READY');
-      rt.store.appendEvent(cluster.id, 'dispatched', { transaction_id: tx.id, audit_id: audit.id, revision: tx.revision });
+      if (unanswered) fail(`transaction ${tx.id} has uncorrected issue ${unanswered.id}`, 409);
+      const audit = requestPlanAudit(rt, cluster, actor, tx, plan);
+      setStatus(rt, tx, 'READY');
+      rt.store.appendEvent(cluster.id, 'dispatched', { transaction_id: tx.id, audit_id: audit.id, plan_ref: jsonValue(plan.ref, 'plan_ref'), revision: tx.revision });
       rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'allocator')?.id, {
         subject: 'plan-dispatched', payload: { transaction_id: tx.id, revision: tx.revision },
       });
-      rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'auditor')?.id, {
-        subject: 'plan-audit-requested', payload: { audit_id: audit.id, transaction_id: tx.id },
-      });
+      const result = jsonValue({ transaction_id: tx.id, audit_id: audit.id, plan_ref: plan.ref, revision: tx.revision, decision: audit.decision }, 'dispatch result');
+      rt.store.saveSemanticReceipt(dispatchKey, cluster.id, plan.ref, result);
+      if (request.plan !== undefined) rt.store.saveSemanticReceipt(key, cluster.id, request, result);
+      outcomes.push(result);
     }
-    return { audits, dispatched: targets.map(tx => tx.id) };
+    return { audits: outcomes, dispatched: requests.map(request => String(request.transaction_id)),
+      ...(outcomes.every(outcome => evidenceObject(outcome).deduped === true) ? { deduped: true } : {}) };
   },
 
   adjust_transaction(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
+    const key = semanticKey(actor, tx, 'adjust_transaction', params.expected_transaction_revision);
+    const retry = rt.store.semanticReceipt(key, params);
+    if (retry) return retry;
+    assertExpectedTransaction(tx, params.expected_transaction_revision);
     if (TRANSACTION_TERMINAL.has(tx.status)) fail(`cannot adjust a ${tx.status} transaction`, 409);
     // Revising a plan during an active Worker turn would change the revision
     // underneath its write scope and make a successfully written result
     // impossible to submit. Let that leased turn finish first.
-    assertTransactionWorkerDrained(rt, tx);
+    assertRevisionSafe(rt, cluster, tx);
     // Accept the fields directly on `params` as well as under `params.patch`:
     // both spellings are the same request, and rejecting one wastes a turn.
-    const allowed = ['objective', 'inputs', 'constraints', 'expected_output', 'acceptance_criteria', 'priority', 'capabilities'];
+    const allowed = ['objective', 'inputs', 'constraints', 'expected_output', 'acceptance_criteria', 'priority', 'capabilities', 'needs'];
     const patch: Record<string, unknown> = params.patch == null
       ? Object.fromEntries(allowed.filter(key => params[key] !== undefined).map(key => [key, params[key]]))
       : objectField(params.patch, 'patch');
@@ -784,7 +1005,7 @@ export const HANDLERS = {
       if (key === 'acceptance_criteria' && typeof patch[key] === 'string') patch[key] = [patch[key]];
       changes[key] = key === 'capabilities' ? validateCapabilities(patch[key], 'capabilities') : patch[key];
     }
-    if (!Object.keys(changes).length) {
+    if (!Object.keys(changes).length && params.plan === undefined) {
       fail(`adjust_transaction needs at least one of ${allowed.join(', ')} — pass them directly on params or inside params.patch`);
     }
     const node: NodeRecord | null = rt.store.getNode(tx.node_id);
@@ -817,7 +1038,12 @@ export const HANDLERS = {
     setStatus(rt, tx, 'DRAFT');
     // Audits, validation and stale-plan checks identify the exact revision.
     // Every adjustment advances it and clears approval of the replaced plan.
-    const updated = bumpRevision(rt, tx, { ...changes, validation: null, plan_approved_revision: null });
+    let updated = bumpRevision(rt, tx, { ...changes, validation: null, plan_approved_revision: null, current_plan_ref: null, current_validation_ref: null });
+    if (params.plan !== undefined) {
+      const plan = memberBriefing.preparePlan(rt.store, updated, actor, params.plan);
+      if (plan.execution === 'decompose') fail('revise decomposition through the atomic decompose action');
+      updated = savePreparedPlan(rt, cluster, updated, plan);
+    }
     rt.store.appendEvent(cluster.id, 'transaction-adjusted', { transaction_id: tx.id, fields: Object.keys(changes), revision: updated.revision });
     pauseDependents(rt, cluster, tx);
     notifyTransactionModified(rt, cluster, actor, rt.store.getTransaction(tx.id), 'adjusted');
@@ -831,51 +1057,94 @@ export const HANDLERS = {
         });
       }
     }
-    return { transaction_id: tx.id, revision: updated.revision, changed: Object.keys(changes) };
+    const result = { transaction_id: tx.id, revision: updated.revision, changed: Object.keys(changes) };
+    rt.store.saveSemanticReceipt(key, cluster.id, params, result);
+    return result;
   },
 
   validate(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
+    const key = semanticKey(actor, tx, 'validate', params.expected_transaction_revision);
+    const retry = rt.store.semanticReceipt(key, params);
+    if (retry) return retry;
+    assertExpectedTransaction(tx, params.expected_transaction_revision);
     if (tx.status !== 'SUBMITTED') fail(`transaction ${tx.id} is ${tx.status}; only SUBMITTED results are validated`, 409);
-    // A parent's result includes its delegated children's work. Wait for those
-    // child results before accepting or aggregating the parent.
-    if (params.accepted === true) {
-      const open = rt.store.parentsAwaitingChildren(cluster.id).includes(tx.id);
-      if (open) {
-        fail(`${tx.id} has delegated work still unfinished; aggregate the child results or replan before accepting it`, 409);
+    const plan = validPlan(rt.store, tx);
+    const result = rt.store.getResult(tx.current_result_ref);
+    if (!result || !sameRef(result.plan_ref, plan.ref) || !sameRef(result.result, tx.result)) fail('validation requires the currently published result snapshot and its plan', 409);
+    if (tx.result_staged_agent !== null || tx.result_staged_epoch !== null || tx.result_staged_turn !== null) fail('staged results cannot enter validation', 409);
+    if (params.plan_ref !== undefined && !sameRef(params.plan_ref, plan.ref)) fail('validation plan_ref is stale', 409);
+    if (params.result_ref !== undefined && !sameRef(params.result_ref, result.ref)) fail('validation result_ref is stale', 409);
+    if (typeof params.accepted !== 'boolean') fail('validate requires accepted: boolean');
+    if (params.accepted && rt.store.parentsAwaitingChildren(cluster.id).includes(tx.id)) fail(`${tx.id} has unfinished child work`, 409);
+    const checks = validateChecks(params.checks);
+    for (const check of checks) {
+      const ref = check.criterion_ref;
+      if (!ref) fail('validation checks require immutable criterion_ref');
+      const standard = rt.store.getPlan(ref);
+      if (!standard || !sameRef(standard.ref, plan.ref) || ref.criterion_index < 0 || ref.criterion_index >= standard.contract.acceptance_criteria.length) fail('validation criterion_ref must identify this current formal contract', 409);
+      if (check.criterion && check.criterion !== standard.contract.acceptance_criteria[ref.criterion_index]) fail('validation criterion text does not match the formal standard', 409);
+      if (params.accepted && (!check.passed || !check.method?.trim() || !check.observation?.trim() || !check.evidence.trim() || !check.evidence_refs?.length)) fail('positive validation requires a passed judgment, actual method, observation and referenced evidence for every standard');
+      for (const rawEvidence of check.evidence_refs ?? []) {
+        const evidence = objectField(rawEvidence, 'evidence reference');
+        if (evidence.kind === 'result') {
+          if (!sameRef(evidence.ref, result.ref)) fail('validation evidence refers to another result publication; use historical_result only for an older publication of this task explicitly referenced in the current formal plan inputs', 409);
+        } else if (evidence.kind === 'historical_result') {
+          const ref = objectField(evidence.ref, 'historical_result.ref');
+          if (typeof ref.transaction_id !== 'string' || !ref.transaction_id.trim()
+            || typeof ref.publication_event_seq !== 'number' || !Number.isSafeInteger(ref.publication_event_seq)
+            || ref.publication_event_seq <= 0 || Object.keys(ref).length !== 2) fail('historical_result requires an exact immutable result reference');
+          const historical = rt.store.getResult({ transaction_id: ref.transaction_id, publication_event_seq: ref.publication_event_seq });
+          if (!historical || historical.cluster_id !== cluster.id || historical.ref.transaction_id !== tx.id
+            || historical.ref.publication_event_seq >= result.ref.publication_event_seq) fail('historical_result must identify an older published result of this task', 409);
+          if (!containsObjectReference(plan.contract.inputs, historical.ref)) fail('historical_result must be explicitly referenced by the current formal plan inputs', 409);
+        } else if (evidence.kind === 'effect') {
+          const callId = typeof evidence.call_id === 'string' ? evidence.call_id : '';
+          const effect = rt.store.getEffect(callId);
+          if (!effect || effect.cluster_id !== cluster.id || (effect.status !== 'SETTLED' || effect.error !== null)) fail('validation effect evidence must refer to a successful persisted effect', 409);
+          const allocation = rt.store.listAllocations({ cluster_id: cluster.id, agent_id: effect.agent_id, transaction_id: tx.id }).find(item => sameRef(item.plan_ref, plan.ref));
+          if (effect.agent_id !== actor.agent_id && (!allocation || effect.agent_id !== result.producer_agent_id || effect.turn_seq !== result.turn_seq || effect.lease_epoch !== result.epoch)) fail('validation effect evidence belongs to another execution', 409);
+        } else if (evidence.kind === 'source') {
+          const source = rt.store.getSource(typeof evidence.id === 'string' ? evidence.id : '');
+          if (!source || source.cluster_id !== cluster.id || source.transaction_id !== tx.id) fail('validation source evidence belongs to another task', 409);
+        } else fail('evidence kind must be result, historical_result, effect or source');
       }
     }
-    if (typeof params.accepted !== 'boolean') fail('validate requires accepted: boolean');
-    const checks = validateChecks(params.checks);
-    if (params.accepted && checks.length === 0) {
-      fail('an accepted validation must carry at least one check, each with criterion, passed and evidence: params.checks = [{"criterion": "...", "passed": true, "evidence": "..."}]');
-    }
-    if (params.accepted && checks.every(check => !check.evidence)) {
-      fail('every accepted check needs concrete evidence (a tool result, a file hash, a command exit code or a source)');
+    if (params.accepted) {
+      for (let index = 0; index < plan.contract.acceptance_criteria.length; index += 1) {
+        if (!checks.some(check => sameRef(check.criterion_ref, { ...plan.ref, criterion_index: index }))) fail(`positive validation omits formal criterion ${index}`);
+      }
+      if (checks.length === 0) fail('positive validation needs a formal criterion and actual check');
     }
     const updated = bumpRevision(rt, tx, {
       validation: { checks, accepted: params.accepted, notes: textOr(params.notes, ''), at: rt.timestamp(), by: actor.agent_id ?? null },
       result_revision: null,
     });
-    const revision = updated.revision;
-    setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), 'VALIDATING');
-    rt.store.updateTransaction(tx.id, { result_revision: revision, __bump_revision: false });
+    const ref = { transaction_id: tx.id, result_revision: updated.revision };
+    const record: ValidationRecord = {
+      ref, cluster_id: cluster.id, plan_ref: plan.ref, result_ref: result.ref,
+      author_role: actor.role, author_agent_id: actor.agent_id ?? null, checks,
+      accepted: params.accepted, notes: textOr(params.notes, ''),
+      limitations: Array.isArray(params.limitations) ? params.limitations.map(String) : [], created: rt.timestamp(),
+    };
+    rt.store.insertValidation(record);
+    setStatus(rt, updated, 'VALIDATING');
+    rt.store.updateTransaction(tx.id, { result_revision: ref.result_revision, current_validation_ref: ref, __bump_revision: false });
     const audit = rt.store.insertAudit({
       id: randomUUID(), cluster_id: cluster.id, transaction_id: tx.id, node_id: tx.node_id,
-      kind: 'validation', target_revision: revision, decision: 'PENDING',
+      kind: 'validation', target_revision: ref.result_revision, plan_ref: plan.ref, validation_ref: ref, decision: 'PENDING',
       evidence: jsonValue({ proposed_by: actor.agent_id ?? null, accepted: params.accepted, checks }, 'validation evidence'),
     }) ?? fail('Failed to record audit', 500);
     if (!params.accepted) {
       rt.store.decideAudit(audit.id, 'OVERRIDDEN', actor.agent_id ?? null, { reason: 'orchestrator rejected its own proposal' });
-      setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), 'REJECTED');
-    }
-    rt.store.appendEvent(cluster.id, 'validation-proposed', {
-      transaction_id: tx.id, result_revision: revision, accepted: params.accepted, checks: checks.length,
+      setStatus(rt, rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404), 'REJECTED');
+    } else rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'auditor')?.id, {
+      subject: 'validation-audit-requested', payload: { audit_id: audit.id, transaction_id: tx.id, target_revision: ref.result_revision },
     });
-    rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'auditor')?.id, {
-      subject: 'validation-audit-requested', payload: { audit_id: audit.id, transaction_id: tx.id, target_revision: revision },
-    });
-    return { transaction_id: tx.id, result_revision: revision, audit_id: audit.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
+    rt.store.appendEvent(cluster.id, 'validation-proposed', { transaction_id: tx.id, result_revision: ref.result_revision, accepted: params.accepted, checks: checks.length });
+    const outcome = { transaction_id: tx.id, result_revision: ref.result_revision, validation_ref: jsonValue(ref, 'validation_ref'), audit_id: audit.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
+    rt.store.saveSemanticReceipt(key, cluster.id, params, outcome);
+    return outcome;
   },
 
   accept_result(rt, cluster, actor, params) {
@@ -883,7 +1152,7 @@ export const HANDLERS = {
     if (tx.status !== 'VALIDATING') fail(`transaction ${tx.id} is ${tx.status}; nothing to accept`, 409);
     const audit = rt.store.findAudit(cluster.id, tx.id, 'validation', tx.result_revision ?? 0);
     if (!audit || audit.decision !== 'APPROVED') fail('auditor approval for this result revision is still missing', 409);
-    return acceptTransaction(rt, cluster, tx);
+    return acceptTransaction(rt, cluster, tx, { role: actor.role, agent_id: actor.agent_id ?? null, action: 'accept_result' });
   },
 
   reject_result(rt, cluster, actor, params) {
@@ -902,11 +1171,13 @@ export const HANDLERS = {
 
   aggregate(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, need(params, 'transaction_id'));
+    const plan = validPlan(rt.store, tx);
+    if (plan.execution === 'worker') fail('direct worker plans do not authorize aggregation', 409);
     // Reaggregating a submitted or validating parent replaces its result
     // revision while the Auditor is deciding it, stranding a chain of stale
     // audits and repeatedly waking the Orchestrator.
     if (tx.status !== 'READY') fail(`cannot aggregate a ${tx.status} transaction; only READY parents can publish their result`, 409);
-    const children = rt.store.childrenOfTransaction(cluster.id, tx.id);
+    const children = rt.store.currentChildrenOfTransaction(cluster.id, tx.id);
     if (!children.length) fail('aggregate requires child transactions', 409);
     const pending = children.filter(child => child.status !== 'ACCEPTED');
     if (pending.length) fail(`cannot aggregate: ${pending.length} child transactions are not ACCEPTED`, 409);
@@ -932,8 +1203,13 @@ export const HANDLERS = {
     // A published aggregate is a new result at a new revision, exactly as a
     // worker's submission is: `setStatus` deliberately does not advance the
     // revision, so the write below must.
-    const updated = bumpRevision(rt, tx, { result, validation: null });
-    rt.store.appendEvent(cluster.id, 'aggregated', { transaction_id: tx.id, children: children.length, revision: updated.revision });
+    const updated = bumpRevision(rt, tx, { result, validation: null, current_validation_ref: null });
+    const publication = rt.store.appendEvent(cluster.id, 'aggregated', { transaction_id: tx.id, children: children.length, revision: updated.revision });
+    rt.store.publishResult(tx.id, { producer_role: actor.role, producer_agent_id: actor.agent_id ?? null,
+      epoch: actor.epoch ?? null, turn_seq: actor.turn_seq ?? null, publication_event_seq: publication.seq,
+      source_result_refs: children.flatMap(child => child.current_result_ref ? [child.current_result_ref] : []),
+      source_validation_refs: children.flatMap(child => child.current_validation_ref ? [child.current_validation_ref] : []),
+    });
     return { transaction_id: tx.id, revision: updated.revision, children: children.length, status: 'SUBMITTED' };
   },
 
@@ -1000,10 +1276,25 @@ export const HANDLERS = {
   spawn_management_node(rt, cluster, actor, params) {
     const parentTx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
     const parentNode = assertDomain(rt, cluster, actor, params.node_id ?? actor.node_id);
+    const parentPlan = validPlan(rt.store, parentTx, 'management');
+    if (!sameRef(params.plan_ref, parentPlan.ref)) fail('spawn_management_node requires the current plan_ref', 409);
+    const assignmentKey = textOr(params.assignment_key, parentPlan.assignment_key);
+    if (assignmentKey !== parentPlan.assignment_key) fail('assignment_key does not identify the saved management delegation', 409);
+    const assignmentReceiptKey = JSON.stringify(['management-delegation', parentTx.id, parentPlan.ref, assignmentKey]);
+    const previous = rt.store.semanticReceipt(assignmentReceiptKey, params);
+    if (previous) return previous;
+    if (rt.store.managementAssignment(parentTx.id, parentPlan.ref, assignmentKey)) fail('this management delegation already exists with another request', 409);
+    if (parentTx.status !== 'READY') fail('management delegation requires a READY prepared task', 409);
+    if (parentNode.id !== parentTx.node_id) fail('management delegation must use the task owning node', 409);
+    for (const field of ['objective', 'expected_output', 'acceptance_criteria', 'inputs', 'constraints'] as const) {
+      const intended = field === 'objective' ? parentPlan.assignment : parentTx[field];
+      if (params[field] !== undefined && !sameRef(params[field], intended)) fail(`Allocator cannot rewrite delegated ${field}; revise the manager plan`, 409);
+    }
     const limits = cluster.limits;
     const children: NodeRecord[] = rt.store.childrenOf(parentNode.id);
+    const occupiedChildren = children.filter(child => child.status !== 'RELEASED');
     const childLimit = parentNode.max_children ?? limits.max_children;
-    if (children.length >= childLimit) fail(`node ${parentNode.id} reached max_children ${childLimit}`, 409);
+    if (occupiedChildren.length >= childLimit) fail(`node ${parentNode.id} reached max_children ${childLimit}`, 409);
     if (parentNode.depth + 1 > limits.max_depth) fail(`depth limit ${limits.max_depth} reached`, 409);
 
     // The topology fixture is authoritative. When the node still owes a
@@ -1019,10 +1310,8 @@ export const HANDLERS = {
     if (parentNode.depth + 1 >= limits.max_depth) {
       fail(`a management node at depth ${parentNode.depth + 1} could not run a Worker: max_depth is ${limits.max_depth}, so its roles would have no identity to allocate. Delegate no deeper, or raise max_depth deliberately.`, 409);
     }
-    const rawScope = params.scope ?? { objective: owed?.objective ?? parentTx.objective.slice(0, 400) };
-    const scope: FlowJsonValue = typeof rawScope === 'string'
-      ? { objective: rawScope.slice(0, 400) }
-      : jsonValue(rawScope, 'node.scope');
+    const rawScope = { objective: parentPlan.assignment, parent_plan_ref: parentPlan.ref, assignment_key: assignmentKey };
+    const scope: FlowJsonValue = jsonValue(rawScope, 'node.scope');
     const node = rt.store.insertNode({
       id: randomUUID(), cluster_id: cluster.id, parent_id: parentNode.id, kind: 'management',
       depth: parentNode.depth + 1, status: 'ACTIVE',
@@ -1039,9 +1328,9 @@ export const HANDLERS = {
       parent_budget_id: parentBudget?.id ?? null, limit: {}, wall_limit_ms: typeof params.wall_limit_ms === 'number' ? params.wall_limit_ms : 0,
     });
     if (parentBudget) {
-      const remainingSlots = Math.max(1, (parentNode.max_children ?? cluster.limits.max_children) - children.length);
+      const remainingSlots = Math.max(1, (parentNode.max_children ?? cluster.limits.max_children) - occupiedChildren.length);
       const requestedGrant = params.budget == null ? null : objectField(params.budget, 'budget');
-      const grant: Record<string, unknown> = requestedGrant ?? { ...shareOf(parentBudget, remainingSlots) };
+      const grant: Record<string, unknown> = { ...(requestedGrant ?? shareOf(parentBudget, remainingSlots)) };
       const levels = Math.min(Math.max(1, spawnBudget || 1),
         Math.max(1, limits.max_depth - parentNode.depth - 1));
       // Each remaining management level needs three identities, and the leaf
@@ -1126,7 +1415,7 @@ export const HANDLERS = {
       // The delegation entry, not the root's topological instruction, names
       // this node's work. At the leaf a Worker otherwise inherits "create
       // another management node" even though the chain already reached zero.
-      objective: params.objective ?? owed?.objective ?? parentTx.objective,
+      objective: parentPlan.assignment,
       expected_output: params.expected_output ?? parentTx.expected_output,
       // The remaining level count is control data: the fixture owns it at every
       // spawn. Keep the injected write scope alongside it, so a Worker with a
@@ -1135,6 +1424,7 @@ export const HANDLERS = {
         ? { ...inheritedInputs, management_levels_remaining: spawnChildren }
         : inheritedInputs,
       acceptance_criteria: params.acceptance_criteria ?? parentTx.acceptance_criteria,
+      constraints: parentTx.constraints,
       capabilities: node.capabilities,
       parent_transaction_id: parentTx.id,
       priority: parentTx.priority,
@@ -1147,6 +1437,8 @@ export const HANDLERS = {
           expected_output: delegated.expected_output,
           ...(owed ? { management_levels_remaining: spawnChildren } : {}),
           acceptance_criteria: delegated.acceptance_criteria,
+          parent_plan_ref: parentPlan.ref,
+          assignment_key: assignmentKey,
         },
       },
     });
@@ -1154,10 +1446,13 @@ export const HANDLERS = {
     rt.store.appendEvent(cluster.id, 'management-node-spawned', {
       node_id: node.id, parent: parentNode.id, delegated_transaction_id: delegated.id, roles,
     });
-    return {
+    const result = {
       node_id: node.id, depth: node.depth, roles, delegated_transaction_id: delegated.id,
       budget: budgetJson(budgetView(rt.store.getBudget(nodeBudget.id))),
     };
+    rt.store.saveManagementAssignment(parentTx.id, parentPlan.ref, assignmentKey, node.id, delegated.id, result);
+    rt.store.saveSemanticReceipt(assignmentReceiptKey, cluster.id, params, result);
+    return result;
   },
 
   release_agent(rt, cluster, actor, params) {
@@ -1167,6 +1462,7 @@ export const HANDLERS = {
     }
     if (params.all) {
       const node = assertDomain(rt, cluster, actor, params.node_id ?? actor.node_id);
+      if (node.status === 'DRAINING') return releaseDrainingDomain(rt, cluster, node);
       const active: AllocationRecord[] = rt.store.allocationsForNode(node.id, { status: 'ACTIVE' });
       for (const allocation of active) {
         assertAllocationTurnDrained(rt, allocation);
@@ -1379,6 +1675,12 @@ export const HANDLERS = {
     assertDomain(rt, cluster, actor, allocation.node_id);
     const oldAgent = rt.store.getAgent(allocation.agent_id) ?? fail('Agent not found', 404);
     assertAllocationTurnDrained(rt, allocation);
+    if (oldAgent.role === 'worker') {
+      const tx = txOf(rt, allocation.transaction_id);
+      const plan = validPlan(rt.store, tx, 'worker');
+      if (!sameRef(allocation.plan_ref, plan.ref) || rt.store.allocationOutdated(cluster.id, allocation)) fail('replacement worker allocation belongs to an old plan', 409);
+      if (TRANSACTION_TERMINAL.has(tx.status)) fail('cannot replace a Worker for terminal work', 409);
+    }
     rt.store.updateAgent(allocation.agent_id, { status: 'TERMINATED' });
     const replacement = rt.store.insertAgent({
       id: randomUUID(), cluster_id: cluster.id, node_id: oldAgent.node_id, role: oldAgent.role,
@@ -1411,6 +1713,7 @@ export const HANDLERS = {
     }
     if (rt.store.allocationOutdated(cluster.id, allocation)) fail('source allocation predates its transaction revision', 409);
     const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
+    const targetPlan = validPlan(rt.store, tx, 'worker');
     if (tx.status !== 'READY' || tx.node_id !== allocation.node_id
       || tx.owner_management_id !== source.owner_management_id) {
       fail(`target transaction ${tx.id} must be READY in the same owner domain`, 409);
@@ -1447,7 +1750,7 @@ export const HANDLERS = {
       fail(`reassigning ${tx.id} would widen the allocation write scope`, 409);
     }
     const updated = rt.store.updateAllocation(allocation.id, {
-      transaction_id: tx.id, write_scope: scope, write_scope_canonical: canonical,
+      transaction_id: tx.id, plan_ref: targetPlan.ref, write_scope: scope, write_scope_canonical: canonical,
     }) ?? fail('Allocation not found', 404);
     rt.store.appendEvent(cluster.id, 'agent-allocated', jsonValue({
       agent_id: agent.id, node_id: allocation.node_id, transaction_id: tx.id,
@@ -1714,15 +2017,9 @@ export const HANDLERS = {
       rt.store.updateTransaction(current.id, {
         status: 'PAUSED', pre_pause_status: current.status,
         pre_pause_revision: current.revision + (reviewing ? 0 : 1),
-        plan_approved_revision: reviewing ? current.plan_approved_revision : null,
+        plan_approved_revision: current.plan_approved_revision,
         __bump_revision: !reviewing,
       });
-      if (!reviewing) {
-        const oldAudit = rt.store.findAudit(cluster.id, current.id, 'plan', current.revision);
-        if (oldAudit?.decision === 'PENDING') {
-          rt.store.decideAudit(oldAudit.id, 'OVERRIDDEN', actor.agent_id ?? null, { reason: 'plan lifecycle paused' });
-        }
-      }
       paused.push(current.id);
     }
     rt.store.appendEvent(cluster.id, 'transaction-paused', jsonValue({
@@ -1752,15 +2049,14 @@ export const HANDLERS = {
       }
       if (['SUBMITTED', 'VALIDATING'].includes(prior)
         && (current.result === null || (prior === 'VALIDATING'
-          && (!current.validation || current.result_revision !== current.revision)))) {
+          && (!current.validation || !rt.store.getValidation(current.current_validation_ref))))) {
         fail(`paused transaction ${current.id} lost its result review identity`, 409);
       }
       const changedRequirements = current.id === tx.id && params.updated_requirements !== undefined;
       const target = changedRequirements ? 'DRAFT'
         : prior === 'DRAFT' ? 'DRAFT'
           : prior === 'SUBMITTED' || prior === 'VALIDATING' ? prior
-            : prior === 'RUNNING' && current.result !== null ? 'SUBMITTED'
-              : rt.settledDependencies(current) ? 'READY' : 'DRAFT';
+            : rt.settledDependencies(current) ? 'READY' : 'DRAFT';
       let updated: TransactionRecord;
       if (changedRequirements) {
         updated = rt.store.updateTransaction(current.id, {
@@ -1776,14 +2072,8 @@ export const HANDLERS = {
         }) ?? fail('Transaction not found', 404);
       }
       if (target === 'READY' && !['SUBMITTED', 'VALIDATING'].includes(prior)) {
-        const audit = rt.store.insertAudit({
-          id: randomUUID(), cluster_id: cluster.id, transaction_id: current.id, node_id: current.node_id,
-          kind: 'plan', target_revision: updated.revision, decision: 'PENDING',
-          evidence: { requested_by: actor.agent_id ?? null, reason: 'transaction resumed' },
-        }) ?? fail('Failed to record audit', 500);
-        rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, current.node_id, 'auditor')?.id, {
-          subject: 'plan-audit-requested', payload: { audit_id: audit.id, transaction_id: current.id },
-        });
+        const plan = validPlan(rt.store, updated);
+        requestPlanAudit(rt, cluster, actor, updated, plan);
         const allocation = rt.store.activeAllocationForTransaction(current.id);
         if (allocation) rt.store.appendEvent(cluster.id, 'agent-allocated', jsonValue({
           agent_id: allocation.agent_id, node_id: allocation.node_id, transaction_id: current.id,
@@ -1838,12 +2128,13 @@ export const HANDLERS = {
     // pull the newer revision back to DRAFT, open an issue against a revision
     // nobody reviewed, and pause its dependents — a correction for work that no
     // longer exists.
-    if (tx.revision !== audit.target_revision) {
+    if (!audit.plan_ref || !sameRef(tx.current_plan_ref, audit.plan_ref)) {
       rt.store.decideAudit(audit.id, 'STALE', actor.agent_id ?? null, { note: `transaction moved to revision ${tx.revision}` });
       return { audit_id: audit.id, decision: 'STALE', transaction_id: tx.id };
     }
+    const evidence = checkedAuditEvidence(actor, audit, decision, params.evidence);
     if (decision === 'APPROVED') {
-      rt.store.decideAudit(audit.id, 'APPROVED', actor.agent_id ?? null, jsonValue({ evidence: params.evidence ?? {} }, 'audit evidence'));
+      rt.store.decideAudit(audit.id, 'APPROVED', actor.agent_id ?? null, { evidence });
       // Observational: the Orchestrator already made this revision dispatchable.
       // The approval is recorded as evidence for the health signal, not as the
       // permission to run.
@@ -1854,7 +2145,7 @@ export const HANDLERS = {
       rt.notifyInternal(cluster.id, rt.roleAgentOf(cluster.id, tx.node_id, 'allocator')?.id, { subject: 'plan-approved', payload: { transaction_id: tx.id } });
       return { audit_id: audit.id, decision: 'APPROVED', transaction_id: tx.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
     }
-    rt.store.decideAudit(audit.id, 'REJECTED', actor.agent_id ?? null, jsonValue({ evidence: params.evidence ?? {} }, 'audit evidence'));
+    rt.store.decideAudit(audit.id, 'REJECTED', actor.agent_id ?? null, { evidence });
     const issue = openIssue(rt, cluster, actor, {
       transaction_id: tx.id, node_id: tx.node_id, target_revision: audit.target_revision,
       severity: params.severity ?? 'MAJOR', evidence: params.evidence ?? {},
@@ -1868,16 +2159,17 @@ export const HANDLERS = {
       ? rt.store.activeAllocationForTransaction(tx.id) : null;
     const workerInFlight = activeAllocation && (rt.activeTurnFor(activeAllocation.agent_id)
       || (rt.store.leaseForAgent(activeAllocation.agent_id)?.expires ?? 0) > rt.timestamp());
-    if (!workerInFlight && !TRANSACTION_TERMINAL.has(tx.status) && tx.status !== 'DRAFT') {
-      setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), 'DRAFT');
+    if (!workerInFlight && !['CANCELLED', 'SUPERSEDED', 'FAILED'].includes(tx.status) && tx.status !== 'DRAFT') {
+      setStatus(rt, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), tx.status === 'ACCEPTED' ? 'REJECTED' : 'DRAFT');
     }
-    rt.store.updateTransaction(tx.id, { plan_approved_revision: null, __bump_revision: false });
+    rt.store.updateTransaction(tx.id, { plan_approved_revision: null, validation: null, current_validation_ref: null, __bump_revision: false });
     if (workerInFlight) {
       rt.store.appendEvent(cluster.id, 'plan-rejection-deferred', {
         transaction_id: tx.id, revision: tx.revision, agent_id: activeAllocation.agent_id,
       });
     }
     pauseDependents(rt, cluster, tx);
+    invalidateAncestorResults(rt, cluster, tx, issue.id);
     assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
     return { audit_id: audit.id, decision: 'REJECTED', transaction_id: tx.id, issue_id: issue.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
   },
@@ -1888,45 +2180,43 @@ export const HANDLERS = {
     assertDomain(rt, cluster, actor, tx.node_id);
     if (audit.decision !== 'PENDING') return { audit_id: audit.id, decision: audit.decision, deduped: true };
     const decision = normaliseDecision(params.decision);
-    if (tx.result_revision !== audit.target_revision || tx.revision !== audit.target_revision) {
+    const validation = rt.store.getValidation(audit.validation_ref);
+    if (!audit.validation_ref || !validation || !sameRef(tx.current_validation_ref, audit.validation_ref)
+      || !sameRef(tx.current_plan_ref, validation.plan_ref) || !sameRef(tx.current_result_ref, validation.result_ref)) {
       rt.store.decideAudit(audit.id, 'STALE', actor.agent_id ?? null, { note: `transaction is at revision ${tx.revision}, result revision ${tx.result_revision}` });
       return { audit_id: audit.id, decision: 'STALE', transaction_id: tx.id };
     }
+    const evidence = checkedAuditEvidence(actor, audit, decision, params.evidence);
     if (decision === 'APPROVED') {
-      rt.store.decideAudit(audit.id, 'APPROVED', actor.agent_id ?? null, jsonValue({ evidence: params.evidence ?? {} }, 'audit evidence'));
-      const outcome = acceptTransaction(rt, cluster, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)));
+      if (!validation.accepted) fail('independent compliance approval cannot replace a positive business validation conclusion', 409);
+      if (validation.author_agent_id === actor.agent_id) fail('the validation author cannot audit their own validation', 403);
+      rt.store.decideAudit(audit.id, 'APPROVED', actor.agent_id ?? null, { evidence });
+      const outcome = acceptTransaction(rt, cluster, (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)), { role: 'runtime', agent_id: actor.agent_id ?? null, action: 'inspect_validation' });
       return { audit_id: audit.id, decision: 'APPROVED', ...outcome };
     }
-    rt.store.decideAudit(audit.id, 'REJECTED', actor.agent_id ?? null, jsonValue({ evidence: params.evidence ?? {} }, 'audit evidence'));
+    rt.store.decideAudit(audit.id, 'REJECTED', actor.agent_id ?? null, { evidence });
     const issue = openIssue(rt, cluster, actor, {
       transaction_id: tx.id, node_id: tx.node_id, target_revision: audit.target_revision,
-      severity: params.severity ?? 'MAJOR', evidence: params.evidence ?? {},
-      required_change: params.required_change ?? 'produce evidence that satisfies every acceptance criterion',
+      severity: params.severity ?? 'MAJOR', evidence: {
+        kind: 'validation-compliance', validation_ref: jsonValue(validation.ref, 'validation_ref'),
+        responsible_agent_id: validation.author_agent_id, audit_evidence: jsonValue(params.evidence ?? {}, 'audit evidence'),
+      },
+      required_change: params.required_change ?? 'the Orchestrator must correct its validation method, coverage or evidence and submit a new validation record',
     });
-    setStatus(rt, tx, 'REJECTED');
+    setStatus(rt, tx, 'SUBMITTED');
+    invalidateAncestorResults(rt, cluster, tx, issue.id);
     assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
-    return { audit_id: audit.id, decision: 'REJECTED', transaction_id: tx.id, issue_id: issue.id, status: 'REJECTED' };
+    return { audit_id: audit.id, decision: 'REJECTED', transaction_id: tx.id, issue_id: issue.id, status: 'SUBMITTED' };
   },
 
   request_correction(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
-    const issue = openIssue(rt, cluster, actor, {
-      transaction_id: tx.id, node_id: tx.node_id, target_revision: params.target_revision ?? tx.revision,
-      severity: params.severity ?? 'MAJOR', evidence: params.evidence ?? {},
-      required_change: params.required_change ?? 'correct the result against the acceptance criteria',
-    });
-    if (!TRANSACTION_TERMINAL.has(tx.status) && tx.status !== 'DRAFT') setStatus(rt, tx, 'REJECTED');
-    const audit = rt.store.findAudit(cluster.id, tx.id, 'validation', tx.result_revision ?? 0);
-    if (audit && audit.decision === 'PENDING') rt.store.decideAudit(audit.id, 'CORRECTION_REQUESTED', actor.agent_id ?? null, { issue_id: issue.id });
-    rt.store.updateTransaction(tx.id, { validation: null });
-    pauseDependents(rt, cluster, tx);
-    assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
-    return { issue_id: issue.id, transaction_id: tx.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
+    return reopenValidation(rt, cluster, actor, tx, params, 'CORRECTION_REQUESTED');
   },
 
   request_replan(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
-    assertTransactionWorkerDrained(rt, tx);
+    assertRevisionSafe(rt, cluster, tx);
     assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
     const issue = openIssue(rt, cluster, actor, {
       transaction_id: tx.id, node_id: tx.node_id, target_revision: tx.revision,
@@ -1943,7 +2233,7 @@ export const HANDLERS = {
     const status = reopeningAcceptance ? 'REJECTED' : 'DRAFT';
     setStatus(rt, tx, status);
     rt.store.updateTransaction(tx.id, {
-      plan_approved_revision: null, validation: null, __bump_revision: false,
+      plan_approved_revision: null, validation: null, current_plan_ref: null, current_validation_ref: null, current_result_ref: null, __bump_revision: false,
       result: null, result_revision: null,
       result_staged_epoch: null, result_staged_turn: null, result_staged_agent: null,
     });
@@ -1956,33 +2246,13 @@ export const HANDLERS = {
       writeNodeSummary(rt, cluster, tx.node_id);
     }
     pauseDependents(rt, cluster, tx);
+    invalidateAncestorResults(rt, cluster, tx, issue.id);
     return { issue_id: issue.id, transaction_id: tx.id, status };
   },
 
   request_revalidation(rt, cluster, actor, params) {
     const tx = assertTransactionDomain(rt, cluster, actor, params.transaction_id);
-    const issue = openIssue(rt, cluster, actor, {
-      transaction_id: tx.id, node_id: tx.node_id, target_revision: params.target_revision ?? tx.revision,
-      severity: params.severity ?? 'MINOR', evidence: params.evidence ?? {},
-      required_change: params.required_change ?? 're-run validation against the current result revision',
-    });
-    if (tx.status === 'VALIDATING') {
-      const audit = rt.store.findAudit(cluster.id, tx.id, 'validation', tx.result_revision ?? 0);
-      if (audit && audit.decision === 'PENDING') rt.store.decideAudit(audit.id, 'REVALIDATION_REQUESTED', actor.agent_id ?? null, { issue_id: issue.id });
-      // An aggregate is the parent's own run: it moves through RUNNING as any other
-    // execution does, because the transition table has no READY → SUBMITTED. The
-    // status is read fresh — the caller's row is a snapshot, and acting on it skipped
-    // the intermediate transition while `setStatus` checked the live one.
-    // Work on a snapshot that reflects the live row: `setTransactionStatus` asserts the
-    // transition from `tx.status`, so a stale snapshot makes the intermediate step a
-    // no-op and the next one illegal.
-    let live = (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404));
-    if (live.status === 'READY') live = setStatus(rt, live, 'RUNNING');
-    setStatus(rt, live, 'SUBMITTED');
-      rt.store.updateTransaction(tx.id, { validation: null, __bump_revision: false });
-    }
-    assertCorrectionBudget(rt, cluster, tx, cluster.limits.max_corrections);
-    return { issue_id: issue.id, transaction_id: tx.id, status: (rt.store.getTransaction(tx.id) ?? fail('Transaction not found', 404)).status };
+    return reopenValidation(rt, cluster, actor, tx, params, 'REVALIDATION_REQUESTED');
   },
 
   verify_correction(rt, cluster, actor, params) {
@@ -2026,6 +2296,15 @@ export const HANDLERS = {
       return { issue_id: withdrawn.id, status: withdrawn.status, dismissed: true };
     }
     const closing = decision === 'VERIFIED' || decision === 'CORRECTED';
+    const issueEvidence = evidenceObject(issue.evidence);
+    if (closing && issueEvidence.kind === 'validation-compliance') {
+      const tx = issue.transaction_id ? rt.store.getTransaction(issue.transaction_id) : null;
+      const record = rt.store.getValidation(tx?.current_validation_ref);
+      const audit = record ? rt.store.findAudit(cluster.id, record.ref.transaction_id, 'validation', record.ref.result_revision) : null;
+      if (!record || sameRef(record.ref, issueEvidence.validation_ref) || !record.accepted || audit?.decision !== 'APPROVED'
+        || !sameRef(audit.validation_ref, record.ref) || !sameRef(record.plan_ref, tx?.current_plan_ref)
+        || !sameRef(record.result_ref, tx?.current_result_ref)) fail('validation compliance issues require a new matching validation record and independent approval', 409);
+    }
     // A closing verdict accepts the correction that is there (anything since the issue
     // was raised); a rejection charges a round, so it needs a correction later than the
     // one already reviewed — otherwise the same repair could be rejected twice.
@@ -2167,17 +2446,27 @@ export const HANDLERS = {
     if (tx.cluster_id !== cluster.id) fail('Transaction belongs to another cluster', 403);
     const allocation = rt.store.activeAllocationForTransaction(tx.id);
     if (!allocation || allocation.agent_id !== actor.agent_id) fail('transaction is not allocated to this worker', 403);
+    const plan = validPlan(rt.store, tx, 'worker', true);
+    if (!sameRef(allocation.plan_ref, plan.ref) || rt.store.allocationOutdated(cluster.id, allocation)) fail('this worker allocation belongs to an old plan', 409);
+    if (params.plan_ref !== undefined && !sameRef(params.plan_ref, plan.ref)) fail('submission plan_ref is stale', 409);
     if (!['RUNNING', 'READY', 'DISPATCHED'].includes(tx.status)) {
       fail(`cannot submit a ${tx.status} transaction; a Worker may only stage a result while its transaction is running or ready to run`, 409);
     }
     if (params.result === undefined) fail('submit_result requires a result');
     const staged = tx.result !== null && tx.result !== undefined;
-    if (staged) return { transaction_id: tx.id, status: 'STAGED', deduped: true };
+    if (staged) {
+      if (tx.result_staged_agent !== actor.agent_id) fail('result staging conflicts with another producer', 409);
+      const sameTurn = tx.result_staged_epoch === (actor.epoch ?? null) && tx.result_staged_turn === (actor.turn_seq ?? null);
+      if (sameTurn) {
+        if (!sameRef(tx.result, params.result)) fail('this execution turn already staged different content', 409);
+        return { transaction_id: tx.id, status: 'STAGED', deduped: true };
+      }
+    }
     const updated = rt.store.updateTransaction(tx.id, {
-      result: jsonValue(params.result, 'result'), validation: null, result_revision: null,
+      result: jsonValue(params.result, 'result'), validation: null, result_revision: null, current_result_ref: null, current_validation_ref: null,
       // Bind the proposal to the exact turn that produced it *and* to the
-      // identity that produced it: a later turn of the same Worker may finish
-      // the job and publish it, a foreign or replaced identity never may.
+      // identity that produced it. A later successful turn must explicitly
+      // submit again; its finisher cannot publish an earlier turn's proposal.
       result_staged_epoch: actor.epoch ?? null, result_staged_turn: actor.turn_seq ?? null,
       result_staged_agent: actor.agent_id ?? null,
       __bump_revision: false,
@@ -2192,7 +2481,19 @@ export const HANDLERS = {
 
 // ------------------------------------------------------------ action helpers
 
-function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord): AcceptOutcome {
+function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: TransactionRecord,
+  source: { role: string; agent_id: string | null; action: string } = { role: 'runtime', agent_id: null, action: 'acceptTransaction' },
+): AcceptOutcome {
+  const plan = validPlan(rt.store, tx);
+  const validation = rt.store.getValidation(tx.current_validation_ref);
+  const result = rt.store.getResult(tx.current_result_ref);
+  const audit = validation ? rt.store.findAudit(cluster.id, tx.id, 'validation', validation.ref.result_revision) : null;
+  if (!validation?.accepted || !result || !sameRef(validation.plan_ref, plan.ref) || !sameRef(result.plan_ref, plan.ref)
+    || !sameRef(validation.result_ref, result.ref) || !sameRef(tx.result, result.result)
+    || !audit || audit.decision !== 'APPROVED' || !sameRef(audit.validation_ref, validation.ref)
+    || !sameRef(audit.plan_ref, plan.ref) || !audit.auditor_agent_id || audit.auditor_agent_id === validation.author_agent_id) {
+    fail('acceptance requires a positive current validation, the matching published result and plan, and independent compliance approval', 409);
+  }
   if (tx.status === 'ACCEPTED') return { transaction_id: tx.id, status: 'ACCEPTED', deduped: true };
   if (tx.status !== 'VALIDATING') fail(`transaction ${tx.id} is ${tx.status}; cannot accept`, 409);
   // The acceptance commit is where the invariant belongs: a parent validated *before*
@@ -2202,9 +2503,16 @@ function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: T
   if (rt.store.parentsAwaitingChildren(cluster.id).includes(tx.id)) {
     fail(`${tx.id} has delegated work still unfinished; aggregate the child results before accepting it`, 409);
   }
+  const children = rt.store.currentChildrenOfTransaction(cluster.id, tx.id);
+  if (children.some(child => !child.current_result_ref || !child.current_validation_ref
+    || !result.source_result_refs.some(ref => sameRef(ref, child.current_result_ref))
+    || !result.source_validation_refs.some(ref => sameRef(ref, child.current_validation_ref)))) {
+    fail('aggregate acceptance requires the current accepted publication and validation of every child', 409);
+  }
   const updated = rt.store.updateTransaction(tx.id, { status: 'ACCEPTED', __bump_revision: false });
   if (!updated) fail(`transaction ${tx.id} vanished while being accepted`, 409);
-  rt.store.appendEvent(cluster.id, 'result-accepted', { transaction_id: tx.id, result_revision: tx.result_revision });
+  rt.store.appendEvent(cluster.id, 'result-accepted', { transaction_id: tx.id, result_revision: tx.result_revision,
+    validated_by: validation.author_agent_id, audited_by: audit.auditor_agent_id, committed_by: source });
   // A durable summary is what a parent aggregates: never a raw transcript, and
   // never a re-sum of an ancestor's numbers.
   rt.store.insertSummary({
@@ -2219,14 +2527,22 @@ function acceptTransaction(rt: ClusterRuntimePort, cluster: ClusterRecord, tx: T
       evidence: (tx.validation?.checks ?? []).map(check => ({
         transaction_id: tx.id, criterion: String(check.criterion).slice(0, 300), passed: check.passed, evidence: String(check.evidence ?? '').slice(0, 400),
       })),
-      accepted_by: 'auditor',
+      validated_by: validation.author_agent_id,
+      validated_by_role: validation.author_role,
+      audited_by: audit.auditor_agent_id,
+      accepted_by: source.role,
+      acceptance_commit_source: source,
+      plan_ref: jsonValue(plan.ref, 'plan_ref'), validation_ref: jsonValue(validation.ref, 'validation_ref'),
     },
   });
   rt.store.appendEvent(cluster.id, 'summary-written', { transaction_id: tx.id, node_id: tx.node_id });
   writeNodeSummary(rt, cluster, tx.node_id);
   rt.deliverFixtureMessages(cluster, tx);
   for (const issue of rt.store.openIssues(cluster.id, { transaction_id: tx.id, status: ['OPEN', 'VERIFYING'] })) {
-    // Acceptance closes outstanding issues. An incomplete Worker result still
+    // Compliance correction remains an explicit Auditor verdict against the
+    // replacement validation record; acceptance alone does not close it.
+    if (evidenceObject(issue.evidence).kind === 'validation-compliance') continue;
+    // Acceptance closes delivery issues. An incomplete Worker result still
     // requires later Worker evidence before its issue can be marked corrected.
     if (rt.store.issueHasIncompleteWorkerResult(cluster.id, issue)
       && !rt.store.issueHasNewWorkerEvidence(cluster.id, issue)) continue;
@@ -2308,8 +2624,12 @@ function resolveAudit(rt: ClusterRuntimePort, cluster: ClusterRecord, actor: Act
   if (!params.transaction_id) fail(`${kind} audit requires audit_id or transaction_id`);
   const tx = txOf(rt, params.transaction_id);
   const requestedRevision = params.target_revision;
+  const explicitRef = params[kind === 'plan' ? 'plan_ref' : 'validation_ref'];
+  const reference = explicitRef === undefined ? null : objectField(explicitRef, `${kind}_ref`);
+  if (reference && reference.transaction_id !== tx.id) fail('audit reference belongs to another transaction', 403);
   const revision = typeof requestedRevision === 'number' ? requestedRevision
-    : kind === 'plan' ? tx.revision : tx.result_revision ?? 0;
+    : kind === 'plan' ? numberOr(reference?.prepared_revision, tx.current_plan_ref?.prepared_revision ?? 0)
+      : numberOr(reference?.result_revision, tx.current_validation_ref?.result_revision ?? 0);
   const audit = rt.store.findAudit(cluster.id, tx.id, kind, revision);
   if (!audit) fail(`no ${kind} audit for transaction ${tx.id} at revision ${revision}`, 404);
   return audit;
@@ -2380,10 +2700,22 @@ function validateChecks(checks: unknown): FlowValidationCheck[] {
   return parsed.map((check): FlowValidationCheck => {
     if (!check || typeof check !== 'object') fail('Invalid validation check');
     const record = objectField(check, 'validation check');
+    let criterionRef: CriterionRef | undefined;
+    if (record.criterion_ref !== undefined) {
+      const ref = objectField(record.criterion_ref, 'criterion_ref');
+      if (typeof ref.transaction_id !== 'string' || typeof ref.prepared_revision !== 'number' || !Number.isSafeInteger(ref.prepared_revision)
+        || typeof ref.criterion_index !== 'number' || !Number.isSafeInteger(ref.criterion_index) || ref.criterion_index < 0) fail('invalid immutable criterion_ref');
+      criterionRef = { transaction_id: ref.transaction_id, prepared_revision: ref.prepared_revision, criterion_index: ref.criterion_index };
+    }
+    if (record.evidence_refs !== undefined && !Array.isArray(record.evidence_refs)) fail('evidence_refs must be an array');
     return {
-      criterion: String(record.criterion ?? '').slice(0, 2000),
+      criterion: typeof record.criterion === 'string' ? record.criterion : '',
+      ...(criterionRef ? { criterion_ref: criterionRef } : {}),
+      ...(typeof record.method === 'string' ? { method: record.method } : {}),
+      ...(typeof record.observation === 'string' ? { observation: record.observation } : {}),
+      ...(Array.isArray(record.evidence_refs) ? { evidence_refs: record.evidence_refs.map(item => jsonValue(item, 'evidence_ref')) } : {}),
       passed: record.passed === true,
-      evidence: typeof record.evidence === 'string' ? record.evidence.slice(0, 4000) : String(JSON.stringify(record.evidence ?? null)).slice(0, 4000),
+      evidence: typeof record.evidence === 'string' ? record.evidence : JSON.stringify(record.evidence ?? null),
     };
   });
 }

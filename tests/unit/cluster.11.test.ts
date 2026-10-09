@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams, prepareFixtureTask } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -123,6 +124,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -162,7 +164,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -223,26 +225,22 @@ test('the recursion checker accepts a no-attempt fault: denial, rejection, corre
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const level1 = textOf(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: (() => {
-      const created = command(runtime, orchestrator, 'create_transaction', { objective: 'level one', acceptance_criteria: ['x'], status: 'READY' });
-      return textOf(created.result.transaction_id, 'transaction_id');
-    })(), objective: 'level one', acceptance_criteria: ['x'],
-  }).result.node_id, 'node_id');
-  const level2 = textOf(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: (() => {
-      const created = command(runtime, orchestrator, 'create_transaction', { objective: 'level two', acceptance_criteria: ['x'], status: 'READY' });
-      return textOf(created.result.transaction_id, 'transaction_id');
-    })(), node_id: level1, objective: 'level two', acceptance_criteria: ['x'],
-  }).result.node_id, 'node_id');
-  const level3 = textOf(command(runtime, allocator, 'spawn_management_node', {
-    transaction_id: (() => {
-      const created = command(runtime, orchestrator, 'create_transaction', { objective: 'level three', acceptance_criteria: ['x'], status: 'READY' });
-      return textOf(created.result.transaction_id, 'transaction_id');
-    })(), node_id: level2, objective: 'level three', acceptance_criteria: ['x'],
-  }).result.node_id, 'node_id');
+  const spawnLevel = (parentNodeId: string, objective: string) => {
+    const parentLead = actorFor(runtime, clusterId, 'orchestrator', parentNodeId);
+    const parentAllocator = actorFor(runtime, clusterId, 'allocator', parentNodeId);
+    const created = command(runtime, parentLead, 'create_transaction', { objective, acceptance_criteria: ['x'] });
+    const txId = textOf(created.result.transaction_id, 'transaction_id');
+    prepareFixtureTask(runtime, txId, 'management');
+    return textOf(command(runtime, parentAllocator, 'spawn_management_node', { fixture_prepare_management: true,
+      transaction_id: txId,
+    }).result.node_id, 'node_id');
+  };
+  const level1 = spawnLevel(root.id, 'level one');
+  const level2 = spawnLevel(level1, 'level two');
+  const level3 = spawnLevel(level2, 'level three');
   const deepestTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId, node_id: level3 }), 'deepest transaction');
   runtime.store.tx(() => runtime.store.updateTransaction(deepestTx.id, { status: 'READY' }));
+  prepareFixtureTask(runtime, deepestTx.id);
   // A root Allocator can supervise the branch, but it cannot put its Worker
   // under the root: the delegated node owns this transaction and its effects.
   assert.throws(() => command(runtime, allocator, 'allocate_agent', { transaction_id: deepestTx.id }),
@@ -266,7 +264,7 @@ test('the recursion checker accepts a no-attempt fault: denial, rejection, corre
     required_change: 'widen the write scope and re-allocate', target_revision: required(runtime.store.getTransaction(deepestTx.id), 'deepest transaction').revision,
   }));
   command(runtime, orchestrator, 'adjust_transaction', {
-    transaction_id: deepestTx.id, patch: { inputs: { write_scope: ['deep'], parent_transaction_id: jsonObject(deepestTx.inputs, 'deepest transaction inputs').parent_transaction_id } },
+    transaction_id: deepestTx.id, patch: { inputs: { ...jsonObject(deepestTx.inputs, 'deepest transaction inputs'), write_scope: ['deep'] } },
   });
   runtime.store.tx(() => runtime.store.updateAllocation(initial.id, { status: 'RELEASED' }));
   // An adjusted transaction is a new revision and goes back through dispatch, as the
@@ -332,8 +330,7 @@ test('a one-slot window lets both classes progress, one resident turn at a time'
   assert.equal(runtime.store.readyForWorker(clusterId, { limit: 1 }).length, 1, 'a Worker is ready');
   let published = 0;
   host.setScript(async turn => {
-    const prompt = turn.prompt?.content?.[0]?.text ?? '';
-    if (prompt.startsWith('You are a Worker')) return;
+    if (runtime.store.getAgentBySession(turn.session.id)?.role === 'worker') return;
     published += 1;
     touchBlackboard(runtime, clusterId, `oneslot/${published}`, null);
   });
@@ -460,8 +457,8 @@ test('a refused child write belongs to its own Auditor, not every ancestor Audit
   const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
   const root = rootNode(runtime, clusterId);
   const rootTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: rootTx.id });
-  const spawned = command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'spawn_management_node', {
+  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: rootTx.id, fixture_execution: 'management' });
+  const spawned = command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: rootTx.id, scope: { objective: 'delegated file' },
   }).result;
   const child = required(runtime.store.getNode(textOf(spawned.node_id, 'node_id')), 'child node');
@@ -570,11 +567,7 @@ test('all three management roles get turns under a small window, without exceedi
     objective: 'work to allocate', acceptance_criteria: ['x'],
   });
   const readyId = textOf(ready.result.transaction_id, 'transaction_id');
-  runtime.store.tx(() => runtime.store.updateTransaction(readyId, { status: 'READY' }));
-  runtime.store.tx(() => runtime.store.insertAudit({
-    id: 'audit-plan-x', cluster_id: clusterId, node_id: root.id, transaction_id: draftId,
-    kind: 'plan', decision: 'PENDING', target_revision: required(runtime.store.getTransaction(draftId), 'transaction').revision,
-  }));
+  prepareFixtureTask(runtime, readyId);
   let published = 0;
   host.setScript(async () => {
     published += 1;
@@ -598,7 +591,7 @@ test('all three management roles get turns under a small window, without exceedi
     assert.ok(roles.has(role), `the ${role} got a turn under a one-slot window: ${JSON.stringify(starts())}`);
   }
   assert.ok(peak <= 1, `and the window was never exceeded: peak ${peak}`);
-  void allocator; void auditor; void readyId;
+  void allocator; void auditor; void readyId; void draftId;
 });
 
 
@@ -625,7 +618,7 @@ test('escalating a node stops its unfinished transactions with it', async t => {
     objective: 'the branch that will be escalated', acceptance_criteria: ['x'],
   });
   const txId = textOf(created.result.transaction_id, 'transaction_id');
-  const child = textOf(command(runtime, allocator, 'spawn_management_node', {
+  const child = textOf(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: txId, objective: 'a branch that cannot finish', acceptance_criteria: ['x'],
   }).result.node_id, 'node_id');
   // The branch has a DRAFT and a READY transaction, neither of them able to complete.
@@ -673,15 +666,17 @@ test('the fault check fails when only a shallower level was allocated', async t 
     budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
     }, { delegation: [{ scope: 'deep/', objective: 'own the deep branch', max_children: 4, spawn_children: 3, inputs: { write_scope: ['deep/staging'] } }] }).cluster.id;
   const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const spawnChild = (nodeId: string | null, objective: string) => {
-    const created = command(runtime, orchestrator, 'create_transaction', { objective, acceptance_criteria: ['x'] });
+    const ownerId = nodeId ?? root.id;
+    const ownerLead = actorFor(runtime, clusterId, 'orchestrator', ownerId);
+    const ownerAllocator = actorFor(runtime, clusterId, 'allocator', ownerId);
+    const created = command(runtime, ownerLead, 'create_transaction', { objective, acceptance_criteria: ['x'] });
     const txId = textOf(created.result.transaction_id, 'transaction_id');
+    prepareFixtureTask(runtime, txId, 'management');
     return {
       txId,
-      nodeId: textOf(command(runtime, allocator, 'spawn_management_node', {
-        transaction_id: txId, node_id: nodeId, objective, acceptance_criteria: ['x'],
+      nodeId: textOf(command(runtime, ownerAllocator, 'spawn_management_node', { fixture_prepare_management: true,
+        transaction_id: txId,
       }).result.node_id, 'node_id'),
     };
   };
@@ -721,15 +716,17 @@ test('the artifact check wants a settled write to this path by the deepest node'
     budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
     }, { delegation: [{ scope: 'deep/', objective: 'own the deep branch', max_children: 4, spawn_children: 3, inputs: { write_scope: ['deep'] } }] }).cluster.id;
   const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const spawnChild = (nodeId: string | null, objective: string) => {
-    const created = command(runtime, orchestrator, 'create_transaction', { objective, acceptance_criteria: ['x'] });
+    const ownerId = nodeId ?? root.id;
+    const ownerLead = actorFor(runtime, clusterId, 'orchestrator', ownerId);
+    const ownerAllocator = actorFor(runtime, clusterId, 'allocator', ownerId);
+    const created = command(runtime, ownerLead, 'create_transaction', { objective, acceptance_criteria: ['x'] });
     const txId = textOf(created.result.transaction_id, 'transaction_id');
+    prepareFixtureTask(runtime, txId, 'management');
     return {
       txId,
-      nodeId: textOf(command(runtime, allocator, 'spawn_management_node', {
-        transaction_id: txId, node_id: nodeId, objective, acceptance_criteria: ['x'],
+      nodeId: textOf(command(runtime, ownerAllocator, 'spawn_management_node', { fixture_prepare_management: true,
+        transaction_id: txId,
       }).result.node_id, 'node_id'),
     };
   };
@@ -738,7 +735,7 @@ test('the artifact check wants a settled write to this path by the deepest node'
   const level3 = spawnChild(level2.nodeId, 'level three');
   const deepestTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId, node_id: level3.nodeId }), 'deepest transaction');
   runtime.store.tx(() => runtime.store.updateTransaction(deepestTx.id, { status: 'READY' }));
-  command(runtime, allocator, 'allocate_agent', { transaction_id: deepestTx.id, node_id: level3.nodeId });
+  command(runtime, actorFor(runtime, clusterId, 'allocator', level3.nodeId), 'allocate_agent', { transaction_id: deepestTx.id });
   const allocation = required(runtime.store.activeAllocationForTransaction(deepestTx.id), 'allocation');
   const worker = required(runtime.store.getAgent(allocation.agent_id), 'worker agent');
   assert.equal(required(runtime.store.getNode(worker.node_id), 'worker node').parent_id, level3.nodeId, 'the deepest node owns the worker');
@@ -772,16 +769,16 @@ test('the artifact check wants a settled write to this path by the deepest node'
   assert.equal(failed.passed, false, `a failed write does not: ${failed.evidence}`);
 });
 
-test('an allocated parent does not re-enter the Worker queue when its delegated child is accepted', t => {
+test('a management parent cannot allocate a Worker or enter its queue when its delegated child is accepted', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  const spawned = command(runtime, allocator, 'spawn_management_node', {
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id, fixture_execution: 'management' });
+  assert.throws(() => command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id }), /management execution/);
+  const spawned = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: tx.id, scope: { objective: 'child result' },
   }).result;
   const child = required(runtime.store.getTransaction(textOf(spawned.delegated_transaction_id, 'delegated_transaction_id')), 'child transaction');
@@ -790,7 +787,7 @@ test('an allocated parent does not re-enter the Worker queue when its delegated 
   assert.equal(runtime.pendingFor('orchestrator', childNode, required(runtime.store.getCluster(clusterId), 'cluster'))
     .some(item => item.action === 'report-to-parent'), false,
   'an accepted delegated result is already visible to its parent and must not wake endless reporting turns');
-  assert.ok(runtime.store.activeAllocationForTransaction(tx.id), 'the old parent grant still exists');
+  assert.equal(runtime.store.activeAllocationForTransaction(tx.id), null, 'the management parent has no Worker grant');
   assert.ok(runtime.store.aggregatableParents(clusterId, root.id).some(row => row.parent_id === tx.id),
     'the Orchestrator can now aggregate the accepted child');
   assert.ok(!runtime.store.readyForWorker(clusterId).some(row => row.id === tx.id),

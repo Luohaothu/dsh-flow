@@ -32,7 +32,96 @@ import type {
   FlowNodeStatus,
   FlowScopeKind,
   FlowTransactionStatus,
+  FlowPlanRef, FlowCriterionRef, FlowValidationRef, FlowResultRef,
 } from '../types.ts';
+
+export type PlanRef = FlowPlanRef;
+export type CriterionRef = FlowCriterionRef;
+export type ValidationRef = FlowValidationRef;
+export type ResultRef = FlowResultRef;
+
+/** Business facts captured with a prepared plan. They never follow mutable rows. */
+export interface TaskContract {
+  readonly objective: string
+  readonly inputs: FlowJsonValue
+  readonly constraints: FlowJsonValue
+  readonly expected_output: string
+  readonly acceptance_criteria: readonly string[]
+  readonly capabilities: readonly FlowCapability[]
+  readonly needs: FlowJsonValue
+  readonly dependencies: readonly string[]
+}
+
+export interface CriterionResponsibility {
+  readonly criterion: CriterionRef
+  readonly evidence_provider: string
+  readonly validated_by: 'orchestrator'
+  readonly applies_to: readonly string[]
+}
+
+export interface PlanRecord {
+  readonly ref: PlanRef
+  readonly cluster_id: string
+  readonly author_role: FlowActorRole
+  readonly author_agent_id: string | null
+  readonly created: number
+  readonly contract: TaskContract
+  readonly understanding: string
+  readonly execution: 'worker' | 'decompose' | 'management'
+  readonly rationale: string
+  readonly assignment: string
+  readonly assignment_key: string
+  readonly child_transaction_ids: readonly string[]
+  readonly criterion_responsibilities: readonly CriterionResponsibility[]
+  readonly integration: string | null
+}
+
+export interface ResultRecord {
+  readonly ref: ResultRef
+  readonly cluster_id: string
+  readonly plan_ref: PlanRef
+  readonly result: FlowJsonValue
+  readonly producer_role: FlowActorRole
+  readonly producer_agent_id: string | null
+  readonly epoch: number | null
+  readonly turn_seq: number | null
+  readonly source_result_refs: readonly ResultRef[]
+  readonly source_validation_refs: readonly ValidationRef[]
+  readonly created: number
+}
+
+export interface ValidationRecord {
+  readonly ref: ValidationRef
+  readonly cluster_id: string
+  readonly plan_ref: PlanRef
+  readonly result_ref: ResultRef
+  readonly author_role: FlowActorRole
+  readonly author_agent_id: string | null
+  readonly checks: readonly FlowValidationCheck[]
+  readonly accepted: boolean
+  readonly notes: string
+  readonly limitations: readonly string[]
+  readonly created: number
+}
+
+export interface MemberInputRecord {
+  readonly id: string
+  readonly cluster_id: string
+  readonly agent_id: string
+  readonly session_id: string
+  readonly delivery_key: string
+  readonly kind: 'initial' | 'revision' | 'wake'
+  readonly author: FlowJsonValue
+  readonly plan_ref: PlanRef | null
+  readonly previous_plan_ref: PlanRef | null
+  readonly binding: FlowJsonValue
+  readonly content: string
+  readonly native_message_id: string
+  readonly native_seq: number | null
+  readonly status: 'PENDING' | 'ADMITTED'
+  readonly created: number
+  readonly admitted: number | null
+}
 
 // ------------------------------------------------------------------- actors
 
@@ -98,6 +187,8 @@ export interface NodeDelegationContract {
   readonly expected_output: string
   readonly acceptance_criteria: readonly string[]
   readonly management_levels_remaining?: number
+  readonly parent_plan_ref?: PlanRef
+  readonly assignment_key?: string
 }
 
 /** One agent's stored meta: its model selection and provenance. */
@@ -113,6 +204,10 @@ export interface AgentMeta {
 /** One check of a transaction's proposed validation. */
 export interface FlowValidationCheck {
   readonly criterion: string
+  readonly criterion_ref?: CriterionRef
+  readonly method?: string
+  readonly observation?: string
+  readonly evidence_refs?: readonly FlowJsonValue[]
   readonly passed: boolean
   readonly evidence: string
 }
@@ -220,6 +315,9 @@ export interface TransactionRecord {
   readonly result_revision: number | null
   readonly validation: FlowValidation | null
   readonly plan_approved_revision: number | null
+  readonly current_plan_ref: PlanRef | null
+  readonly current_result_ref: ResultRef | null
+  readonly current_validation_ref: ValidationRef | null
   readonly result_staged_epoch: number | null
   readonly result_staged_turn: number | null
   readonly result_staged_agent: string | null
@@ -236,6 +334,7 @@ export interface AllocationRecord {
   readonly node_id: string
   readonly agent_id: string
   readonly transaction_id: string | null
+  readonly plan_ref: PlanRef | null
   readonly capabilities: readonly FlowCapability[]
   readonly write_scope: readonly string[]
   readonly write_scope_canonical: readonly string[] | null
@@ -289,6 +388,8 @@ export interface AuditRecord {
   readonly auditor_agent_id: string | null
   readonly kind: FlowAuditKind
   readonly target_revision: number | null
+  readonly plan_ref: PlanRef | null
+  readonly validation_ref: ValidationRef | null
   readonly decision: FlowAuditDecision
   readonly evidence: FlowJsonValue
   readonly created: number
@@ -553,6 +654,9 @@ export interface TransactionPatch {
   readonly result_revision?: number | null
   readonly validation?: FlowValidation | null
   readonly plan_approved_revision?: number | null
+  readonly current_plan_ref?: PlanRef | null
+  readonly current_result_ref?: ResultRef | null
+  readonly current_validation_ref?: ValidationRef | null
   readonly priority?: number
   readonly owner_management_id?: string
   readonly parent_transaction_id?: string | null
@@ -577,6 +681,7 @@ export interface TransactionPatch {
 export interface AllocationPatch {
   readonly status?: FlowAllocationStatus
   readonly transaction_id?: string | null
+  readonly plan_ref?: PlanRef | null
   readonly agent_id?: string
   readonly write_scope?: readonly string[]
   readonly write_scope_canonical?: readonly string[] | null

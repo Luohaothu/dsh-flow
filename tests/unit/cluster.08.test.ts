@@ -17,6 +17,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -124,6 +125,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -151,7 +153,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 

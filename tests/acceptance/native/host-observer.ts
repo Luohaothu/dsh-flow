@@ -11,6 +11,7 @@ import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { fromAny } from '@total-typescript/shoehorn';
 import type { SessionRequestId } from '@deepseek-ai/dsh-api-session-controller';
 import { asObject, requiredString, messageOf } from '../context.ts';
+import { startTeam } from '../../../packages/dsh-flow/src/core/team.ts';
 import { runTurn } from '../../../packages/dsh-flow/src/core/runtime.ts';
 import type { ClusterRuntime } from '../../../packages/dsh-flow/src/core/cluster.ts';
 
@@ -112,7 +113,8 @@ export function apply(ctx: Context, config: Config): void {
           if (closed) throw new Error('native observer disposed during creation');
           const ordinaryTools = ordinary.agent.ctx.tools.schemas(scopeOf(ordinary.agent.ctx)).map(tool => tool.name);
           if (operation === 'agent-session') {
-            const started=ctx.flow.startTeam(ordinary.agent.id,randomUUID(),'Sum [2,3] with flow_sum and independently verify the total 5.',config.workspace);
+            const objective = 'Sum [2,3] with flow_sum and independently verify the total 5.';
+            const started = startTeam(fromAny<ClusterRuntime, typeof ctx.flow>(ctx.flow), ordinary.agent.id, randomUUID(), objective, config.workspace, undefined, { objective, assessment: { complexity: 'simple', rationale: 'One independently checked sum' }, acceptance_criteria: ['The real sum equals 5'], capabilities: [] });
             ctx.flow.control(started.cluster.id,'pause');
             const target=ctx.flow.teamRead(ordinary.agent.id,started.cluster.id).agents.find(agent=>agent.role==='orchestrator')!;
             const prompt={sessionId:SessionId(target.session_id),requestId:randomUUID() as SessionRequestId,mode:'queue' as const,content:[{type:'text' as const,text:'NATIVE-AGENT-CONTINUATION: independently check 5-3=2 as well.'}],clientTimeZone:'Asia/Shanghai'};

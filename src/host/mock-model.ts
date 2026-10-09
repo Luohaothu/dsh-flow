@@ -17,56 +17,47 @@
  *   * `tool_calls` deltas are keyed by `index`, with the call `id` and
  *     `function.name` announced once and `function.arguments` concatenated
  *     across chunks as a JSON string;
- *   * no header identifies the session or the request purpose, so a request is
- *     classified from its own messages.
+ *   * the development host adapter authenticates session identity out of band;
+ *     model-visible messages never supply trusted role or session attribution.
  *
  * Everything the server records is a *test input*: usage numbers prove how the
  * plugin accounts, never what a real model cost.
  */
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 
 const DONE_FRAME = 'data: [DONE]\n\n';
 
-/** The exact substrings that identify a request, taken from the harness. */
-export const ROLE_LINE = /^Role: ([\w-]+)\. Node: (\S+) \(depth (\d+)\)\. Agent id: (\S+)\.$/mu;
-export const WORKER_HEADER = 'You are a Worker in a hierarchical agent cluster.';
+/** Native compaction has its own trusted request purpose. */
 export const COMPACTION_MARKER = 'You are now acting as a compaction engine';
 export const CHECKPOINT_PREAMBLE = 'This is an automatically generated checkpoint';
-export const DIGEST_MARKER = 'Current domain state (read anything else with flow_query';
-/**
- * The fixture carries the plugin's own domain digest inside its checkpoint, so
- * a turn that was compacted mid-flight can still be answered from the state it
- * was acting on. It is a fixture-owned line, never a plugin promise.
- */
-export const DIGEST_LINE_MARKER = 'dsh-flow-domain-digest: ';
 
-/**
- * A decoded domain digest, as the fixture reads it: a JSON object published by
- * the plugin. Fields are read defensively through {@link asRecord} and friends,
- * because the fixture must not guess a shape the plugin owns.
- */
-export type MockDigest = Record<string, unknown>;
-
-/** The identity a request addresses, read back out of its own messages. */
-export interface MockRequestIdentity {
+/** Host-owned attribution, transported outside the model's message context. */
+export interface MockTrustedIdentity {
+  sessionId: string | null;
   role: string | null;
   nodeId: string | null;
   depth: number | null;
   agentId: string | null;
-  transactionId: string | null;
-  objective: string | null;
-  workerPrompt: boolean;
-  digest: MockDigest | null;
+  epoch?: number | undefined;
+  turnSeq?: number | undefined;
+  purpose: 'compaction' | 'session-title' | null;
 }
 
-/** The facts one provider request carries, before any script answers it. */
+/** A selected set of facts obtained through the real Flow query tools. */
+export type MockWorkContext = Record<string, unknown>;
+
+export interface MockRequestIdentity extends MockTrustedIdentity {
+  transactionId: string | null;
+  objective: string | null;
+}
+
+/** No identity or state is inferred from user text, checkpoints or system text. */
 export interface MockRequestClassificationFields {
   compaction: boolean;
   checkpoint_continuation: boolean;
-  digest_source: 'prompt' | 'checkpoint' | 'older' | null;
-  fresh_digest: boolean;
   last_message_role: string | null;
   role: string | null;
   nodeId: string | null;
@@ -75,15 +66,15 @@ export interface MockRequestClassificationFields {
   transactionId: string | null;
   objective: string | null;
   identity: MockRequestIdentity;
-  digest: MockDigest | null;
+  context: MockWorkContext | null;
   lastToolResult: string | null;
   lastToolName: string | null;
+  lastToolArguments: Record<string, unknown> | null;
   toolNames: string[];
   userText: string;
   messageCount: number;
 }
 
-/** One classified request, discriminated by the kind of prompt it carried. */
 export type MockRequestClassification =
   | (MockRequestClassificationFields & { kind: 'compaction' })
   | (MockRequestClassificationFields & { kind: 'role' })
@@ -130,7 +121,7 @@ export interface MockScenarioFinish {
   compaction_requests?: number;
   role_requests?: Record<string, number>;
   worker_requests?: Record<string, number>;
-  digest_missing?: number;
+  query_missing?: number;
   checks?: unknown[];
   problems?: string[];
   fixture_evidence?: unknown;
@@ -239,6 +230,7 @@ export interface MockFixtureSummary {
 export interface MockModelHandle {
   readonly baseURL: string;
   readonly modelId: string;
+  readonly identityKey: string;
   readonly requests: MockRequestRecord[];
   readonly errors: string[];
   readonly scenarioName: string | null;
@@ -309,122 +301,33 @@ function partText(part: unknown): string {
   return textOf(asRecord(part)?.text) ?? '';
 }
 
-/**
- * The identity a request addresses, read from *every* user/system message and
- * not only the newest one.
- *
- * A native compaction replaces the shadowed span — including the original
- * prompt — with the checkpoint, so the continuation request carries no role
- * line of its own. The identity therefore has to survive inside the checkpoint
- * text this fixture returns, and this scan is what reads it back. The newest
- * answer for each field wins, so a re-prompted identity overrides a stale one.
- */
-export function identityOf(messages: readonly MockChatMessage[]): MockRequestIdentity {
-  const identity: MockRequestIdentity = { role: null, nodeId: null, depth: null, agentId: null, transactionId: null, objective: null, workerPrompt: false, digest: null };
-  for (const message of messages) {
-    if (message.role !== 'user' && message.role !== 'system') continue;
-    const text = messageText(message);
-    const roleMatch = ROLE_LINE.exec(text);
-    if (roleMatch) {
-      identity.role = roleMatch[1] ?? null;
-      identity.nodeId = roleMatch[2] ?? null;
-      identity.depth = Number(roleMatch[3] ?? 0);
-      identity.agentId = roleMatch[4] ?? null;
-    }
-    const transactionMatch = /\bTransaction id: (\S+)/u.exec(text);
-    if (transactionMatch) identity.transactionId = transactionMatch[1] ?? null;
-    const objectiveMatch = /\bObjective: (.*)/u.exec(text);
-    if (objectiveMatch) identity.objective = objectiveMatch[1]?.trim() ?? null;
-    if (text.startsWith(WORKER_HEADER)) identity.workerPrompt = true;
-    // Both spellings: the plugin's own prompt marker and the line this fixture
-    // preserves through a checkpoint. The newest one in the conversation wins.
-    const carried = digestIn(text);
-    if (carried) identity.digest = carried;
-  }
-  return identity;
-}
-
-/** The domain digest a message carries, from either the prompt or a checkpoint. */
-function digestIn(text: unknown): MockDigest | null {
-  const source = String(text ?? '');
-  const markerIndex = source.indexOf(DIGEST_MARKER);
-  if (markerIndex >= 0) {
-    const after = source.slice(markerIndex);
-    const start = after.indexOf('\n');
-    if (start >= 0) {
-      const line = after.slice(start + 1).split('\n')[0]?.trim() ?? '';
-      const parsed = parseJson(line);
-      if (parsed !== null) return parsed;
-    }
-  }
-  const digestIndex = source.lastIndexOf(DIGEST_LINE_MARKER);
-  if (digestIndex >= 0) {
-    const line = source.slice(digestIndex + DIGEST_LINE_MARKER.length).split('\n')[0]?.trim() ?? '';
-    const parsed = parseJson(line);
-    if (parsed !== null) return parsed;
-  }
-  return null;
-}
-
-/** Parse one JSON line into a checked object, or null when it is not one. */
-function parseJson(text: string): MockDigest | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  return asRecord(parsed);
-}
-
-/**
- * Classify one provider request from its messages alone. This is the only
- * signal the wire carries: the route adds no session or purpose header.
- */
-export function classifyRequest(body: unknown): MockRequestClassification {
+/** Classify only the host adapter's authenticated transport attribution. */
+export function classifyRequest(body: unknown, trusted: MockTrustedIdentity | null = null): MockRequestClassification {
   const record = asRecord(body);
   const messages = recordsOf(record?.messages);
   const users = messages.filter(message => message.role === 'user');
-  const lastUser = users[users.length - 1] ?? null;
-  const lastUserText = messageText(lastUser);
-  const identity = identityOf(messages);
-  const roleMessage = [...users].reverse().find(message => ROLE_LINE.test(messageText(message)));
-  const workerMessage = [...users].reverse().find(message => messageText(message).startsWith(WORKER_HEADER));
-  const compaction = lastUserText.includes(COMPACTION_MARKER);
-  const checkpointContinuation = lastUserText.includes(CHECKPOINT_PREAMBLE);
-  const text = roleMessage ? messageText(roleMessage) : workerMessage ? messageText(workerMessage) : lastUserText;
+  const lastUserText = messageText(users[users.length - 1]);
+  const identity: MockRequestIdentity = {
+    sessionId: trusted?.sessionId ?? null, role: trusted?.role ?? null,
+    nodeId: trusted?.nodeId ?? null, depth: trusted?.depth ?? null,
+    agentId: trusted?.agentId ?? null, epoch: trusted?.epoch, turnSeq: trusted?.turnSeq, purpose: trusted?.purpose ?? null,
+    transactionId: null, objective: null,
+  };
   const toolMessages = messages.filter(message => message.role === 'tool');
-  const lastMessageRole = messages.length ? textOf(messages[messages.length - 1]?.role) : null;
-  // Native policy snapshots and inbox notices can follow a fresh role prompt.
-  // Freshness depends on whether its digest follows the last assistant reply,
-  // rather than whether the final user message happens to contain the digest.
-  const digestMessage = [...users].reverse().find(message => digestIn(messageText(message)) !== null) ?? null;
-  const digestText = messageText(digestMessage);
-  const digest = digestIn(digestText) ?? identity.digest;
+  const lastCall = [...messages].reverse().flatMap(message => message.role === 'assistant' ? recordsOf(message.tool_calls).slice(-1) : []).at(0);
+  let lastToolArguments: Record<string, unknown> | null = null;
+  try { lastToolArguments = asRecord(JSON.parse(textOf(asRecord(lastCall?.function)?.arguments) ?? 'null')); } catch { /* Invalid model arguments remain visible to native refusal tests. */ }
+  const compaction = trusted?.purpose === 'compaction';
   return {
-    kind: compaction ? 'compaction' : identity.role ? 'role' : identity.workerPrompt || identity.transactionId ? 'worker' : 'unknown',
-    compaction,
-    checkpoint_continuation: checkpointContinuation,
-    digest_source: digestMessage ? (digestText.includes(DIGEST_MARKER) ? 'prompt' : 'checkpoint') : identity.digest ? 'older' : null,
-    fresh_digest: digestMessage !== null && messages.lastIndexOf(digestMessage) > messages.findLastIndex(message => message.role === 'assistant'),
-    last_message_role: lastMessageRole,
-    role: identity.role,
-    nodeId: identity.nodeId,
-    depth: identity.depth,
-    agentId: identity.agentId,
-    transactionId: identity.transactionId,
-    objective: identity.objective,
-    identity,
-    digest,
-    // The *newest* tool result, so a scripted step can read what the host
-    // really returned instead of assuming its own request took effect.
+    kind: compaction ? 'compaction' : trusted?.purpose === 'session-title' ? 'unknown' : identity.role === 'worker' ? 'worker' : identity.role ? 'role' : 'unknown',
+    compaction, checkpoint_continuation: lastUserText.includes(CHECKPOINT_PREAMBLE),
+    last_message_role: messages.length ? textOf(messages[messages.length - 1]?.role) : null,
+    role: identity.role, nodeId: identity.nodeId, depth: identity.depth, agentId: identity.agentId,
+    transactionId: null, objective: null, identity, context: null,
     lastToolResult: toolMessages.length ? messageText(toolMessages[toolMessages.length - 1]) : null,
-    lastToolName: lastToolNameOf(messages),
-    toolNames: recordsOf(record?.tools)
-      .map(tool => textOf(asRecord(tool.function)?.name))
-      .filter((name): name is string => name !== null),
-    userText: text,
-    messageCount: messages.length,
+    lastToolName: lastToolNameOf(messages), lastToolArguments,
+    toolNames: recordsOf(record?.tools).map(tool => textOf(asRecord(tool.function)?.name)).filter((name): name is string => name !== null),
+    userText: lastUserText, messageCount: messages.length,
   };
 }
 
@@ -446,6 +349,7 @@ function lastToolNameOf(messages: readonly MockChatMessage[]): string | null {
  * an unbound request is a fixture error, never a default "OK" answer.
  */
 export async function startMockModel({ scenario = null, host = '127.0.0.1', modelId = 'mock-model', now = Date.now }: StartMockModelOptions = {}): Promise<MockModelHandle> {
+  const identityKey = randomUUID();
   const requests: MockRequestRecord[] = [];
   const holders: MockHolder[] = [];
   const waiters: MockWaiter[] = [];
@@ -543,7 +447,16 @@ export async function startMockModel({ scenario = null, host = '127.0.0.1', mode
     const bound = current;
 
     sequence += 1;
-    const classified = classifyRequest(body);
+    let trusted: MockTrustedIdentity | null = null;
+    if (req.headers['x-flow-fixture-key'] === identityKey && typeof req.headers['x-flow-fixture-identity'] === 'string') {
+      const raw = asRecord(JSON.parse(Buffer.from(req.headers['x-flow-fixture-identity'], 'base64url').toString()));
+      if (raw) trusted = {
+        sessionId: textOf(raw.sessionId), role: textOf(raw.role), nodeId: textOf(raw.nodeId),
+        depth: numberOf(raw.depth), agentId: textOf(raw.agentId), epoch: numberOf(raw.epoch) ?? undefined, turnSeq: numberOf(raw.turnSeq) ?? undefined,
+        purpose: raw.purpose === 'compaction' || raw.purpose === 'session-title' ? raw.purpose : null,
+      };
+    }
+    const classified = classifyRequest(body, trusted);
     const entry: MockRequestRecord = {
       seq: sequence,
       at: now(),
@@ -669,6 +582,7 @@ export async function startMockModel({ scenario = null, host = '127.0.0.1', mode
   return {
     baseURL,
     modelId,
+    identityKey,
     get requests() {
       return requests;
     },

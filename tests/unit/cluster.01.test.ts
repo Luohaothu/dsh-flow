@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { TurnOutcome } from '../../packages/dsh-flow/src/core/runtime.ts';
@@ -104,6 +105,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -131,7 +133,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -197,7 +199,7 @@ function beginTurn(
   });
   return {
     lease: required(lease, 'turn lease'),
-    actor: { cluster_id: clusterId, agent_id: scenario.worker.id, node_id: scenario.worker.node_id, role: 'worker', session_id: scenario.worker.session_id, epoch, turn_seq: 1 },
+    actor: { cluster_id: clusterId, agent_id: scenario.worker.id, node_id: scenario.worker.node_id, role: 'worker', session_id: scenario.worker.session_id, epoch, turn_seq: required(runtime.store.getAgent(scenario.worker.id), 'worker').turns + 1 },
   };
 }
 
@@ -229,7 +231,7 @@ test('auditor rejections create issues, and the correction budget escalates to B
   const rejected = command(runtime, auditor, 'inspect_validation', {
     transaction_id: tx.id, decision: 'reject', required_change: 'show the file hash', evidence: { missing: 'hash' },
   });
-  assert.equal(rejected.result.status, 'REJECTED');
+  assert.equal(rejected.result.status, 'SUBMITTED', 'an invalid manager validation returns the result for further manager work');
   const issue = required(runtime.store.getIssue(textOf(rejected.result.issue_id, 'issue_id')), 'issue');
   assert.equal(issue.status, 'OPEN');
   assert.equal(issue.required_change, 'show the file hash');
@@ -350,7 +352,7 @@ test('a delegation fixture builds a decreasing management chain', t => {
   const rootTx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
   // The fixture's instruction supplies the depth budget for the first spawn.
-  const first = command(runtime, allocator, 'spawn_management_node', {
+  const first = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: rootTx.id, scope: { objective: 'level 1' },
   }).result;
   const level1 = required(runtime.store.getNode(textOf(first.node_id, 'node_id')), 'level 1');
@@ -359,14 +361,14 @@ test('a delegation fixture builds a decreasing management chain', t => {
   assert.equal(level1.scope?.delegation_entry?.spawn_children, 2, 'the remaining budget travels with the instruction');
 
   // Every following level inherits the budget without being told again.
-  const second = command(runtime, allocator, 'spawn_management_node', {
+  const second = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: textOf(first.delegated_transaction_id, 'delegated_transaction_id'), node_id: textOf(first.node_id, 'node_id'), scope: { objective: 'level 2' },
   }).result;
   const level2 = required(runtime.store.getNode(textOf(second.node_id, 'node_id')), 'level 2');
   assert.equal(level2.depth, 2);
   assert.equal(level2.scope?.spawn_children, 1);
 
-  const third = command(runtime, allocator, 'spawn_management_node', {
+  const third = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: textOf(second.delegated_transaction_id, 'delegated_transaction_id'), node_id: textOf(second.node_id, 'node_id'), scope: { objective: 'level 3' },
   }).result;
   const level3 = required(runtime.store.getNode(textOf(third.node_id, 'node_id')), 'level 3');
@@ -378,7 +380,7 @@ test('a delegation fixture builds a decreasing management chain', t => {
   // A depth-1 worker branch and a depth-3 management branch coexist. The root
   // transaction has delegated work (the chain this fixture just built), so a *second*
   // transaction is the one a worker may run.
-  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: rootTx.id });
+  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: rootTx.id, fixture_execution: 'management' });
   command(runtime, actorFor(runtime, clusterId, 'auditor', root.id), 'inspect_plan', { transaction_id: rootTx.id, decision: 'approve' });
   const direct = command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'create_transaction', {
     objective: 'a flat branch under the root', acceptance_criteria: ['x'],
@@ -496,8 +498,8 @@ test('a worker proposal is published only when its turn completed', t => {
     return turn;
   };
   const finish = (outcome: TurnOutcome) => runtime.finishWorkerTurn(
-    required(runtime.store.getCluster(clusterId), 'cluster'), scenario.worker, required(runtime.store.getTransaction(scenario.tx.id), 'transaction'),
-    scenario.allocation, { outcome, error: null, before: 0, lease: turn.lease, deliveries: [], admitted: true },
+    required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(scenario.worker.id), 'current worker'), required(runtime.store.getTransaction(scenario.tx.id), 'transaction'),
+    scenario.allocation, { outcome, error: null, before: 0, lease: turn.lease, deliveries: [], admitted: true, durable: true },
   );
 
   command(runtime, turn.actor, 'submit_result', { transaction_id: scenario.tx.id, result: { value: 5 } });
@@ -558,9 +560,9 @@ test('a completed Worker without an explicit submission publishes attributable n
     body: { isError: false, text: 'Created file deep/nested/result.txt' },
   }));
   runtime.finishWorkerTurn(
-    required(runtime.store.getCluster(clusterId), 'cluster'), scenario.worker, required(runtime.store.getTransaction(scenario.tx.id), 'transaction'),
+    required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(scenario.worker.id), 'current worker'), required(runtime.store.getTransaction(scenario.tx.id), 'transaction'),
     scenario.allocation, { outcome: completedTurn(''), error: null, before: 0,
-      lease: scenario.lease, deliveries: [], admitted: true },
+      lease: scenario.lease, deliveries: [], admitted: true, durable: true },
   );
   const tx = runtime.query({ cluster_id: clusterId, role: 'user' }, 'transaction', { id: scenario.tx.id });
   assert.equal(tx.transaction.status, 'SUBMITTED');
@@ -594,12 +596,13 @@ test('a staged proposal survives pause, but not a stale epoch or a foreign turn'
   assert.equal(resumed.status, 'READY');
   runtime.store.tx(() => runtime.store.updateTransaction(scenario.tx.id, { status: 'RUNNING', __bump_revision: false }));
   const resumedTurn = beginTurn(runtime, clusterId, scenario, 12);
-  runtime.finishWorkerTurn(required(runtime.store.getCluster(clusterId), 'cluster'), scenario.worker, required(runtime.store.getTransaction(scenario.tx.id), 'transaction'), scenario.allocation, {
-    outcome: completedTurn('no submission'), error: null, before: 0, lease: resumedTurn.lease, deliveries: [], admitted: true,
+  command(runtime, resumedTurn.actor, 'submit_result', { transaction_id: scenario.tx.id, result: { value: 11 } });
+  runtime.finishWorkerTurn(required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(scenario.worker.id), 'current worker'), required(runtime.store.getTransaction(scenario.tx.id), 'transaction'), scenario.allocation, {
+    outcome: completedTurn('no submission'), error: null, before: 0, lease: resumedTurn.lease, deliveries: [], admitted: true, durable: true,
   });
   const afterResume = required(runtime.store.getTransaction(scenario.tx.id), 'transaction');
   assert.equal(afterResume.status, 'SUBMITTED');
-  assert.deepEqual(afterResume.result, { value: 11 }, 'the same turn publishes the proposal it staged before the pause');
+  assert.deepEqual(afterResume.result, { value: 11 }, 'the new successful turn publishes its explicitly resubmitted result');
 
   // a proposal staged by an older epoch is not promotable by a newer turn
   const root = rootNode(runtime, clusterId);

@@ -15,7 +15,9 @@
 | `messages` / `recipients` / `inbox` | 通信、投递与待处理工作 |
 | `core/cluster.ts` 的 `recoverAndReconcile` | 结合宿主会话核对恢复状态的一致性，再开放调度 |
 
-`tx` 回调必须同步完成，不能在数据库写事务尚未结束时等待模型或宿主网络操作。数据库采用 schema 3，只接受空新库或当前版本。旧版本及版本 0 但已有业务表的数据库在写入前拒绝，提示使用新 `dataDir`，不迁移、不删除原数据。
+`tx` 回调必须同步完成，不能在数据库写事务尚未结束时等待模型或宿主网络操作。数据库采用 schema 4，只接受空新库或当前版本。旧版本及版本 0 但已有业务表的数据库在写入前拒绝，提示使用新 `dataDir`，不迁移、不删除原数据。
+
+`plans` 保存以任务和 `prepared_revision` 标识的不可变计划及正式契约快照；`result_snapshots` 保存实际发布事件和生产轮次；`validation_records` 保存调度校验记录及其计划、结果引用。任务分别持有当前引用，普通状态推进不会让同一业务计划过期。`semantic_receipts` 对模型新调用 ID 的重试去重，`management_assignments` 对父任务、计划引用及委派 key 建立唯一约束。`member_inputs` 保留交接内容、真实作者、绑定对象和原生消息 ID，恢复先核对 Session 证据再决定投递。
 
 ## 命令幂等
 

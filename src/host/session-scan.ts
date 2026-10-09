@@ -1,5 +1,5 @@
 /**
- * Count delivery markers inside a *native* DSH Session log. This is the only
+ * Count independently sourced deliveries inside a *native* DSH Session log. This is the only
  * evidence for "the recipient saw this message exactly once": the recipients
  * table enforces its own uniqueness and proves nothing about injection.
  *
@@ -110,10 +110,10 @@ export function readSessionEvents(file: string): SessionReadResult {
 }
 
 /**
- * How many incoming conversation messages carry each delivery's own marker.
+ * Count independently attributed incoming messages, including legacy marker journals.
  *
- * Only a `user/message` event whose payload contains the *complete* marker
- * (`[[flow-delivery <id> seq <n>]]`) proves receipt: a sender's own tool result
+ * A `user/message` event with the exact `flow-message` source proves receipt.
+ * Historical journals can instead carry the complete delivery marker. A sender's own tool result
  * also contains the message id it just sent, so an id-substring count would
  * treat "I sent it" as "I received it".
  */
@@ -138,9 +138,11 @@ export function countDeliveriesInSession(file: string, deliveries: readonly Deli
     events += 1;
     const event = asRecord(parsed);
     if (!/user\/message|user_message/i.test(String(event?.type ?? ''))) continue;
+    const data = asRecord(event?.data);
+    const source = asRecord(data?.source);
     const serialized = JSON.stringify(event?.data ?? event);
     for (const entry of deliveries) {
-      if (serialized.includes(markerFor(entry.message_id, entry.delivery_seq))) {
+      if ((source?.kind === 'flow-message' && source.message_id === entry.message_id) || serialized.includes(markerFor(entry.message_id, entry.delivery_seq))) {
         counted[entry.message_id] = (counted[entry.message_id] ?? 0) + 1;
       }
     }

@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -121,6 +122,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -160,7 +162,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -384,8 +386,14 @@ test('a resumed Auditor receives parseable action evidence without a repeated fu
   runtime.store.tx(() => runtime.store.updateAgent(auditor.agent_id, { turns: 3 }));
 
   let prompt: string | null = null;
+  let queriedAgenda: Record<string, unknown> | null = null;
   host.setScript(async turn => {
     if (runtime.store.getAgentBySession(turn.session.id)?.id === auditor.agent_id && prompt === null) {
+      const answer = await turn.callTool('flow_query', { what: 'agenda', params: { limit: 8 } });
+      assert.equal(answer.isError, false);
+      const body = answer.content.find(block => block.type === 'text');
+      assert.ok(body?.type === 'text');
+      queriedAgenda = jsonObject(JSON.parse(body.text), 'queried agenda');
       prompt = required(firstOf(required(required(turn.prompt, 'prompt').content, 'prompt content'), 'prompt content item').text, 'prompt text');
     }
   });
@@ -396,19 +404,15 @@ test('a resumed Auditor receives parseable action evidence without a repeated fu
   }
   assert.ok(prompt, 'the pending audits activated the resumed Auditor');
   const resumedPrompt = textOf(prompt, 'resumed prompt');
-  const json = resumedPrompt.split('Current domain state (read anything else with flow_query; every list answers with items/total/next_offset):\n')[1]
-    ?.split('\n\nPerform the pending actions')[0];
-  const digest = jsonObject(JSON.parse(required(json, 'digest json')), 'digest');
-  const pendingActions: readonly unknown[] = Array.isArray(digest.pending_actions) ? digest.pending_actions : [];
-  const planActions = pendingActions
-    .map(entry => jsonObject(entry, 'pending action'))
-    .filter(action => action.action === 'inspect_plan');
-  assert.deepEqual(planActions.map(action => action.transaction_id).sort(), transactions.map(tx => tx.id).sort(),
-  'all three review decisions and their transaction references remain actionable');
+  assert.ok(!/Role:|Current domain state|STATUS:/u.test(resumedPrompt));
+  const agenda = jsonObject(queriedAgenda, 'queried agenda');
+  const items: unknown[] = Array.isArray(agenda.items) ? agenda.items : [];
+  const planActions = items.map(entry => jsonObject(entry, 'agenda item')).filter(item => item.kind === 'review_plan');
+  assert.deepEqual(planActions.map(action => action.transaction_id).sort(), transactions.map(tx => tx.id).sort());
   for (const action of planActions) {
-    const transaction = required(transactions.find(tx => tx.id === textOf(action.transaction_id, 'transaction_id')), 'transaction');
-    assert.deepEqual(action.acceptance_criteria, transaction.acceptance_criteria,
-      `the Auditor decision for ${transaction.id} still carries the criteria it must judge`);
+    const detail = runtime.query(auditor, 'transaction', { id: textOf(action.transaction_id, 'transaction id'), fields: ['requirements'] });
+    const transaction = required(transactions.find(tx => tx.id === action.transaction_id), 'transaction');
+    assert.deepEqual(jsonObject(detail.requirements, 'requirements').acceptance_criteria, transaction.acceptance_criteria);
   }
   assert.ok(resumedPrompt.length < 4_000, `the resumed prompt stays concise: ${resumedPrompt.length}`);
 });
@@ -706,7 +710,7 @@ test('a revalidation answers its issue: no plan edit is needed to close the roun
   // Nothing to verify yet.
   const noProgress = runtime.issueProgressed(clusterId, issue);
   assert.equal(noProgress.progressed, false);
-  assert.throws(() => command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: {} }), /correction to verify/);
+  assert.throws(() => command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: {} }), /new matching validation record and independent approval/);
 
   // The Orchestrator does exactly what was asked — re-validate, no plan edit.
   command(runtime, orchestrator, 'validate', {
@@ -717,7 +721,12 @@ test('a revalidation answers its issue: no plan edit is needed to close the roun
   assert.equal(progress.how, 'revalidated');
   assert.ok(Number(required(runtime.store.getTransaction(tx.id), 'transaction').result_revision) > target, 'and it is past the issue\'s revision');
 
-  // So the verdict is accepted and closes the round.
+  // The new validation still needs the independent governance decision.
+  assert.throws(() => command(runtime, auditor, 'verify_correction', {
+    issue_id: issueId, decision: 'VERIFIED', evidence: { revalidated: true },
+  }), /independent approval/);
+  command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
+  // The matching, independently approved revalidation closes the round.
   const verified = command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: { revalidated: true } });
   assert.equal(verified.result.status, 'CORRECTED');
   assert.equal(required(runtime.store.getIssue(issueId), 'issue').status, 'CORRECTED');

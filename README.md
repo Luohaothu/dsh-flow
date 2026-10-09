@@ -63,7 +63,7 @@ A parent aggregates only accepted children. Accepted root transactions still req
 
 Budgets account for tool calls, wall time, agent identities and active execution capacity. DSH owns model context, output and default compaction. Token statistics passively project durable native Session events as host-recorded usage; missing fields remain unknown and incomplete observations are marked. Agent scheduling permits do not prove the concurrency of all host auxiliary model requests. Shared grants are not summed once per agent. Declared write scopes support allocation checks and managed-tool authorization; filesystem access also depends on the host's sandbox and permission policy.
 
-SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 3 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
+SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 4 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
 
 ## Workspace
 

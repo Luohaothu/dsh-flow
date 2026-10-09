@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -117,6 +118,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -144,7 +146,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -182,7 +184,7 @@ test('a child is funded from the capacity its own node is holding in idle roles'
     objective: 'delegate to a child', acceptance_criteria: ['x'], status: 'READY',
   });
   const delegatedId = textOf(created.result.transaction_id, 'transaction_id');
-  const spawned = command(runtime, allocator, 'spawn_management_node', {
+  const spawned = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: delegatedId, objective: 'a child that must run', acceptance_criteria: ['x'],
   });
   const childId = textOf(spawned.result.node_id, 'node_id');
@@ -287,7 +289,7 @@ test('a delegation instruction carries its write scope all the way down, and the
     });
     const delegated = textOf(created.result.transaction_id, 'transaction_id');
     if (nodeId) runtime.store.tx(() => runtime.store.updateTransaction(delegated, { node_id: nodeId }));
-    return textOf(command(runtime, allocator, 'spawn_management_node', {
+    return textOf(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
       transaction_id: delegated, node_id: nodeId, objective, acceptance_criteria: ['x'],
     }).result.node_id, 'node_id');
   };

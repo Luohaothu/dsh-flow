@@ -1,3 +1,4 @@
+import { fixtureParams } from './task-fixtures.ts';
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
  * lifecycle, role permissions, audit gates, budgets, communication, the
@@ -123,6 +124,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}, internals: FlowStartInternals = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -162,7 +164,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -207,7 +209,7 @@ test('a waiting Worker is admitted even when every management slot is pending', 
       objective: `own ${scope}`, acceptance_criteria: ['x'], status: 'READY',
     });
     const delegatedId = textOf(created.result.transaction_id, 'transaction_id');
-    const spawned = command(runtime, allocator, 'spawn_management_node', {
+    const spawned = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
       transaction_id: delegatedId, scope: { objective: `own ${scope}` }, max_children: 4, spawn_children: 0,
     });
     spawnedNodes.push(textOf(spawned.result.node_id, 'node_id'));
@@ -233,8 +235,7 @@ test('a waiting Worker is admitted even when every management slot is pending', 
   // starvation this test is about, where supervision holds the window open and
   // the work never gets a slot.
   host.setScript(async turn => {
-    const text = turn.prompt?.content?.[0]?.text ?? '';
-    if (text.startsWith('You are a Worker')) {
+    if (runtime.store.getAgentBySession(turn.session.id)?.role === 'worker') {
       workerStarted = true;
       return;
     }
@@ -434,7 +435,7 @@ test('delegation refuses an unfunded child instead of creating unusable manageme
     }
   });
   assert.throws(() => command(runtime, actorFor(runtime, clusterId, 'allocator', root.id),
-    'spawn_management_node', { transaction_id: parent.id, scope: { objective: 'funded work' } }),
+    'spawn_management_node', { fixture_prepare_management: true, transaction_id: parent.id, scope: { objective: 'funded work' } }),
   error => rejectionStatus(error) === 409 && /fund|budget/i.test(messageOf(error)));
   assert.equal(runtime.store.listNodes(clusterId, {}).length, 1);
   assert.equal(runtime.store.listTransactions({ cluster_id: clusterId }).length, 1,
@@ -477,6 +478,8 @@ test('Workers holding the window do not starve a management role that is owed a 
     }));
   }
   for (const id of ids) command(runtime, allocator, 'allocate_agent', { transaction_id: id });
+  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  for (const id of ids) command(runtime, auditor, 'inspect_plan', { transaction_id: id, decision: 'approve' });
   assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 3, 'three Workers have work waiting');
 
   const roles: FlowAgentRole[] = ['orchestrator', 'allocator', 'auditor'];
@@ -493,8 +496,7 @@ test('Workers holding the window do not starve a management role that is owed a 
     barrier.resolve(undefined);
   };
   host.setScript(async turn => {
-    const text = turn.prompt?.content?.[0]?.text ?? '';
-    if (text.startsWith('You are a Worker')) {
+    if (runtime.store.getAgentBySession(turn.session.id)?.role === 'worker') {
       await barrier.promise;
       return;
     }

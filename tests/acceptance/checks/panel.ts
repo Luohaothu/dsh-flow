@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import type {Page} from 'playwright';
 import {browserExecutablePath,importPlaywright} from '../../../src/host/browser.ts';
 import {ClusterStore} from '../../../packages/dsh-flow/src/core/store.ts';
+import {findSessionFile,readSessionEvents} from '../../../src/host/session-scan.ts';
 import type {CheckEntry} from '../context.ts';
 import type {RunLayout,DshHostOp} from '../../../src/host/types.ts';
 interface Report {cluster_id?:string|null;web_url?:string|null;live_checks?:{checks?:CheckEntry[]}|null}
@@ -36,6 +37,17 @@ async function setNativeTheme(page:Page,scheme:'light'|'dark') {
 }
 function binding(layout:RunLayout) {const store=new ClusterStore(join(layout.data,'cluster.sqlite'));try{return store.all('SELECT * FROM team_runs ORDER BY rowid');}finally{store.close();}}
 function sessionId(value:unknown):string {if(value&&typeof value==='object'&&typeof Reflect.get(value,'session_id')==='string')return Reflect.get(value,'session_id');throw new Error('Native fixture did not return a session');}
+function inputFacts(layout:RunLayout,agent:{id:string;role:string;session_id:string}) {
+  const file=findSessionFile(join(layout.home,'sessions'),agent.session_id);
+  const log=file?readSessionEvents(file):null;
+  const inputs=(log?.events??[]).filter(event=>event.type==='user/message').map(event=>{
+    const data=event.data&&typeof event.data==='object'?event.data:null;
+    const content=data?Reflect.get(data,'content'):null;
+    return {seq:event.seq,id:data?Reflect.get(data,'id'):null,source:data?Reflect.get(data,'source'):null,text:Array.isArray(content)?content.map(block=>block&&typeof block==='object'?Reflect.get(block,'text')??'':'').join('\n'):''};
+  });
+  return {agent_id:agent.id,role:agent.role,session_id:agent.session_id,read:log?.state,inputs};
+}
+const compactText=(text:string)=>text.replace(/\s+/gu,' ').trim();
 function addReader(layout:RunLayout,runId:string,id:string,nativeSession:string,title:string,parent?:string) {
   const store=new ClusterStore(join(layout.data,'cluster.sqlite'));try{const lead=store.listAgents(runId,{role:'orchestrator'})[0]!;store.insertAgent({id,cluster_id:runId,node_id:lead.node_id,role:'worker',session_id:nativeSession,status:'TERMINATED',meta:{parent_agent_id:parent??lead.id,display_name:title,responsibility:'原生持久化阅读验收记录；不代表模型执行'}});store.recordTeamEnd(store.getAgent(id)!,'COMPLETED');store.appendEvent(runId,'ux-read-fixture',{id});}finally{store.close();}
 }
@@ -158,6 +170,37 @@ export async function live({report,layout,host,mock}:Live) {
     const nativeContent=page.locator('.flow-content');
     await nativeContent.locator('.flow-node[data-role=orchestrator]').click();
     const nativeReader = nativeContent.getByLabel('只读对话',{exact:true});
+    const inputStore=new ClusterStore(join(layout.data,'cluster.sqlite'));
+    try {
+      const agentId=await nativeContent.locator('.flow-node[data-role=orchestrator]').getAttribute('data-agent-id');
+      const agent=agentId?inputStore.getAgent(agentId):null;
+      if(!agent)throw new Error('No native Orchestrator identity is selected');
+      const facts=inputFacts(layout,agent);const first=facts.inputs[0];
+      if(first?.text)await nativeReader.getByText(first.text.split('\n')[0]??'',{exact:false}).first().waitFor({timeout:30000});
+      const visible=await nativeReader.innerText();
+      writeFileSync(join(artifacts,'native-orchestrator-inputs.json'),JSON.stringify({...facts,visible_before_tool_expansion:visible},null,2));
+      push('native-first-management-input-readable',facts.read==='READ'&&Boolean(first?.text)&&
+        facts.inputs.every(input=>!/Current domain state|pending_actions|^Role:|STATUS:/mu.test(input.text))&&
+        compactText(visible).includes(compactText(first?.text??'')),{first,visible_before_tool_expansion:visible});
+      const owned=inputStore.all('SELECT id,kind,native_message_id FROM member_inputs WHERE agent_id=?',agent.id);
+      const entered=owned.flatMap(row=>facts.inputs.filter(input=>input.id===row.native_message_id).map(input=>({row,input})));
+      const notices=entered.filter(({row})=>row.kind!=='initial');
+      const communications=facts.inputs.filter(input=>input.source&&typeof input.source==='object'&&Reflect.get(input.source,'kind')==='flow-message');
+      push('native-notices-have-independent-sources',notices.length+communications.length>0&&entered.every(({row,input})=>{
+        const source=input.source;if(!source||typeof source!=='object')return false;
+        return row.kind==='initial'?Reflect.get(source,'kind')==='user':Reflect.get(source,'kind')==='flow'&&
+          Reflect.get(source,'delivery_id')===row.id&&Reflect.get(source,'form')===row.kind;
+      })&&communications.every(input=>{
+        const source=input.source;if(!source||typeof source!=='object')return false;
+        const messageId=String(Reflect.get(source,'message_id'));
+        return Reflect.get(source,'recipient_id')===agent.id&&
+          (Boolean(inputStore.get('SELECT message_id FROM recipients WHERE message_id=? AND recipient=?',messageId,agent.id))||
+            Boolean(inputStore.get('SELECT id FROM inbox WHERE id=? AND recipient=?',messageId,agent.id)));
+      }),{owned_notices:notices.map(({row,input})=>({kind:row.kind,id:row.id,native_message_id:input.id,source:input.source})),
+        communications:communications.map(input=>({seq:input.seq,id:input.id,source:input.source}))});
+      await nativeReader.locator('[data-conversation-scroll]').evaluate(element=>{element.scrollTop=0;});await sleep(page,100);
+      await page.screenshot({path:join(artifacts,'native-first-management-input.png'),fullPage:true});
+    } finally {inputStore.close();}
     await nativeReader.getByRole('button',{name:/用时 /}).first().click();
     await nativeReader.getByText('已调用工具',{exact:true}).first().click();
     await nativeReader.getByText(/^flow_transaction.*request_user$/).first().click();
@@ -170,10 +213,13 @@ export async function live({report,layout,host,mock}:Live) {
     try {
       if(!inspectedId)throw new Error('The live native Orchestrator has no observed identity');
       if(usageStore.getAgent(inspectedId)?.cluster_id!==runId)throw new Error('The observed Orchestrator belongs to a different team than the acknowledged launch');
-      const usage=usageStore.usageSummary(runId,{agentId:inspectedId});
+      let usage=usageStore.usageSummary(runId,{agentId:inspectedId});
+      let information=await nativeContent.locator('.flow-information').innerText();
+      for(let attempt=0;attempt<120&&usage.total_tokens!==null&&!information.includes(`宿主已记录 Token（当前代理自身）：${usage.total_tokens.toLocaleString('zh-CN')}`);attempt++) {
+        await sleep(page,250);usage=usageStore.usageSummary(runId,{agentId:inspectedId});
+        information=await nativeContent.locator('.flow-information').innerText();
+      }
       const actual=usageStore.latestNativeContext(inspectedId);
-      if(usage.total_tokens!==null)await nativeContent.locator('.flow-information').getByText(`宿主已记录 Token（当前代理自身）：${usage.total_tokens.toLocaleString('zh-CN')}`,{exact:false}).waitFor();
-      const information=await nativeContent.locator('.flow-information').innerText();
       writeFileSync(join(artifacts,'native-usage-information.json'),JSON.stringify({agent_id:inspectedId,usage,actual,information},null,2));
       push('native-usage-in-live-ui',usage.requests>0&&usage.total_tokens!==null&&information.includes(`宿主已记录 Token（当前代理自身）：${usage.total_tokens.toLocaleString('zh-CN')}`)&&
         (usage.completeness!=='incomplete'||information.includes('可能不完整')),{usage,information});
@@ -181,6 +227,29 @@ export async function live({report,layout,host,mock}:Live) {
       await nativeContent.locator('.flow-information').getByText('宿主已记录 Token（当前代理自身）：',{exact:false}).scrollIntoViewIfNeeded();
       await page.screenshot({path:join(artifacts,'native-usage.png'),fullPage:true});
     } finally {usageStore.close();}
+    const workerNode=nativeContent.locator('.flow-node[data-role=worker]').first();
+    if(await workerNode.count()) {
+      await page.keyboard.press('Escape');
+      await workerNode.click();await sleep(page,300);
+      const workerStore=new ClusterStore(join(layout.data,'cluster.sqlite'));
+      try {
+        const id=await workerNode.getAttribute('data-agent-id');const worker=id?workerStore.getAgent(id):null;
+        if(!worker)throw new Error('No native Worker identity is selected');
+        const facts=inputFacts(layout,worker);const workerReader=nativeContent.getByLabel('只读对话',{exact:true});
+        const first=facts.inputs[0];
+        if(first?.text)await workerReader.getByText(first.text.split('\n')[0]??'',{exact:false}).first().waitFor({timeout:30000});
+        const visible=await workerReader.innerText();
+        writeFileSync(join(artifacts,'native-worker-inputs.json'),JSON.stringify({...facts,visible},null,2));
+        push('native-worker-business-input-readable',facts.read==='READ'&&Boolean(first?.text)&&
+          facts.inputs.every(input=>!/Current domain state|pending_actions|^Role:|STATUS:/mu.test(input.text))&&
+          first?.source&&typeof first.source==='object'&&Reflect.get(first.source,'kind')==='user'&&
+          compactText(visible).includes(compactText(first.text)),{first,visible});
+        await workerReader.locator('[data-conversation-scroll]').evaluate(element=>{element.scrollTop=0;});await sleep(page,100);
+        await page.screenshot({path:join(artifacts,'native-worker-business-input.png'),fullPage:true});
+      } finally {workerStore.close();}
+      await page.keyboard.press('Escape');
+      await nativeContent.locator('.flow-node[data-role=orchestrator]').click();await sleep(page,300);
+    } else push('native-worker-business-input-readable',false,'No real Worker is present in the observed team');
     await nativeContent.getByRole('button',{name:'打开完整会话',exact:true}).click();
     const activeComposer=page.locator('[data-composer-input=true]');await activeComposer.waitFor({state:'visible'});
     push('active-native-session-input',await nativeContent.count()===0&&await activeComposer.isEditable()&&await page.getByRole('tab',{name:'对话',exact:true}).isVisible()&&await page.getByRole('tab',{name:'轨迹',exact:true}).isVisible(),'The live Orchestrator opens its complete native Session with editable text input and conversation/trajectory tabs');

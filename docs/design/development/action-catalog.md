@@ -10,9 +10,9 @@
 |---|---|
 | `create_transaction` / `decompose` | 创建工作单元或将目标分解为子任务，记录约束与验收标准 |
 | `set_dependency` / `set_priority` | 设置无环依赖和执行优先级 |
-| `dispatch` | 将计划提交调度，并发起异步规划审查 |
+| `dispatch` | 原子保存执行方案与任务简报，再派发并发起异步规划审查；未准备的任务不能派发 |
 | `adjust_transaction` | 在安全点修订计划，增加版本并使过期分配失效 |
-| `validate` / `accept_result` | 提交有检查项和证据的业务接受意见，等待对应结果版本的独立复核 |
+| `validate` / `accept_result` | 保存覆盖正式标准的不可变校验记录；独立复核通过后提交接受状态 |
 | `reject_result` | 驳回候选结果并记录理由 |
 | `aggregate` | 基于已接受的下级工作生成汇总候选结果 |
 | `pause_transaction` / `resume_transaction` / `cancel_transaction` | 控制本管理域内的单个任务单元 |
@@ -20,7 +20,7 @@
 | `escalate` | 将本管理域无法解决的问题提交上级 |
 | `finish_cluster` | 根编排智能体请求整体收尾；运行时仍检查交付和资源条件 |
 
-`accept_result` 不是绕过审计的捷径。`ACCEPTED` 必须来自当前 `revision/result_revision` 的业务接受与独立审查，见[任务单元与独立审计](/development/components/transactions)。
+`ACCEPTED` 必须同时匹配当前 `plan_ref`、`result_ref`、`validation_ref`、正向校验及独立审核，并核对当前子任务的接受状态。普通状态推进增加 `revision`，不会使仍适用的计划失效。见[任务单元与独立审计](/development/components/transactions)。
 
 ## 资源分配智能体
 
@@ -48,14 +48,14 @@
 | 动作 | 职责 |
 |---|---|
 | `inspect_plan` | 审查规划、依赖和管理决策，记录证据与结论 |
-| `inspect_validation` | 针对指定结果版本独立审查业务验收 |
+| `inspect_validation` | 针对指定不可变校验记录独立审核调度的验收行为，核对方法、证据及结论 |
 | `request_correction` / `request_replan` / `request_revalidation` | 明确纠正要求、重新规划或重新验收的原因 |
 | `verify_correction` | 用修复证据复核纠正项 |
 | `notify` / `recommend` | 记录监督信号或管理建议 |
 | `evaluate_health` | 依据观测信号评价八项编排质量维度 |
 | `escalate` | 将持续或严重的问题提交上级处理 |
 
-规划审查不阻塞每次派发，结果审查是正式接受的必要条件。审查绑定的版本与当前结果不一致时，结论不能使当前结果通过。
+规划审查不阻塞每次派发，验收审核是正式接受的必要条件。审核引用与当前记录不一致时，结论不能使当前结果通过。验收审核拒绝保留已发布结果，任务回到 `SUBMITTED`，由调度补充校验；业务结果不合格时才安排 Worker 返工。
 
 ## 执行智能体与共享工具
 

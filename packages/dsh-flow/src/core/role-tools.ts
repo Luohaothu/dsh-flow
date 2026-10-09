@@ -24,7 +24,7 @@ import { fail } from '../errors.ts';
 import type { FlowAgentActor } from './model.ts';
 import type { FlowAgentRole } from '../types.ts';
 import type { ClusterRuntime } from './cluster.ts';
-import { ROLE_TOOL, commandIdFor } from './protocol.ts';
+import { ROLE_TOOL, commandIdFor, ORCHESTRATOR_ACTIONS, ALLOCATOR_ACTIONS, AUDITOR_ACTIONS, WORKER_ACTIONS } from './protocol.ts';
 import { COMMUNICATION_ACTIONS } from './communication.ts';
 import { COMMUNICATION_CATEGORIES } from '../messages.ts';
 
@@ -36,8 +36,48 @@ const ROLE_TOOL_DESCRIPTIONS: Record<string, string> = {
   flow_allocation:
     'Allocator control: agent identity, write scopes, tool-call and capacity budgets, Agent scheduling concurrency and scaling inside your own management domain.',
   flow_audit:
-    'Auditor control: plan supervision, independent result acceptance and durable correction requests inside your own management domain.',
+    'Auditor: independently review the Orchestrator\'s planning and actual validation behavior; record compliance decisions and correction requests inside your management domain. Business validation remains the Orchestrator\'s responsibility.',
 };
+
+const PLAN_PARAMETERS = 'plan: {understanding, execution: "worker"|"management"|"decompose", rationale, assignment, '
+  + 'criterion_responsibilities: [{criterion: {transaction_id: "self", criterion_index: 0}, '
+  + 'evidence_provider: "worker"|"orchestrator"|child_key, validated_by: "orchestrator", applies_to: ["worker"]}], '
+  + 'integration?: string, assignment_key?: string}. Cover every formal criterion by its stable reference. '
+  + 'Management/decompose plans require integration. applies_to contains actual participant roles (worker, orchestrator, allocator, auditor) or child keys; it declares applicability, not who produces evidence. In a parent decompose plan, evidence_provider must be the exact child key for each delegated criterion, for example {criterion:{transaction_id:"self",criterion_index:0},evidence_provider:"multiply",validated_by:"orchestrator",applies_to:["multiply"]}. Use evidence_provider:"orchestrator" for integration criteria. '
+  + 'The child keyed multiply must cover that criterion with {criterion:{transaction_id:"parent",criterion_index:0},evidence_provider:"worker",validated_by:"orchestrator",applies_to:["worker"]}, AND separately cover every one of its own acceptance_criteria using transaction_id:"self". Parent references do not replace child self references. Reference existing criteria using their transaction_id/prepared_revision/criterion_index. '
+  + 'In a management plan, use evidence_provider:"orchestrator" for the integrated delivery you will receive, check and hand upward; child_key is only available for children declared in the same atomic decompose call. Do not invent a key for the future delegated domain. '
+  + 'A management assignment is addressed to the new child manager that the Allocator will create. State that recipient\'s own business objective, boundaries and remaining downstream work. Do not ask the recipient to create itself or repeat the parent\'s domain-creation action: creation is already performed by the Allocator. Each child manager then prepares its own execution plan. Inherited criteria describe the contribution to the end-to-end delivery; read the actual node and parent relations to distinguish already completed upstream structure from remaining work in your domain. '
+  + 'Text instructions explain work; authorization and independent governance remain enforced by the runtime.';
+
+/** Operation arguments live with the tool, leaving role instructions stable. */
+function commandParameters(role: FlowAgentRole): string {
+  if (role === 'worker') return 'submit_result: {transaction_id, result: actual deliverable and execution evidence}. Read assignment to obtain the bound transaction and current authorization. The result is staged until this native turn finishes successfully.';
+  if (role === 'orchestrator') return [
+    'Execution types describe actual runtime effects: worker assigns one executor; decompose creates business child transactions in this same management domain, still planned and validated by you; management delegates a transaction through the Allocator to a new management node with its own Orchestrator, Allocator and Auditor. A decompose child does not create an autonomous management domain. Choose management for work requiring a child manager to plan independently, and let the Allocator create that domain from the saved plan.',
+    'Use transaction_id from assignment/agenda and expected_transaction_revision from binding.current_revision or a freshly read transaction.revision for mutations. The captured binding.revision and plan_ref.prepared_revision describe older snapshots and are not a current compare-and-swap version. After a conflict read current state and decide again.',
+    `dispatch: {transaction_id, expected_transaction_revision, plan?}; an existing valid plan may be reused. Batch: {transactions: [{transaction_id, expected_transaction_revision, plan?}]}. ${PLAN_PARAMETERS}`,
+    'decompose: {transaction_id, expected_transaction_revision, plan (execution=decompose), children: [{key, objective, inputs, constraints, expected_output, acceptance_criteria, capabilities?, depends_on?: [child_key|transaction_id], plan}]}. Saves parent and child plans atomically; prepared children remain DRAFT until dispatched. Every child needs an executable worker/management plan or its own further decomposition. Keep parent integration in the parent plan.integration with evidence_provider:"orchestrator"; do not create an empty decompose child just for integration. A child criterion can use transaction_id:"parent" without a revision, or the actual parent ID without a revision inside this atomic call; do not guess the new prepared revision.',
+    'adjust_transaction: {transaction_id, expected_transaction_revision, objective?, inputs?, constraints?, expected_output?, acceptance_criteria?, plan?}. Read current state after a conflict and explicitly revise; business changes invalidate the old plan.',
+    'validate: {transaction_id, expected_transaction_revision, accepted, checks: [{criterion_ref: {transaction_id, prepared_revision, criterion_index}, criterion, method, observation, passed, evidence, evidence_refs: [{kind: "result", ref: current_result_ref}]}], notes?, plan_ref?, result_ref?}. Perform actual checks against all formal criteria; a positive proposal must cover each one with passing findings and evidence. Read transaction fields requirements/plan/result/validation for references. Validation is independently audited before acceptance.',
+    'Describe the checks you actually performed. An explicit plain-text calculation can be a business check; a claimed tool-based check must correspond to a real tool call and result. Read evidence for native tool receipts and name their call IDs in check.evidence alongside the result reference. Supported evidence_refs kinds are result, historical_result, effect and source. result must identify the current publication. historical_result may identify an earlier publication of this same task only when its exact ref was explicitly preserved in the current formal plan inputs, for example a rejected candidate referenced by a correction task; read it with transaction {id, result_ref, fields:["result"]}. Historical evidence does not replace the current result or validation binding. Effects records cover external side effects; pure tools such as flow_sum do not create side effects and must not be labeled as effect evidence.',
+    'aggregate: {transaction_id, summary?}; accepted child deliverables are required. accept_result: {transaction_id}; requires a passing current validation, matching compliant audit and completed children. reject_result: {transaction_id, reason}; use when the business deliverable is wrong. Audit rejection of your checking calls for a new validate using the preserved result.',
+    'create_transaction: {objective, inputs?, constraints?, expected_output, acceptance_criteria, capabilities?}. set_dependency: {transaction_id, expected_transaction_revision, depends_on}. set_priority: {transaction_id, priority}. pause_transaction/resume_transaction/cancel_transaction: {transaction_id, reason?}. request_user: {question, transaction_id?}. finish_cluster: {summary?}. escalate: {reason, transaction_id?}.',
+  ].join('\n');
+  if (role === 'allocator') return [
+    'allocate_agent/spawn_agent: {transaction_id, capabilities?, write_scope?, budget?}; only a READY worker plan permits a worker allocation. The execution type is fixed by the saved manager plan.',
+    'spawn_management_node: {transaction_id, plan_ref, assignment_key?, capabilities?, max_children?, budget?}; only a READY management plan permits delegation. The child objective is the saved assignment; retries reuse the same delegation.',
+    'release_agent: {agent_id} or {all:true,node_id?} to release all eligible members of a draining domain. replace_agent/reassign_agent: {agent_id, transaction_id?}; require a safe lease/turn boundary. allocate_budget/rebalance_budget: read budgets for scope and available dimensions. select_model: {agent_id, model}. set_concurrency: {max_active_agents?, max_llm_concurrency?}. Read allocation/budget details as needed; retain work and evidence while releasing resources.',
+  ].join('\n');
+  return [
+    'inspect_plan/inspect_validation: {audit_id, decision: "approve"|"reject", evidence: {checks: [{rule, method, observation, passed, evidence_refs: [{kind: "plan"|"validation", ref: audit.plan_ref|audit.validation_ref}]}], issues?: [string], notes?: string}, required_change?}. Cover every governance rule. Plan rules: goal_coverage, responsibility, dependencies, handoff, acceptance_arrangement. Validation rules: standard_coverage, checks_performed, evidence_applicability, conclusion_support, authority. Approval requires all checks passed; rejection identifies a failed check and required correction. Read the audit, bound immutable plan/validation and relevant execution evidence. Approval asserts compliance of the manager\'s behavior, rather than substituting your own business checks.',
+    'Reject insufficient validation with a precise required_change: the runtime returns the preserved result to SUBMITTED for the Orchestrator to revalidate. Inspect the replacement validation before closing its issue.',
+    'Validation ordering: the Orchestrator first records actual business checks and its acceptance proposal; you then audit that immutable validation; only then may the runtime accept it. Do not demand your own not-yet-issued approval of this same proposal as evidence required to create the proposal. Already audited child deliverables can be evidence for a parent integration check. Every accepted proposal still requires its own matching independent audit.',
+    'Read native tool call/result receipts through the object evidence projection when reviewing a claimed tool-based check. effects/effect records track external side effects, so an empty effects list does not mean that pure tools such as flow_sum were never called. A Worker reporting manual calculation does not rule out a later tool-based check by its Orchestrator; check the actual actor and call/result. Plain-text reasoning can support a check when its actual steps are recorded truthfully.',
+    'Interpret plan fields correctly: criterion_responsibilities.validated_by is always orchestrator, because it names business validation; your independent audit is a separate record and must not replace that field. Child plans retain inherited parent criterion references alongside their own self criteria. child_transaction_ids is an immutable runtime-owned snapshot populated by atomic decomposition, not a list managers can edit. A management plan keeps its initial empty list even after Allocator creates a delegated domain; query transactions with {parent_id:transaction_id} or nodes to inspect actual delegation. Review the planned handoff and acceptance arrangement without demanding that future allocation or execution already be completed at plan-review time.',
+    'request_replan/request_revalidation/request_correction: {transaction_id, reason, required_change?, evidence?}. verify_correction: {issue_id, decision: "CORRECTED"|"REJECTED"|"DISMISSED", evidence}; correction closure requires a matching new audited validation or actual repair evidence. notify/recommend/escalate: record actual observations and reasons; query the corresponding agenda/audit/issue for operation references.',
+    'evaluate_health: {dimensions: {metric: score}, weights?: {metric: weight}, evaluation_window?: "subtree-close", evidence?}. Scores are in [0,1]; weights sum to 1. Read health for measured signals and metric names. For a closeout agenda item, score all eight dimensions and use evaluation_window: "subtree-close" so the domain can finish.',
+  ].join('\n');
+}
 
 /**
  * Register this role's own tools on its agent Context.
@@ -48,20 +88,22 @@ const ROLE_TOOL_DESCRIPTIONS: Record<string, string> = {
 export function registerRoleTools(agentCtx: Context, runtime: ClusterRuntime, role: FlowAgentRole): void {
   const roleTool = ROLE_TOOL[role];
   if (roleTool === undefined) fail(`Unknown role: ${String(role)}`, 403);
-  registerCommandTool(agentCtx, runtime, roleTool);
+  registerCommandTool(agentCtx, runtime, roleTool, role);
   registerCommunicationTool(agentCtx, runtime);
   registerQueryTool(agentCtx, runtime);
   registerSumTool(agentCtx);
 }
 
 /** The role's command surface: one action plus the parameters it consumes. */
-function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolName: string): void {
+function registerCommandTool(agentCtx: Context, runtime: ClusterRuntime, toolName: string, role: FlowAgentRole): void {
+  const actions = role === 'worker' ? WORKER_ACTIONS : role === 'orchestrator' ? ORCHESTRATOR_ACTIONS
+    : role === 'allocator' ? ALLOCATOR_ACTIONS : AUDITOR_ACTIONS;
   agentCtx.tools.register(strictTool(defineTool({
     name: toolName,
     description: ROLE_TOOL_DESCRIPTIONS[toolName] ?? 'Cluster command surface.',
     parameters: {
-      action: { type: 'string', required: true, description: 'The action to perform.' },
-      params: { type: 'json', description: 'Action parameters.' },
+      action: { type: 'string', required: true, enum: [...actions], description: 'The authorized action to perform.' },
+      params: { type: 'json', description: commandParameters(role) },
       expected_revision: { type: 'number', description: 'Optional optimistic concurrency check against the cluster revision.' },
     },
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
@@ -126,7 +168,7 @@ function registerCommunicationTool(agentCtx: Context, runtime: ClusterRuntime): 
 function registerQueryTool(agentCtx: Context, runtime: ClusterRuntime): void {
   agentCtx.tools.register(strictTool(defineTool({
     name: 'flow_query',
-    description: 'Read-only cluster state scoped to your domain: cluster, nodes, node, transactions, transaction, agents, allocations, budgets, issues, issue, audits, audit, effects, effect, usage, summary, blackboard. Lists are paged references; transactions {parent_id} filters delegated children. Transaction {id} includes its current result and validation; aggregate child results and historical audit/issue evidence are referenced by id. Read the child transaction {id}, audit {id}, issue {id}, or effect {call_id} for complete evidence.',
+    description: 'Read bound work and domain-scoped evidence. assignment returns this native turn\'s actual work object and binding (references, revision and staleness), without requiring IDs in prose. agenda {limit, snapshot_id?, offset?} lists role-specific work; retain snapshot_id when reading later pages. transaction/audit/issue/effect use {id, fields?}; fields are per-object allowlists, omitted fields remain present in the authoritative contract. Read requirements, plan, result and validation to obtain immutable criterion, result and validation references. Read fields:["evidence"] for native_tools call/result references; follow the returned read.params, including native_session_id and native_call_id, to read the actual receipt. Native receipts describe actual actor and turn, not business correctness. effects/effect covers external side effects and excludes pure calls such as flow_sum. Evidence and large inputs expose explicit references and continuation instead of truncating formal constraints. Other reads: cluster, nodes, node, transactions, agents, allocations, budgets, issues, audits, effects, usage, deliveries, context, health, summary, blackboard. context retains its native host context/compaction meaning. Read-only results never grant permission or replace actor identity.',
     parameters: {
       what: { type: 'string', required: true },
       params: { type: 'json' },
@@ -134,7 +176,7 @@ function registerQueryTool(agentCtx: Context, runtime: ClusterRuntime): void {
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     async execute(args, exec) {
       exec.signal.throwIfAborted();
-      const actor = actorFor(runtime, exec, { requireLease: false });
+      const actor = actorFor(runtime, exec, { requireLease: args.what === 'assignment' });
       return JSON.stringify(runtime.query(actor, args.what, coerceParams(args.params)));
     },
   })));

@@ -29,6 +29,11 @@ import type { WriteDecision } from '../../packages/dsh-flow/src/core/scope.ts';
 import type { ClusterRecord, FlowActor, FlowAgentActor } from '../../packages/dsh-flow/src/core/model.ts';
 import type { FlowBudgetView, FlowJsonValue } from '../../packages/dsh-flow/src/types.ts';
 import { rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
+import { fixtureParams } from './task-fixtures.ts';
+
+function fixtureCommand(runtime: ClusterRuntime, actor: FlowActor, command: Parameters<ClusterRuntime['command']>[1]) {
+  return runtime.command(actor, { ...command, params: fixtureParams(runtime, actor, command.action, command.params ?? {}) });
+}
 
 let clock = 1_700_000_000_000;
 const now = () => clock;
@@ -109,7 +114,7 @@ test('store rejects unsupported schema versions and workflow databases', t => {
   assert.throws(() => new ClusterStore(workflow), /use a new dataDir/);
 });
 
-test('schema-3 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
+test('schema-4 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-inputs-'));
   const path = join(dir, 'cluster.sqlite');
   const open = () => new ClusterRuntime(new Context(), {
@@ -170,22 +175,22 @@ test('schema-3 transaction JSON inputs survive creation, updates and reopened co
     session_id: allocator.session_id, role: 'allocator',
   };
   for (const id of ['json-input-0', 'json-input-2', 'json-input-8', storedNull.id]) {
-    runtime.command(actor, {
+    fixtureCommand(runtime, actor, {
       command_id: `json-dispatch-${id}`, action: 'dispatch', params: { transaction_id: id },
     });
   }
-  assert.throws(() => runtime.command(allocatorActor, {
+  assert.throws(() => fixtureCommand(runtime, allocatorActor, {
     command_id: 'json-scope-ceiling', action: 'spawn_agent',
     params: { transaction_id: 'json-input-8', write_scope: ['output'] },
   }), error => rejectionStatus(error) === 409);
   assert.equal(runtime.store.activeAllocationForTransaction('json-input-8'), null);
-  runtime.command(allocatorActor, {
+  fixtureCommand(runtime, allocatorActor, {
     command_id: 'json-allocate-array', action: 'spawn_agent',
     params: { transaction_id: 'json-input-0', write_scope: ['output'] },
   });
   const allocation = must(runtime.store.activeAllocationForTransaction('json-input-0'), 'array allocation');
   for (const id of ['json-input-2', storedNull.id]) {
-    runtime.command(allocatorActor, {
+    fixtureCommand(runtime, allocatorActor, {
       command_id: `json-reassign-${id}`, action: 'reassign_agent',
       params: { agent_id: allocation.agent_id, transaction_id: id },
     });
@@ -194,14 +199,14 @@ test('schema-3 transaction JSON inputs survive creation, updates and reopened co
     assert.deepEqual(reassigned.write_scope, ['output']);
   }
 
-  runtime.command(actor, {
+  fixtureCommand(runtime, actor, {
     command_id: 'json-create-command', action: 'create_transaction',
     params: { objective: 'command payload', inputs: ['created', { through: 'role command' }] },
   });
   const commandTx = must(runtime.store.listTransactions({ cluster_id: clusterId })
     .find(tx => tx.objective === 'command payload'), 'command-created transaction');
   expected.set(commandTx.id, ['created', { through: 'role command' }]);
-  runtime.command(actor, {
+  fixtureCommand(runtime, actor, {
     command_id: 'json-adjust-command', action: 'adjust_transaction',
     params: { transaction_id: commandTx.id, inputs: 'updated scalar' },
   });
@@ -215,7 +220,7 @@ test('schema-3 transaction JSON inputs survive creation, updates and reopened co
   assert.throws(() => runtime.store.updateTransaction('json-input-4', { inputs: null }));
   const count = runtime.store.countTransactions(clusterId);
   const cursor = runtime.store.latestEventSeq(clusterId);
-  assert.throws(() => runtime.command(actor, {
+  assert.throws(() => fixtureCommand(runtime, actor, {
     command_id: 'json-invalid-command', action: 'create_transaction',
     params: { objective: 'invalid input', inputs: { nonJson: undefined } },
   }), error => rejectionStatus(error) === 400);
@@ -236,9 +241,9 @@ test('schema-3 transaction JSON inputs survive creation, updates and reopened co
       if (userQuery.what !== 'transaction') assert.fail('transaction query tag mismatch');
       if (!('inputs' in userQuery.data.transaction)) assert.fail('user transaction inputs missing');
       assert.deepEqual(userQuery.data.transaction.inputs, inputs);
-      const roleQuery = runtime.query(actor, 'transaction', { id });
-      if (!('inputs' in roleQuery.transaction)) assert.fail('role transaction inputs missing');
-      assert.deepEqual(roleQuery.transaction.inputs, inputs);
+      const roleQuery = runtime.query(actor, 'transaction', { id, fields: ['inputs'] });
+      if (!('inputs' in roleQuery)) assert.fail('role transaction inputs missing');
+      assert.deepEqual(roleQuery.inputs, inputs);
     }
     const transactionsQuery = runtime.queryCluster(clusterId, 'transactions', {});
     if (transactionsQuery.what !== 'transactions') assert.fail('transactions query tag mismatch');
@@ -252,7 +257,7 @@ test('schema-3 transaction JSON inputs survive creation, updates and reopened co
   checkConsumers();
   await runtime.dispose();
   runtime = open();
-  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 3);
+  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 4);
   checkConsumers();
 });
 
@@ -298,15 +303,15 @@ test('context and summary queries decode transaction acceptance and node summari
   const auditorActor: FlowAgentActor = {
     role: auditor.role, cluster_id: clusterId, agent_id: auditor.id, node_id: auditor.node_id, session_id: auditor.session_id,
   };
-  runtime.command(orchestratorActor, { command_id: 'create-summary-work', action: 'create_transaction',
+  fixtureCommand(runtime, orchestratorActor, { command_id: 'create-summary-work', action: 'create_transaction',
     params: { objective: 'accepted summary fixture', acceptance_criteria: ['the check passes'] } });
   const transaction = must(runtime.store.listTransactions({ cluster_id: clusterId }).find(tx => tx.objective === 'accepted summary fixture'), 'summary transaction');
-  runtime.command(orchestratorActor, { command_id: 'dispatch-summary-work', action: 'dispatch', params: { transaction_id: transaction.id } });
+  fixtureCommand(runtime, orchestratorActor, { command_id: 'dispatch-summary-work', action: 'dispatch', params: { transaction_id: transaction.id } });
   runtime.store.updateTransaction(transaction.id, { status: 'SUBMITTED', result: { summary: 'the result is recorded' } });
-  runtime.command(orchestratorActor, { command_id: 'validate-summary-work', action: 'validate', params: {
+  fixtureCommand(runtime, orchestratorActor, { command_id: 'validate-summary-work', action: 'validate', params: {
     transaction_id: transaction.id, accepted: true, checks: [{ criterion: 'the check passes', passed: true, evidence: 'verified fixture' }],
   } });
-  runtime.command(auditorActor, { command_id: 'accept-summary-work', action: 'inspect_validation', params: {
+  fixtureCommand(runtime, auditorActor, { command_id: 'accept-summary-work', action: 'inspect_validation', params: {
     transaction_id: transaction.id, decision: 'approve',
   } });
   const actor = { role: 'user' as const, cluster_id: clusterId };

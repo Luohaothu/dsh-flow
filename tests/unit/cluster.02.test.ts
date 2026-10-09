@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { ClusterStore } from '../../packages/dsh-flow/src/core/store.ts';
@@ -105,6 +106,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -141,7 +143,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -682,9 +684,9 @@ test('reparent runs only at a safe point and rejects unsafe requests', t => {
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id , fixture_execution: 'management'});
   command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  const child = command(runtime, allocator, 'spawn_management_node', { transaction_id: tx.id }).result;
+  const child = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true, transaction_id: tx.id }).result;
   const childNodeId = textOf(child.node_id, 'child node_id');
   const childTransactionId = textOf(child.delegated_transaction_id, 'child transaction_id');
 
@@ -696,7 +698,7 @@ test('reparent runs only at a safe point and rejects unsafe requests', t => {
   assert.throws(() => command(runtime, allocator, 'reparent', { node_id: childNodeId, new_parent_id: root.id }),
     error => rejectionStatus(error) === 409 && /delegated assignment/.test(messageOf(error)));
 
-  const grandchild = command(runtime, allocator, 'spawn_management_node', {
+  const grandchild = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: childTransactionId, node_id: childNodeId, scope: { objective: 'grandchild' },
   }).result;
   const grandchildNodeId = textOf(grandchild.node_id, 'grandchild node_id');

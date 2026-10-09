@@ -14,6 +14,7 @@ import type { AgentRecord, FlowActor, FlowAgentActor, NodeRecord } from '../../p
 import type { BudgetPatch } from '../../packages/dsh-flow/src/core/model.ts';
 import type { FlowAgentRole, FlowJsonValue } from '../../packages/dsh-flow/src/types.ts';
 import { messageOf, rejectionStatus } from '../../packages/dsh-flow/src/errors.ts';
+import { fixtureParams } from './task-fixtures.ts';
 
 const instant = 1_800_000_000_000;
 let commandNumber = 0;
@@ -94,7 +95,7 @@ function fixture(t: TestContext): Fixture {
     return { cluster_id: id, agent_id: agent.id, node_id: node.id, session_id: agent.session_id, role: name };
   };
   const send = (actor: FlowActor, action: string, params: Record<string, unknown> = {}): FlowJsonValue => runtime.command(actor, {
-    command_id: `actions-${++commandNumber}`, action, params,
+    command_id: `actions-${++commandNumber}`, action, params: fixtureParams(runtime, actor, action, params),
   }).result;
   const create = (params: Record<string, unknown> = {}): string => transactionIdOf(send(role('orchestrator'), 'create_transaction', {
     objective: 'isolated task', acceptance_criteria: ['observable result'], ...params,
@@ -103,34 +104,26 @@ function fixture(t: TestContext): Fixture {
 }
 
 function managementTree(f: Fixture) {
-  const rootTx = must(f.runtime.store.listTransactions({ cluster_id: f.id })[0], 'root transaction');
-  f.send(f.role('orchestrator'), 'dispatch', { transaction_id: rootTx.id });
-  const oldParent = recordOf(f.send(f.role('allocator'), 'spawn_management_node', {
-    transaction_id: rootTx.id, scope: { objective: 'old parent' }, max_children: 5,
-    budget: { tool_calls: 400, agents: 20, max_active_agents: 2 },
-  }), 'spawn_management_node');
-  const newParent = recordOf(f.send(f.role('allocator'), 'spawn_management_node', {
-    transaction_id: rootTx.id, scope: { objective: 'new parent' }, max_children: 5,
-  }), 'spawn_management_node');
+  const delegate = (owner: NodeRecord, transactionId: string, budget?: Record<string, number>) => {
+    f.send(f.role('orchestrator', owner), 'dispatch', { transaction_id: transactionId, fixture_execution: 'management' });
+    const tx = must(f.runtime.store.getTransaction(transactionId), 'delegation transaction');
+    return recordOf(f.send(f.role('allocator', owner), 'spawn_management_node', {
+      transaction_id: tx.id, plan_ref: tx.current_plan_ref, max_children: 5, ...(budget ? { budget } : {}),
+    }), 'spawn_management_node');
+  };
+  const oldTask = f.create({ objective: 'old parent planning domain' });
+  const newTask = f.create({ objective: 'new parent planning domain' });
+  const oldParent = delegate(f.root, oldTask, { tool_calls: 400, agents: 20, max_active_agents: 2 });
+  const newParent = delegate(f.root, newTask);
   const oldNode = must(f.runtime.store.getNode(textOf(oldParent.node_id, 'old node')), 'old node');
   const newNode = must(f.runtime.store.getNode(textOf(newParent.node_id, 'new node')), 'new node');
-  const moving = recordOf(f.send(f.role('allocator', oldNode), 'spawn_management_node', {
-    transaction_id: textOf(oldParent.delegated_transaction_id, 'old delegated transaction'),
-    scope: { objective: 'moving branch' }, max_children: 5,
-  }), 'spawn_management_node');
+  const moving = delegate(oldNode, textOf(oldParent.delegated_transaction_id, 'old delegated transaction'));
   f.runtime.store.tx(() => {
-    for (const id of [
-      textOf(oldParent.delegated_transaction_id, 'old delegated transaction'),
-      textOf(newParent.delegated_transaction_id, 'new delegated transaction'),
-      textOf(moving.delegated_transaction_id, 'moving delegated transaction'),
-    ]) {
-      f.runtime.store.updateTransaction(id, { status: 'ACCEPTED' });
+    for (const id of [oldParent.delegated_transaction_id, newParent.delegated_transaction_id, moving.delegated_transaction_id]) {
+      f.runtime.store.updateTransaction(textOf(id, 'delegated transaction'), { status: 'ACCEPTED' });
     }
   });
-  return {
-    oldNode, newNode,
-    movingNode: must(f.runtime.store.getNode(textOf(moving.node_id, 'moving node')), 'moving node'),
-  };
+  return { oldNode, newNode, movingNode: must(f.runtime.store.getNode(textOf(moving.node_id, 'moving node')), 'moving node') };
 }
 
 test('reparent reissues all retained unused grants on the new branch and preserves the earliest deadline', t => {
@@ -341,10 +334,12 @@ test('allocate_budget moves capacity from the node scope to an identity, and ref
   assert.equal(afterNode.tool_calls_limit - afterNode.tool_calls_spent - afterNode.tool_calls_reserved, before.node - 50,
     'and the node it came from gave up exactly that amount');
 
-  // A scope outside the actor's domain is refused before anything moves.
+  // A separate formal management assignment gives this test its foreign domain.
+  const otherTask = f.create({ objective: 'other planning domain' });
+  f.send(f.role('orchestrator'), 'dispatch', { transaction_id: otherTask, fixture_execution: 'management' });
+  const otherTx = must(store.getTransaction(otherTask), 'other management task');
   const other = recordOf(f.send(f.role('allocator'), 'spawn_management_node', {
-    transaction_id: must(store.listTransactions({ cluster_id: f.id })[0], 'root transaction').id,
-    scope: { objective: 'other domain' }, max_children: 2,
+    transaction_id: otherTask, plan_ref: otherTx.current_plan_ref, max_children: 2,
   }), 'spawn_management_node');
   const otherNodeId = textOf(other.node_id, 'other node id');
   const otherBudget = must(store.budgetForScope(f.id, 'node', otherNodeId), 'other budget');
@@ -425,8 +420,8 @@ test('scoped pause/resume restores DRAFT, READY, SUBMITTED and VALIDATING withou
     assert.equal(after.result_revision, before.result_revision);
     if (audit) assert.equal(must(f.runtime.store.getAudit(audit.id), 'audit').decision, 'PENDING');
     if (phase === 'READY') {
-      assert.equal(f.runtime.store.findAudit(f.id, id, 'plan', before.revision)?.decision, 'OVERRIDDEN');
-      assert.equal(f.runtime.store.findAudit(f.id, id, 'plan', after.revision)?.decision, 'PENDING');
+      assert.deepEqual(after.current_plan_ref, before.current_plan_ref);
+      assert.equal(f.runtime.store.findAudit(f.id, id, 'plan', must(before.current_plan_ref, 'plan ref').prepared_revision)?.decision, 'PENDING');
     }
   }
 });

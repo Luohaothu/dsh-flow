@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 
+import { fixtureParams } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { apply } from '../../packages/dsh-flow/src/index.ts';
@@ -123,6 +124,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
   const snapshot = runtime.start({
     objective: 'test objective',
+    acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
     capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 6 },
@@ -159,7 +161,7 @@ function command(
   extra: Record<string, unknown> = {},
 ): TestCommandOutcome {
   counter += 1;
-  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params, ...extra });
+  const outcome = runtime.command(actor, { command_id: `cmd-${counter}`, action, params: fixtureParams(runtime, actor, action, params), ...extra });
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
@@ -193,7 +195,7 @@ test('a root budget stop waits for funded delegated work to return capacity, the
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = command(runtime, allocator, 'spawn_management_node', {
+  const child = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: original.id, scope: { objective: 'complete funded delegated work' },
   }).result;
   const childNodeId = textOf(child.node_id, 'child node id');
@@ -242,7 +244,7 @@ test('a blocked cluster cannot admit fresh turns from still-active child nodes',
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = command(runtime, allocator, 'spawn_management_node', {
+  const child = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: original.id, scope: { objective: 'pending child task' },
   }).result;
   assert.equal(required(runtime.store.getNode(textOf(child.node_id, 'child node id')), 'child node').status, 'ACTIVE');
@@ -449,11 +451,11 @@ test('a revised plan is a new revision, and the Auditor re-decides it instead of
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').revision, 1);
+  const firstPlan = required(required(runtime.store.getTransaction(tx.id), 'root transaction').current_plan_ref, 'prepared plan');
   command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'reject', required_change: 'name the depth-3 node explicitly' });
   assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').status, 'DRAFT');
   const rejected = required(runtime.store.getTransaction(tx.id), 'root transaction').revision;
-  assert.equal(rejected, 1, 'the rejection itself does not rewrite the plan');
+  assert.equal(rejected, firstPlan.prepared_revision, 'the rejection itself does not rewrite the plan');
 
   // The revision advances on its own: without it the re-dispatch would reuse the
   // audit that was just rejected, and the branch could only escalate.
@@ -465,12 +467,14 @@ test('a revised plan is a new revision, and the Auditor re-decides it instead of
   assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').plan_approved_revision, null, 'and the old approval cannot carry over');
 
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  const revisedPlan = required(required(runtime.store.getTransaction(tx.id), 'root transaction').current_plan_ref, 'revised prepared plan');
+  assert.ok(revisedPlan.prepared_revision > Number(adjusted.revision), 'saving the revised formal plan produces its own revision');
   const audits = runtime.store.pendingAudits(clusterId, { kind: 'plan', limit: 10 });
-  const fresh = audits.find(audit => audit.transaction_id === tx.id && audit.target_revision === adjusted.revision);
+  const fresh = audits.find(audit => audit.transaction_id === tx.id && audit.target_revision === revisedPlan.prepared_revision);
   assert.ok(fresh, `a plan audit targets the new revision: ${JSON.stringify(audits.map(a => ({ tx: String(a.transaction_id).slice(0, 8), r: a.target_revision })))}`);
   assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').status, 'READY', 'and the revised plan is dispatchable while the audit is pending');
   command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').plan_approved_revision, adjusted.revision);
+  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').plan_approved_revision, revisedPlan.prepared_revision);
 });
 
 test('transaction-scoped pause and resume advance the revision', t => {
@@ -568,10 +572,11 @@ test('a rejection of a superseded plan is stale: it never touches the newer revi
   const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
-  // Revision 1 is dispatched and pending the Auditor's verdict.
+  // The first saved plan is dispatched and pending the Auditor's verdict.
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  const originalPlan = required(required(runtime.store.getTransaction(tx.id), 'root transaction').current_plan_ref, 'original prepared plan');
   const rev1Audit = runtime.store.pendingAudits(clusterId, { kind: 'plan', limit: 10 })
-    .find(audit => audit.transaction_id === tx.id && audit.target_revision === 1);
+    .find(audit => audit.transaction_id === tx.id && audit.target_revision === originalPlan.prepared_revision);
   assert.ok(rev1Audit, 'the first plan audit is pending');
 
   // The Orchestrator revises it before the Auditor gets to rev1.
@@ -580,8 +585,10 @@ test('a rejection of a superseded plan is stale: it never touches the newer revi
   }).result;
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
   const before = required(runtime.store.getTransaction(tx.id), 'root transaction');
+  const revisedPlan = required(before.current_plan_ref, 'revised prepared plan');
   assert.equal(before.status, 'READY');
-  assert.equal(before.revision, adjusted.revision);
+  assert.ok(before.revision > Number(adjusted.revision), 'the new formal plan is saved after the business adjustment');
+  assert.equal(before.revision, revisedPlan.prepared_revision);
 
   // The late verdict on rev1 must be STALE for either answer — including the one
   // that would otherwise pull the plan back and open a correction issue.
@@ -589,20 +596,21 @@ test('a rejection of a superseded plan is stale: it never touches the newer revi
     audit_id: rev1Audit.id, decision: 'reject', required_change: 'name the depth-3 node',
   }).result;
   assert.equal(late.decision, 'STALE', `a superseded plan is stale, not rejected: ${JSON.stringify(late)}`);
-  assert.equal(required(runtime.store.findAudit(clusterId, tx.id, 'plan', 1), 'rev1 audit').decision, 'STALE');
+  assert.equal(required(runtime.store.findAudit(clusterId, tx.id, 'plan', originalPlan.prepared_revision), 'original plan audit').decision, 'STALE');
 
   const after = required(runtime.store.getTransaction(tx.id), 'root transaction');
   assert.equal(after.status, 'READY', 'the newer revision is untouched');
-  assert.equal(after.revision, adjusted.revision, 'and it is still the revision that was dispatched');
+  assert.equal(after.revision, before.revision, 'and it is still the revision that was dispatched');
+  assert.deepEqual(after.current_plan_ref, revisedPlan, 'the late verdict preserves the current immutable plan');
   assert.equal(after.plan_approved_revision, null, 'a stale verdict cannot clear or grant an approval it never reviewed');
   assert.equal(runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length, 0, 'and it opens no correction for work that moved on');
 
   // The current revision still has its own plan audit to decide, and deciding it
   // works normally.
   const rev2Audit = runtime.store.pendingAudits(clusterId, { kind: 'plan', limit: 10 })
-    .find(audit => audit.transaction_id === tx.id && audit.target_revision === adjusted.revision);
+    .find(audit => audit.transaction_id === tx.id && audit.target_revision === revisedPlan.prepared_revision);
   assert.ok(rev2Audit, 'the new revision has a pending audit of its own');
   const verdict = command(runtime, auditor, 'inspect_plan', { audit_id: rev2Audit.id, decision: 'approve' }).result;
   assert.equal(verdict.decision, 'APPROVED');
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').plan_approved_revision, adjusted.revision);
+  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').plan_approved_revision, revisedPlan.prepared_revision);
 });

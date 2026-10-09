@@ -6,7 +6,7 @@
  * There is no second agent loop here: every role and Worker runs through the
  * host's own `ctx.agents` registry.
  */
-import { ReasoningEffortId, createUserMessage, lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm';
+import { MessageId, ReasoningEffortId, createUserMessage, lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm';
 
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic';
 
@@ -24,8 +24,8 @@ import type {} from '@deepseek-ai/dsh-token-meter';
 
 import { fail } from '../errors.ts';
 import { reserveChain, settleChain } from './budget.ts';
-import type { AgentRecord, FlowLogger, FlowModelSelection } from './model.ts';
-import type { FlowAgentRole, FlowCapability } from '../types.ts';
+import type { AgentRecord, FlowLogger, FlowModelSelection, PlanRef } from './model.ts';
+import type { FlowAgentRole, FlowCapability, FlowJsonValue } from '../types.ts';
 import type { ClusterStore } from './store.ts';
 import type { NativeContextSnapshot } from './native-usage.ts';
 import { validateModelSelection } from './model-selection.ts';
@@ -47,7 +47,7 @@ export const FLOW_SOURCE = { kind: 'flow' } as const;
 // initial task keep their producer identity instead of inventing human input.
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
-    flow: { kind: 'flow' };
+    flow: { kind: 'flow'; delivery_id?: string; form?: 'revision' | 'wake'; plan_ref?: PlanRef | null };
     'flow-message': FlowCommunicationSource;
   }
 }
@@ -173,6 +173,8 @@ export interface RunTurnOptions {
   readonly agent: AgentRecord
   readonly role: FlowAgentRole
   readonly prompt: string
+  /** Explicit producer intent; native history is evidence, never a source classifier. */
+  readonly input?: MemberTurnInput | undefined
   /** Individually attributed deliveries, admitted in the same native step. */
   readonly messages?: readonly UserMessage[] | undefined
   readonly systemInstructions?: string | null | undefined
@@ -191,6 +193,16 @@ export interface RunTurnOptions {
   readonly onAdmitted?: (() => void) | undefined
   readonly onFlushed?: ((durable: boolean) => void) | undefined
   readonly setup?: (agentCtx: Context) => void | Promise<void>
+}
+
+/** Persisted handoff identity supplied by the scheduler's bound work object. */
+export interface MemberTurnInput {
+  readonly kind: 'initial' | 'revision' | 'wake'
+  readonly key: string
+  readonly author?: FlowJsonValue | undefined
+  readonly planRef?: PlanRef | null | undefined
+  readonly previousPlanRef?: PlanRef | null | undefined
+  readonly binding?: FlowJsonValue | undefined
 }
 
 // -------------------------------------------------------------------- helpers
@@ -418,7 +430,7 @@ function nativeContextSnapshot(ctx: Context, session: Agent['session']): NativeC
  */
 export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<TurnOutcome> {
   const {
-    agent, role, prompt, messages = [], systemInstructions = null, allowedTools, globalTools, capabilities = [], resume, cwd, model, signal, logger,
+    agent, role, prompt, input, messages = [], systemInstructions = null, allowedTools, globalTools, capabilities = [], resume, cwd, model, signal, logger,
     transactionId = null, flow,
     onAgentReady, onAdmitted, onFlushed, setup: setupScope,
   } = options;
@@ -435,6 +447,8 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   // delivery acks can be gated on it.
   let admitted = false;
   let taskPrompt: UserMessage | null = null;
+  let inputId: string | null = null;
+  let recoveredInput: { id: string; nativeSeq: number } | null = null;
   const selectedModel = validateModelSelection(model, 'agent model');
   const agentOptions: AgentOptions = {
     ...(selectedModel.provider === undefined ? {} : { provider: selectedModel.provider }),
@@ -573,12 +587,50 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     // Native cancel() only aborts existing activity. A subsequent followup()
     // wakes a fresh turn, so cancellation during preparation must stop here.
     signal?.throwIfAborted();
-    // Session existence alone does not prove the initial task was admitted:
-    // creation can be persisted before its first step. Read the native message
-    // projection; small host fixtures may only expose create/resume identity.
-    const hasPriorPrompt = typeof live.session.deriveMessages === 'function'
-      ? live.session.deriveMessages().some(message => message.role === 'user') : resumeSession;
-    taskPrompt = createUserMessage({ content: [{ type: 'text', text: prompt }], source: hasPriorPrompt ? FLOW_SOURCE : { kind: 'user' } });
+    const intent: MemberTurnInput = input ?? {
+      kind: 'wake', key: `turn:${agent.epoch}:${options.turnSeq}`,
+    };
+    const saveInput = (details: MemberTurnInput, content: string): UserMessage => {
+      const generated = createUserMessage({ content: [{ type: 'text', text: content }], source: { kind: 'user' } });
+      const saved = flow.store.saveMemberInput({
+        cluster_id: agent.cluster_id, agent_id: agent.id, session_id: agent.session_id,
+        delivery_key: details.key, kind: details.kind, author: details.author ?? null,
+        plan_ref: details.planRef ?? null, previous_plan_ref: details.previousPlanRef ?? null,
+        binding: details.binding ?? null, content, native_message_id: generated.id,
+      });
+      inputId = saved.id;
+      return Object.freeze({ ...generated, id: MessageId(saved.native_message_id),
+        source: details.kind === 'initial' ? { kind: 'user' as const } : {
+          kind: 'flow' as const, delivery_id: saved.id, form: details.kind,
+          plan_ref: details.planRef ?? null,
+        },
+      });
+    };
+    taskPrompt = saveInput(intent, prompt);
+    // Compaction changes the visible messages, so recover from the append-only
+    // native journal. An unrelated human message says nothing about this handoff.
+    const priorEvents = typeof live.session.snapshotEvents === 'function'
+      ? live.session.snapshotEvents(SessionLogOffset(0)) : null;
+    const entered = priorEvents?.find(event => event.type === 'user/message' && event.data.id === taskPrompt?.id);
+    const saved = inputId === null ? null : flow.store.getMemberInput(inputId);
+    if (saved?.status === 'ADMITTED' && !entered) {
+      throw Object.assign(new Error('Native session evidence does not contain the previously admitted handoff'), { code: 'DELIVERY_UNKNOWN' });
+    }
+    if (entered) {
+      recoveredInput = { id: inputId!, nativeSeq: entered.seq };
+      if (await ctx.sessions.flush(live.session) !== false) {
+        flow.store.acknowledgeMemberInput(recoveredInput.id, { native_seq: entered.seq });
+      }
+      // Resume an interrupted decision using a separate Flow wake; the original
+      // author's business task is never replayed as a new user delegation.
+      taskPrompt = saveInput({ ...intent, kind: 'wake', key: `${intent.key}:resume:${agent.epoch}:${options.turnSeq}` },
+        '本次任务已投递。请继续处理尚未完成的工作。');
+    }
+    // An inbox item persisted before a crash is still pending, rather than a
+    // second handoff. Requeue its identified message to wake the native driver.
+    const queued = [...(live.inbox?.nextTurn ?? []), ...(live.inbox?.nextStep ?? [])]
+      .some(message => message.id === taskPrompt?.id);
+    if (queued) live.inbox.remove(taskPrompt.id);
     // Inject communication at the next step, then wake exactly one turn. Native
     // followup prompts each own a turn, so batching those would multiply turns.
     for (const input of messages) live.send(input, 'next-step', false);
@@ -598,6 +650,12 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     const flushed = await ctx.sessions.flush(live.session);
     if (flushed !== false) {
       projectNativeSessionUsage(flow.store, agent, events, transactionId, contextSnapshot);
+      // Flush success alone cannot prove a particular input was retained.
+      const journal = typeof live.session.snapshotEvents === 'function'
+        ? live.session.snapshotEvents(SessionLogOffset(0)) : collected.events;
+      const proof = journal.find(event => event.type === 'user/message' && event.data.id === taskPrompt?.id);
+      if (proof && inputId !== null) flow.store.acknowledgeMemberInput(inputId, { native_seq: proof.seq });
+      if (recoveredInput !== null) flow.store.acknowledgeMemberInput(recoveredInput.id, { native_seq: recoveredInput.nativeSeq });
     }
     await projection;
     onFlushed?.(flushed !== false);

@@ -1,6 +1,6 @@
 # 智能体提示词与任务交接方案
 
-状态：设计提案，尚未实施。日期：2026 年 10 月 9 日。源码基线：`9c97667`。
+状态：实现及验证完成；见[实施验证记录](agent-prompts-and-task-handoffs-validation.md)。日期：2026 年 10 月 9 日。设计源码基线：`9c97667`。
 
 团队成员应收到面向自己职责的自然语言任务，按需查询执行与审核所需的状态。总协调先理解目标、选择执行方式并写出交接说明，运行时负责保存决定、检查权限和版本、投递消息。固定角色职责和工具使用规则进入系统提示词；普通任务正文只承载本次工作需要的信息。
 
@@ -56,11 +56,11 @@ Auditor 可以读取 Worker 结果、工具回执和相关材料，用于审查�
 
 若业务另有“独立重算”“交叉验证结果”等交付要求，由调度 Agent 安排另一名 Worker 或专业执行者完成，并对其结果验收；这些业务检查不由治理角色 Auditor 代替。Auditor 的审核义务由系统规则确定，调度 Agent 不能通过任务分工取消或降低对自身验收行为的审核。
 
-## 当前行为与需要改变的位置
+## 设计时的行为与需要改变的位置
 
-当前 `#pendingFor()` 对没有未回答问题的 DRAFT 事务直接生成 `dispatch`；`#rolePrompt()` 又要求立即执行待办。因此，单独删除 JSON 或将它翻译成自然语言，仍会让总协调直接转交原任务。
+设计源码基线中的 `#pendingFor()` 对没有未回答问题的 DRAFT 事务直接生成 `dispatch`；`#rolePrompt()` 又要求立即执行待办。因此，单独删除 JSON 或将它翻译成自然语言，仍会让总协调直接转交原任务。
 
-当前普通 Worker 把 `WORKER_PROMPT_HEADER` 拼在 user 正文中，执行入口没有传入 `systemInstructions`。Worker 还原样接收事务全部验收条件，包括属于调度校验、治理审核或整体团队的责任。
+设计源码基线中的普通 Worker 把 `WORKER_PROMPT_HEADER` 拼在 user 正文中，执行入口没有传入 `systemInstructions`。Worker 还原样接收事务全部验收条件，包括属于调度校验、治理审核或整体团队的责任。
 
 这些变化涉及提示词、计划及派发条件、验收责任和查询契约。原生 Agent 的模型请求、上下文容量及压缩仍遵循 DSH；计划审核继续异步监督，结果接受继续需要对调度验收行为的独立审核。现有 `validate` 保存 Orchestrator 的验收提案，`inspect_validation` 审核该提案；本方案应强化这条责任边界。
 
@@ -347,17 +347,20 @@ interface MemberBriefing {
 
 确定性 tests 验证状态、权限、版本、投递与查询契约；真实模型验证判断计划质量、简报可执行性和自然语言可读性。评审应检查目标覆盖、职责适配、必要上下文、交付清晰度及是否存在无益分解，不仅检查文案快照或字符长度。
 
-当前 mock 通过 `Role:`、`Current domain state`、`pending_actions` 及 Worker 文本正则驱动脚本。应改为通过新查询工具获取工作对象、字段和证据，验证与真实成员相同的读取路径；不能为了保住测试而在隐藏正文中继续保留旧 digest。只在宿主测试 adapter 中使用身份绑定进行模型脚本分类。
+设计源码基线中的 mock 通过 `Role:`、`Current domain state`、`pending_actions` 及 Worker 文本正则驱动脚本。实施已改为通过新查询工具获取工作对象、字段和证据，验证与真实成员相同的读取路径；没有在隐藏正文中保留旧 digest。只在宿主测试 adapter 中使用身份绑定进行模型脚本分类。
 
 实施后执行项目类型检查、构建、单元与原生验收、mock 场景及文档构建；真实模型至少覆盖简单直接任务、复杂拆分、两层委派、纠正和恢复。验证安装包与源码对应后，再用新隔离实例检查用户可见首条任务、运行通知和成员会话。设计审查通过仅说明方案可实施，不能替代这些运行证据。
 
 ## 源码定位
 
-- [角色模板 任务生成 调度和查询](../../packages/dsh-flow/src/core/cluster.ts)：`ROLE_INSTRUCTIONS`、`WORKER_PROMPT_HEADER`、`#pendingFor`、`#rolePrompt`、`#workerPrompt`、`query`。
+- [统一任务简报](../../packages/dsh-flow/src/core/briefing.ts)：角色 system、自然语言交接、运行事实通知和绑定输入。
+- [正式计划与责任契约](../../packages/dsh-flow/src/core/contracts.ts)：计划准备、稳定标准引用、父约束覆盖及有效性。
+- [调度和查询](../../packages/dsh-flow/src/core/cluster.ts)：`#pendingFor`、原生轮次绑定、assignment/agenda、字段投影、分页与结果发布。
 - [原生 Agent 接入](../../packages/dsh-flow/src/core/runtime.ts)：system section、创建与恢复、首条和后续消息投递。
 - [任务动作与审核](../../packages/dsh-flow/src/core/actions.ts)：创建、分解、派发、修订、管理委派、验证及独立审核。
 - [角色工具](../../packages/dsh-flow/src/core/role-tools.ts)：actor 解析、查询、工具 schema 及 `concludeTurn`。
 - [领域记录](../../packages/dsh-flow/src/core/model.ts)、[持久化存储](../../packages/dsh-flow/src/core/store.ts)、[公开查询类型](../../packages/dsh-flow/src/types.ts)。
 - [主会话入口](../../packages/dsh-flow/src/command.ts)与[团队 skill](../../packages/dsh-flow/skills/agent-team/SKILL.md)。
-- [确定性模型](../../src/host/mock-model.ts)与[场景脚本](../../src/host/mock-scenarios.ts)。
+- [确定性模型](../../src/host/mock-model.ts)、[原生身份适配](../../src/host/mock-identity-adapter.ts)与[场景脚本](../../src/host/mock-scenarios.ts)。
+- [真实模型验收](../../tests/acceptance/handoffs-live.ts)及[完整验证证据](agent-prompts-and-task-handoffs-validation.md)。
 - [已实施的模型执行职责方案](model-context-token-limits-plan.md)及[领域语言](../../CONTEXT.md)。

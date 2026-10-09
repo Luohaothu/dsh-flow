@@ -81,7 +81,7 @@ async function harness(t: TestContext, { name, hooks, caseId = 'native', holdSum
   const overlay = join(layout.root, 'mock-model.patch.yml');
   const routes = [{ provider: MOCK_PROVIDER, model: MOCK_MODEL_ID }];
   const observer = resolve(PROJECT_ROOT, 'tests/acceptance/native/host-observer.ts');
-  writeFileSync(overlay, `${mockPatchText(mock.baseURL, routes)}
+  writeFileSync(overlay, `${mockPatchText(mock.baseURL, routes, mock.identityKey)}
 - insert:
     - id: native-observer
       name: ${JSON.stringify(observer)}
@@ -251,7 +251,7 @@ test('N-communication: classified messages retain full bodies, independent sourc
     objective: 'Sum [2,3] and retain incoming review evidence.', workspace: layout.workspace, capabilities: ['fs_read'],
     limits: { max_children: 2, max_depth: 2, max_agents: 8, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
     budget: singleBudget,
-    initial_transactions: [{ id: 'communication-sum', objective: 'Sum [2,3] with flow_sum and submit the tool result.' }],
+    initial_transactions: [{ id: 'communication-sum', objective: 'Sum [2,3] with flow_sum and submit the tool result.', acceptance_criteria: ['The real tool result equals 5'] }],
   }));
   assert.ok(created);
   await host.request('settle', created.cluster.id, { timeout_ms: 300_000, poll_ms: 300 }, 420_000);
@@ -275,7 +275,8 @@ test('N-communication: classified messages retain full bodies, independent sourc
     assert.ok(asString(source.sender_id), 'the Agent sender is attributed');
     const text = (asArray(data.content) ?? []).map(block => asString(asObject(block)?.text) ?? '').join('');
     assert.equal(text.slice(Number(source.body_offset)), body, 'long body remains intact');
-    assert.ok(text.includes('[[flow-delivery native-classified-message seq '), 'durable receipt proof is retained');
+    assert.equal(text.includes('[[flow-delivery '), false, 'transport proof stays out of model-visible message text');
+    assert.equal(source.message_id, 'native-classified-message', 'the native source carries the durable message identity');
     const position = session.events.indexOf(review[0]!);
     const preceding = session.events.slice(0, position).findLast(event => event.type === 'user/message');
     assert.ok(['user', 'flow'].includes(String(asObject(asObject(preceding?.data)?.source)?.kind)), 'a task or scheduling prompt shares the same admitted step');
@@ -296,7 +297,7 @@ test('F-permission: a Worker cannot reach management tools or write outside its 
     hooks: {
       worker(request) {
         const c = request.classified;
-        if (c.lastToolName) {
+        if (c.lastToolName && c.lastToolName !== 'flow_query') {
           return call('flow_transaction', {
             action: 'submit_result',
             params: { transaction_id: c.transactionId, result: { attempted: true }, notes: 'reported the refusals' },
@@ -355,7 +356,7 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
     hooks: {
       worker(request) {
         const c = request.classified;
-        if (c.lastToolName) {
+        if (c.lastToolName && c.lastToolName !== 'flow_query') {
           const total = sumFromToolResult(c.lastToolResult);
           // `params` as a JSON *string* is a spelling the plugin documents; the
           // scenario covers it on the second transaction.
@@ -405,7 +406,7 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
     hooks: {
       worker(request) {
         const c = request.classified;
-        if (c.lastToolName) return say('done');
+        if (c.lastToolName && c.lastToolName !== 'flow_query') return say('done');
         return call('flow_transaction', {
           action: 'submit_result',
           params: { transaction_id: 'not-a-transaction', result: { sum: 5 } },
@@ -455,7 +456,7 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
     hooks: {
       worker(request) {
         const c = request.classified;
-        if (c.lastToolName) return say('done');
+        if (c.lastToolName && c.lastToolName !== 'flow_query') return say('done');
         return { toolCalls: [{ name: 'flow_sum', arguments: malformedRaw }], chunkBoundaries: [1, 4, 9] };
       },
     },
@@ -471,7 +472,7 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
   const malformedLedger = ledgerOf(malformed.layout, malformedSingle.cluster_id);
   try {
     const sessions = sessionsOf(malformed.layout, malformedSingle.cluster_id);
-    const calls = sessions.flatMap(session => session.events.filter(event => event.type === 'tool/call'));
+    const calls = sessions.flatMap(session => session.events.filter(event => event.type === 'tool/call' && asObject(event.data)?.name === 'flow_sum'));
     const results = sessions.flatMap(session => session.events.filter(event => event.type === 'tool/result'));
     assert.equal(calls.length, 1, `exactly the malformed call was issued: ${JSON.stringify(calls)}`);
     const attempt = calls[0];
@@ -512,8 +513,8 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
       worker(request) {
         const c = request.classified;
         const mode = c.objective ?? '';
-        if (/aborted stream/u.test(mode)) return c.lastToolName ? say('done') : { abort: true };
-        if (/server error/u.test(mode)) return c.lastToolName ? say('done') : { fail: { status: 500, message: 'declared server failure' } };
+        if (/aborted stream/u.test(mode)) return c.lastToolName && c.lastToolName !== 'flow_query' ? say('done') : { abort: true };
+        if (/server error/u.test(mode)) return c.lastToolName && c.lastToolName !== 'flow_query' ? say('done') : { fail: { status: 500, message: 'declared server failure' } };
         return say(`no stimulus matched: ${mode}`);
       },
     },
@@ -699,7 +700,7 @@ test('N-scopes: ordinary Agents receive team lifecycle tools while role tools st
     capabilities: ['fs_read'],
     limits: { max_children: 2, max_depth: 2, max_agents: 8, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
     budget: singleBudget,
-    initial_transactions: [{ id: 'scope-sum', objective: 'Sum [2,3] with flow_sum and submit the tool result.' }],
+    initial_transactions: [{ id: 'scope-sum', objective: 'Sum [2,3] with flow_sum and submit the tool result.', acceptance_criteria: ['The submitted tool result equals 5'] }],
   }));
   assert.ok(created);
   await host.request('settle', created.cluster.id, { timeout_ms: 300_000, poll_ms: 300 }, 420_000);
@@ -879,7 +880,7 @@ test('N-summary-cancel: native cancellation preserves incomplete compaction evid
     capabilities: ['fs_read'],
     budget: singleBudget,
     limits: { max_children: 2, max_depth: 2, max_agents: 4, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 6 },
-    initial_transactions: [{ id: 'summary-cancel', objective: 'Read pressure.txt and report what it contains.' }],
+    initial_transactions: [{ id: 'summary-cancel', objective: 'Read pressure.txt and report what it contains.', acceptance_criteria: ['The contents are reported from the actual file'] }],
   }));
   assert.ok(created);
   const clusterId = created.cluster.id;
@@ -926,7 +927,7 @@ test('N-capabilities: requested fs, shell/jobs and web tools execute through nat
     name: 'capabilities',
     hooks: { worker(request) {
       const c = request.classified;
-      if (!c.lastToolName) return call('write', { file_path: 'native.txt', content: 'NATIVE-CAPABILITY\\n' });
+      if (!c.lastToolName || c.lastToolName === 'flow_query') return call('write', { file_path: 'native.txt', content: 'NATIVE-CAPABILITY\\n' });
       if (c.lastToolName === 'write') return call('read', { file_path: 'native.txt' });
       if (c.lastToolName === 'read') {
         assert.match(c.lastToolResult ?? '', /NATIVE-CAPABILITY/, 'the real filesystem returned the written marker');

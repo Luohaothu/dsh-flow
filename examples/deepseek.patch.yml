@@ -39,7 +39,7 @@
   config:
     provider: deepseek
     model: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
-    reasoningEffort: off
+    reasoningEffort: !!js process.env.FLOW_MODEL_REASONING_EFFORT ?? 'off'
 
 # Patches replace the entire config row. Keep deployment paths and lifecycle
 # settings here so applying the model overlay cannot reset the instance policy.
@@ -49,7 +49,7 @@
     workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
     provider: deepseek
     model: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
-    reasoningEffort: off
+    reasoningEffort: !!js process.env.FLOW_MODEL_REASONING_EFFORT ?? 'off'
     defaultCapabilities: [fs_read, fs_write]
     tickMs: 250
     staleMs: 120000

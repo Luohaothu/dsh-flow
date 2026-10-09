@@ -317,12 +317,13 @@ test('the tier denominator has exactly one source, and a mismatched budget is re
   const spec = {
     generated_tier: true,
     initial_transactions: planned,
-    budget: { tool_calls: 16 * 64, wall_time_ms: 21_600_000, agents: 4096, max_active_agents: 9 },
+    budget: { tool_calls: 64 * 64, wall_time_ms: 21_600_000, agents: 4096, max_active_agents: 9 },
   };
   assert.equal(assertTierBudget(spec), undefined, 'a conforming tier passes the guard');
   // The 64 tier carrying a 1024 tier's budget is the defect this refuses.
   for (const wrong of [
-    { tool_calls: 16 * 1024 },
+    { tool_calls: 64 * 1024 },
+    { tool_calls: 16 * 64 },
   ]) {
     assert.throws(() => assertTierBudget({ ...spec, budget: { ...spec.budget, ...wrong } }), /tier budget mismatch: \w+ is \d+, expected \d+ for 64 planned transactions/);
   }

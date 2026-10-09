@@ -80,9 +80,10 @@ import type {
   ToolCallReceiptRecord,
   TransactionPatch,
   TransactionRecord,
+  PlanRef, PlanRecord, ResultRef, ResultRecord, ValidationRef, ValidationRecord, MemberInputRecord,
 } from './model.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** One SQLite row as the driver returns it. */
 type Row = Record<string, SQLOutputValue>;
@@ -530,6 +531,7 @@ interface AllocationInsert {
   readonly node_id: string
   readonly agent_id: string
   readonly transaction_id?: string | null | undefined
+  readonly plan_ref?: PlanRef | null | undefined
   readonly capabilities?: FlowJsonValue | undefined
   readonly write_scope?: FlowJsonValue | undefined
   readonly write_scope_canonical?: FlowJsonValue | undefined
@@ -716,6 +718,8 @@ interface AuditInsert {
   readonly node_id: string
   readonly kind: FlowAuditKind
   readonly target_revision: number
+  readonly plan_ref?: PlanRef | null | undefined
+  readonly validation_ref?: ValidationRef | null | undefined
   readonly decision?: FlowAuditDecision | undefined
   readonly auditor_agent_id?: string | null | undefined
   readonly evidence?: FlowJsonValue | undefined
@@ -783,6 +787,7 @@ CREATE TABLE IF NOT EXISTS transactions(
   priority INTEGER NOT NULL, capabilities TEXT NOT NULL, status TEXT NOT NULL,
   revision INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, result TEXT,
   result_revision INTEGER, validation TEXT, plan_approved_revision INTEGER,
+  current_plan_ref TEXT, current_result_ref TEXT, current_validation_ref TEXT,
   result_staged_epoch INTEGER, result_staged_turn INTEGER, result_staged_agent TEXT,
   pre_pause_status TEXT, pre_pause_revision INTEGER,
   created INTEGER NOT NULL, updated INTEGER NOT NULL);
@@ -797,6 +802,7 @@ CREATE INDEX IF NOT EXISTS dependencies_dep ON dependencies(depends_on);
 CREATE TABLE IF NOT EXISTS allocations(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, node_id TEXT NOT NULL, agent_id TEXT NOT NULL,
   transaction_id TEXT, capabilities TEXT NOT NULL, write_scope TEXT NOT NULL,
+  plan_ref TEXT,
   write_scope_canonical TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS allocations_tx ON allocations(transaction_id);
@@ -904,6 +910,7 @@ CREATE INDEX IF NOT EXISTS sources_cluster ON sources(cluster_id,fetched_at);
 CREATE TABLE IF NOT EXISTS audits(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, transaction_id TEXT NOT NULL, node_id TEXT NOT NULL,
   kind TEXT NOT NULL, target_revision INTEGER NOT NULL, decision TEXT NOT NULL,
+  plan_ref TEXT, validation_ref TEXT,
   auditor_agent_id TEXT, evidence TEXT NOT NULL, created INTEGER NOT NULL, decided INTEGER);
 CREATE INDEX IF NOT EXISTS audits_target ON audits(cluster_id,transaction_id,kind,target_revision);
 CREATE TABLE IF NOT EXISTS issues(
@@ -912,6 +919,28 @@ CREATE TABLE IF NOT EXISTS issues(
   evidence TEXT NOT NULL, required_change TEXT NOT NULL, status TEXT NOT NULL,
   corrections INTEGER NOT NULL DEFAULT 0, reviewed_revision INTEGER, created INTEGER NOT NULL, updated INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS issues_status ON issues(cluster_id,status);
+CREATE TABLE IF NOT EXISTS plans(
+  transaction_id TEXT NOT NULL, prepared_revision INTEGER NOT NULL, cluster_id TEXT NOT NULL,
+  data TEXT NOT NULL, PRIMARY KEY(transaction_id,prepared_revision));
+CREATE TABLE IF NOT EXISTS result_snapshots(
+  transaction_id TEXT NOT NULL, publication_event_seq INTEGER NOT NULL, cluster_id TEXT NOT NULL,
+  data TEXT NOT NULL, PRIMARY KEY(transaction_id,publication_event_seq));
+CREATE TABLE IF NOT EXISTS validation_records(
+  transaction_id TEXT NOT NULL, result_revision INTEGER NOT NULL, cluster_id TEXT NOT NULL,
+  data TEXT NOT NULL, PRIMARY KEY(transaction_id,result_revision));
+CREATE TABLE IF NOT EXISTS semantic_receipts(
+  key TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL,
+  created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS management_assignments(
+  transaction_id TEXT NOT NULL, plan_ref TEXT NOT NULL, assignment_key TEXT NOT NULL,
+  node_id TEXT NOT NULL UNIQUE, delegated_transaction_id TEXT NOT NULL, data TEXT NOT NULL,
+  PRIMARY KEY(transaction_id,plan_ref,assignment_key));
+CREATE TABLE IF NOT EXISTS member_inputs(
+  id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  delivery_key TEXT NOT NULL, kind TEXT NOT NULL, author TEXT NOT NULL, plan_ref TEXT,
+  previous_plan_ref TEXT, binding TEXT NOT NULL, content TEXT NOT NULL,
+  native_message_id TEXT NOT NULL, native_seq INTEGER, status TEXT NOT NULL,
+  created INTEGER NOT NULL, admitted INTEGER, UNIQUE(agent_id,delivery_key));
 `;
 
 export class ClusterStore {
@@ -1489,6 +1518,137 @@ export class ClusterStore {
     return one(this.get('SELECT * FROM transactions WHERE id=?', id), decodeTransaction);
   }
 
+  insertPlan(plan: PlanRecord): PlanRecord {
+    this.run('INSERT INTO plans(transaction_id,prepared_revision,cluster_id,data) VALUES(?,?,?,?)',
+      plan.ref.transaction_id, plan.ref.prepared_revision, plan.cluster_id, j(plan));
+    return plan;
+  }
+
+  getPlan(ref: PlanRef | null | undefined): PlanRecord | null {
+    if (!ref) return null;
+    const row = this.get('SELECT data FROM plans WHERE transaction_id=? AND prepared_revision=?', ref.transaction_id, ref.prepared_revision);
+    return row ? JSON.parse(textOf(row.data, 'plans.data')) as PlanRecord : null;
+  }
+
+  listPlans(clusterId: string, transactionId: string): PlanRecord[] {
+    return this.all('SELECT data FROM plans WHERE cluster_id=? AND transaction_id=? ORDER BY prepared_revision', clusterId, transactionId)
+      .map(row => JSON.parse(textOf(row.data, 'plans.data')) as PlanRecord);
+  }
+
+  /** Historical child links remain intact; execution uses this plan's own assignment generation. */
+  currentChildrenOfTransaction(clusterId: string, transactionId: string): TransactionRecord[] {
+    const tx = this.getTransaction(transactionId);
+    const plan = this.getPlan(tx?.current_plan_ref);
+    if (!plan) return this.childrenOfTransaction(clusterId, transactionId);
+    if (plan.execution === 'worker') return [];
+    if (plan.execution === 'decompose') return plan.child_transaction_ids.flatMap(id => {
+      const child = this.getTransaction(id);
+      return child && child.cluster_id === clusterId && child.parent_transaction_id === transactionId ? [child] : [];
+    });
+    return this.all('SELECT delegated_transaction_id FROM management_assignments WHERE transaction_id=? AND plan_ref=?', transactionId, j(plan.ref))
+      .flatMap(row => {
+        const child = this.getTransaction(textOf(row.delegated_transaction_id, 'management assignment'));
+        return child ? [child] : [];
+      });
+  }
+
+  publishResult(transactionId: string, source: {
+    producer_role: FlowActor['role']; producer_agent_id: string | null;
+    epoch: number | null; turn_seq: number | null; publication_event_seq: number;
+    source_result_refs?: readonly ResultRef[];
+    source_validation_refs?: readonly ValidationRef[];
+  }): ResultRecord {
+    const tx = this.getTransaction(transactionId) ?? fail('Transaction not found', 404);
+    if (!tx.current_plan_ref || !this.getPlan(tx.current_plan_ref)) fail('published result requires its actual plan', 409);
+    const ref: ResultRef = { transaction_id: tx.id, publication_event_seq: source.publication_event_seq };
+    const record: ResultRecord = {
+      ref, cluster_id: tx.cluster_id, plan_ref: tx.current_plan_ref, result: tx.result,
+      producer_role: source.producer_role, producer_agent_id: source.producer_agent_id,
+      epoch: source.epoch, turn_seq: source.turn_seq, source_result_refs: source.source_result_refs ?? [],
+      source_validation_refs: source.source_validation_refs ?? [], created: this.now(),
+    };
+    this.run('INSERT INTO result_snapshots(transaction_id,publication_event_seq,cluster_id,data) VALUES(?,?,?,?)',
+      tx.id, ref.publication_event_seq, tx.cluster_id, j(record));
+    this.updateTransaction(tx.id, { current_result_ref: ref, current_validation_ref: null, __bump_revision: false });
+    return record;
+  }
+
+  getResult(ref: ResultRef | null | undefined): ResultRecord | null {
+    if (!ref) return null;
+    const row = this.get('SELECT data FROM result_snapshots WHERE transaction_id=? AND publication_event_seq=?', ref.transaction_id, ref.publication_event_seq);
+    return row ? JSON.parse(textOf(row.data, 'result_snapshots.data')) as ResultRecord : null;
+  }
+
+  insertValidation(record: ValidationRecord): ValidationRecord {
+    this.run('INSERT INTO validation_records(transaction_id,result_revision,cluster_id,data) VALUES(?,?,?,?)',
+      record.ref.transaction_id, record.ref.result_revision, record.cluster_id, j(record));
+    return record;
+  }
+
+  getValidation(ref: ValidationRef | null | undefined): ValidationRecord | null {
+    if (!ref) return null;
+    const row = this.get('SELECT data FROM validation_records WHERE transaction_id=? AND result_revision=?', ref.transaction_id, ref.result_revision);
+    return row ? JSON.parse(textOf(row.data, 'validation_records.data')) as ValidationRecord : null;
+  }
+
+  /** Semantic retries survive a fresh native call ID, but never accept another request. */
+  semanticReceipt(key: string, request: unknown): FlowJsonValue | null {
+    const row = this.get('SELECT request_hash,result FROM semantic_receipts WHERE key=?', key);
+    if (!row) return null;
+    if (textOf(row.request_hash, 'semantic_receipts.request_hash') !== canonical(request)) fail('semantic operation key reused with different content; read the current task and revise explicitly', 409);
+    const receipt = jsonOf(p(row.result), 'semantic_receipts.result');
+    return receipt !== null && typeof receipt === 'object' && !Array.isArray(receipt) ? { ...receipt, deduped: true } : receipt;
+  }
+
+  saveSemanticReceipt(key: string, clusterId: string, request: unknown, result: FlowJsonValue): void {
+    this.run('INSERT INTO semantic_receipts(key,cluster_id,request_hash,result,created) VALUES(?,?,?,?,?)',
+      key, clusterId, canonical(request), j(result), this.now());
+  }
+
+  managementAssignment(transactionId: string, planRef: PlanRef, assignmentKey: string): FlowJsonValue | null {
+    const row = this.get('SELECT data FROM management_assignments WHERE transaction_id=? AND plan_ref=? AND assignment_key=?', transactionId, j(planRef), assignmentKey);
+    return row ? jsonOf(p(row.data), 'management_assignments.data') : null;
+  }
+
+  saveManagementAssignment(transactionId: string, planRef: PlanRef, assignmentKey: string, nodeId: string, delegatedId: string, data: FlowJsonValue): void {
+    this.run('INSERT INTO management_assignments(transaction_id,plan_ref,assignment_key,node_id,delegated_transaction_id,data) VALUES(?,?,?,?,?,?)',
+      transactionId, j(planRef), assignmentKey, nodeId, delegatedId, j(data));
+  }
+
+  saveMemberInput(input: Omit<MemberInputRecord, 'id' | 'status' | 'created' | 'admitted' | 'native_seq' | 'previous_plan_ref'> & {
+    id?: string; previous_plan_ref?: PlanRef | null;
+  }): MemberInputRecord {
+    const prior = this.memberInputForKey(input.agent_id, input.delivery_key);
+    if (prior) {
+      if (prior.cluster_id !== input.cluster_id || prior.session_id !== input.session_id || prior.kind !== input.kind
+        || prior.content !== input.content || canonical(prior.author) !== canonical(input.author)
+        || canonical(prior.plan_ref) !== canonical(input.plan_ref) || canonical(prior.previous_plan_ref) !== canonical(input.previous_plan_ref ?? null)
+        || canonical(prior.binding) !== canonical(input.binding)) {
+        fail('member input delivery key reused with different content or binding', 409);
+      }
+      return prior;
+    }
+    const id = input.id ?? randomUUID();
+    this.run('INSERT INTO member_inputs(id,cluster_id,agent_id,session_id,delivery_key,kind,author,plan_ref,previous_plan_ref,binding,content,native_message_id,status,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      id, input.cluster_id, input.agent_id, input.session_id, input.delivery_key, input.kind, j(input.author),
+      input.plan_ref ? j(input.plan_ref) : null, input.previous_plan_ref ? j(input.previous_plan_ref) : null,
+      j(input.binding), input.content, input.native_message_id, 'PENDING', this.now());
+    return this.getMemberInput(id) ?? fail('Member input not found', 500);
+  }
+
+  getMemberInput(id: string): MemberInputRecord | null {
+    return one(this.get('SELECT * FROM member_inputs WHERE id=?', id), decodeMemberInput);
+  }
+
+  memberInputForKey(agentId: string, key: string): MemberInputRecord | null {
+    return one(this.get('SELECT * FROM member_inputs WHERE agent_id=? AND delivery_key=?', agentId, key), decodeMemberInput);
+  }
+
+  acknowledgeMemberInput(id: string, { native_seq = null }: { native_seq?: number | null } = {}): MemberInputRecord {
+    this.run("UPDATE member_inputs SET status='ADMITTED',native_seq=?,admitted=COALESCE(admitted,?) WHERE id=?", native_seq, this.now(), id);
+    return this.getMemberInput(id) ?? fail('Member input not found', 404);
+  }
+
   listTransactions(
     { cluster_id, node_id, status, parent_transaction_id, limit, offset }: {
       cluster_id: string
@@ -1558,11 +1718,15 @@ export class ClusterStore {
   }
 
   updateTransaction(id: string, patch: TransactionPatch): TransactionRecord | null {
-    const row = this.get('SELECT revision FROM transactions WHERE id=?', id);
+    const row = this.get('SELECT * FROM transactions WHERE id=?', id);
     if (!row) fail('Transaction not found', 404);
     const sets: string[] = [];
     const args: BindValue[] = [];
-    const bump = patch.__bump_revision !== false;
+    const businessKeys = ['objective', 'inputs', 'constraints', 'expected_output', 'acceptance_criteria', 'needs', 'capabilities'] as const;
+    const current = decodeTransaction(row);
+    const businessChanged = businessKeys.some(key => patch[key] !== undefined && canonical(patch[key]) !== canonical(current[key]));
+    if (businessChanged) patch = { ...patch, current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null };
+    const bump = businessChanged || patch.__bump_revision !== false;
     for (const [key, column] of TRANSACTION_COLUMNS) {
       const value = patch[key];
       if (value === undefined) continue;
@@ -1580,11 +1744,13 @@ export class ClusterStore {
   // ------------------------------------------------------------ dependencies
 
   addDependency(transactionId: string, dependsOn: string): void {
-    this.run('INSERT OR IGNORE INTO dependencies(transaction_id,depends_on,created) VALUES(?,?,?)', transactionId, dependsOn, this.now());
+    const change = this.run('INSERT OR IGNORE INTO dependencies(transaction_id,depends_on,created) VALUES(?,?,?)', transactionId, dependsOn, this.now());
+    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null });
   }
 
   removeDependency(transactionId: string, dependsOn: string): void {
-    this.run('DELETE FROM dependencies WHERE transaction_id=? AND depends_on=?', transactionId, dependsOn);
+    const change = this.run('DELETE FROM dependencies WHERE transaction_id=? AND depends_on=?', transactionId, dependsOn);
+    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null });
   }
 
   dependenciesOf(transactionId: string): string[] {
@@ -1612,12 +1778,12 @@ export class ClusterStore {
   insertAllocation(allocation: AllocationInsert): AllocationRecord | null {
     const at = this.now();
     this.run(
-      `INSERT INTO allocations(id,cluster_id,node_id,agent_id,transaction_id,capabilities,write_scope,write_scope_canonical,status,created,updated)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO allocations(id,cluster_id,node_id,agent_id,transaction_id,capabilities,write_scope,write_scope_canonical,status,created,updated,plan_ref)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
       allocation.id, allocation.cluster_id, allocation.node_id, allocation.agent_id,
       allocation.transaction_id ?? null, j(allocation.capabilities ?? []), j(allocation.write_scope ?? []),
       j(allocation.write_scope_canonical ?? []),
-      allocation.status ?? 'ACTIVE', at, at,
+      allocation.status ?? 'ACTIVE', at, at, allocation.plan_ref ? j(allocation.plan_ref) : null,
     );
     return one(this.get('SELECT * FROM allocations WHERE id=?', allocation.id), decodeAllocation);
   }
@@ -1661,6 +1827,8 @@ export class ClusterStore {
   /** An allocation binds to the transaction plan that existed at its grant event. */
   allocationOutdated(clusterId: string, allocation: AllocationRecord | null): boolean {
     if (!allocation?.transaction_id) return false;
+    const tx = this.getTransaction(allocation.transaction_id);
+    if (!tx || canonical(allocation.plan_ref) !== canonical(tx.current_plan_ref) || !allocation.plan_ref) return true;
     const events = this.get(
       `SELECT
          (SELECT MAX(seq) FROM events
@@ -1906,7 +2074,8 @@ export class ClusterStore {
       'EXISTS (SELECT 1 FROM allocations a WHERE a.transaction_id = t.id AND a.status=\'ACTIVE\')',
       // A delegated parent is always an aggregation task, not a Worker task;
       // accepting its last child must not revive a preexisting Worker grant.
-      "NOT EXISTS (SELECT 1 FROM transactions c WHERE c.cluster_id=t.cluster_id AND c.parent_transaction_id=t.id)",
+      "json_extract(t.current_plan_ref,'$.prepared_revision') IS NOT NULL",
+      "EXISTS (SELECT 1 FROM plans p WHERE p.transaction_id=t.id AND p.prepared_revision=json_extract(t.current_plan_ref,'$.prepared_revision') AND json_extract(p.data,'$.execution')='worker')",
       // Dependencies gate Worker admission. Every dependency must be ACCEPTED;
       // pending, rejected and failed dependencies all keep the dependent queued.
       `NOT EXISTS (
@@ -1933,32 +2102,18 @@ export class ClusterStore {
    * parent is waiting for its Auditor, not eligible for another aggregation.
    */
   aggregatableParents(clusterId: string, nodeId: string, { limit = 64 }: { limit?: number | undefined } = {}): AggregatableParent[] {
-    return this.all(
-      `SELECT p.id AS parent_id, COUNT(*) AS children
-         FROM transactions c JOIN transactions p ON p.id = c.parent_transaction_id
-        WHERE c.cluster_id=? AND p.node_id=? AND p.status='READY'
-        GROUP BY p.id
-       HAVING SUM(CASE WHEN c.status='ACCEPTED' THEN 0 ELSE 1 END) = 0
-        ORDER BY p.created, p.id LIMIT ?`, clusterId, nodeId, integer(limit, 1, 500, 'limit'),
-    ).map(r => ({ parent_id: textOf(r.parent_id, 'transactions.parent_id'), children: numOf(r.children, 'transactions.children') }));
+    const parents = this.transactionsInSubtree(clusterId, nodeId, { status: 'READY' }).filter(parent => parent.node_id === nodeId);
+    return parents.flatMap(parent => {
+      const children = this.currentChildrenOfTransaction(clusterId, parent.id);
+      return children.length > 0 && children.every(child => child.status === 'ACCEPTED') ? [{ parent_id: parent.id, children: children.length }] : [];
+    }).slice(0, integer(limit, 1, 500, 'limit'));
   }
 
-  /**
-   * Transactions that have delegated children still unfinished: their own work must
-   * not be executed or validated while the delegation they handed out is open.
-   */
+  /** Pending children of the actual prepared assignment generation. */
   parentsAwaitingChildren(clusterId: string, nodeId: string | null = null): string[] {
-    const where = ['c.cluster_id=?', "c.status NOT IN ('ACCEPTED','CANCELLED','SUPERSEDED','FAILED')",
-      "p.status NOT IN ('ACCEPTED','CANCELLED','SUPERSEDED','FAILED')"];
-    const args: BindValue[] = [clusterId];
-    if (nodeId) {
-      where.push('p.node_id=?');
-      args.push(nodeId);
-    }
-    return this.all(
-      `SELECT DISTINCT p.id AS parent_id FROM transactions c JOIN transactions p ON p.id = c.parent_transaction_id
-        WHERE ${where.join(' AND ')}`, ...args,
-    ).map(row => textOf(row.parent_id, 'transactions.parent_id'));
+    return this.transactionsInSubtree(clusterId, nodeId).filter(parent => !['ACCEPTED', 'CANCELLED', 'SUPERSEDED', 'FAILED'].includes(parent.status)
+      && (!nodeId || parent.node_id === nodeId)
+      && this.currentChildrenOfTransaction(clusterId, parent.id).some(child => child.status !== 'ACCEPTED')).map(parent => parent.id);
   }
 
   /** Deliveries in one cluster, with the sender node and the recipient's node. */
@@ -2657,10 +2812,11 @@ export class ClusterStore {
 
   insertAudit(audit: AuditInsert): AuditRecord | null {
     this.run(
-      `INSERT INTO audits(id,cluster_id,transaction_id,node_id,kind,target_revision,decision,auditor_agent_id,evidence,created,decided)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO audits(id,cluster_id,transaction_id,node_id,kind,target_revision,decision,auditor_agent_id,evidence,created,decided,plan_ref,validation_ref)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       audit.id, audit.cluster_id, audit.transaction_id, audit.node_id, audit.kind, audit.target_revision,
       audit.decision ?? 'PENDING', audit.auditor_agent_id ?? null, j(audit.evidence ?? {}), this.now(), null,
+      audit.plan_ref ? j(audit.plan_ref) : null, audit.validation_ref ? j(audit.validation_ref) : null,
     );
     return one(this.get('SELECT * FROM audits WHERE id=?', audit.id), decodeAudit);
   }
@@ -2813,11 +2969,12 @@ const AGENT_JSON_COLUMNS: Partial<Record<keyof AgentPatch, true>> = {
 const TRANSACTION_JSON_COLUMNS: Partial<Record<keyof TransactionPatch, true>> = {
   inputs: true, constraints: true, acceptance_criteria: true, needs: true,
   capabilities: true, result: true, validation: true,
+  current_plan_ref: true, current_result_ref: true, current_validation_ref: true,
 };
 
 /** Which allocation keys carry JSON that must be encoded before binding. */
 const ALLOCATION_JSON_COLUMNS: Partial<Record<keyof AllocationPatch, true>> = {
-  write_scope: true, write_scope_canonical: true, capabilities: true,
+  write_scope: true, write_scope_canonical: true, capabilities: true, plan_ref: true,
 };
 
 /** The cluster keys `updateCluster` builds its SET clause from, in order. */
@@ -2852,12 +3009,15 @@ const TRANSACTION_COLUMNS = [
   ['owner_management_id', 'owner_management_id'], ['parent_transaction_id', 'parent_transaction_id'],
   ['result_staged_epoch', 'result_staged_epoch'], ['result_staged_turn', 'result_staged_turn'],
   ['result_staged_agent', 'result_staged_agent'],
+  ['current_plan_ref', 'current_plan_ref'], ['current_result_ref', 'current_result_ref'],
+  ['current_validation_ref', 'current_validation_ref'],
 ] as const satisfies readonly (readonly [keyof TransactionPatch, string])[];
 
 /** The allocation keys `updateAllocation` builds its SET clause from, in order. */
 const ALLOCATION_COLUMNS = [
   ['status', 'status'], ['write_scope', 'write_scope'], ['write_scope_canonical', 'write_scope_canonical'],
   ['capabilities', 'capabilities'], ['transaction_id', 'transaction_id'], ['agent_id', 'agent_id'],
+  ['plan_ref', 'plan_ref'],
 ] as const satisfies readonly (readonly [keyof AllocationPatch, string])[];
 
 /** The group keys `updateGroup` builds its SET clause from, in order. */
@@ -2946,6 +3106,25 @@ function decodeAgent(row: Row): AgentRecord {
   };
 }
 
+function decodeRef<T>(value: SQLOutputValue | undefined): T | null {
+  return value === null || value === undefined ? null : JSON.parse(textOf(value, 'reference')) as T;
+}
+
+function decodeMemberInput(row: Row): MemberInputRecord {
+  return {
+    id: textOf(row.id, 'member_inputs.id'), cluster_id: textOf(row.cluster_id, 'member_inputs.cluster_id'),
+    agent_id: textOf(row.agent_id, 'member_inputs.agent_id'), session_id: textOf(row.session_id, 'member_inputs.session_id'),
+    delivery_key: textOf(row.delivery_key, 'member_inputs.delivery_key'),
+    kind: oneOf(row.kind, ['initial', 'revision', 'wake'], 'member_inputs.kind'),
+    author: jsonOf(p(row.author), 'member_inputs.author'), plan_ref: decodeRef<PlanRef>(row.plan_ref),
+    previous_plan_ref: decodeRef<PlanRef>(row.previous_plan_ref), binding: jsonOf(p(row.binding), 'member_inputs.binding'),
+    content: textOf(row.content, 'member_inputs.content'), native_message_id: textOf(row.native_message_id, 'member_inputs.native_message_id'),
+    native_seq: numOrNull(row.native_seq, 'member_inputs.native_seq'),
+    status: oneOf(row.status, ['PENDING', 'ADMITTED'], 'member_inputs.status'),
+    created: numOf(row.created, 'member_inputs.created'), admitted: numOrNull(row.admitted, 'member_inputs.admitted'),
+  };
+}
+
 function decodeTransaction(row: Row): TransactionRecord {
   return {
     id: textOf(row.id, 'transactions.id'),
@@ -2968,6 +3147,9 @@ function decodeTransaction(row: Row): TransactionRecord {
     result_revision: numOrNull(row.result_revision, 'transactions.result_revision'),
     validation: objectOrNull(p(row.validation), 'transactions.validation'),
     plan_approved_revision: numOrNull(row.plan_approved_revision, 'transactions.plan_approved_revision'),
+    current_plan_ref: decodeRef<PlanRef>(row.current_plan_ref),
+    current_result_ref: decodeRef<ResultRef>(row.current_result_ref),
+    current_validation_ref: decodeRef<ValidationRef>(row.current_validation_ref),
     result_staged_epoch: row.result_staged_epoch === undefined || row.result_staged_epoch === null
       ? null : numOf(row.result_staged_epoch, 'transactions.result_staged_epoch'),
     result_staged_turn: row.result_staged_turn === undefined || row.result_staged_turn === null
@@ -2988,6 +3170,7 @@ function decodeAllocation(row: Row): AllocationRecord {
     node_id: textOf(row.node_id, 'allocations.node_id'),
     agent_id: textOf(row.agent_id, 'allocations.agent_id'),
     transaction_id: textOrNull(row.transaction_id, 'allocations.transaction_id'),
+    plan_ref: decodeRef<PlanRef>(row.plan_ref),
     capabilities: validateCapabilities(p(row.capabilities), 'allocations.capabilities'),
     write_scope: stringList(p(row.write_scope), 'allocations.write_scope'),
     write_scope_canonical: stringList(p(row.write_scope_canonical ?? '[]'), 'allocations.write_scope_canonical'),
@@ -3044,6 +3227,8 @@ function decodeAudit(row: Row): AuditRecord {
     auditor_agent_id: textOrNull(row.auditor_agent_id, 'audits.auditor_agent_id'),
     kind: oneOf(row.kind, AUDIT_KINDS, 'audits.kind'),
     target_revision: numOrNull(row.target_revision, 'audits.target_revision'),
+    plan_ref: decodeRef<PlanRef>(row.plan_ref),
+    validation_ref: decodeRef<ValidationRef>(row.validation_ref),
     decision: oneOf(row.decision, AUDIT_DECISIONS, 'audits.decision'),
     evidence: jsonOf(p(row.evidence), 'audits.evidence'),
     created: numOf(row.created, 'audits.created'),
