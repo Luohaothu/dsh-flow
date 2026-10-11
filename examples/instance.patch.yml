@@ -49,9 +49,8 @@
     mode: workspace-write
     workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
 
-# Cluster sessions run unattended: the shipped workspace-write preset keeps
-# approval `ask`, which no cluster agent can answer, so the deployment pins an
-# extra preset with the same sandbox and `never`, and names it as the default.
+# Ordinary sessions keep native permission modes and interactive approval.
+# Flow pins approval `never` only inside its managed member sessions.
 - id: permission
   config:
     presets:
@@ -61,13 +60,10 @@
       workspace-write:
         sandbox: workspace-write
         approval: ask
-      workspace-write-unattended:
-        sandbox: workspace-write
-        approval: never
       danger-full-access:
         sandbox: danger-full-access
         approval: never
-    defaultPreset: workspace-write-unattended
+    defaultPreset: workspace-write
 
 - id: dsh-flow
   config:

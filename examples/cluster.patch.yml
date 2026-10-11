@@ -2,7 +2,7 @@
 #
 # Layers on top of a shipped profile template (web / headless). It pins:
 #   * every cluster model request to the local OpenAI-compatible Qwen service,
-#   * the file-effect boundary to workspace-write with approval never,
+#   * the file-effect boundary to workspace-write; Flow members alone use approval never,
 #   * the cluster composition itself: the control plane, its Remote face and the
 #     /agent-team command — main-session ownership and read-only observation.
 #
@@ -61,9 +61,8 @@
     mode: workspace-write
     workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
 
-# Cluster sessions run unattended: the shipped workspace-write preset keeps
-# approval `ask`, which no cluster agent can answer, so the deployment pins an
-# extra preset with the same sandbox and `never`, and names it as the default.
+# Ordinary sessions keep native permission modes and interactive approval.
+# Flow pins approval `never` only inside its managed member sessions.
 - id: permission
   config:
     presets:
@@ -73,13 +72,10 @@
       workspace-write:
         sandbox: workspace-write
         approval: ask
-      workspace-write-unattended:
-        sandbox: workspace-write
-        approval: never
       danger-full-access:
         sandbox: danger-full-access
         approval: never
-    defaultPreset: workspace-write-unattended
+    defaultPreset: workspace-write
 
 - insert:
     - id: dsh-flow

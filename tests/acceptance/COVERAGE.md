@@ -62,6 +62,7 @@ pnpm run accept:mock --case recovery
 | 命令回执绑定身份与请求，预算转移、结算和嵌套事务具有原子性 | [ledger-command-regression.test.ts](../unit/ledger-command-regression.test.ts)、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) |
 | 通信先验证全部目标，再原子记录消息和投递；flush 后确认收取；重试不重复投递 | [communication-regression.test.ts](../unit/communication-regression.test.ts)、`tests/unit/cluster.*.test.ts` 的消息持久化窗口测试；原生 recovery 场景检查接收方 Session 中的消息次数 |
 | Worker 工具由 capability 和授权范围约束；权限拒绝不能写文件或创建分配 | [core.test.ts](../unit/core.test.ts)、原生 `F-permission`、`N-missing-capability`、`N-identity`；声明写范围不等于操作系统文件锁 |
+| 普通会话使用三个原生权限模式及 `workspace-write / ask` 默认；只有团队成员采用 `never`，冷恢复保持策略和工作区沙箱 | 原生 `N-permission-rpc` 检查实际目录与普通会话日志；`N0`、`N-scopes` 检查 Worker 与三类管理角色；`N-default-compaction` 检查冷恢复 |
 | 原生事件被动计量；未知值保留，重放幂等；工具额度与副作用独立恢复 | 原生用量投影与默认压缩组合测试、工具预算与恢复单元测试 |
 | 取消、重启和卸载使失效身份失去执行权；依赖未就绪或恢复失败时不发布服务 | [lifecycle-regression.test.ts](../unit/lifecycle-regression.test.ts)、`tests/unit/cluster.*.test.ts`、原生 recovery 场景 |
 | 查询按域过滤后分页，按 id 可读完整证据；非法访问被拒绝 | `tests/unit/cluster.*.test.ts` 的 query、paging、domain 测试；页面 `authenticated-observer-route` |

@@ -71,6 +71,13 @@ export function apply(ctx: Context, config: Config): void {
     const task = (async () => {
       try {
         if (closed) throw new Error('native observer disposed');
+        if (operation === 'flush-session') {
+          const session = ctx.sessions.get(SessionId(requiredString(message.sessionId, 'fixture session id')));
+          if (!session) throw new Error('fixture session is not live');
+          await ctx.sessions.flush(session);
+          process.send?.({ nativeObserver: true, requestId, ok: true, value: { flushed: true } });
+          return;
+        }
         if (operation === 'ownership') {
           // No Flow database record or owning driver claims this fixture. The
           // immutable composition identity must protect it independently.
@@ -121,6 +128,7 @@ export function apply(ctx: Context, config: Config): void {
           const cold = ctx.sessions.get(SessionId(sessionId)) === undefined;
           const saved = await ctx.sessionController.inspect(SessionId(sessionId));
           let checkpointInHistory = false;
+          let approvalPolicy: unknown;
           const outcome = await runTurn(ctx, {
             agent, role: agent.role, prompt: 'NATIVE-RESUMED-COMPACTION: confirm the saved checkpoint is available and answer RESUMED-COMPACTION-OK.',
             model: runtime.modelFor(agent), allowedTools: [], globalTools: [],
@@ -128,6 +136,7 @@ export function apply(ctx: Context, config: Config): void {
             flow: runtime,
             onAgentReady(live) {
               checkpointInHistory = JSON.stringify(live.session.deriveMessages()).includes('<compacted-summary>');
+              approvalPolicy = asObject(live.session.snapshotEvents().filter(event => event.type === 'approval/policy').at(-1)?.data)?.policy;
             },
           });
           const settled = runtime.store.usageSummary(agent.cluster_id);
@@ -135,6 +144,7 @@ export function apply(ctx: Context, config: Config): void {
           await runtime.replayNativeUsage();
           process.send?.({ nativeObserver: true, requestId, ok: true, value: {
             cold, checkpoint_in_history: checkpointInHistory,
+            approval_policy: approvalPolicy,
             saved_summaries: saved.events.filter(event => event.type === 'compaction/summary').length,
             final_text: outcome.finalText, native_seq: outcome.native_seq,
             cursor: runtime.store.nativeUsageCursor(sessionId),
@@ -213,6 +223,10 @@ export function apply(ctx: Context, config: Config): void {
               source: { kind: 'native-test' },
             }));
             await ordinary.agent.whenIdle();
+            // The caller may immediately resume this fixture through HTTP.
+            // Publish the cold identity only after its previous owner closes.
+            await ordinary.dispose();
+            disposed = true;
             process.send?.({ nativeObserver: true, requestId, ok: true, value: { session_id: ordinary.agent.id, ordinary_tools: ordinaryTools, flow_compaction_backends: [...ctx.registry.values()].filter(runtime => runtime.callback.name === 'BasicCompactionEngine').flatMap(runtime => [...runtime.fibers]).filter(fiber => { const owner = scopeOf(fiber.ctx); return owner !== undefined && typeof owner === 'object' && 'id' in owner && typeof owner.id === 'string' && ctx.flow.isTeamAgentSession(owner.id); }).length } });
           } else {
             process.send?.({nativeObserver:true,requestId,ok:true,value:{ordinary_tools:ordinaryTools}});

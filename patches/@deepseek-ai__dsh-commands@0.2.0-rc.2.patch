@@ -28,7 +28,7 @@ index 0f8cefd..ae97f6a 100644
            },
          },
 -      ],
-+      {name: 'submissionId', wire: 'submissionId', source: 'json', codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
++      {name: 'submissionId', wire: 'submissionId', source: 'json', acceptsUndefined: true, codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
 +],
        cancellation: { parameter: 'signal' },
        result: {
@@ -68,7 +68,7 @@ index 5f4d14e..893741c 100644
            },
          },
 -      ],
-+      {name: 'submissionId', wire: 'submissionId', source: 'json', codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
++      {name: 'submissionId', wire: 'submissionId', source: 'json', acceptsUndefined: true, codec: {mode: 'strict', typeSymbol: '@deepseek-ai/dsh-commands#commands/execute:submissionId', create: () => z.string().min(1).max(128).optional()}},
 +],
        cancellation: { parameter: 'signal' },
        result: {

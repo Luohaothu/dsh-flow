@@ -223,6 +223,8 @@ test('N0: a native single Worker sums through a real tool call and answers from 
   assert.ok(file, 'the Worker session must exist on disk');
   const read = readSessionEvents(file);
   assert.equal(read.state, 'READ', `the session must be readable: ${read.reason ?? ''}`);
+  assert.equal(asObject(read.events.filter(event => event.type === 'approval/policy').at(-1)?.data)?.policy, 'never', 'the Worker uses session-local unattended approval');
+  assert.equal(asObject(read.events.filter(event => event.type === 'sandbox/mode').at(-1)?.data)?.mode, 'workspace-write', 'unattended execution retains the workspace sandbox');
   const initial = read.events.find(event => event.type === 'user/message');
   assert.equal(asObject(asObject(initial?.data)?.source)?.kind, 'user', 'the initial Worker task is a native user prompt');
   const verdict = inspectNativeSumRoundTrip(read.events);
@@ -596,7 +598,7 @@ function txCount(events: readonly SqlRow[], type: string): number {
 }
 
 /** Fixture IPC is deliberately separate from the eight-method Flow service. */
-async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session' | 'resume-compacted' | 'ownership', params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session' | 'resume-compacted' | 'ownership' | 'flush-session', params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const child = host.child;
   assert.ok(child?.connected, 'the real host child must be connected');
   const requestId = randomUUID();
@@ -634,6 +636,52 @@ async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' |
   child.send({ ...params, nativeObserver: true, requestId, operation });
   return promise;
 }
+
+test('N-permission-rpc: native permission commands accept an omitted submission intent over HTTP', async t => {
+  const { host, layout, mock } = await harness(t, { name: 'permission-rpc' });
+  const ordinary = await observerRequest(host, 'ordinary');
+  const sessionId = requiredString(ordinary.session_id, 'ordinary permission session');
+  const url = await host.waitForWebUrl();
+  const admission = await fetch(url, { redirect: 'manual' });
+  const cookie = admission.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+  const catalogResponse = await fetch(new URL('/api/permissionPresets/catalog', url), {
+    method: 'POST', headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: 'permissionPresets/catalog', payload: { args: {} } }),
+  });
+  const catalog = asObject(asObject(asObject(await catalogResponse.json())?.result)?.value);
+  assert.equal(catalog?.defaultPreset, 'workspace-write');
+  assert.deepEqual(asArray(catalog?.options)?.map(option => asObject(option)?.value), ['read-only', 'workspace-write', 'danger-full-access']);
+  const ordinaryFile = findSessionFile(join(layout.home, 'sessions'), sessionId);
+  assert.ok(ordinaryFile);
+  const ordinaryEvents = readSessionEvents(ordinaryFile).events;
+  assert.equal(asObject(ordinaryEvents.filter(event => event.type === 'permission/preset').at(-1)?.data)?.preset, 'workspace-write');
+  assert.equal(asObject(ordinaryEvents.filter(event => event.type === 'approval/policy').at(-1)?.data)?.policy, 'ask', 'ordinary sessions keep interactive approval');
+  const requestsBefore = mock.requests.length;
+  const execute = async (preset: string, intent: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+    const response = await fetch(new URL('/api/commands/execute', url), {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: 'commands/execute',
+        payload: { args: { agentId: sessionId, line: `/permission ${preset}`, submittedAttachments: [], ...intent } } }),
+    });
+    assert.equal(response.status, 200);
+    return asObject(asObject(await response.json())?.result) ?? {};
+  };
+  for (const [preset, intent] of [['read-only', {}], ['workspace-write', { submissionId: 'permission-intent' }]] as const) {
+    const result = await execute(preset, intent);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(asObject(asObject(result.value)?.result)?.kind, 'success');
+    await observerRequest(host, 'flush-session', { sessionId });
+    const file = findSessionFile(join(layout.home, 'sessions'), sessionId);
+    assert.ok(file);
+    const events = readSessionEvents(file).events;
+    assert.equal(asObject(events.filter(event => event.type === 'permission/preset').at(-1)?.data)?.preset, preset);
+    assert.equal(events.filter(event => event.type === 'command/run').length, events.filter(event => event.type === 'command/done').length);
+  }
+  const invalid = await execute('read-only', { submissionId: null });
+  assert.equal(invalid.ok, false, 'optional intent still rejects a JSON null value');
+  assert.equal(asObject(invalid.error)?.code, 'gateway/input-invalid');
+  assert.equal(mock.requests.length, requestsBefore, 'permission changes do not invoke the model');
+});
 
 test('N-ownership: live and cold Flow composition refuses ordinary execution without a driver',async t=>{
   const {host,mock}=await harness(t,{name:'ownership'});
@@ -736,6 +784,11 @@ test('N-scopes: ordinary Agents receive team lifecycle tools while role tools st
     });
   for (const role of Object.keys(expected)) {
     const sessionId = requiredString(agents.find(agent => agent.role === role)?.session_id, `${role} session id`);
+    const file = findSessionFile(join(layout.home, 'sessions'), sessionId);
+    assert.ok(file);
+    const events = readSessionEvents(file).events;
+    assert.equal(asObject(events.filter(event => event.type === 'approval/policy').at(-1)?.data)?.policy, 'never', `${role} alone uses unattended approval`);
+    assert.equal(asObject(events.filter(event => event.type === 'sandbox/mode').at(-1)?.data)?.mode, 'workspace-write');
     const requests = observed.filter(envelope => envelope?.session_id === sessionId);
     assert.ok(requests.length > 0, `${role} made an actual provider request`);
     for (const request of requests) {
@@ -844,6 +897,7 @@ test('N-default-compaction: the native Loader composition installs one default b
   const sessionId = requiredString(worker?.session_id, 'compacted Worker session');
   const resumed = await observerRequest(host, 'resume-compacted', { sessionId });
   assert.equal(resumed.cold, true, 'the completed Worker handle has released its live Session');
+  assert.equal(resumed.approval_policy, 'never', 'cold resume retains session-local unattended approval');
   assert.equal(resumed.checkpoint_in_history, true, 'native resume restores the durable compacted checkpoint into effective history');
   assert.ok(typeof resumed.saved_summaries === 'number' && resumed.saved_summaries > 0);
   assert.equal(resumed.final_text, 'RESUMED-COMPACTION-OK', 'the same compacted Session completes a later native request');

@@ -104,6 +104,14 @@ description: 启动请求、部署默认值、预算和运行限制的实际优�
 
 模型与能力参数见 [智能体配置参数](/configuration/agents)。修改部署示例后，可按[开发环境搭建](/development/setup#_4-检查模型与覆盖配置)使用 `--dump-config` 检查合并后的配置。
 
+## 会话权限与无人值守
+
+部署示例的普通会话只提供 DSH 原生的“仅可查看”“工作区内修改”和“完全权限”，默认“工作区内修改”，审批策略为 `ask`。普通会话的模式由用户通过原生权限菜单选择。
+
+Flow 仅在其成员 Agent 的执行入口调用 DSH 原生审批策略接口，将成员会话的 `approval/policy` 设为 `never`；新建和恢复均检查该策略，不修改主会话或全局默认值。该值禁用审批请求，需要审批的操作由 DSH 自动拒绝。沙箱继续按 DSH 会话策略执行，部署默认是 `workspace-write`。团队角色、工具能力与分配范围仍各自约束操作。
+
+不再定义全局 `workspace-write-unattended` 预设。成员会话的工作区沙箱与 `never` 组合可由 DSH 显示为“自定义”当前状态，普通会话的菜单不会因此增加一个模式。
+
 ## 源码依据
 
 [配置与合并](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/config.ts)、[输入校验](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/validation.ts)、[协议默认值](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts)、[预算账本](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/budget.ts)、[实际调度与计数](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/cluster.ts)。

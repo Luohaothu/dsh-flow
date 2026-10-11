@@ -8,10 +8,10 @@
       "name": "@deepseek-ai/dsh-api-remotes",
       "version": "0.2.0-rc.2",
       "patch": "patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
-      "patch_sha256": "9605b896e16786179728010d1a962ed56e7108b965e3f82eae6825104f77687e",
+      "patch_sha256": "38a0341e5d65133a1e793d93df95b1b9aa023c6f2bffcf958ec7a2d8ff1b35bd",
       "package_json_sha256": "83e8ebc26265b204cd56d19d77ac0cbd08731650f2850d189f8806047afb5e84",
       "entries": {
-        "lib/client.js": "3d389b7043541ae4202f03532d32a7a60c102499139d265ee6f4db03bd7a243e",
+        "lib/client.js": "d96693d7ac73ee4b34462584f870622a0d2f121e140137ac992f1797060cd847",
         "lib/index.js": "cec4c600bf45db5d59941bd89203a656a31a5d8dc1903822b7780b0e000aaec5",
         "lib/types/client/index.d.ts": "bc6a841c5fb40bcaff87b73087a47d16e31d539339a56fe8b3099f22f29af07d",
         "lib/types/index.d.ts": "defef2b5508361c76484ee00e9311df398c16f8bf693939e1508fb1299cb8e66"
@@ -183,13 +183,13 @@
       "name": "@deepseek-ai/dsh-commands",
       "version": "0.2.0-rc.2",
       "patch": "patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
-      "patch_sha256": "9e4ee15211b1c1d821690568a277cbbcf0747136cc5fadecda54578274da96a0",
+      "patch_sha256": "8f5d5a9dd0a87ad02f5e374f1f1123749cc04bb709f59b5dd180c3dbdb794fbe",
       "package_json_sha256": "c627cd7296b112ce4ecd97f562eb6c089d500a0493117008ef808938869f1056",
       "entries": {
         "lib/index.js": "f6abf9204749e8bf94817b685a7aadf9063e3ec6ebb8bbf4ac71c31ac83eaf2c",
-        "lib/typert.host.js": "dbf6080b13bf7ad2be02f8968e955f8537bf245f61c4a5fb343ef451192b9119",
+        "lib/typert.host.js": "8e38208420bc4ecc8144afa24c3eaa22f8c696e4a3339f12bcd4e453f16051bf",
         "lib/typert.remote-client.d.ts": "3535f2e0f363abca189cbdc03e4f34b31ef0a2bd464c355d3241dc1086b57718",
-        "lib/typert.remote-client.js": "3e4643258471bbd34ca3b717a97eb14c36fd540e6b7578de0b82676f4ba33494",
+        "lib/typert.remote-client.js": "bfc3cb03d6056339c86f8efd493f8bebc56f78c1000bb6211a3b42ac26482cb7",
         "lib/types/index.d.ts": "6a7f683adbe551d95668962c9bbf5748e096c7347bde5084a6fe530e03991077"
       }
     },

@@ -49,6 +49,7 @@ test('installed api-remotes aggregate preserves command intent and cold observat
     assert.equal(execute.scope?.context,'agent');assert.equal(execute.scope?.wire,'agentId');
     assert.equal(execute.cancellation?.parameter,'signal');
     const intent=execute.parameters[3]!.codec;assert.ok('create' in intent);
+    assert.equal(execute.parameters[3]!.acceptsUndefined,true,'JSON omits an undefined command intent');
     assert.equal(intent.create().parse(undefined),undefined);
     assert.equal(intent.create().parse('intent'),'intent');
     assert.throws(()=>intent.create().parse(new AbortController().signal));

@@ -67,3 +67,23 @@ DSH 直接依赖、peer 和生成期声明统一为精确版本 `0.2.0-rc.2`。�
 该轮原始脚本将字段选择标志 `projection: true` 误读为承载回执的对象，导致唯一一项读取检查误报失败。已修正为读取顶层 `evidence.native_tools`，以该轮真实响应新增回归测试，并在同一份不可变证据上复核全部原通过项与错误判定项；原报告、原生证据的 SHA256 一并保存在复核记录中，没有改写原失败报告。随后完整重跑的模型取消原正式任务并创建两个根任务草稿，偏离单工作单元要求；该重跑被停止并记为失败，不计入验收证据。[重跑记录](../../.artifacts/handoffs-artifact-2026-10-10T20-20-07-458Z/manual-review.json)。因此，本次接口兼容与已完成案例的证据成立，不宣称当前模型每次规划都能稳定完成。
 
 三个已完成/已复核的实际案例使用相同插件发布归档 SHA256：`8a0c2a51757d20cb27eeed865752e6c9bc95800a7857c404b4a1ca16cc0fc430`。每轮执行期间源码与构建指纹保持一致；案例间修订的是验收工具、案例配置和传输等待，Host/Client 发布字节一致。实际恢复案例包含 22 项检查；原生成员生命周期包含 49 次非标题模型请求，鉴权、稳定输入重试、活跃续接、回收与两次冷读取均通过。用户本地 `/Users/luohao/deepseek-harness` 的 `0.2.1-alpha.1` 检出及其原有修改没有被用于 rc2 验收或改写。
+
+## 权限菜单回归修复
+
+2026-10-11，用户发现原生权限菜单选择后不生效。实际 HTTP 重放确认 `commands/execute` 返回 `gateway/arguments-invalid`，原因为缺少 `submissionId`。迁移扩展的 codec 已允许该字段为 `undefined`，但 Host、Remote 与浏览器聚合接口声明漏标 `acceptsUndefined: true`，因此 JSON 省略可选字段时被 rc2 网关拒绝。三个声明同步修正，保持严格参数校验；没有恢复旧版网关补齐路径。
+
+新增真实宿主 HTTP 回归覆盖省略提交标识、显式提交标识、非法 `null` 值拒绝，以及权限日志落盘与命令开始/结束配对；权限切换不触发模型请求。测试夹具先关闭原会话持有者再公开冷会话 ID，避免 HTTP 恢复与异步销毁竞争。修复后冻结安装、构建、类型检查和 458 项单元/验收基础设施测试通过，完整原生接口验收增至 16 项，全部通过。
+
+当前 `flow-rc2` 实例已重启并实际验证“仅可查看”与“工作区内修改”切换，刷新后仍保持选中模式；最终停留在“工作区内修改”，模型仍为本地 oMLX `Qwen3.8-27B-4bit`。本次没有重新运行上文八个完整 mock 场景和实际模型团队案例，原记录仍对应各自运行时的依赖字节。更新后的 Provider 基线 SHA256 为 `50e78852f05cb2f1c4f49ac0eb928e3c240e4f037bbc4f8998f30e7b96b58523`。[本次验证记录](../../.artifacts/local-rc2/permission-fix-verification.json)、[界面截图](../../.artifacts/local-rc2/permission-fixed.jpg)。
+
+## 普通会话与团队审批策略隔离
+
+2026-10-11，移除实例、验收和网站下载配置中的全局 `workspace-write-unattended` 预设。普通会话只提供三个原生权限模式，默认 `workspace-write / ask`。团队成员在 `runTurn` 的新建与恢复入口通过 DSH 原生 `setApprovalPolicy` 固定会话级 `never`，不改全局默认与主会话，不放宽沙箱。该接口依赖固定为 `0.2.0-rc.2`。
+
+冻结安装、构建、类型和文档检查通过；单元/验收基础设施 459 项、原生契约 16 项全部通过。补充原生断言覆盖真实权限目录、普通 Agent 的 `ask`、Worker 与三个管理角色的 `never`、工作区沙箱和冷恢复。新单元回归覆盖重复恢复不增加策略事件、恢复前策略偏移重新固定，以及普通会话不受影响。完整 [smoke](../../.artifacts/smoke-20261011T035103Z-adcaa2/report.json)、[recovery](../../.artifacts/recovery-20261011T035103Z-8b9bbd/report.json)、[panel](../../.artifacts/panel-20261011T035103Z-4d7c6c/report.json) 场景均通过。
+
+本地 oMLX `Qwen3.8-27B-4bit` 的 [隔离实际案例](../../.artifacts/team-permission-omlx-2026-10-11T03-56-22-823Z/permission-omlx.json) 通过：普通 Agent 持久化审批策略为 `ask`；独立 Worker 保持 `workspace-write / never`，真实调用 `write`、`read`、`flow_sum` 和 `flow_transaction`，文件内容为 `OMLX-TEAM-PERMISSION-OK`，原生求和回执为 5，后续正式提交保存该值。该案例验证单 Worker 的工具与策略路径，不代表重新运行完整多角色业务审核。源码和构建指纹无漂移，加载的六个发布入口与构建一致，发布归档 SHA256 为 `c03628d0fa8fd8980951cb9d8dc09e63b34a4a3c8b63e66ceebcc769090d619e`。
+
+单元夹具起初缺少原生 `Session.append` 接口，已补齐后重跑。实际模型首轮使用未持久化的裸 Session 夹具，检查在模型案例开始前失败；第二轮完成了读写、求和与正式提交，但错误要求提交后还有独立的文本回答 5，而单 Worker 提交会结束本轮。两个失败报告保留，最终案例按真实原生回执和正式提交校验并完整重跑，没有改写原报告。
+
+当前界面实例 PID `33694`，地址 `http://127.0.0.1:18791/`，鉴权访问成功。旧当前会话通过原生菜单切回工作区修改；新会话及刷新后的默认值均为“工作区内修改”，菜单只剩三个原生选项。[本次总验证记录](../../.artifacts/local-rc2/team-permissions-verification.json)、[界面截图](../../.artifacts/local-rc2/native-permissions.jpg)。

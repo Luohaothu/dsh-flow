@@ -9,6 +9,7 @@
 import { MessageId, ReasoningEffortId, createUserMessage, lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm';
 
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic';
+import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval';
 
 import type { Context, Fiber } from '@deepseek-ai/cordis';
 import type { Agent, AgentHandle, AgentOptions } from '@deepseek-ai/dsh-agent';
@@ -489,6 +490,11 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
   });
 
   const setup = async (agentCtx: Context, nativeAgent: Agent): Promise<void> => {
+    // Only Flow-owned member execution is unattended. The native session
+    // policy is durable and is rechecked on resume; host defaults and sandbox
+    // choices remain owned by DSH, including ordinary interactive sessions.
+    const approval = nativeAgent.session.snapshotEvents().findLast(event => event.type === 'approval/policy');
+    if (approval?.data.policy !== 'never') setApprovalPolicy(nativeAgent.session, 'never');
     if (systemInstructions !== null) {
       // The agent scope is recreated on resume, while the native Session keeps
       // its system head. Registering identical instructions here retains them

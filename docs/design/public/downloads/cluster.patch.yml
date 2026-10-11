@@ -17,13 +17,11 @@
     mode: workspace-write
     workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
 
-# 新会话保持 workspace-write 沙箱，不请求审批；需审批的操作直接拒绝。
-# 该默认值也影响同一配置方案中的普通新会话。
+# 普通新会话使用原生工作区修改模式；团队成员会话由 Flow 单独禁用审批请求。
 - id: permission
   config:
     presets:
       read-only: { sandbox: read-only, approval: ask }
       workspace-write: { sandbox: workspace-write, approval: ask }
       danger-full-access: { sandbox: danger-full-access, approval: never }
-      workspace-write-unattended: { sandbox: workspace-write, approval: never }
-    defaultPreset: workspace-write-unattended
+    defaultPreset: workspace-write

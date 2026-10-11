@@ -548,7 +548,14 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       const id = sessionId;
       const events = sessionLogs.get(sessionId) ?? [];
       sessionLogs.set(sessionId, events);
-      const session = fromPartial<Session>({ id: sessionId, get seq() { return events.length; }, snapshotEvents: (fromSeq = 0) => events.slice(fromSeq) });
+      const session = fromPartial<Session>({
+        id: sessionId, get seq() { return events.length; }, snapshotEvents: (fromSeq = 0) => events.slice(fromSeq),
+        append<T extends keyof SessionEventMap>(type: T, data: SessionEventMap[T]) {
+          const event = fromAny<SessionEvent, object>({ type, data, time: Date.now(), seq: events.length });
+          events.push(event);
+          root.emit('session/event', session, event);
+        },
+      });
       let agentScope: FakeAgentScope | undefined;
       const fiber = root.plugin({
         name: `fake-agent-${id}-${state.turns.length}`,
