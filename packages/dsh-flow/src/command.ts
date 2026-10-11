@@ -69,7 +69,7 @@ export function apply(ctx: Context): void {
     if(!skill||!isUserInvocable(skill))fail('agent-team skill 不可用',503);
     return {...decision,messages:[...decision.messages,createUserMessage({content:[{type:'text',text:renderSkillContent(skill)}],source:{kind:'skill-invocation',name:'agent-team',form:'instructions'}})]};
   },true);
-  const submitting=new Map<string,Promise<{kind:'success';text:string}>>();
+  const submitting=new Map<string,{objective:string;promise:Promise<{kind:'success';text:string}>}>();
   ctx.effect(() => ctx.commands.register({
     definitionId: CommandDefinitionId('dsh-flow/agent-team'), name: 'agent-team',
     description: '智能体团队 skill：由主会话评估、创建和跟进团队',
@@ -79,24 +79,30 @@ export function apply(ctx: Context): void {
       const objective=invocation.rawInput.trim();
       if(!objective)return {kind:'error',text:'请描述希望团队完成的任务'};
       if(ctx.flow.isTeamAgentSession(invocation.agent.session.id))return {kind:'error',text:'请在主会话中使用 agent-team skill'};
-      const key=`${invocation.agent.session.id}:${invocation.commandId}`;
+      // RPC retries share the domain launch identity; every native command
+      // execution still has a unique run/done pairing in the V4 journal.
+      const launchId=invocation.submissionId ? `cmd-client-${invocation.submissionId}` : invocation.commandId;
+      const key=`${invocation.agent.session.id}:${launchId}`;
       const pending=submitting.get(key);
-      if(pending)return pending;
+      if(pending){
+        if(pending.objective!==objective)fail('同一提交标识不能用于不同需求',409);
+        return pending.promise;
+      }
       const task=(async()=>{
         const history=await ctx.sessionController.inspect(invocation.agent.session.id,invocation.signal);
         invocation.signal.throwIfAborted();
-        const existing=teamLaunches(history.events).find(launch=>launch.launch_id===invocation.commandId);
+        const existing=teamLaunches(history.events).find(launch=>launch.launch_id===launchId);
         if(existing&&existing.request.content[0]?.type==='text'&&existing.request.content[0].text!==`/agent-team ${objective}`)fail('同一提交标识不能用于不同需求',409);
         const request:UserMessage=existing?.request??createUserMessage({content:[{type:'text',text:`/agent-team ${objective}`},...invocation.attachments],source:{kind:'user'}});
         if(!existing) {
-          invocation.agent.session.append('flow/team-launch',{launch_id:invocation.commandId,request},{ignorable:true});
+          invocation.agent.session.append('flow/team-launch',{launch_id:launchId,request},{ignorable:true});
           await ctx.sessions.flush(invocation.agent.session);
         }
         const delivered=history.events.some(event=>event.type==='user/message'&&event.data.id===request.id||event.type==='agent/inbox/spliced'&&event.data.inserted.some(message=>message.id===request.id));
         if(!delivered)invocation.agent.followup(request);
         return {kind:'success' as const,text:'已提交团队需求，主会话将评估并创建团队'};
       })();
-      submitting.set(key,task);
+      submitting.set(key,{objective,promise:task});
       try{return await task;}finally{submitting.delete(key);}
     },
   }), 'dsh-flow: agent-team skill command');
@@ -146,7 +152,7 @@ export function apply(ctx: Context): void {
               if('error' in resolved)throw resolved.error;
               resolved.agent.followup(message);
               session=resolved.agent.session;
-            } else session?.append('user/message',message,{surfaceOp:'append'});
+            } else ctx.agents.get(sessionId)?.send(message,'next-turn',false);
             if(session)await ctx.sessions.flush(session);
             announced.set(key,signature);
           }

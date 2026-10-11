@@ -1,0 +1,13 @@
+diff --git a/lib/client.js b/lib/client.js
+index 07bb8cc..4fbb899 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -701,7 +701,7 @@ window.__ModuleLoader__.load({
+ 				name: "conversation.input.plan",
+ 				locale: NS,
+ 				inject: (sessionId) => ({ exitPlanMode: async () => {
+-					const result = await ctx.remote.commands.execute(sessionId, "/plan off", []);
++					const result = await ctx.remote.commands.execute(sessionId, "/plan off", [], void 0);
+ 					if (!result.ok) return `${result.error.message} (${result.error.code})`;
+ 					if (result.value === void 0) return "unknown command: /plan off";
+ 					return null;

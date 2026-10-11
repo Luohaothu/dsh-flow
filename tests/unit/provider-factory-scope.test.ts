@@ -31,7 +31,7 @@ function factoryProbe() {
     const EMPTY_FACTORY_SELECTION = {};
     const FactoryAncestryContext = {Provider:'ancestry'};
     const FactoryErrorBoundary='boundary',FactoryOccurrence='occurrence';
-    const react={useContext:()=>ancestors,useSyncExternalStore:(_subscribe,read)=>read()};
+    const react={useContext:()=>ancestors,useSyncExternalStore:(_subscribe,read)=>read(),useMemo:(read)=>read()};
     const react_jsx_runtime={Fragment:'fragment',jsx:(type,props)=>({type,props})};
     const _deepseek_ai_dsh_client_ui_slots={SlotOwnershipError:Error};
     const useHost=()=>({getFactoryVersion:()=>1,factoryOf:()=>({scope})});

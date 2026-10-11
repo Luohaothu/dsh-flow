@@ -542,12 +542,13 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     }
     signal?.throwIfAborted();
     handle = resumeSession
-      ? await ctx.agents.resume({ resumeSessionId: SessionId(agent.session_id), agentOptions, setup })
+      ? await ctx.agents.resume({ resumeSessionId: SessionId(agent.session_id), agentOptions, setup, ...(signal ? { signal } : {}) })
       : await ctx.agents.create({
         sessionId: SessionId(agent.session_id),
-        meta: { ...(cwd ? { cwd } : {}), ...nativeSessionParent(flow.store, agent) },
+        meta: { ...(cwd ? { cwd } : {}), ...nativeSessionParent(flow.store, agent), agentPreset: 'dsh-flow/member' },
         agentOptions,
         setup,
+        ...(signal ? { signal } : {}),
       });
   } catch (caught) {
     disposeSession();

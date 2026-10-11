@@ -1,5 +1,5 @@
 diff --git a/lib/client.js b/lib/client.js
-index 3622a98f843e49c11e1ade653346a77bb2111a4d..30b2e1660da2f3d3448b7470324a26f9a31f8980 100644
+index 1ae21e3..6e07b48 100644
 --- a/lib/client.js
 +++ b/lib/client.js
 @@ -421,6 +421,7 @@ window.__ModuleLoader__.load({
@@ -31,6 +31,15 @@ index 3622a98f843e49c11e1ade653346a77bb2111a4d..30b2e1660da2f3d3448b7470324a26f9
  			/** Shared low-water target of the running jump loop; null when no jump is paging. */
  			jumpTargetSeq = null;
  			/** The running jump loop's completion, shared by retargeting callers. */
+@@ -1846,7 +1850,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the admission result.
+ 			*/
+ 			async command(line) {
+-				const result = await this.remote.commands.execute(this.sessionId, line, []);
++				const result = await this.remote.commands.execute(this.sessionId, line, [], undefined);
+ 				if (!result.ok) return result;
+ 				return {
+ 					ok: true,
 @@ -1854,10 +1858,11 @@ window.__ModuleLoader__.load({
  				};
  			}
@@ -151,10 +160,27 @@ index 3622a98f843e49c11e1ade653346a77bb2111a4d..30b2e1660da2f3d3448b7470324a26f9
  				} catch (error) {
  					reference.release();
 diff --git a/lib/index.js b/lib/index.js
-index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425cc1e4952a 100644
+index 3b8507e..57c3ca9 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -217,6 +217,7 @@ var ApiSessionAgentController = class {
+@@ -124,6 +124,7 @@ var ApiSessionPresetConflict = class extends Error {
+ * @returns whether subagent routing owns the Session identity.
+ */
+ function hasApiSessionSubagentOwner(ctx, session, agent) {
++	if (session.header.agentPreset === "dsh-flow/member" || ctx.sessionController?.sessionDriver(session.header.id)) return true;
+ 	if (session.header.origin === "subagent") return true;
+ 	const parentId = session.header.parentSession;
+ 	if (parentId === void 0 || agent === void 0) return false;
+@@ -136,7 +137,7 @@ function hasApiSessionSubagentOwner(ctx, session, agent) {
+ * @returns a stable Session-domain failure.
+ */
+ function apiSessionSubagentOwnershipError(sessionId) {
+-	return new RemoteError("session/agent-busy", `session "${sessionId}" is owned by subagent routing`, { reason: "use subagent delivery for this child session" });
++	return new RemoteError("session/agent-busy", `session "${sessionId}" is owned by its dedicated execution driver`, { reason: "use the owning session driver" });
+ }
+ /**
+ * Inspect one cold Session without repairing, resuming, or publishing it.
+@@ -217,6 +218,7 @@ var ApiSessionAgentController = class {
  		return this.resolve(observation.header.id, observation);
  	}
  	async resolve(sessionId, observation) {
@@ -162,7 +188,79 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		const live = this.liveAgent(sessionId);
  		if (live !== void 0) return live;
  		const attached = this.ctx.sessions.get(sessionId);
-@@ -1518,7 +1519,7 @@ var SessionHistoryController = class {
+@@ -251,6 +253,7 @@ var ApiSessionAgentController = class {
+ 	* @returns the matching live ordinary Agent.
+ 	*/
+ 	async ensureSession(sessionId, cwd, checkPersistedIdentity, presetId) {
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) throw new ApiSessionSubagentOwnership(sessionId);
+ 		let creation = this.creations.get(sessionId);
+ 		if (creation === void 0) {
+ 			creation = this.createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId).catch((error) => {
+@@ -357,6 +360,7 @@ var ApiSessionAgentController = class {
+ 	*/
+ 	async composeAgent(presetId) {
+ 		const presets = this.ctx.get("agentPresets");
++		if (presets === void 0 && presetId !== void 0) throw new Error(`agent preset "${presetId}" provider is unavailable`);
+ 		if (presets === void 0) return { setup: (_agentCtx, agent) => {
+ 			this.installSelection(agent);
+ 		} };
+@@ -400,6 +404,7 @@ var ApiSessionAgentController = class {
+ 		if (observation.header.id !== sessionId || observation.header.cwd === void 0) throw new ApiSessionNotFound(`session "${sessionId}" not found`);
+ 		if (hasApiSessionSubagentOwner(this.ctx, { header: observation.header }, void 0)) throw new ApiSessionSubagentOwnership(sessionId);
+ 		const composition = await this.composeAgent(this.presetForObservation(observation));
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) throw new ApiSessionSubagentOwnership(sessionId);
+ 		const published = this.ctx.sessions.get(sessionId);
+ 		const live = this.ctx.agents.get(sessionId);
+ 		if (published !== void 0 && hasApiSessionSubagentOwner(this.ctx, published, live)) throw new ApiSessionSubagentOwnership(sessionId);
+@@ -410,6 +415,7 @@ var ApiSessionAgentController = class {
+ 		})).agent;
+ 	}
+ 	async createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId) {
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) throw new ApiSessionSubagentOwnership(sessionId);
+ 		const attached = this.ctx.sessions.get(sessionId);
+ 		const live = this.ctx.agents.get(sessionId);
+ 		if (attached !== void 0 && hasApiSessionSubagentOwner(this.ctx, attached, live)) throw new ApiSessionSubagentOwnership(sessionId);
+@@ -427,6 +433,7 @@ var ApiSessionAgentController = class {
+ 				const storedPreset = this.presetForObservation(observation);
+ 				this.assertPresetUnchanged(sessionId, presetId, storedPreset);
+ 				const composition = await this.composeAgent(storedPreset);
++				if (this.ctx.sessionController?.sessionDriver(sessionId)) throw new ApiSessionSubagentOwnership(sessionId);
+ 				return (await this.ctx.agents.resume({
+ 					resumeSessionId: sessionId,
+ 					agentOptions: this.agentOptions(),
+@@ -447,6 +454,7 @@ var ApiSessionAgentController = class {
+ 			throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error });
+ 		}
+ 		const composition = await this.composeAgent(presetId);
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) throw new ApiSessionSubagentOwnership(sessionId);
+ 		return (await this.ctx.agents.create({
+ 			sessionId,
+ 			agentOptions: this.agentOptions(),
+@@ -686,6 +694,7 @@ var SessionCommandController = class {
+ 	async create(request) {
+ 		if (request.workspaceId !== void 0 && request.cwd !== void 0) throw new RemoteError("gateway/bad-request", "session.create accepts workspaceId or cwd, not both", {});
+ 		const sessionId = request.sessionId ?? brandString(`session-${randomUUID()}`);
++		if (request.agentPreset === "dsh-flow/member" || this.ctx.sessionController?.sessionDriver(sessionId)) throw apiSessionSubagentOwnershipError(sessionId);
+ 		let workspace;
+ 		if (request.workspaceId !== void 0) {
+ 			workspace = this.ctx.workspaceRegistry.get(request.workspaceId);
+@@ -774,6 +783,7 @@ var SessionCommandController = class {
+ 	* @returns the new Session identity.
+ 	*/
+ 	async fork(request) {
++		if (this.ctx.sessionController?.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
+ 		const env_1 = {
+ 			stack: [],
+ 			error: void 0,
+@@ -794,6 +804,7 @@ var SessionCommandController = class {
+ 				throw new RemoteError("gateway/internal", `fork source unavailable for session "${request.sessionId}": ${String(error)}`, {});
+ 			}
+ 			const source = __addDisposableResource$3(env_1, observed, false);
++			if (source.header.agentPreset === "dsh-flow/member" || this.ctx.sessionController?.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
+ 			const boundary = atSeq ?? latestCompletedPrefixBoundary(source.events);
+ 			if (boundary === void 0 || source.events[boundary]?.seq !== boundary) throw new RemoteError("session/fork-unavailable", request.atSeq === void 0 ? `session "${request.sessionId}" has no completed turn to fork from` : `event ${String(request.atSeq)} does not exist in session "${request.sessionId}" (last seq: ${String(source.events.at(-1)?.seq ?? "none")})`, { sessionId: request.sessionId });
+ 			const seed = buildForkSeed(source.events, boundary);
+@@ -1518,7 +1529,7 @@ var SessionHistoryController = class {
  					} : projectionBlock(source.projections),
  					...assistantStream === void 0 ? {} : { assistantStream }
  				};
@@ -171,7 +269,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  					const promotion = source.retain();
  					try {
  						this.promote(promotion);
-@@ -1805,7 +1806,8 @@ const imageLimitsSchema = z$1.object({
+@@ -1805,7 +1816,8 @@ const imageLimitsSchema = z$1.object({
  * @returns the original or advanced metadata value.
  */
  function applySessionListMetadata(state, event) {
@@ -181,7 +279,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  	const lastPromptAt = event.type === "user/message" && event.data.source.kind === "user" ? event.time : state.lastPromptAt;
  	return blank === state.blank && lastPromptAt === state.lastPromptAt ? state : {
  		blank,
-@@ -1831,9 +1833,11 @@ function truncateUnicodeCodePoints(value, maximum) {
+@@ -1831,9 +1843,11 @@ function truncateUnicodeCodePoints(value, maximum) {
  /** Owns list projection registration, bounded cold summaries, and authorized search. */
  var ApiSessionList = class {
  	ctx;
@@ -194,7 +292,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		ctx.sessionProjections.register({
  			key: "sessionListMetadata",
  			stateSchema: sessionListMetadataSchema,
-@@ -1846,7 +1850,7 @@ var ApiSessionList = class {
+@@ -1846,7 +1860,7 @@ var ApiSessionList = class {
  				viewSchema: sessionListMetadataSchema,
  				view: (state) => state
  			},
@@ -203,7 +301,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		});
  		ctx.inject(["attachments"], (attachmentCtx) => {
  			ctx.sessionProjections.register({
-@@ -1877,6 +1881,7 @@ var ApiSessionList = class {
+@@ -1877,6 +1891,7 @@ var ApiSessionList = class {
  			running: this.ctx.agents.get(session.id)?.status === "running",
  			blank: metadata?.blank ?? session.seq === 0,
  			...listFields(session.header),
@@ -211,7 +309,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			...projections === void 0 ? {} : { projections }
  		};
  	}
-@@ -1904,6 +1909,10 @@ var ApiSessionList = class {
+@@ -1904,6 +1919,10 @@ var ApiSessionList = class {
  		items.sort((left, right) => right.updatedAt - left.updatedAt);
  		return items;
  	}
@@ -222,7 +320,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  	summarizeCold(header) {
  		const projections = this.projectionsFor(header, void 0);
  		const metadata = projections?.values.sessionListMetadata;
-@@ -1914,6 +1923,7 @@ var ApiSessionList = class {
+@@ -1914,6 +1933,7 @@ var ApiSessionList = class {
  			running: false,
  			blank: metadata?.blank ?? false,
  			...listFields(header),
@@ -230,7 +328,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			...projections === void 0 ? {} : { projections }
  		};
  	}
-@@ -1931,7 +1941,7 @@ var ApiSessionList = class {
+@@ -1931,7 +1951,7 @@ var ApiSessionList = class {
  		try {
  			const visible = await provider.listSessions(signal);
  			signal.throwIfAborted();
@@ -239,7 +337,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			if (visibleIds.size === 0) return {
  				items: [],
  				hasMore: false
-@@ -2832,6 +2842,8 @@ let SessionController = (() => {
+@@ -2832,6 +2852,8 @@ let SessionController = (() => {
  		controlState;
  		history;
  		listState;
@@ -248,7 +346,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		openPath;
  		fileApplications;
  		openFileApplication;
-@@ -2860,7 +2872,12 @@ let SessionController = (() => {
+@@ -2860,7 +2882,12 @@ let SessionController = (() => {
  			this.history = new SessionHistoryController(ctx, (observation) => {
  				this.promote(observation);
  			});
@@ -262,7 +360,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			this.fileApplications = internals.fileApplications ?? nativeFileApplications;
  			this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication;
  			this.openPath = internals.openPath ?? openNativeAssociatedPath;
-@@ -2898,6 +2915,7 @@ let SessionController = (() => {
+@@ -2898,6 +2925,7 @@ let SessionController = (() => {
  		}
  		promote(observation) {
  			const sessionId = observation.header.id;
@@ -270,11 +368,11 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			const task = (async () => {
  				const env_1 = {
  					stack: [],
-@@ -2927,7 +2945,24 @@ let SessionController = (() => {
+@@ -2927,7 +2955,24 @@ let SessionController = (() => {
  		* @param sessionId - Session identity whose Agent owns the operation.
  		* @returns the live Agent or the stable Session-domain failure.
  		*/
-+		/** Register presentation classification for externally owned legacy sessions. */
++		/** Register presentation classification for externally owned sessions. */
 +		registerSessionOrigin(resolve) {
 +			this.sessionOriginResolvers.add(resolve);
 +			return () => this.sessionOriginResolvers.delete(resolve);
@@ -295,7 +393,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			return this.agents.resolveAgent(sessionId);
  		}
  		/**
-@@ -3095,7 +3130,8 @@ let SessionController = (() => {
+@@ -3095,7 +3140,8 @@ let SessionController = (() => {
  		*/
  		prompt(request, signal) {
  			signal.throwIfAborted();
@@ -305,7 +403,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		}
  		/**
  		* Read one image proven reachable from the addressed Session log.
-@@ -3111,6 +3147,7 @@ let SessionController = (() => {
+@@ -3111,6 +3157,7 @@ let SessionController = (() => {
  		* @returns acknowledgement that the queue mutation was applied.
  		*/
  		updateQueue(request) {
@@ -313,7 +411,7 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  			return this.commands.updateQueue(request);
  		}
  		/**
-@@ -3119,7 +3156,8 @@ let SessionController = (() => {
+@@ -3119,7 +3166,8 @@ let SessionController = (() => {
  		* @returns acknowledgement that cancellation was requested.
  		*/
  		cancel(request) {
@@ -324,10 +422,10 @@ index 3b8507e0ca524eba88d52d62e288b1afd37eb3cc..cd9a32b0d72a844b96c453d4581b425c
  		/**
  		* Read one cold-safe, message-aligned Session history page.
 diff --git a/lib/typert.host.js b/lib/typert.host.js
-index 3ee71e354830818730179abc4156af7ce6dab771..245bac3a2865c44685b5d821ea7748508c06d2e0 100644
+index 57b5a2b..25bbaa0 100644
 --- a/lib/typert.host.js
 +++ b/lib/typert.host.js
-@@ -182,6 +182,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
+@@ -212,6 +212,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
    'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
  })]).readonly(),
    'assistantStream': z.literal(true).readonly().optional(),
@@ -335,7 +433,7 @@ index 3ee71e354830818730179abc4156af7ce6dab771..245bac3a2865c44685b5d821ea774850
    'maxMessages': z.number().readonly().optional(),
    'turnWindow': z.object({
    'minMessages': z.number().readonly(),
-@@ -2002,7 +2003,7 @@ export const TYPERT = {
+@@ -2142,7 +2143,7 @@ export const TYPERT = {
            },
            {
              "name": "SessionFollowRequest",
@@ -345,10 +443,10 @@ index 3ee71e354830818730179abc4156af7ce6dab771..245bac3a2865c44685b5d821ea774850
            {
              "name": "SessionForkRequest",
 diff --git a/lib/typert.remote-client.js b/lib/typert.remote-client.js
-index 2a0d24d50bec997146bd019da0faaf07d22fc791..286141801b7f62fd931029c93a85bd47822fbe12 100644
+index 4e6d18f..f889a54 100644
 --- a/lib/typert.remote-client.js
 +++ b/lib/typert.remote-client.js
-@@ -182,6 +182,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
+@@ -212,6 +212,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema
    'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
  })]).readonly(),
    'assistantStream': z.literal(true).readonly().optional(),
@@ -357,7 +455,7 @@ index 2a0d24d50bec997146bd019da0faaf07d22fc791..286141801b7f62fd931029c93a85bd47
    'turnWindow': z.object({
    'minMessages': z.number().readonly(),
 diff --git a/lib/types/client/contract/sessions.d.ts b/lib/types/client/contract/sessions.d.ts
-index 6eddfb2215fc78493e364b65d813b62025a5118e..26ff0180013af4b71557a9e6730eb83210de159d 100644
+index 81cc3c6..39f5ad0 100644
 --- a/lib/types/client/contract/sessions.d.ts
 +++ b/lib/types/client/contract/sessions.d.ts
 @@ -30,6 +30,12 @@ export interface SessionReference extends Disposable {
@@ -374,7 +472,7 @@ index 6eddfb2215fc78493e364b65d813b62025a5118e..26ff0180013af4b71557a9e6730eb832
      readonly signal?: AbortSignal | undefined;
  }
 diff --git a/lib/types/client/contract/snapshot.d.ts b/lib/types/client/contract/snapshot.d.ts
-index 012c45a3f79c113016b7dffc1a7e30583e3b18fd..9226ff492e5d68f68261e56bc16bdfa7aecf35c2 100644
+index 012c45a..9226ff4 100644
 --- a/lib/types/client/contract/snapshot.d.ts
 +++ b/lib/types/client/contract/snapshot.d.ts
 @@ -70,6 +70,8 @@ export interface SessionSnapshot {
@@ -387,7 +485,7 @@ index 012c45a3f79c113016b7dffc1a7e30583e3b18fd..9226ff492e5d68f68261e56bc16bdfa7
      readonly blank: boolean;
      readonly lastAgentError: string | null;
 diff --git a/lib/types/client/sessions/manager.d.ts b/lib/types/client/sessions/manager.d.ts
-index 6075c6afa9d1d43245509fa9e5f334ee20d4afff..ad0331705a936dc8d6884cfd7af04519f0544df3 100644
+index 6075c6a..ad03317 100644
 --- a/lib/types/client/sessions/manager.d.ts
 +++ b/lib/types/client/sessions/manager.d.ts
 @@ -83,7 +83,7 @@ export declare class SessionManager {
@@ -400,7 +498,7 @@ index 6075c6afa9d1d43245509fa9e5f334ee20d4afff..ad0331705a936dc8d6884cfd7af04519
       * Resolve an address for breadcrumb navigation without retaining transport authority.
       * @param sessionId - possible child id in an already-loaded catalog.
 diff --git a/lib/types/client/sessions/session.d.ts b/lib/types/client/sessions/session.d.ts
-index 73c66fadb1bb6068c136667d7afaf4afbffc7b7f..33979d9cd560835bb4b6da923c22fd72d64228dd 100644
+index 73c66fa..33979d9 100644
 --- a/lib/types/client/sessions/session.d.ts
 +++ b/lib/types/client/sessions/session.d.ts
 @@ -48,6 +48,7 @@ export declare class Session implements SessionFace {
@@ -421,7 +519,7 @@ index 73c66fadb1bb6068c136667d7afaf4afbffc7b7f..33979d9cd560835bb4b6da923c22fd72
      loadOlder(): Promise<void>;
      /** Jump loader: page backwards until the window covers seq (see ISession.loadThrough). */
 diff --git a/lib/types/client/transport.d.ts b/lib/types/client/transport.d.ts
-index d322ee775cb93d320c2a29ede1638696f5d59b21..f452cae9965a0031280d57321617a22aabfe2e64 100644
+index d322ee7..f452cae 100644
 --- a/lib/types/client/transport.d.ts
 +++ b/lib/types/client/transport.d.ts
 @@ -43,6 +43,8 @@ export interface SessionControlStreamOptions {
@@ -434,7 +532,7 @@ index d322ee775cb93d320c2a29ede1638696f5d59b21..f452cae9965a0031280d57321617a22a
      readonly publish: (change: SessionJournalChange) => void;
      /** Observe a retryable carrier loss before reconnection. */
 diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
-index 58e6dd4ea6314f4b4037ef652aa4356196f6c999..51ab999e3e6af697f35160089426139dd8d81b2e 100644
+index 58e6dd4..51ab999 100644
 --- a/lib/types/index.d.ts
 +++ b/lib/types/index.d.ts
 @@ -24,6 +24,12 @@ export interface Config {
@@ -471,7 +569,7 @@ index 58e6dd4ea6314f4b4037ef652aa4356196f6c999..51ab999e3e6af697f35160089426139d
       * Inspect one attached or persisted Session without activating its Agent.
       * @param sessionId - durable Session identity.
 diff --git a/lib/types/types.d.ts b/lib/types/types.d.ts
-index 1ce67e417fb35bf7ec474878d80c271a1473d8c3..9b05689811cb7c2f3514a6708b2a6a91dc729ffa 100644
+index 1ce67e4..9b05689 100644
 --- a/lib/types/types.d.ts
 +++ b/lib/types/types.d.ts
 @@ -457,6 +457,8 @@ export interface SessionPageRequest {

@@ -1,8 +1,10 @@
 # 宿主接口与补丁
 
-团队界面使用 DeepSeek Harness `0.1.7-rc.2` 的公开服务和仓库 `patches/` 中的接口扩展。`pnpm-workspace.yaml` 的 `patchedDependencies` 固定补丁，`pnpm-lock.yaml` 固定安装解析。应使用冻结安装和仓库启动器运行这一组合；相同版本号的未打补丁宿主不具备完整接口。
+团队界面使用 DeepSeek Harness `0.2.0-rc.2` 的公开服务和仓库 `patches/` 中的接口扩展。`pnpm-workspace.yaml` 的 `patchedDependencies` 固定补丁，`pnpm-lock.yaml` 固定安装解析。应使用冻结安装和仓库启动器运行这一组合；相同版本号的未打补丁宿主不具备完整接口。
 
 [提供方基线清单](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/development/provider-baseline.json)列出依赖版本、补丁 SHA-256、包声明和公开入口的预期摘要。该清单用于检查实际安装字节，不推断 npm 发行包对应的上游提交。
+
+只支持该 rc2 组合，不提供 0.1.x 参数签名、能力探测或 Gateway 参数补齐。新成员使用不可变的 `agentPreset: dsh-flow/member` 标记独立执行归属，保留原生 `origin` 语义；驱动缺席时拒绝普通恢复、显式 ID 创建、模型选择、队列和命令，不妨碍冷历史读取。原生 subagent 分支功能保持官方行为。旧版本的无标记日志不承诺在卸载 Flow 后获得同样归属保护。
 
 ## 接入位置
 
@@ -23,14 +25,13 @@
 
 | 提供方包 | 约定 |
 |---|---|
-| `dsh-commands`、`dsh-api-remotes`、`dsh-api-gateway` | `execute` 的可选 `submissionId` 在命令链路传递；直接调用、Agent 作用域调用与 AbortSignal 均有明确参数位置 |
+| `dsh-commands`、`dsh-api-remotes`、`dsh-client-ui-plan` | `execute` 的 `submissionId: string | undefined` 是独立提交意图；Host 第五位为 signal，root Remote 第四位是意图，第五位是取消；Agent scoped 对应第三、四位。每次 native commandId 独立，Flow launchId 按意图去重 |
 | `dsh-client-ui-commands` | 命令失败保留输入；确认未知时复用 sessionStorage 中的提交意图；不可用的 `agent-team` 引导至插件管理 |
 | `dsh-client-ui-conversation` | 顶栏视图选择、会话级视图可用性、contained/readOnly 呈现、原生 lineage 插槽和内容工厂参数 |
 | `dsh-client-ui-chat` | 命令会话的原生内容、只读节点操作限制、自动跟随、结构化通信节点 |
 | `dsh-client-ui-renderer` | Factory 递归检查结合工厂名与实际 Session generation，允许跨会话嵌入并拒绝循环 |
-| `dsh-session-format-v3-to-v4` | 按原生 fold 语义恢复通知与系统消息，校验首节点、替换范围、事件来源与轮次关系 |
 | `dsh-api-session-controller` | 历史读取错误、`allowUnlisted`、`observationOnly`、分页代次隔离和公开会话驱动 |
-| `dsh-session` | 会话驱动与冷历史读取的执行边界；可忽略的结构化元数据保留在原生日志 |
+| `dsh-session` | 可忽略的结构化元数据保留在原生日志；不放宽 rc2 V4 日志关系校验 |
 | `dsh-client-ui-subagent`、`dsh-client-ui-workspace` | 完整子会话导航、保留选项与所属主会话返回路径 |
 | `dsh-client-ui-dockkit` | `allowTabDrag=false` 固定观察布局，保留原生聚焦与分隔条调整 |
 | `dsh-client-ui-layout` | `addNavigationGuard/requestNavigation` 延迟提交导航，等待保存结果 |

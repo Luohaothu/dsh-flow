@@ -1,5 +1,5 @@
 diff --git a/lib/client.js b/lib/client.js
-index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3d667966b 100644
+index 7f3f791..36857c4 100644
 --- a/lib/client.js
 +++ b/lib/client.js
 @@ -3027,6 +3027,21 @@ window.__ModuleLoader__.load({
@@ -24,7 +24,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  			/** Registry of event matchers and target snapshot builders. */
  			events;
  			/** Registry of target View definitions. */
-@@ -15718,7 +15733,7 @@ window.__ModuleLoader__.load({
+@@ -15794,7 +15809,7 @@ window.__ModuleLoader__.load({
  		}
  		//#endregion
  		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css.mjs
@@ -33,7 +33,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  		const tagId$4 = "@deepseek-ai/dsh-client-ui-conversation/ConversationRoot.module.css";
  		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$4) + "]") === null) {
  			const tag = document.createElement("style");
-@@ -16259,7 +16274,7 @@ window.__ModuleLoader__.load({
+@@ -16336,7 +16351,7 @@ window.__ModuleLoader__.load({
  				children: [(0, react_jsx_runtime.jsxs)("div", {
  					className: ConversationRoot_module_css_default.scrollBody,
  					"data-conversation-scroll": "",
@@ -42,7 +42,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  				}), (0, react_jsx_runtime.jsx)(WidthControls, {
  					container: body,
  					phase
-@@ -16305,7 +16320,7 @@ window.__ModuleLoader__.load({
+@@ -16382,7 +16397,7 @@ window.__ModuleLoader__.load({
  		* @returns the selected View, Chat fallback, or undefined when neither is registered.
  		*/
  		function resolveActiveView(tabs, selectedId) {
@@ -51,7 +51,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  		}
  		//#endregion
  		//#region lib/types/client/skeleton/DefaultConversationViews.js
-@@ -16315,7 +16330,7 @@ window.__ModuleLoader__.load({
+@@ -16392,7 +16407,7 @@ window.__ModuleLoader__.load({
  		* @param props - Strict Session input/store, view ledger, and render shares.
  		* @returns the active view area, or null while the Session remains blank.
  		*/
@@ -60,7 +60,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  			const tabs = useConversationViews((value) => value);
  			const inspectCall = useInspectCall((value) => value);
  			const active = resolveActiveView(tabs, useStore((s) => s.view));
-@@ -16325,17 +16340,22 @@ window.__ModuleLoader__.load({
+@@ -16402,17 +16417,22 @@ window.__ModuleLoader__.load({
  			const storedDraft = useStore((s) => s.draft);
  			const viewRequest = useStore((s) => s.viewRequest ?? null);
  			(0, react.useEffect)(() => {
@@ -84,7 +84,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  					inspectCall,
  					viewRequest,
  					openView,
-@@ -16376,7 +16396,7 @@ window.__ModuleLoader__.load({
+@@ -16453,7 +16473,7 @@ window.__ModuleLoader__.load({
  		* @param props - Strict Session store, view ledger, navigation, render, and locale shares.
  		* @returns Session navigation controls, with title and tabs after conversation starts.
  		*/
@@ -93,7 +93,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  			const tabs = useConversationViews((value) => value);
  			const active = resolveActiveView(tabs, useStore((s) => s.view));
  			const ancestry = useSessions((s) => deriveAncestry(s, sessionId), equalBreadcrumbs);
-@@ -16414,7 +16434,7 @@ window.__ModuleLoader__.load({
+@@ -16491,7 +16511,7 @@ window.__ModuleLoader__.load({
  								children: [index > 0 && (0, react_jsx_runtime.jsx)("span", {
  									className: ConversationRoot_module_css_default.crumbSep,
  									children: "/"
@@ -102,7 +102,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  							}, summary.id);
  						}), ancestry.length === 0 && (0, react_jsx_runtime.jsx)("span", {
  							className: ConversationRoot_module_css_default.crumbCurrent,
-@@ -16422,11 +16442,11 @@ window.__ModuleLoader__.load({
+@@ -16499,11 +16519,11 @@ window.__ModuleLoader__.load({
  						})]
  					}), (0, react_jsx_runtime.jsx)("div", {
  						className: ConversationRoot_module_css_default.headerActions,
@@ -116,7 +116,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  				})] }), (0, react_jsx_runtime.jsx)("div", {
  					className: ConversationRoot_module_css_default.headerCorner,
  					"data-conversation-header-corner": "",
-@@ -17892,27 +17912,44 @@ window.__ModuleLoader__.load({
+@@ -17969,27 +17989,44 @@ window.__ModuleLoader__.load({
  					}
  				})
  			}, EnterBehaviorRow));
@@ -164,7 +164,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  			const bindings = /* @__PURE__ */ new Set();
  			const trackedBindings = /* @__PURE__ */ new WeakSet();
  			const trackBinding = (binding) => {
-@@ -17930,14 +17967,21 @@ window.__ModuleLoader__.load({
+@@ -18007,14 +18044,21 @@ window.__ModuleLoader__.load({
  					const candidate = next.at(index);
  					return candidate !== void 0 && tab.id === candidate.id && tab.label === candidate.label;
  				}))) conversationViews.set(next);
@@ -188,7 +188,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  					disposeLocale();
  					disposeViews();
  				};
-@@ -18138,7 +18182,7 @@ window.__ModuleLoader__.load({
+@@ -18215,7 +18259,7 @@ window.__ModuleLoader__.load({
  				store: conversationStore,
  				inject: (sessionId, actions) => {
  					const openView = (view, focus) => {
@@ -197,7 +197,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  						activateView(sessionId, view);
  						actions.openView(view, focus);
  					};
-@@ -18149,7 +18193,7 @@ window.__ModuleLoader__.load({
+@@ -18226,7 +18270,7 @@ window.__ModuleLoader__.load({
  					};
  					return {
  						hooks: {
@@ -206,7 +206,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  							inspectCall: {
  								getSnapshot: () => inspectionTarget() === void 0 ? void 0 : inspectCall,
  								subscribe: (listener) => {
-@@ -18185,7 +18229,7 @@ window.__ModuleLoader__.load({
+@@ -18262,7 +18306,7 @@ window.__ModuleLoader__.load({
  				locale: NS,
  				children: {
  					"conversation.session.header.lineage": {
@@ -215,7 +215,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  						scope: "session"
  					},
  					"conversation.session.header.actions": {
-@@ -18203,7 +18247,7 @@ window.__ModuleLoader__.load({
+@@ -18280,7 +18324,7 @@ window.__ModuleLoader__.load({
  				},
  				store: conversationStore,
  				inject: (sessionId, actions) => ({
@@ -225,7 +225,7 @@ index 2107bbbf7e402043911def17a664b027aff1d88a..ee01b7c7924553527ff5f0e255980fb3
  						workspaceNavigation.openSession(id);
  					},
 diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
-index 74f584630dd4130c51c61008369c9a86137d263f..f6d52c85d0e668908c8c432f5052cf191f9876b2 100644
+index 74f5846..f6d52c8 100644
 --- a/lib/types/client/contract/slots.d.ts
 +++ b/lib/types/client/contract/slots.d.ts
 @@ -129,6 +129,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -279,7 +279,7 @@ index 74f584630dd4130c51c61008369c9a86137d263f..f6d52c85d0e668908c8c432f5052cf19
      phase: 'settling' | 'hero' | 'active';
      hero: boolean;
 diff --git a/lib/types/client/contract/views.d.ts b/lib/types/client/contract/views.d.ts
-index f67b7880c3c2ca8d07bc519039608c2967e94e5b..41c57e3e6a375a54b76ab88aeaacd147ce7b593a 100644
+index f67b788..41c57e3 100644
 --- a/lib/types/client/contract/views.d.ts
 +++ b/lib/types/client/contract/views.d.ts
 @@ -6,6 +6,10 @@
@@ -294,7 +294,7 @@ index f67b7880c3c2ca8d07bc519039608c2967e94e5b..41c57e3e6a375a54b76ab88aeaacd147
  /** One-shot focus request addressed to a Conversation View. */
  export interface ConversationViewRequest {
 diff --git a/lib/types/client/conversation/assembly.d.ts b/lib/types/client/conversation/assembly.d.ts
-index 9a81a8abad090bae88b8ca9435631eeef81bcbb7..3ba3415ff70d390046b73e23a374d9a00a748668 100644
+index 9a81a8a..3ba3415 100644
 --- a/lib/types/client/conversation/assembly.d.ts
 +++ b/lib/types/client/conversation/assembly.d.ts
 @@ -36,6 +36,10 @@ export interface ConversationBinding {

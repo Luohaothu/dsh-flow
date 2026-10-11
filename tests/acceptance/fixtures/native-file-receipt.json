@@ -1,0 +1,231 @@
+{
+  "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+  "binding": {
+    "object": {
+      "kind": "transaction",
+      "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc"
+    },
+    "plan_ref": {
+      "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+      "prepared_revision": 2
+    },
+    "revision": 2,
+    "current_revision": 2,
+    "stale": false,
+    "read_version": 67
+  },
+  "transaction": {
+    "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+    "node_id": "7b56304f-16bf-4bfa-b509-813a2933fc0e",
+    "owner_management_id": "7b56304f-16bf-4bfa-b509-813a2933fc0e",
+    "status": "SUBMITTED",
+    "revision": 2,
+    "result_revision": null,
+    "current_plan_ref": {
+      "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+      "prepared_revision": 2
+    },
+    "current_result_ref": {
+      "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+      "publication_event_seq": 62
+    },
+    "current_validation_ref": null,
+    "priority": 0,
+    "parent_transaction_id": null,
+    "objective": "Use one Worker to create arithmetic-report.md in the current workspace. Include the title 算术核验报告, 2+3=5, 17×23=391, 144÷12=12 and reproducible calculation steps"
+  },
+  "projection": true,
+  "fields": [
+    "evidence"
+  ],
+  "available_fields": [
+    "requirements",
+    "constraints",
+    "inputs",
+    "plan",
+    "result",
+    "validation",
+    "dependencies",
+    "dependents",
+    "allocation",
+    "audits",
+    "issues",
+    "evidence"
+  ],
+  "evidence": {
+    "result_ref": {
+      "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+      "publication_event_seq": 62
+    },
+    "validation_ref": null,
+    "plan_ref": {
+      "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+      "prepared_revision": 2
+    },
+    "native_tools": {
+      "items": [
+        {
+          "ref": {
+            "agent_id": "000684b6-794a-442a-b884-9b3aaa78ded1",
+            "native_session_id": "32738664-43ec-4ab5-be02-7b08528af24f",
+            "native_turn": 1,
+            "call_id": "call_319fabf0",
+            "call_seq": 24,
+            "result_seq": 25
+          },
+          "tool": "read",
+          "status": "returned",
+          "association": "result-producer",
+          "captured_binding": {
+            "agent_id": "000684b6-794a-442a-b884-9b3aaa78ded1",
+            "turn_seq": 1,
+            "epoch": 1,
+            "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+            "object": {
+              "kind": "transaction",
+              "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc"
+            },
+            "plan_ref": {
+              "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+              "prepared_revision": 2
+            },
+            "validation_ref": null
+          },
+          "read": {
+            "what": "transaction",
+            "params": {
+              "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+              "plan_ref": {
+                "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+                "prepared_revision": 2
+              },
+              "result_ref": {
+                "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+                "publication_event_seq": 62
+              },
+              "fields": [
+                "evidence"
+              ],
+              "native_call_id": "call_319fabf0",
+              "native_session_id": "32738664-43ec-4ab5-be02-7b08528af24f",
+              "native_call_seq": 24
+            }
+          },
+          "call": {
+            "turn": 1,
+            "step": 3,
+            "callId": "call_319fabf0",
+            "name": "read",
+            "arguments": "{\"file_path\":\"/Users/luohao/dsh-flow/.artifacts/handoffs-artifact-2026-10-10T20-08-39-725Z/workspace/arithmetic-report.md\"}"
+          },
+          "result": {
+            "turn": 1,
+            "step": 3,
+            "message": {
+              "role": "tool",
+              "source": {
+                "kind": "tool",
+                "callId": "call_319fabf0"
+              },
+              "toolCallId": "call_319fabf0",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<path>/Users/luohao/dsh-flow/.artifacts/handoffs-artifact-2026-10-10T20-08-39-725Z/workspace/arithmetic-report.md</path>\n<type>file</type>\n<content>\n1: # 算术核验报告\n2: \n3: ## 2+3=5\n4: \n5: 2+3=5；复算：flow_sum([2,3]) 即 2+3=5\n6: \n7: ## 17×23=391\n8: \n9: 17×23=391；复算：flow_sum 对 23 个 17 求和（重复加法）= 17×23 = 391\n10: \n11: ## 144÷12=12\n12: \n13: 144÷12=12；逆算校验：flow_sum 对 12 个 12 求和 = 144，即 12×12=144，故 144÷12=12\n\n(End of file - total 13 lines)\n</content>"
+                }
+              ],
+              "isError": false,
+              "id": "a65d12c7-5498-4f6d-bf0c-dc367a128f31"
+            },
+            "meta": {
+              "path": "/Users/luohao/dsh-flow/.artifacts/handoffs-artifact-2026-10-10T20-08-39-725Z/workspace/arithmetic-report.md",
+              "offset": 1,
+              "lines": [
+                {
+                  "number": 1,
+                  "text": "# 算术核验报告"
+                },
+                {
+                  "number": 2,
+                  "text": ""
+                },
+                {
+                  "number": 3,
+                  "text": "## 2+3=5"
+                },
+                {
+                  "number": 4,
+                  "text": ""
+                },
+                {
+                  "number": 5,
+                  "text": "2+3=5；复算：flow_sum([2,3]) 即 2+3=5"
+                },
+                {
+                  "number": 6,
+                  "text": ""
+                },
+                {
+                  "number": 7,
+                  "text": "## 17×23=391"
+                },
+                {
+                  "number": 8,
+                  "text": ""
+                },
+                {
+                  "number": 9,
+                  "text": "17×23=391；复算：flow_sum 对 23 个 17 求和（重复加法）= 17×23 = 391"
+                },
+                {
+                  "number": 10,
+                  "text": ""
+                },
+                {
+                  "number": 11,
+                  "text": "## 144÷12=12"
+                },
+                {
+                  "number": 12,
+                  "text": ""
+                },
+                {
+                  "number": 13,
+                  "text": "144÷12=12；逆算校验：flow_sum 对 12 个 12 求和 = 144，即 12×12=144，故 144÷12=12"
+                }
+              ],
+              "totalLines": 13,
+              "lang": "md"
+            }
+          }
+        }
+      ],
+      "total": 1,
+      "offset": 0,
+      "limit": 6,
+      "next_offset": null,
+      "read": {
+        "what": "transaction",
+        "params": {
+          "id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+          "plan_ref": {
+            "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+            "prepared_revision": 2
+          },
+          "result_ref": {
+            "transaction_id": "69b7aa52-8a69-41d3-8fb4-a878825161cc",
+            "publication_event_seq": 62
+          },
+          "fields": [
+            "evidence"
+          ],
+          "limit": 6,
+          "offset": 6
+        }
+      },
+      "coverage": "persisted-native-events",
+      "meaning": "These receipts prove the listed native tool calls and returned content. Captured input binding is not a claim that every call checks this business criterion. Empty or pending receipts do not prove that no tool ran; effects only records external side effects."
+    },
+    "read": "native_tools contains persisted native call/result references; follow each read.params for arguments and returned content. effects/effect records external side effects only."
+  }
+}

@@ -1,5 +1,5 @@
 diff --git a/lib/client.js b/lib/client.js
-index ba9b6c231c2eed8a5dfc88fd1911bac7f928cd4d..ee68b5fed2b47baef07e6b3351372ba5019a6f86 100644
+index e90615e..4ab8c80 100644
 --- a/lib/client.js
 +++ b/lib/client.js
 @@ -459,10 +459,18 @@ window.__ModuleLoader__.load({
@@ -24,7 +24,7 @@ index ba9b6c231c2eed8a5dfc88fd1911bac7f928cd4d..ee68b5fed2b47baef07e6b3351372ba5
  			/** @returns the new pending navigation's cancellation signal. */
  			beginNavigation() {
 diff --git a/lib/types/client/service.d.ts b/lib/types/client/service.d.ts
-index a998dc6a811a4ddb458e243dab17fd2981afa32a..a561e11d5b957eef06092602d167ecdc3cb22401 100644
+index a998dc6..a561e11 100644
 --- a/lib/types/client/service.d.ts
 +++ b/lib/types/client/service.d.ts
 @@ -22,6 +22,11 @@ export interface PanelInfo {

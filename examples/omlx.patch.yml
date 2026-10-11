@@ -1,0 +1,36 @@
+# Local oMLX deployment. Credentials are read only by the DSH provider.
+- id: llm-pi-ai
+  config:
+    providers:
+      omlx:
+        displayName: Local oMLX
+        api: openai-completions
+        baseURL: !!js process.env.FLOW_QWEN_BASE_URL ?? 'http://127.0.0.1:8000/v1'
+        apiKeyEnv: FLOW_MODEL_API_KEY
+        timeoutMs: 360000
+        streamIdleTimeoutMs: 300000
+        retryPolicy:
+          mode: normal
+          maxRetries: 0
+        compat:
+          thinkingFormat: qwen-chat-template
+          supportsStore: false
+          supportsDeveloperRole: false
+          supportsReasoningEffort: false
+          supportsStrictMode: false
+          supportsUsageInStreaming: true
+          maxTokensField: max_tokens
+        models:
+          - id: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-4bit'
+            contextWindow: !!js Number(process.env.FLOW_CONTEXT_MODEL ?? 500000)
+            maxTokens: !!js Number(process.env.FLOW_MAX_TOKENS ?? 8192)
+            input: [text]
+            reasoningEfforts:
+              off:
+              high: high
+
+- id: agent-default-model
+  config:
+    provider: omlx
+    model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-4bit'
+    reasoningEffort: !!js process.env.FLOW_MODEL_REASONING_EFFORT ?? 'off'

@@ -595,8 +595,8 @@ function txCount(events: readonly SqlRow[], type: string): number {
   return events.filter(event => event.type === type).length;
 }
 
-/** Fixture IPC is deliberately separate from the seven-method Flow service. */
-async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session' | 'resume-compacted', params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+/** Fixture IPC is deliberately separate from the eight-method Flow service. */
+async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' | 'team-launch' | 'agent-session' | 'resume-compacted' | 'ownership', params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const child = host.child;
   assert.ok(child?.connected, 'the real host child must be connected');
   const requestId = randomUUID();
@@ -635,6 +635,15 @@ async function observerRequest(host: DshHost, operation: 'scopes' | 'ordinary' |
   return promise;
 }
 
+test('N-ownership: live and cold Flow composition refuses ordinary execution without a driver',async t=>{
+  const {host,mock}=await harness(t,{name:'ownership'});
+  const outcome=await observerRequest(host,'ownership');
+  const expected=['create','fork','model','queue','prompt','cancel','resolve'];
+  assert.deepEqual(outcome.live,expected);assert.deepEqual(outcome.cold,expected);
+  assert.equal(outcome.agent_active,false);assert.equal(outcome.marker,'dsh-flow/member');
+  assert.equal(mock.requests.length,0,'cold follow never activates a model request');
+});
+
 test('N-agent-session: native prompts use the Flow owner, survive retries and retain cold history after recycle',async t=>{
   const {host,layout,mock}=await harness(t,{name:'agent-session'});
   const outcome=await observerRequest(host,'agent-session');
@@ -661,6 +670,9 @@ test('N-team-launch: the native main Agent loads the skill, creates, reads and f
   const outcome=await observerRequest(host,'team-launch');
   assert.equal(outcome.cold_reload,true,'native persistence reloads the main conversation');
   assert.equal(outcome.launch_ignorable,true,'extension metadata is compatible with the static host event catalog');
+  assert.equal(outcome.launches,1,'concurrent and cold command retries reuse one domain launch');
+  assert.equal(asArray(outcome.command_ids)?.length,3);
+  assert.equal(new Set(asArray(outcome.command_ids)).size,3,'V4 native lifecycle pairing identities remain unique');
   const runs=asArray(outcome.runs);assert.equal(runs?.length,1);
   const run=asObject(runs![0]);assert.equal(run?.state,'completed');assert.ok(run?.finalized_at);
   const id=requiredString(outcome.session_id,'main session');

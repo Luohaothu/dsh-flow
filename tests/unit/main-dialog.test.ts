@@ -20,7 +20,7 @@ test('the skill command admits a human request once without creating a team',asy
   const runtime=new ClusterRuntime(new Context(),{path:join(dir,'ledger.sqlite'),dataDir:dir,autoTick:false});
   const session=Session.create(SessionId('human-main'),[],{version:4,id:SessionId('human-main'),cwd:dir,createdAt:Date.now(),isSeeded:false});
   const messages:UserMessage[]=[];
-  type Definition={name:string;handler:(invocation:{agent:Agent;commandId:string;rawInput:string;attachments:[];signal:AbortSignal})=>{kind:string}|Promise<{kind:string}>};
+  type Definition={name:string;handler:(invocation:{agent:Agent;commandId:string;submissionId?:string;rawInput:string;attachments:[];signal:AbortSignal})=>{kind:string}|Promise<{kind:string}>};
   const definitions:Definition[]=[];
   const disposers:(()=>unknown)[]=[];
   const agent=fromPartial<Agent>({id:session.id,session,followup(message:UserMessage){messages.push(message);session.append('agent/inbox/spliced',{target:'next-turn',start:0,inserted:[message]});}});
@@ -41,14 +41,16 @@ test('the skill command admits a human request once without creating a team',asy
   t.after(async()=>{for(const dispose of disposers)dispose();await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
   apply(ctx);
   const command=definitions.find(definition=>definition.name==='agent-team')!;
-  const invocation=fromPartial<Parameters<typeof command.handler>[0]>({agent,commandId:'intent',rawInput:'写一个 Hello World',attachments:[],signal:new AbortController().signal});
-  assert.equal((await command.handler(invocation))?.kind,'success');
+  const invocation=fromPartial<Parameters<typeof command.handler>[0]>({agent,commandId:'attempt-1',submissionId:'intent',rawInput:'写一个 Hello World',attachments:[],signal:new AbortController().signal});
+  const pending=command.handler(invocation);
+  await assert.rejects(Promise.resolve(command.handler({...invocation,commandId:'attempt-conflict',rawInput:'另一个需求'})),/同一提交标识不能用于不同需求/);
+  assert.equal((await pending)?.kind,'success');
   assert.equal(messages.length,1);
   assert.deepEqual(messages[0]!.source,{kind:'user'});
   assert.deepEqual(messages[0]!.content,[{type:'text',text:'/agent-team 写一个 Hello World'}]);
   assert.equal(runtime.teamRuns(session.id).length,0,'the model has not called create');
   assert.equal(session.snapshotEvents().find(event=>event.type==='flow/team-launch')?.ignorable,true,'plugin metadata must remain cold-readable');
-  await command.handler(invocation);
+  await command.handler({...invocation,commandId:'attempt-2'});
   assert.equal(messages.length,1,'a repeated startup intent cannot invent a second human message');
 });
 

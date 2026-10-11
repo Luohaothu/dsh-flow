@@ -1,8 +1,8 @@
 diff --git a/lib/client.js b/lib/client.js
-index 76cd7932738b2c53ebbe64f6ac30989e69fa561b..8a43ca180293f2ba971b6721d0907b31df832d22 100644
+index 41a4591..fa3d8cc 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -816,8 +816,8 @@ window.__ModuleLoader__.load({
+@@ -818,8 +818,8 @@ window.__ModuleLoader__.load({
  					return this.sessions.create({ workspaceId });
  				}
  			}
@@ -13,7 +13,7 @@ index 76cd7932738b2c53ebbe64f6ac30989e69fa561b..8a43ca180293f2ba971b6721d0907b31
  			}
  			async openWorkspace(workspaceId, beforeOpen) {
  				const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal]);
-@@ -959,15 +959,21 @@ window.__ModuleLoader__.load({
+@@ -962,15 +962,21 @@ window.__ModuleLoader__.load({
  				return true;
  			}
  			clearMain() {
@@ -38,7 +38,7 @@ index 76cd7932738b2c53ebbe64f6ac30989e69fa561b..8a43ca180293f2ba971b6721d0907b31
  					signal.throwIfAborted();
  					beforeOpen?.(reference.sessionId);
 diff --git a/lib/types/client/navigation.d.ts b/lib/types/client/navigation.d.ts
-index 9afabc29f3e91343ffab343e7886715bc528a619..6e1adaf28e564df24cde857633c1f9b8911f7e5a 100644
+index 0d73753..a96ad3e 100644
 --- a/lib/types/client/navigation.d.ts
 +++ b/lib/types/client/navigation.d.ts
 @@ -1,7 +1,7 @@
@@ -59,12 +59,12 @@ index 9afabc29f3e91343ffab343e7886715bc528a619..6e1adaf28e564df24cde857633c1f9b8
      /**
       * Connect a Workspace and open its Session unless a later navigation supersedes it.
       * @param workspaceId - target Workspace.
-@@ -123,7 +123,7 @@ declare class UiWorkspaceService extends Service implements UiWorkspace {
+@@ -124,7 +124,7 @@ declare class UiWorkspaceService extends Service implements UiWorkspace {
      connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>;
      private reuseOrCreateBlank;
      private reuseBlank;
 -    openSession(target: SessionTarget): void;
 +    openSession(target: SessionTarget, options?: Pick<SessionRetainOptions, "allowUnlisted" | "observationOnly">): void;
      openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void>;
-     forkSession(sessionId: SessionId): Promise<void>;
+     forkSession(sessionId: SessionId, onCreated?: (childId: SessionId) => void): Promise<SessionId>;
      startSession(workspaceId?: WorkspaceId): void;

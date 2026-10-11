@@ -1,8 +1,8 @@
 diff --git a/lib/index.js b/lib/index.js
-index d3243445c7bb2ee307af933c8d28593653e866b3..97e6e6806dfc4cff30e1a4a183bc00e6f2c2cc46 100644
+index 10e7779..fda5075 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -3264,7 +3264,7 @@ function sameSizes(a, b) {
+@@ -3272,7 +3272,7 @@ function sameSizes(a, b) {
  	});
  }
  /** The split tree and the gestures over it. */
@@ -11,7 +11,7 @@ index d3243445c7bb2ee307af933c8d28593653e866b3..97e6e6806dfc4cff30e1a4a183bc00e6
  	const surface = useRef(null);
  	const [preview, setPreview] = useState(NO_PREVIEW);
  	const [fits, setFits] = useState(NO_FITS);
-@@ -3313,6 +3313,7 @@ function Surface({ state, canSplit, canAddTab, canCloseTab, intents, labels, ren
+@@ -3321,6 +3321,7 @@ function Surface({ state, canSplit, canAddTab, canCloseTab, intents, labels, ren
  		onAddTab: intents.addTab.bind(intents),
  		onCloseTab: intents.closeTab.bind(intents),
  		onTabPressed: (tabId, event) => {
@@ -20,7 +20,7 @@ index d3243445c7bb2ee307af933c8d28593653e866b3..97e6e6806dfc4cff30e1a4a183bc00e6
  				const startX = event.clientX;
  				const startY = event.clientY;
 diff --git a/lib/types/components/DockSurface.d.ts b/lib/types/components/DockSurface.d.ts
-index 2de8671691f734131af59dd85fd1cdc35ad334aa..da66ea0c956d4c0e54bca1d5959d47156abf2921 100644
+index 2de8671..da66ea0 100644
 --- a/lib/types/components/DockSurface.d.ts
 +++ b/lib/types/components/DockSurface.d.ts
 @@ -6,6 +6,8 @@ import { type TabRetention } from './TabLayout.tsx';

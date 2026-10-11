@@ -1,8 +1,8 @@
 diff --git a/lib/client.js b/lib/client.js
-index ea674fead471a738a250f1db051264111a5f5528..e2b08ea221f039261a68e75add4e0074b0116e56 100644
+index f830d1d..798ccae 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -2695,7 +2695,7 @@ window.__ModuleLoader__.load({
+@@ -3317,7 +3317,7 @@ window.__ModuleLoader__.load({
  			};
  			const state = props.usePluginManager((snapshot) => snapshot);
  			const ledger = props.useConfigLedger((snapshot) => snapshot);
@@ -11,16 +11,16 @@ index ea674fead471a738a250f1db051264111a5f5528..e2b08ea221f039261a68e75add4e0074
  			const [activation, setActivation] = (0, react.useState)(null);
  			(0, react.useEffect)(() => {
  				ensure();
-@@ -3436,7 +3436,7 @@ window.__ModuleLoader__.load({
+@@ -3720,7 +3720,7 @@ window.__ModuleLoader__.load({
  					key: PANEL_ID,
  					locale: NS,
  					store,
--					inject: () => controller.inject(configLedger, (text) => ctx.locale.resolveText(text)),
-+					inject: () => ({ ...controller.inject(configLedger, (text) => ctx.locale.resolveText(text)), requestNavigation: (commit) => ctx.layout.requestNavigation(commit) }),
+-					inject: () => face,
++					inject: () => ({ ...face, requestNavigation: (commit) => ctx.layout.requestNavigation(commit) }),
  					children: {
  						"plugins.item": {
  							kind: "list",
-@@ -3472,11 +3472,13 @@ window.__ModuleLoader__.load({
+@@ -3756,11 +3756,13 @@ window.__ModuleLoader__.load({
  					if (ctx.layout.panelInfo.getSnapshot().activePanelId !== "plugins") instance.actions.setView({ kind: "list" });
  				});
  				const disposeNavigation = ctx.reflect.provide("pluginNavigation", { openBundle: (packageName) => {
@@ -35,10 +35,10 @@ index ea674fead471a738a250f1db051264111a5f5528..e2b08ea221f039261a68e75add4e0074
  				yield () => {
  					disposeNavigation();
 diff --git a/lib/types/client/manager-store.d.ts b/lib/types/client/manager-store.d.ts
-index 95f40cc7322a38a1b4951d6e15da762d99fd9c4e..34d23bb0d85421e0e408a3ee1106a3c019b0aea0 100644
+index a2ea825..634eb2b 100644
 --- a/lib/types/client/manager-store.d.ts
 +++ b/lib/types/client/manager-store.d.ts
-@@ -231,6 +231,8 @@ export interface PluginManagerState {
+@@ -234,6 +234,8 @@ export interface PluginManagerState {
  }
  /** The registration-side face the tab's slot entry injects. */
  export interface PluginManagerFace {

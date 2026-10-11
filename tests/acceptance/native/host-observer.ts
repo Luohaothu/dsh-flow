@@ -2,7 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import { createUserMessage, MessageId } from '@deepseek-ai/dsh-llm';
 import type { AgentHandle } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-commands';
@@ -26,6 +26,7 @@ export interface Config {
   workspace: string;
   provider: string;
   model: string;
+  timeoutMs?: number;
 }
 
 export const name = 'flow-native-observer';
@@ -70,6 +71,46 @@ export function apply(ctx: Context, config: Config): void {
     const task = (async () => {
       try {
         if (closed) throw new Error('native observer disposed');
+        if (operation === 'ownership') {
+          // No Flow database record or owning driver claims this fixture. The
+          // immutable composition identity must protect it independently.
+          const id = SessionId(randomUUID());
+          const member = await ctx.agents.create({sessionId:id,meta:{cwd:config.workspace,agentPreset:'dsh-flow/member'},agentOptions:{provider:config.provider,model:config.model}});
+          handles.add(member);
+          const probe = async (cold = false) => {
+            const refused: string[] = [];
+            const operations = {
+              create: () => ctx.sessionController.create({sessionId:id,cwd:config.workspace}),
+              fork: () => ctx.sessionController.fork({sessionId:id}),
+              model: () => ctx.sessionController.selectModel({sessionId:id,provider:config.provider,model:config.model}),
+              queue: () => ctx.sessionController.updateQueue({sessionId:id,itemId:MessageId('absent'),action:{kind:'remove'}}),
+              prompt: () => ctx.sessionController.prompt({sessionId:id,requestId:randomUUID() as SessionRequestId,mode:'queue',content:[{type:'text',text:'must not execute'}]},new AbortController().signal),
+              cancel: () => ctx.sessionController.cancel({sessionId:id}),
+            };
+            for (const [name,call] of Object.entries(operations)) {
+              try { await call(); } catch (error) {
+                const code = asObject(error)?.code;
+                if (code !== 'session/agent-busy' && !(cold && name === 'cancel' && code === 'session/not-found')) throw error;
+                refused.push(name);
+              }
+            }
+            const resolved = await ctx.sessionController.resolveAgent(id);
+            if ('error' in resolved && resolved.error.code === 'session/agent-busy') refused.push('resolve');
+            return refused;
+          };
+          const live = await probe();
+          await ctx.sessions.flush(member.agent.session);
+          await member.dispose();handles.delete(member);
+          const cold = await probe(true);
+          const controller = new AbortController();
+          const iterator = ctx.sessionController.follow({address:{kind:'session',sessionId:id}},controller.signal)[Symbol.asyncIterator]();
+          let pending: ReturnType<typeof iterator.next> | undefined;
+          try { await iterator.next(); pending=iterator.next();await new Promise(resolve=>setTimeout(resolve,100)); }
+          finally { controller.abort();await pending?.catch(()=>{});await iterator.return?.(); }
+          const history = await ctx.sessionController.inspect(id);
+          process.send?.({nativeObserver:true,requestId,ok:true,value:{live,cold,agent_active:ctx.agents.get(id)!==undefined,marker:history.meta.agentPreset}});
+          return;
+        }
         if (operation === 'resume-compacted') {
           // This fixture owns the completed single-Agent session. Exercise the
           // production native resume seam without reopening its team or tools.
@@ -123,14 +164,16 @@ export function apply(ctx: Context, config: Config): void {
             const ownership=await ctx.sessionController.resolveAgent(prompt.sessionId);
             let activeSent=false;
             const stopActive=ctx.on('llm/stream',async function*(options,next){
-              if(options.sessionId===prompt.sessionId && options.purpose!=='session-title' && !activeSent){
-                activeSent=true;
-                await ctx.sessionController.prompt({...prompt,requestId:randomUUID() as SessionRequestId,mode:'steer',content:[{type:'text',text:'NATIVE-ACTIVE-CONTINUATION: keep the same acceptance criteria.'}]},new AbortController().signal);
+              for await (const chunk of next()) {
+                if(options.sessionId===prompt.sessionId && options.purpose!=='session-title' && !activeSent){
+                  activeSent=true;
+                  await ctx.sessionController.prompt({...prompt,requestId:randomUUID() as SessionRequestId,mode:'steer',content:[{type:'text',text:'NATIVE-ACTIVE-CONTINUATION: keep the same acceptance criteria.'}]},new AbortController().signal);
+                }
+                yield chunk;
               }
-              yield* next();
             });
             ctx.flow.control(started.cluster.id,'resume');
-            const deadline=Date.now()+60_000;
+            const deadline=Date.now()+(config.timeoutMs ?? 60_000);
             while(Date.now()<deadline && !['completed','failed','cancelled'].includes(ctx.flow.teamRead(ordinary.agent.id,started.cluster.id).run.state)) await new Promise(resolve=>setTimeout(resolve,100));
             let finalized;
             while(!finalized) {
@@ -144,8 +187,13 @@ export function apply(ctx: Context, config: Config): void {
             stopActive();
             process.send?.({nativeObserver:true,requestId,ok:true,value:{accepted,owned:'error' in ownership,refused,run:finalized.run,session_id:target.session_id,events:history.events}});
           } else if (operation === 'team-launch') {
-            const result=await ctx.commands.execute(ordinary.agent,'/agent-team Sum [2,3] with flow_sum and independently verify the total 5.',[],new AbortController().signal);
+            const intent=randomUUID(),line='/agent-team Sum [2,3] with flow_sum and independently verify the total 5.';
+            const [result,retry]=await Promise.all([
+              ctx.commands.execute(ordinary.agent,line,[],intent,new AbortController().signal),
+              ctx.commands.execute(ordinary.agent,line,[],intent,new AbortController().signal),
+            ]);
             if(result?.result.kind!=='success')throw new Error('team skill command was not admitted');
+            if(retry?.result.kind!=='success' || retry.commandId===result.commandId)throw new Error('command retry must keep a unique native lifecycle');
             await ordinary.agent.whenIdle();
             const sessionId = ordinary.agent.id;
             const runs = ctx.flow.teamRuns(sessionId);
@@ -153,7 +201,12 @@ export function apply(ctx: Context, config: Config): void {
             disposed = true;
             const reloaded = await ctx.sessionController.inspect(sessionId);
             const launch = reloaded.events.find(event => event.type === 'flow/team-launch');
-            process.send?.({nativeObserver:true,requestId,ok:true,value:{session_id:sessionId,runs,cold_reload:!!launch,launch_ignorable:launch?.ignorable===true}});
+            const resumed=await ctx.sessionController.resolveAgent(sessionId);
+            if('error' in resumed)throw resumed.error;
+            await ctx.commands.execute(resumed.agent,line,[],intent,new AbortController().signal);
+            await ctx.sessions.flush(resumed.agent.session);
+            const afterRetry=await ctx.sessionController.inspect(sessionId);
+            process.send?.({nativeObserver:true,requestId,ok:true,value:{session_id:sessionId,runs,cold_reload:!!launch,launch_ignorable:launch?.ignorable===true,launches:afterRetry.events.filter(event=>event.type==='flow/team-launch').length,command_ids:afterRetry.events.filter(event=>event.type==='command/run').map(event=>event.data.commandId)}});
           } else if (operation === 'ordinary') {
             ordinary.agent.followup(createUserMessage({
               content: [{ type: 'text', text: 'NATIVE-ORDINARY: answer with OK; do not call a tool.' }],

@@ -1,8 +1,8 @@
 diff --git a/lib/client.js b/lib/client.js
-index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627ae5aa5c70 100644
+index f172d27..5fb59a3 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -722,6 +722,7 @@ window.__ModuleLoader__.load({
+@@ -756,6 +756,7 @@ window.__ModuleLoader__.load({
  				"remote.commands"
  			];
  			directory;
@@ -10,7 +10,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  			live = {
  				contributions: /* @__PURE__ */ new Map(),
  				decorations: /* @__PURE__ */ new Map(),
-@@ -961,6 +962,13 @@ window.__ModuleLoader__.load({
+@@ -995,6 +996,13 @@ window.__ModuleLoader__.load({
  				}
  				await this.directory.ensureReady(session.sessionId, signal);
  				const desc = this.directory.resolve(session.sessionId, typedName);
@@ -24,7 +24,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  				if (desc === void 0) return void 0;
  				const name = desc.name;
  				const canonical = `/${name}${trimmed.slice(token.length)}`;
-@@ -1032,14 +1040,27 @@ window.__ModuleLoader__.load({
+@@ -1066,14 +1074,27 @@ window.__ModuleLoader__.load({
  			* A refused call throws.
  			*/
  			async execute(session, line, attachments = []) {
@@ -58,7 +58,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  					kind: "error",
  					text: result.value.result.text
  				};
-@@ -1353,6 +1374,12 @@ window.__ModuleLoader__.load({
+@@ -1414,6 +1435,12 @@ window.__ModuleLoader__.load({
  		* Mount the command service and its per-session popupSelect overlay.
  		* @param ctx - client root context.
  		*/
@@ -71,7 +71,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  		function apply(ctx) {
  			ctx.effect(() => ctx.locale.register(NS, {
  				zh,
-@@ -1362,7 +1389,8 @@ window.__ModuleLoader__.load({
+@@ -1423,7 +1450,8 @@ window.__ModuleLoader__.load({
  			ctx.inject([
  				"slots",
  				"commandUi",
@@ -81,7 +81,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  			], (scope) => {
  				const command = scope.commandUi;
  				const sessions = scope.get("sessions");
-@@ -1377,6 +1405,7 @@ window.__ModuleLoader__.load({
+@@ -1438,6 +1466,7 @@ window.__ModuleLoader__.load({
  						return { popup: command.popupFor(actx) };
  					}
  				}, PopupSelectView));
@@ -90,7 +90,7 @@ index 101d40ef6cd284f09cd5dc533a262b7b8c0d66c8..6d09fb5bbfaa5862d3dc87900210627a
  		}
  		//#endregion
 diff --git a/package.json b/package.json
-index c0e21b6fcbf799c804551e1fa678cb2df5d2d72f..95f178cd7065761c7aa68a88007f1c587f3040a0 100644
+index e45d44f..c20a41c 100644
 --- a/package.json
 +++ b/package.json
 @@ -31,7 +31,8 @@
@@ -104,12 +104,19 @@ index c0e21b6fcbf799c804551e1fa678cb2df5d2d72f..95f178cd7065761c7aa68a88007f1c58
        "platform": "web"
      }
 @@ -59,7 +60,8 @@
-     "@deepseek-ai/dsh-session": "0.1.7-rc.2",
-     "@deepseek-ai/dsh-util-values": "0.1.7-rc.2",
-     "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2",
--    "@deepseek-ai/dsh-client-ui-session": "0.1.7-rc.2"
-+    "@deepseek-ai/dsh-client-ui-session": "0.1.7-rc.2",
-+    "@deepseek-ai/dsh-client-ui-layout": "0.1.7-rc.2"
+     "@deepseek-ai/dsh-util-values": "0.2.0-rc.2",
+     "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+     "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.2",
+-    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2"
++    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
++    "@deepseek-ai/dsh-client-ui-layout": "0.2.0-rc.2"
    },
    "files": [
      "lib/index.js",
+@@ -70,4 +72,4 @@
+     "bundle": "tsdown",
+     "watch": "tsdown --watch"
+   }
+-}
+\ No newline at end of file
++}

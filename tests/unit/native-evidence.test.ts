@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolCallId, createToolResultMessage } from '@deepseek-ai/dsh-llm';
+import { ToolCallId, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm';
+import { ToolCallRecovery, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN } from '@deepseek-ai/dsh-session';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 import { projectNativeSessionUsage } from '../../packages/dsh-flow/src/core/runtime.ts';
 import type { FlowAgentActor } from '../../packages/dsh-flow/src/core/model.ts';
@@ -18,6 +19,50 @@ async function nativeCall(turn: FakeTurn, nativeTurn: number, name: string, args
   return outcome;
 }
 function tools(answer: unknown) { return objectField(objectField(objectField(answer, 'projection').evidence, 'evidence').native_tools, 'native tools'); }
+
+for (const dispatched of [false,true]) test(`rc2 recovery preserves ${dispatched ? 'unknown dispatched' : 'unstarted'} tool evidence without another execution or charge`,async t=>{
+  const host=createFakeHost();
+  const runtime=new ClusterRuntime(host.ctx,{path:':memory:',autoTick:false});
+  t.after(async()=>{await runtime.dispose();await host.dispose();});
+  let scriptFailure:unknown;
+  host.setScript(async turn=>{
+    try {
+    turn.emit('turn/start',{turn:51});
+    for(const input of turn.inputs)turn.emit('user/message',input);
+    const callId=ToolCallId('recovered-sum');
+    turn.emit('assistant/message',{turn:51,step:1,stream:[],message:createAssistantMessage({source:{provider:'test',model:'test'},content:[{type:'tool-call',id:callId,name:'flow_sum',arguments:'{"values":[2,3]}'}]})});
+    if(dispatched){
+      turn.emit('tool/call',{turn:51,step:1,callId,name:'flow_sum',arguments:'{"values":[2,3]}'});
+      // The effect completed, but no native success was committed before the
+      // crash. Recovery must retain UNKNOWN rather than infer its result.
+      assert.equal((await turn.callTool('flow_sum',{values:[2,3]},{callId})).value,5);
+    }
+    const recovery=new ToolCallRecovery();
+    for(const event of turn.session.snapshotEvents())recovery.observe(event);
+    const results=recovery.results();assert.equal(results.length,1);
+    const result=results[0]!;
+    assert.equal(result.data.error?.code,dispatched?TOOL_OUTCOME_UNKNOWN:TOOL_NOT_STARTED);
+    assert.equal(result.data.message.isError,true);
+    turn.emit('tool/result',result.data);
+    recovery.observe(result);
+    assert.deepEqual(recovery.results(),[],'a committed recovery result does not create a second compensation');
+    const assignment=objectField(JSON.parse(String((await turn.callTool('flow_query',{what:'assignment'})).value)),'assignment');
+    await turn.callTool('flow_transaction',{action:'submit_result',params:{transaction_id:objectField(assignment.binding,'binding').transaction_id,result:{answer:5}}});
+    } catch(error){scriptFailure=error;throw error;}
+  });
+  const run=await runtime.runSingleAgent({objective:'计算2+3',acceptance_criteria:['结果为5'],workspace:'/tmp',capabilities:[],budget:{tool_calls:50}});
+  if(scriptFailure)throw scriptFailure;
+  const tx=runtime.store.listTransactions({cluster_id:run.cluster_id})[0]!;
+  const worker=runtime.store.listAgents(run.cluster_id)[0]!;
+  const evidence=tools(runtime.query({role:'user',cluster_id:run.cluster_id},'transaction',{id:tx.id,fields:['evidence']}));
+  assert.equal(evidence.total,dispatched?1:0,'an assistant request alone is not a dispatched call');
+  if(dispatched)assert.equal(objectField((evidence.items as unknown[])[0],'receipt').status,'error','the synthetic result never proves success');
+  const usage=runtime.store.usageSummary(run.cluster_id);
+  projectNativeSessionUsage(runtime.store,worker,host.turns[0]!.session.snapshotEvents(),tx.id);
+  projectNativeSessionUsage(runtime.store,worker,host.turns[0]!.session.snapshotEvents(),tx.id);
+  assert.deepEqual(runtime.store.usageSummary(run.cluster_id),usage);
+  assert.equal(runtime.query({role:'user',cluster_id:run.cluster_id},'effects').total,0);
+});
 
 test('native Worker sum receipts are tied to the published epoch and Flow turn, rather than effects', async t => {
   const host = createFakeHost();

@@ -1,27 +1,26 @@
 diff --git a/lib/index.js b/lib/index.js
-index bc72ae650e3cb6e04bb0244927e8f3cf60609492..4dfe73758296ac108aa879ba1866a48fc17d8e29 100644
+index bc72ae6..1c4215d 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -324,13 +324,15 @@ let CommandRuntime = (() => {
+@@ -324,7 +324,7 @@ let CommandRuntime = (() => {
  		* @returns the settled execution (result + lifecycle pairing id), or
  		*   `undefined` when syntax or name does not resolve.
  		*/
 -		async execute(agent, line, submittedAttachments, signal) {
 +		async execute(agent, line, submittedAttachments, submissionId, signal) {
-+            if (submissionId !== undefined && typeof submissionId !== "string") { signal ??= submissionId; submissionId = undefined; }
-+            signal ??= new AbortController().signal;
  			const parsed = parseCommand(line);
  			if (parsed === void 0) return void 0;
  			const command = this.view(agent).get(parsed.name);
- 			if (command === void 0) return void 0;
- 			if (signal.aborted) throw abortError(signal);
--			const commandId = this.mintCommandId();
-+			const commandId = submissionId ? CommandId(`cmd-client-${submissionId}`) : this.mintCommandId();
- 			this.appendLifecycle(agent.session, "command/run", {
+@@ -378,6 +378,7 @@ let CommandRuntime = (() => {
+ 			}
+ 			const invocation = Object.freeze({
  				commandId,
- 				name: parsed.name,
++				submissionId,
+ 				agent,
+ 				rawInput: parsed.rawInput,
+ 				attachments,
 diff --git a/lib/typert.host.js b/lib/typert.host.js
-index 011c289f2117b1ebb87e8e8a0d835d44c146e542..b54b508f23eb2c25bdb7c5dd652801ea0f7908df 100644
+index 0f8cefd..ae97f6a 100644
 --- a/lib/typert.host.js
 +++ b/lib/typert.host.js
 @@ -89,7 +89,8 @@ export const TYPERT = {
@@ -35,7 +34,7 @@ index 011c289f2117b1ebb87e8e8a0d835d44c146e542..b54b508f23eb2c25bdb7c5dd652801ea
        result: {
          mode: 'strict',
 diff --git a/lib/typert.remote-client.d.ts b/lib/typert.remote-client.d.ts
-index 96ff83ce03e7caabf31135eb92190cdf536ebe67..556c6a5bb5bb3e3477e9faa9d90d492018ac05a5 100644
+index 96ff83c..b36e9d3 100644
 --- a/lib/typert.remote-client.d.ts
 +++ b/lib/typert.remote-client.d.ts
 @@ -8,18 +8,18 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -43,12 +42,12 @@ index 96ff83ce03e7caabf31135eb92190cdf536ebe67..556c6a5bb5bb3e3477e9faa9d90d4920
  declare module '@deepseek-ai/dsh-typert-protocol' {
    interface TypertRemoteNamespace$636f6d6d616e6473 {
 -    execute: (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
-+    execute: (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    execute: (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId: string | undefined, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
      list: (agentId: SessionId) => Promise<RemoteResult<readonly CommandDescriptor[]>>
    }
    interface TypertRemoteMap {
 -    'commands/execute': (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
-+    'commands/execute': (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    'commands/execute': (agentId: SessionId, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId: string | undefined, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
      'commands/list': (agentId: SessionId) => Promise<RemoteResult<readonly CommandDescriptor[]>>
    }
    interface TypertRemoteNamespaceMap {
@@ -56,12 +55,12 @@ index 96ff83ce03e7caabf31135eb92190cdf536ebe67..556c6a5bb5bb3e3477e9faa9d90d4920
    }
    interface TypertRemoteScopeMap {
 -    'agent:commands/execute': (line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
-+    'agent:commands/execute': (line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId?: string | AbortSignal, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
++    'agent:commands/execute': (line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId: string | undefined, signal?: AbortSignal) => Promise<RemoteResult<CommandExecution | undefined>>
      'agent:commands/list': () => Promise<RemoteResult<readonly CommandDescriptor[]>>
    }
  }
 diff --git a/lib/typert.remote-client.js b/lib/typert.remote-client.js
-index 5f4d14e8f3acf0ef745788c39d1c52861320c9b9..893741c5df889184cf6d89066a569516bd03e061 100644
+index 5f4d14e..893741c 100644
 --- a/lib/typert.remote-client.js
 +++ b/lib/typert.remote-client.js
 @@ -86,7 +86,8 @@ export const TYPERT_REMOTE = {
@@ -75,13 +74,23 @@ index 5f4d14e8f3acf0ef745788c39d1c52861320c9b9..893741c5df889184cf6d89066a569516
        result: {
          mode: 'strict',
 diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
-index 0a33a7ad7e2c02f1a20df2d4bf0d13d2dd0083b3..1060b2524136668a20d7fb49287c87b1825e5471 100644
+index 0a33a7a..7bbd953 100644
 --- a/lib/types/index.d.ts
 +++ b/lib/types/index.d.ts
-@@ -140,6 +140,7 @@ export declare class CommandRuntime extends TypertRemoteService {
+@@ -17,6 +17,8 @@ export declare const name = "commands";
+ export type CommandFileReceiptResolver = (agent: Agent, receiptId: string) => FileAttachmentRef | undefined;
+ /** Invocation passed to one registered command handler. */
+ export interface CommandInvocation {
++    /** Stable caller intent across acknowledgement retries; independent of log pairing identity. */
++    readonly submissionId: string | undefined;
+     /** Pairing id already written to this invocation's `command/run` event. */
+     readonly commandId: CommandId;
+     /** Exact agent whose UI received the command. */
+@@ -139,7 +141,7 @@ export declare class CommandRuntime extends TypertRemoteService {
+      * @returns the settled execution (result + lifecycle pairing id), or
       *   `undefined` when syntax or name does not resolve.
       */
-     execute(agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal): Promise<CommandExecution | undefined>;
+-    execute(agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal): Promise<CommandExecution | undefined>;
 +    execute(agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], submissionId: string | undefined, signal: AbortSignal): Promise<CommandExecution | undefined>;
      /** Contained `command/done` error append for a thrown handler or admission failure. */
      private settleThrown;

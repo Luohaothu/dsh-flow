@@ -1,7 +1,7 @@
 /** Real provider acceptance for saved plans, readable handoffs and independent governance. */
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -11,18 +11,21 @@ import { computeBuildHashes, buildDrift } from './build-fingerprint.ts';
 import { ipcBridgePatchText, startAcceptanceHost } from './run.ts';
 import { asObject, asString } from './context.ts';
 import { isCurrentWorkerProducer } from './handoff-worker-identity.ts';
+import { readNativeToolReceipts } from './native-tool-receipts.ts';
 
 const cases = [
+  { id: 'artifact', objective: 'Use one Worker to create arithmetic-report.md in the current workspace. Include the title 算术核验报告, 2+3=5, 17×23=391, 144÷12=12 and reproducible calculation steps. The Worker must use write, then read the completed file and submit that actual native receipt as evidence. The Allocator must grant write_scope ["arithmetic-report.md"], inherited from the transaction inputs. The Orchestrator has evidence-query tools rather than a file tool: query the current transaction fields:["evidence"], find the Worker read receipt, and follow its exact read.what and read.params to inspect the actual file contents. Independently compute flow_sum([2,3]), flow_sum with 23 copies of 17, and flow_sum with 12 copies of 12. These prove the addition, repeated-addition multiplication, and inverse check of division. Record the actual methods truthfully: flow_sum adds numbers, it does not multiply. The Auditor independently reviews the Orchestrator’s native receipt reads, computations and validation. State the limitation that file content was inspected through the persisted Worker read receipt; do not claim a direct file-tool call by the manager. Do not decompose this single-file task. Deliver the real file path and the validation and audit conclusions.', criteria: ['当前工作区存在 arithmetic-report.md，含三个正确结果与计算依据', '总协调读取当前交付的原生文件回执并独立校验计算及内容'] },
   { id: 'simple', objective: '请安排成员计算 2+3，由总协调实际校验，并让 Auditor 独立审核验收过程。一个执行者即可完成，无需分解。全程纯文本，不读写文件、不运行终端。最终交付结果、验收结论和审核结论。', criteria: ['计算结果为 5，包含简短计算依据', '全程纯文本，不读写文件或运行终端'] },
   { id: 'decompose', objective: '制作一份纯文本算术报告：分别计算 17×23 和 144÷12，两部分是独立交付，请拆分为两个工作单元，最后由总协调整合报告并检查两个结果及报告完整性。每份局部交付和最终整合均由对应总协调实际校验，Auditor 审核其验收。全程不读写文件、不运行终端。', criteria: ['第一部分给出 391 及乘法依据', '第二部分给出 12 及除法依据', '最终报告同时保留两个结果、计算依据及整体验收结论'] },
   { id: 'delegation', objective: '形成纯文本指标核验报告，并演示两层自主管理委派。结构应为根管理域→一级指标核验管理域→二级原始计算复核管理域→执行者：根总协调委派一级域，一级总协调自主规划并委派二级域，二级总协调自主规划一个执行者计算 2+3。每个管理者校验自己接收的下游交付并逐层整合；各层验收记录由本层 Auditor 独立审核后才能接受。根协调整合最终报告，保留计算依据与逐层交付关系。不得用 Worker 充当第二层管理域，也不得把独立计算交给 Auditor；全程不使用文件或终端。', criteria: ['最终计算结果为 5 且依据可核对', '存在两层真实子管理域，各自保存规划并逐层交接整合', '最终报告保留原始计算依据及逐层交付关系'] },
   { id: 'correction', objective: '这是明确的纠正流程演练：只用纯文本完成 2+3。首次执行者请提交候选 6，并说明这是演练中的错误候选；总协调必须实际检查并拒绝错误候选，然后正式修订任务，要求执行者提交正确结果与依据。最终总协调校验正确结果，Auditor 审核验收行为。不要把首次错误候选标为验收通过。全程不读写文件、不运行终端。', criteria: ['首次错误候选被总协调实际识别并记录拒绝及纠正', '最终提交正确结果 5 及计算依据', '最终交付区分首次错误候选与纠正后的正确结果'] },
-  { id: 'recovery', objective: '请安排一个执行者计算 2+3 并解释依据，交付后由总协调实际校验并由 Auditor 独立审核验收。此运行可能发生宿主进程重启；请依据已保存计划及真实结果继续工作。全程纯文本，不读写文件、不运行终端。最终交付结果和验收结论。', criteria: ['结果为 5 且依据可核对', '重启后继续原正式任务，保留原任务与实际交付依据'] },
+  { id: 'recovery', objective: 'Use one Worker to compute 2+3 with flow_sum and explain the basis. The Orchestrator independently verifies the actual result; the Auditor independently audits that validation. The host may restart. Continue the same saved transaction and plan, preserving the original task and the actual delivery evidence. No files or shell tools. Deliver the result, validation and audit conclusions.', criteria: ['The result is 5 with verifiable calculation evidence', 'After host restart, continue the same formal task and preserve the original input and actual delivery evidence'] },
 ] as const;
 
 const key = process.env.FLOW_MODEL_API_KEY;
 if (!key) throw new Error('Configure FLOW_MODEL_API_KEY in the process environment.');
 const reasoningEffort = process.env.FLOW_MODEL_REASONING_EFFORT ?? 'off';
+const provider = process.env.FLOW_MODEL_PROVIDER ?? 'deepseek';
 assert(['off', 'high'].includes(reasoningEffort), 'FLOW_MODEL_REASONING_EFFORT must be off or high');
 const timeout = Number(process.env.FLOW_LIVE_TIMEOUT_MS ?? 900_000);
 const selected = process.argv[2];
@@ -42,6 +45,15 @@ function canonical(value: unknown): string {
 const same = (a: unknown, b: unknown): boolean => canonical(a) === canonical(b);
 const nonempty = (value: unknown): boolean => typeof value === 'string' && value.trim().length > 0;
 const containsValue = (result: unknown, value: number): boolean => new RegExp(`\\b${value}\\b`).test(JSON.stringify(result) ?? '');
+function parsedObject(value: unknown): Record<string, unknown> | null {
+  try { return asObject(typeof value === 'string' ? JSON.parse(value) : value); } catch { return null; }
+}
+const correctFileMath = (text: string): boolean => {
+  const compact = text.replace(/\s/g, '');
+  return /算术核验报告/.test(text) && /2\+3=5/.test(compact) && /17[×*x]23=391/.test(compact) && /144[÷/]12=12/.test(compact);
+};
+// Explain the existing tool contract without supplying any audit judgment.
+const auditFormat = 'Auditor interface reminder: read the pending audit object and its bound immutable plan or validation. inspect_plan checks cover goal_coverage, responsibility, dependencies, handoff, acceptance_arrangement. inspect_validation checks cover standard_coverage, checks_performed, evidence_applicability, conclusion_support, authority. Every check requires rule, method, observation, passed (boolean), and evidence_refs. For a plan check use {kind:"plan",ref:<the exact audit.plan_ref object>}; for a validation check use {kind:"validation",ref:<the exact audit.validation_ref object>}. Copy the reference object from the actual audit; never use a transaction ID alone, invent a reference, or mix another audit’s revision. Judge each check independently from real evidence. If a tool rejects the format, read its error and repair the missing field or reference; do not repeat an unchanged rejected call.';
 
 for (const scenario of cases.filter(entry => !selected || entry.id === selected)) {
   const layout = createRunLayout(join(PROJECT_ROOT, '.artifacts'), `handoffs-${scenario.id}-${stamp}`);
@@ -49,7 +61,7 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
   const profile = `flow-handoffs-${scenario.id}-${stamp}`;
   // Exercise the npm artifact that users install, with host services shared as
   // peer dependencies. Shipped bytes are checked before loading the profile.
-  const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', layout.root],
+  const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--cache', join(layout.tmp, 'npm-cache'), '--pack-destination', layout.root],
     { cwd: PLUGIN_ROOT, encoding: 'utf8' })) as { filename: string }[];
   const archive = packed[0]?.filename;
   assert(archive, 'npm produces a package artifact');
@@ -58,14 +70,14 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
   for (const file of ['index.js', 'command.js', 'web.js', 'client.js', 'typert.host.js', 'typert.remote-client.js']) {
     assert.deepEqual(readFileSync(join(packagePath, 'lib', file)), readFileSync(join(PLUGIN_ROOT, 'lib', file)), `installed ${file} matches build`);
   }
-  symlinkSync(join(PROJECT_ROOT, 'node_modules'), join(packagePath, 'node_modules'), 'dir');
+  symlinkSync(join(PLUGIN_ROOT, 'node_modules'), join(packagePath, 'node_modules'), 'dir');
   ensureProfile(layout.home, profile, { bundles: WEB_PROFILE_BUNDLES, packagePath });
   const bridge = join(layout.root, 'ipc-bridge.patch.yml');
   writeFileSync(bridge, ipcBridgePatchText());
-  const patches = [join(PROJECT_ROOT, 'examples/cluster.patch.yml'), join(PROJECT_ROOT, 'examples/deepseek.patch.yml'), bridge];
+  const patches = [join(PROJECT_ROOT, 'examples/cluster.patch.yml'), process.env.FLOW_MODEL_PATCH ?? join(PROJECT_ROOT, `examples/${provider === 'omlx' ? 'omlx' : 'deepseek'}.patch.yml`), bridge];
   const buildBefore = computeBuildHashes({ id: '' }, patches);
   const env = buildHostEnv({ home: layout.home, tmpdir: layout.tmp, dataDir: layout.data, workspace: layout.workspace,
-    modelRoute: { provider: 'deepseek', model: process.env.FLOW_MODEL_ID ?? 'deepseek-flash', baseURL: process.env.FLOW_MODEL_BASE_URL ?? 'https://api.deepseek.com' }, modelApiKey: key });
+    modelRoute: { provider, model: process.env.FLOW_MODEL_ID ?? 'deepseek-flash', baseURL: process.env.FLOW_MODEL_BASE_URL ?? 'https://api.deepseek.com' }, modelApiKey: key });
   env.FLOW_MODEL_REASONING_EFFORT = reasoningEffort;
   const makeHost = (suffix: string): DshHost => new DshHost({ profile, patches, cwd: layout.workspace, env,
     logPath: join(layout.logs, `host${suffix}.log`), sanitizeLog: redact });
@@ -80,12 +92,23 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
   };
   try {
     await startAcceptanceHost(host);
-    const started = asObject(await host.request('start', undefined, { objective: scenario.objective,
-      workspace: layout.workspace, capabilities: [], acceptance_criteria: [...scenario.criteria],
+    const objective = `${scenario.objective}\n\n${auditFormat}`;
+    const started = asObject(await host.request('start', undefined, { objective,
+      workspace: layout.workspace, capabilities: scenario.id === 'artifact' ? ['fs_read', 'fs_write'] : [], acceptance_criteria: [...scenario.criteria],
+      ...(scenario.id === 'artifact' ? { initial_transactions: [{ objective, acceptance_criteria: [...scenario.criteria], inputs: { write_scope: ['arithmetic-report.md'] } }] } : {}),
       limits: { max_depth: 4, max_role_turns: 80, max_attempts: 4 },
       budget: { tool_calls: 1200, agents: 24, max_active_agents: 8, wall_time_ms: timeout } }, 120_000));
     clusterId = asString(asObject(started?.cluster)?.id) ?? undefined;
     assert(clusterId, 'native host creates a cluster');
+    if (scenario.id === 'artifact') {
+      const db = new DatabaseSync(join(layout.data, 'cluster.sqlite'), { readOnly: true });
+      try {
+        const rows = db.prepare('SELECT inputs FROM transactions WHERE cluster_id=?').all(clusterId);
+        const admitted = rows.length === 1 && same(asObject(decoded(rows[0]!.inputs))?.write_scope, ['arithmetic-report.md']);
+        check('artifact-write-scope-admitted', admitted);
+        assert(admitted, 'the formal transaction retains its bounded write scope before allocation');
+      } finally { db.close(); }
+    }
     const deadline = Date.now() + timeout;
     for (;;) {
       const snapshot = asObject(await host.request('read', clusterId, { limit: 500 }, 30_000));
@@ -184,11 +207,53 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           && publication.source_validation_refs.some(ref => same(ref, decoded(child.current_validation_ref)));
       };
       const transcripts: unknown[] = [];
+      const fileToolEvidence: {role: string; session_id: string; seq: number; name: string; call_id: unknown; arguments: unknown; native_success: boolean}[] = [];
+      const receiptReads: {call_id: unknown; seq: number; source_call_id: unknown; source_session_id: unknown; source_seq: unknown; source_tool: unknown; native_success: boolean; content_matches: boolean; before_validation: boolean}[] = [];
+      const managerSums: {call_id: unknown; seq: number; values: unknown; result: number; native_success: boolean; before_validation: boolean}[] = [];
       const nativeInitialCounts = new Map<string, number>();
       for (const agent of agents) {
         const file = findSessionFile(join(layout.home, 'sessions'), String(agent.session_id));
         const journal = file ? readSessionEvents(file) : null;
         const nativeEvents = journal?.events ?? [];
+        const resultForCall = (call: typeof nativeEvents[number]): Record<string, unknown> | null => {
+          const data = asObject(call.data);
+          const returned = nativeEvents.find(event => event.type === 'tool/result' && event.seq > call.seq
+            && asObject(event.data)?.turn === data?.turn && asObject(event.data)?.step === data?.step
+            && asObject(asObject(event.data)?.message)?.toolCallId === data?.callId);
+          return asObject(asObject(returned?.data)?.message);
+        };
+        const resultText = (message: Record<string, unknown> | null): string => Array.isArray(message?.content)
+          ? message.content.map(part => asString(asObject(part)?.text) ?? '').join('\n') : '';
+        const currentValidationSeq = Math.max(-1, ...nativeEvents.filter(event => {
+          if (event.type !== 'tool/call' || asObject(event.data)?.name !== 'flow_transaction') return false;
+          const args = parsedObject(asObject(event.data)?.arguments), message = resultForCall(event);
+          const envelope = parsedObject(resultText(message)), outcome = asObject(envelope?.result);
+          return args?.action === 'validate' && message?.isError === false && envelope?.ok === true
+            && decodedValidations.some(validation => validation.author_agent_id === agent.id
+              && transactions.some(tx => same(validation.ref, decoded(tx.current_validation_ref)))
+              && same(validation.ref, { transaction_id: outcome?.transaction_id, result_revision: outcome?.result_revision }));
+        }).map(event => event.seq));
+        for (const call of nativeEvents.filter(event => event.type === 'tool/call')) {
+          const data = asObject(call.data);
+          if (!data) continue;
+          const message = resultForCall(call), nativeSuccess = message?.isError === false;
+          if (['read', 'write'].includes(String(data.name)) && JSON.stringify(data.arguments).includes('arithmetic-report.md')) {
+            fileToolEvidence.push({role: String(agent.role), session_id: String(agent.session_id), seq: call.seq, name: String(data.name), call_id: data.callId, arguments: data.arguments, native_success: nativeSuccess});
+          }
+          if (agent.role !== 'orchestrator') continue;
+          const args = parsedObject(data.arguments), params = asObject(args?.params);
+          if (data.name === 'flow_sum') managerSums.push({call_id: data.callId, seq: call.seq, values: args?.values,
+            result: Number(resultText(message)), native_success: nativeSuccess, before_validation: call.seq < currentValidationSeq});
+          if (data.name !== 'flow_query' || !params?.native_call_id) continue;
+          const reply = parsedObject(resultText(message));
+          const details = readNativeToolReceipts(reply);
+          const detail = details.find(item => asObject(item?.ref)?.call_id === params.native_call_id);
+          const sourceResult = asObject(asObject(detail?.result)?.message);
+          receiptReads.push({call_id: data.callId, seq: call.seq, source_call_id: params.native_call_id,
+            source_session_id: params.native_session_id, source_seq: params.native_call_seq,
+            source_tool: asObject(detail?.call)?.name, native_success: nativeSuccess && sourceResult?.isError === false,
+            content_matches: correctFileMath(resultText(sourceResult)), before_validation: call.seq < currentValidationSeq});
+        }
         const userEvents = nativeEvents.filter(event => event.type === 'user/message');
         const texts = userEvents.map(event => {
           const data = asObject(event.data);
@@ -219,6 +284,17 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
       const acceptedText = accepted.map(tx => String(tx.result)).join('\n');
       check('expected-business-values', scenario.id === 'decompose'
         ? /\b391\b/.test(acceptedText) && /\b12\b/.test(acceptedText) : /\b5\b/.test(acceptedText));
+      if (scenario.id === 'artifact') {
+        const path = join(layout.workspace, 'arithmetic-report.md');
+        const content = existsSync(path) ? readFileSync(path, 'utf8') : '';
+        check('independently-read-delivered-file', correctFileMath(content), path);
+        check('worker-native-file-write', fileToolEvidence.some(call => call.role === 'worker' && call.name === 'write' && call.native_success));
+        check('manager-native-file-receipt-read', receiptReads.some(read => read.native_success && read.content_matches && read.before_validation
+          && read.source_tool === 'read' && fileToolEvidence.some(call => call.role === 'worker' && call.name === 'read' && call.native_success
+            && call.call_id === read.source_call_id && call.session_id === read.source_session_id && call.seq === read.source_seq)));
+        check('manager-native-arithmetic-checks', [[2, 3], Array(23).fill(17), Array(12).fill(12)].every((values, index) =>
+          managerSums.some(call => call.native_success && call.before_validation && same(call.values, values) && call.result === [5, 391, 144][index])));
+      }
       const roots = transactions.filter(tx => tx.parent_transaction_id === null);
       if (scenario.id === 'simple') {
         check('one-worker', agents.filter(agent => agent.role === 'worker').length === 1);
@@ -306,13 +382,13 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           && inputs.some(input => input.id === preserved.id && input.native_message_id === preserved.native_message_id && input.status === 'ADMITTED'),
         JSON.stringify(preserved));
       }
-      writeFileSync(join(layout.root, 'native-evidence.json'), redact(JSON.stringify({ plans, publications, validations, audits, inputs, nodes, allocations, assignments, events, commands, restart_input: restartInput, transcripts }, null, 2)));
+      writeFileSync(join(layout.root, 'native-evidence.json'), redact(JSON.stringify({ plans, publications, validations, audits, inputs, nodes, allocations, assignments, events, commands, restart_input: restartInput, file_tool_evidence: fileToolEvidence, manager_receipt_reads: receiptReads, manager_native_sums: managerSums, transcripts }, null, 2)));
     } finally { db.close(); }
   }
   const buildAfter = computeBuildHashes({ id: '' }, patches);
   check('source-and-build-stable', buildDrift(buildBefore, buildAfter) === null, buildDrift(buildBefore, buildAfter) ?? undefined);
   const report = { scenario: scenario.id, status: checks.every(entry => entry.passed) ? 'PASSED' : 'FAILED',
-    provider: 'deepseek', model: env.FLOW_QWEN_MODEL, reasoning_effort: reasoningEffort, checks, build_before: buildBefore, build_after: buildAfter,
+    provider, model: env.FLOW_QWEN_MODEL, reasoning_effort: reasoningEffort, checks, build_before: buildBefore, build_after: buildAfter,
     installed_package: { path: packagePath, archive, sha256: createHash('sha256').update(readFileSync(join(layout.root, archive))).digest('hex'), shipped_files_match_build: true },
     ...(error === undefined ? {} : { error: redact(error) }) };
   writeFileSync(join(layout.root, 'report.json'), redact(JSON.stringify(report, null, 2)) + '\n');

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-typert-protocol",
   "description": "Local face declaration of the published @deepseek-ai/dsh-typert-protocol, registered so the Typert generator recognizes Remote decorators from an out-of-tree workspace.",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -33,7 +33,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-brand": "0.1.7-rc.2"
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4"

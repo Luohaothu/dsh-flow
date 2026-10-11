@@ -1,8 +1,8 @@
 diff --git a/lib/index.js b/lib/index.js
-index 48bc365ca7021dcf0d69a2d07ac49995034357c4..6c26c824c416fc8e78bb54f5c72fb48cf21192b3 100644
+index 16b79c7..5dd5eb3 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -1401,6 +1401,7 @@ var Session = class Session {
+@@ -1441,6 +1441,7 @@ var Session = class Session {
  	append(type, data, ...opts) {
  		const surfaceOpts = opts[0];
  		const surfaceMetadata = {
@@ -11,7 +11,7 @@ index 48bc365ca7021dcf0d69a2d07ac49995034357c4..6c26c824c416fc8e78bb54f5c72fb48c
  			...surfaceOpts?.surfaceOp === void 0 ? {} : { surfaceOp: surfaceOpts.surfaceOp }
  		};
 diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
-index 3d6aa837b6ab4c40b4c84c178a9579e261731010..1982060e910477ffbdb45de8b5fda9a54af4c91e 100644
+index 9db0258..a4783c4 100644
 --- a/lib/types/index.d.ts
 +++ b/lib/types/index.d.ts
 @@ -243,7 +243,7 @@ export declare class Session {

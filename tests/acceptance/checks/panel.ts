@@ -411,6 +411,7 @@ export async function live({report,layout,host,mock}:Live) {
     await page.evaluate(()=>{Storage.prototype.setItem=Reflect.get(window,'__uxStorageWrite');});await page.screenshot({path:join(artifacts,'settings.png'),fullPage:true});
     await page.getByRole('button',{name:'取消更改',exact:true}).click();await page.getByRole('button',{name:'返回会话',exact:true}).click();
     await header.click();const tree=page.getByRole('tree',{name:'智能体派生树'});
+    await page.getByRole('dialog',{name:'智能体团队',exact:true}).getByRole('button',{name:/已结束 .* 个 · 展开/}).waitFor({state:'visible'});
     push('header-ended-preference',await tree.getByRole('button',{name:'查看 原生记录 A 对话',exact:true}).count()===0&&await page.getByRole('dialog',{name:'智能体团队',exact:true}).getByRole('button',{name:/已结束 .* 个 · 展开/}).isVisible(),'Saved collapse preference hides ended identities while preserving live ancestors and the expansion entry');
     await page.getByRole('dialog',{name:'智能体团队',exact:true}).getByRole('button',{name:/已结束 .* 个 · 展开/}).click();
     push('header-ended-expand',await tree.locator('[data-tree-id="ux-reader-A"]').isVisible(),'Header expansion reveals the original historical identity of the remaining active run');await page.keyboard.press('Escape');

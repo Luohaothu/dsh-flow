@@ -9,7 +9,7 @@ description: 从源码安装依赖、构建并测试 dsh-flow，在独立 DSH �
 
 安装、构建和模拟测试均不需要模型服务；提交目标并运行集群时，才需要接入可用的模型。日常使用集群的操作流程见[快速上手](/quick-start)。
 
-当前 `0.1.7-rc.2` 基线需要本仓库冻结安装中的提供方接口补丁。启动时使用仓库的 `dsh-launch.ts`；普通同版本 npm 宿主尚未包含这些扩展。
+当前 `0.2.0-rc.2` 基线需要本仓库冻结安装中的提供方接口补丁。启动时使用仓库的 `dsh-launch.ts`；普通同版本 npm 宿主尚未包含这些扩展。
 
 ## 1. 安装开发依赖
 
@@ -60,7 +60,7 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
 
 ## 4. 检查模型与覆盖配置
 
-[instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。请按实际部署修改模型提供方、模型名称、服务地址和宿主模型适配器容量；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
+[instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。本地 oMLX 可使用 [omlx.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/omlx.patch.yml)，通过进程环境配置 `FLOW_MODEL_API_KEY`，不将凭据写入配置文件。请按实际部署修改模型提供方、模型名称、服务地址和宿主模型适配器容量；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
 
 这些配置用于准备独立调试实例的宿主模型服务。日常使用时，插件直接使用宿主中已配置好的模型，操作步骤见[快速上手](/quick-start)。
 

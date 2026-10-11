@@ -1,17 +1,17 @@
 diff --git a/lib/client.js b/lib/client.js
-index 4603dc4e637d06140500e1baf8e2f65b2bd68f2c..44ed1983164b4b5fd105d87ac1d6d18651a9bf1b 100644
+index c5ca884..ec06e21 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -1045,9 +1045,10 @@ window.__ModuleLoader__.load({
+@@ -1044,9 +1044,10 @@ window.__ModuleLoader__.load({
+ 			const maybeEpoch = useMaybeIncarnation(binding);
  			const version = (0, react.useSyncExternalStore)((listener) => host.subscribeFactory(name, listener), () => host.getFactoryVersion(name));
  			const definition = host.factoryOf(name);
+-			const nextAncestors = (0, react.useMemo)(() => new Set(ancestors).add(name), [ancestors, name]);
++			const ancestorKey = `${name}:${definition?.scope === "root" ? "root" : binding.key === void 0 ? "session:absent" : `session:${sessionGenerationKeyOf(binding)}`}`;
++			const nextAncestors = (0, react.useMemo)(() => new Set(ancestors).add(ancestorKey), [ancestors, ancestorKey]);
  			if (definition === void 0) return (0, react_jsx_runtime.jsx)(react_jsx_runtime.Fragment, { children: fallback ?? null });
 -			if (ancestors.has(name)) throw new _deepseek_ai_dsh_client_ui_slots.SlotOwnershipError(`recursive render of factory '${name}'`);
-+			const ancestorKey = `${name}:${definition.scope === "root" ? "root" : binding.key === void 0 ? "session:absent" : `session:${sessionGenerationKeyOf(binding)}`}`;
 +			if (ancestors.has(ancestorKey)) throw new _deepseek_ai_dsh_client_ui_slots.SlotOwnershipError(`recursive render of factory '${name}'`);
  			for (const localName of Object.keys(selected)) if (definition.slots?.[localName] === void 0) throw new _deepseek_ai_dsh_client_ui_slots.SlotOwnershipError(`local slot '${localName}' is not declared by factory '${name}'`);
--			const nextAncestors = new Set(ancestors).add(name);
-+			const nextAncestors = new Set(ancestors).add(ancestorKey);
  			const scopeIdentity = definition.scope === "root" ? "root" : definition.scope === "session" ? binding.key === void 0 ? "session:absent" : `session:${sessionGenerationKeyOf(binding)}` : `session-maybe:${maybeEpoch}`;
  			return (0, react_jsx_runtime.jsx)(FactoryErrorBoundary, {
- 				name,

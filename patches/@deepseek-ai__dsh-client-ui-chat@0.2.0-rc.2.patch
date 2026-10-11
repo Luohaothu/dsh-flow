@@ -1,8 +1,8 @@
 diff --git a/lib/client.js b/lib/client.js
-index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f070db069 100644
+index f997683..039ee57 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -1527,6 +1527,7 @@ window.__ModuleLoader__.load({
+@@ -1520,6 +1520,7 @@ window.__ModuleLoader__.load({
  			"user",
  			"steering",
  			"turn-trigger",
@@ -35,7 +35,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  				groupPart,
  				cwd,
  				openFile,
-@@ -5040,7 +5043,7 @@ window.__ModuleLoader__.load({
+@@ -5127,7 +5130,7 @@ window.__ModuleLoader__.load({
  		* The chat view slot entry: pure component over the composed props; each
  		* ordered business Node crosses the keyed renderer seat.
  		*/
@@ -44,7 +44,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  			const order = useChat((s) => s.order);
  			const groupedEntries = useConversation((snapshot) => snapshot.views.grouped("chat")?.entries);
  			const entries = (0, react.useMemo)(() => groupedEntries ?? order.map((key) => ({
-@@ -5128,6 +5131,12 @@ window.__ModuleLoader__.load({
+@@ -5220,6 +5223,12 @@ window.__ModuleLoader__.load({
  			const lastKey = order.at(-1) ?? null;
  			const latestSteering = pendingInputs.findLast((item) => "source" in item);
  			const steeringId = latestSteering?.source.kind === "user" && "rpcId" in latestSteering.source ? latestSteering.source.rpcId : latestSteering?.id ?? null;
@@ -57,7 +57,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  			const scroll = useChatScroll({
  				ready: openState === "open",
  				order,
-@@ -5136,7 +5145,7 @@ window.__ModuleLoader__.load({
+@@ -5228,7 +5237,7 @@ window.__ModuleLoader__.load({
  				running,
  				loadingOlder,
  				hasMore,
@@ -66,7 +66,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  				loadOlder,
  				loadThrough,
  				lastIsUser: lastKey !== null && nodeStore.get(lastKey)?.kind === "user",
-@@ -5190,6 +5199,7 @@ window.__ModuleLoader__.load({
+@@ -5282,6 +5291,7 @@ window.__ModuleLoader__.load({
  										openFile: requestOpenFile,
  										fileImages,
  										children: (0, react_jsx_runtime.jsx)(ChatNodeList, {
@@ -74,7 +74,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  											entries,
  											pendingInputs,
  											lastInputTurn,
-@@ -6054,12 +6064,12 @@ window.__ModuleLoader__.load({
+@@ -6131,12 +6141,12 @@ window.__ModuleLoader__.load({
  		//#endregion
  		//#region lib/types/client/chat/CommandNodeView.js
  		/** Ordinary command lifecycle renderer with command-name keyed specialization. */
@@ -89,7 +89,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  					entryKey: command.name ?? "",
  					fallback: (0, react_jsx_runtime.jsx)(GenericCommandCard, {
  						...owner,
-@@ -6496,7 +6506,7 @@ window.__ModuleLoader__.load({
+@@ -6564,7 +6574,7 @@ window.__ModuleLoader__.load({
  			}
  		}
  		/** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
@@ -98,7 +98,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  			const detailed = usePerformanceUsage((mode) => mode) === "detailed";
  			const data = node.data;
  			const hasLaterChatNode = useChat((snapshot) => (lastContent(snapshot, data.turn, true)?.anchorSeq ?? -1) > (data.closing?.finalNode.seq ?? data.seq));
-@@ -6509,7 +6519,7 @@ window.__ModuleLoader__.load({
+@@ -6577,7 +6587,7 @@ window.__ModuleLoader__.load({
  			const turn = node.location.kind === "turn" || node.location.kind === "step" ? node.location.turn : void 0;
  			if (turn === void 0) return null;
  			const closing = data.closing;
@@ -107,7 +107,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  				turn,
  				seq: closing?.finalNode.seq ?? data.seq,
  				openFile
-@@ -6520,16 +6530,16 @@ window.__ModuleLoader__.load({
+@@ -6588,16 +6598,16 @@ window.__ModuleLoader__.load({
  				children: tail
  			});
  			const messageId = closing.finalNode.messageId;
@@ -127,7 +127,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  						forkAt(data.seq);
  					},
  					branchUnavailable: data.branchUnavailable || hasLaterChatNode,
-@@ -8784,7 +8794,7 @@ window.__ModuleLoader__.load({
+@@ -8852,7 +8862,7 @@ window.__ModuleLoader__.load({
  		const chatViewDefinition = {
  			target: "chat",
  			create: () => new ChatSnapshotBuilder(),
@@ -136,7 +136,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  		};
  		/**
  		* Register the incremental Chat target builder.
-@@ -9234,7 +9244,7 @@ window.__ModuleLoader__.load({
+@@ -9302,7 +9312,7 @@ window.__ModuleLoader__.load({
  			update: (context) => context.state,
  			buildViewNode: (context) => {
  				if (context.state === void 0) return null;
@@ -145,7 +145,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  			}
  		};
  		/** Developer history uses the input-message lifecycle and context presentation. */
-@@ -10566,6 +10576,7 @@ window.__ModuleLoader__.load({
+@@ -10634,6 +10644,7 @@ window.__ModuleLoader__.load({
  			"user",
  			"steering",
  			"turn-trigger",
@@ -153,7 +153,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  			"model-retry",
  			"turn-error",
  			"turn-max-tokens",
-@@ -12408,6 +12419,9 @@ window.__ModuleLoader__.load({
+@@ -12504,6 +12515,9 @@ window.__ModuleLoader__.load({
  			ctx.slots.inject("conversation.approval.detail", () => ctx.slots.register({ name: "conversation.approval.detail" }, ApprovalCommand));
  		}
  		//#endregion
@@ -164,7 +164,7 @@ index a99972a5aa2d05e2df2887f62435bf1b85569845..1aaec69351f620b0687b40719b3c5a1f
  		exports.apply = apply;
  		exports.inject = inject;
 diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
-index a3f4a4246318a741b3049c2de50bed1cb41bd981..7b8e27602f857bff1e0c82c8ef17191ff9154b83 100644
+index a3f4a42..7b8e276 100644
 --- a/lib/types/client/contract/slots.d.ts
 +++ b/lib/types/client/contract/slots.d.ts
 @@ -123,6 +123,8 @@ export interface ChatNodeInjected {
@@ -177,7 +177,7 @@ index a3f4a4246318a741b3049c2de50bed1cb41bd981..7b8e27602f857bff1e0c82c8ef17191f
      groupPart?: string;
      cwd?: string | undefined;
 diff --git a/lib/types/client/conversation-nodes/message.d.ts b/lib/types/client/conversation-nodes/message.d.ts
-index f289a5c8edd3a35e6072ddc7ed94f9101aee80b0..60060ecb40dbf69ee63665d410ab6c9d626af931 100644
+index f289a5c..60060ec 100644
 --- a/lib/types/client/conversation-nodes/message.d.ts
 +++ b/lib/types/client/conversation-nodes/message.d.ts
 @@ -25,6 +25,8 @@ declare module '../contract/chat-nodes.ts' {

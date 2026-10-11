@@ -1,5 +1,5 @@
 diff --git a/lib/client.js b/lib/client.js
-index a452ef2408543d62ea1e0133a2a0206008951eed..e04a71676f4824f0a979c0666e0791ac70896ba1 100644
+index a452ef2..e04a716 100644
 --- a/lib/client.js
 +++ b/lib/client.js
 @@ -962,7 +962,14 @@ window.__ModuleLoader__.load({

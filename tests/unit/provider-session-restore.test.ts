@@ -1,4 +1,4 @@
-/** Persisted V4 admission must accept the native Session's notification-first history. */
+/** rc2 retains the released V4 protected-system-head validation. */
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Session,SessionId,KNOWN_SESSION_EVENT_TYPES} from '@deepseek-ai/dsh-session';
@@ -25,8 +25,8 @@ function artifact(session:Session):SessionFormatArtifact {
   return JSON.parse(JSON.stringify({header:{...session.header,delegationDepth:0},inheritedEventCount:0,events:session.snapshotEvents()}));
 }
 
-test('official V4 restoration retains a notification before the first system prompt unchanged',()=>{
-  const session=history(true);
+test('official rc2 V4 restoration retains a system-first history unchanged',()=>{
+  const session=history(false);
   const image=artifact(session);
   const before=JSON.stringify(image);
   assert.equal(restoreReleasedV4Artifact(image,KNOWN_SESSION_EVENT_TYPES),image);
@@ -34,6 +34,10 @@ test('official V4 restoration retains a notification before the first system pro
   const replay=Session.create(session.id,session.snapshotEvents(),session.header);
   assert.deepEqual(replay.surface.nodes,session.surface.nodes);
   assert.deepEqual(replay.snapshotEvents().slice(0,session.seq),session.snapshotEvents());
+});
+
+test('official rc2 V4 restoration rejects notification-first legacy or malformed histories',()=>{
+  assert.throws(()=>restoreReleasedV4Artifact(artifact(history(true)),KNOWN_SESSION_EVENT_TYPES),/protected first surface head/);
 });
 
 test('official V4 restoration still protects an existing system head against a non-system replacement',()=>{
