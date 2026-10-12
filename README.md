@@ -48,10 +48,11 @@ Follow the [isolated-profile installation guide](docs/design/development/setup.m
 ```bash
 # Use the isolated DSH_HOME configured in the installation guide.
 node --import tsx src/host/dsh-launch.ts plugin --profile web add /tmp/dsh-flow-0.1.0.tgz
-node --import tsx src/host/dsh-launch.ts --profile web --patch examples/instance.patch.yml --dump-config
+node --import tsx scripts/initialize-omlx-profile.ts --profile-dir "$DSH_HOME/profiles/web"
+node --import tsx src/host/dsh-launch.ts --profile web --patch examples/instance-runtime.patch.yml --dump-config
 ```
 
-`examples/instance.patch.yml` configures a profile with the package already installed. `examples/cluster.patch.yml` inserts services into an acceptance profile. Both map deployment variables into ordinary Cordis configuration; the plugin core reads its configuration from the schema in `packages/dsh-flow/src/config.ts`.
+Initialize editable model settings once while the profile is stopped; the helper preserves existing Providers and default model choices and stores only a credential environment reference. `examples/instance-runtime.patch.yml` then supplies runtime policy without overriding native model settings. Installed deployments disable development source watching; native GUI settings still validate, persist and apply immediately. The fixed model overlays (`instance.patch.yml` and `omlx.patch.yml`) are for isolated acceptance runs; using them as launch overrides prevents native Provider edits from persisting. `examples/cluster.patch.yml` inserts services into an acceptance profile. Both map deployment variables into ordinary Cordis configuration; the plugin core reads its configuration from the schema in `packages/dsh-flow/src/config.ts`.
 
 The standard bundle provides the service, observing Remote API and `/agent-team` command. Its capability tools are mounted inside each agent's scope. The host owns authentication, sandbox policy, model transport, conversation rendering and navigation. See [patches](patches/README.md) for the required provider contracts and their maintenance workflow.
 

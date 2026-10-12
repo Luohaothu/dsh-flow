@@ -60,20 +60,30 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
 
 ## 4. 检查模型与覆盖配置
 
-[instance.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/instance.patch.yml) 提供完整部署示例，默认使用 `http://127.0.0.1:8000/v1` 上的 `local-sglang / Qwen3.8-27B-FP8`。本地 oMLX 可使用 [omlx.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/omlx.patch.yml)，通过进程环境配置 `FLOW_MODEL_API_KEY`，不将凭据写入配置文件。请按实际部署修改模型提供方、模型名称、服务地址和宿主模型适配器容量；接入 OpenAI 兼容服务时，可参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml)。
+需要通过网页设置新增或编辑 Provider 的实例，应将模型配置保存在 profile 的 `cordis.patch.yml`，启动覆盖文件只负责 Flow 和宿主运行策略。下面以本地 oMLX 为例，在创建 profile 后、启动宿主前执行一次：
 
-这些配置用于准备独立调试实例的宿主模型服务。日常使用时，插件直接使用宿主中已配置好的模型，操作步骤见[快速上手](/quick-start)。
+```bash
+export FLOW_MODEL_PROVIDER=omlx
+export FLOW_QWEN_MODEL=Qwen3.8-27B-4bit
+export FLOW_QWEN_BASE_URL=http://127.0.0.1:8000/v1
+node --import tsx scripts/initialize-omlx-profile.ts \
+  --profile-dir "$FLOW_DEMO_HOME/profiles/web"
+```
 
-团队默认模型为“跟随主会话”时，创建使用主会话当前选中的模型，后续选择同步给该会话未结束的团队；设置为固定模型时保持团队选择。示例中的 `provider/model` 同时提供底层程序化启动的默认路由。若团队受阻且提示模型服务连接失败，先核对主会话选中服务是否可连接。
+初始化器将地址、模型名和容量写成明确的字符串或数字，凭据仅保留 `apiKeyEnv: FLOW_MODEL_API_KEY` 引用。通过安全的本机方式向宿主进程提供 `FLOW_MODEL_API_KEY`；不要把密钥写进 YAML。初始化器保留已有 Provider、默认模型选择和其他配置，只补充缺失的 oMLX 配置；已有 oMLX 没有默认选择时使用它已声明的首个模型。它只转换本仓库 oMLX 模板中的已知环境表达式，遇到其他表达式或模型配置别名会在写入前拒绝。已有实例迁移时先停止该 profile 的宿主，保留其数据库和会话，再运行初始化器；此命令不用于与网页设置并发写入。
 
-先检查合并后的配置，此步骤不会加载服务或运行模型：
+日常增删改 Provider 在原生模型设置中完成。不要同时传入 `instance.patch.yml`、`omlx.patch.yml` 或其他覆盖 `llm-pi-ai` / `agent-default-model` 的启动文件：rc2 的模型热校验不能接受未求值的 `!!js` 字段，命令行模型覆盖层也会阻止 profile 保存。原模型模板继续供独立、固定配置的验收使用；它们不是可编辑实例的启动入口。其他 OpenAI 兼容服务可在模型设置中添加，或参考 [openai-compatible.patch.yml](https://github.com/Luohaothu/dsh-flow/blob/main/examples/openai-compatible.patch.yml) 将明确的模型字段写入 profile。
+
+团队默认模型为“跟随主会话”时，创建使用主会话当前选中的模型，后续选择同步给该会话未结束的团队；设置为固定模型时保持团队选择。运行策略中的 `provider/model` 只为底层程序化启动提供默认路由，不覆盖原生 Provider 设置。
+
+检查合并后的配置，不加载服务或运行模型：
 
 ```bash
 DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
-  --profile web --patch examples/instance.patch.yml --dump-config
+  --profile web --patch examples/instance-runtime.patch.yml --dump-config
 ```
 
-确认 `dsh-flow` 只出现一次、模型路由正确，并检查 `workspace`、`dataDir`、权限和宿主上下文压缩配置是否符合调试要求。`instance.patch.yml` 用于覆盖已安装插件组合中的配置条目；验收用的 `cluster.patch.yml` 则会显式插入插件。两者的安装前提不同，不能混用。
+确认 `dsh-flow` 只出现一次、模型路由正确，并检查 `workspace`、`dataDir` 和权限。安装后的部署策略关闭开发源码 HMR 监听；网页模型设置仍通过原生 ConfigEditor 校验、持久保存并立即应用，重启后保留。`instance-runtime.patch.yml` 用于已有插件的部署；验收用的 `cluster.patch.yml` 会显式插入插件，两者不能混用。
 
 ## 5. 启动宿主并联调
 
@@ -81,11 +91,19 @@ DSH_HOME="$FLOW_DEMO_HOME" node --import tsx src/host/dsh-launch.ts \
 DSH_HOME="$FLOW_DEMO_HOME" \
 FLOW_DATA_DIR="$FLOW_DEMO_HOME/flow-data" \
 node --import tsx src/host/dsh-launch.ts \
-  --profile web --patch examples/instance.patch.yml \
-  --host 127.0.0.1 --port 8791 --no-open
+  --profile web --patch examples/instance-runtime.patch.yml \
+  --host 127.0.0.1 --port 8791
 ```
 
-打开终端打印的带访问令牌的 URL。示例使用独立数据目录；不提交目标就不会创建集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
+本地启动默认在系统浏览器中打开认证入口；无人值守运行时可显式添加 `--no-open`。未自动打开时，复制本次启动终端打印的完整访问 URL，在需要使用的浏览器中打开。
+
+首次直接访问 `http://127.0.0.1:8791/` 可能返回 `401` 和认证提示。这表示浏览器尚未取得登录 Cookie，不应据此关闭宿主认证。打开本次启动打印的带访问令牌的 URL 后，宿主会设置 Cookie，并自动跳回不带令牌的普通地址。成功后可以收藏普通地址；不要将带令牌的访问链接写入公开文档或分享给他人。
+
+不同浏览器、浏览器用户配置和无痕窗口不共享同一份 Cookie，需要分别从认证入口进入。`127.0.0.1`、`localhost` 及不同端口分别认证，原地址的 Cookie 不能用于新地址；新地址尚未登录时，请打开本次启动打印的认证链接。
+
+每次宿主进程重启都会生成新的访问令牌，旧链接不能作为未登录浏览器的新入口。同一主机名和端口、继续使用原凭据存储且 Cookie 未过期时，重启后普通地址书签仍可使用；如果再次出现 `401`，打开最近一次启动打印的认证链接即可，无需重启服务或关闭认证。
+
+示例使用独立数据目录；不提交目标就不会创建集群任务。示例 YAML 通过 `!!js` 表达式读取 `FLOW_DATA_DIR` 并写入配置，插件核心本身不读取该环境变量。
 
 模型服务准备好后，在主会话输入 `/agent-team <需求>`，说明目标、预期产物和验收条件。团队指令通过主会话下达，“智能体”视图和检查器只读；成员完整原生会话允许符合生命周期条件的文本续聊。执行智能体提交产物后，还必须由总协调实际检查并完成业务验收，任务单元才会被正式接受。
 

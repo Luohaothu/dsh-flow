@@ -299,6 +299,9 @@ importers:
       vue:
         specifier: 3.5.43
         version: 3.5.43(typescript@6.0.3)
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   packages/dsh-flow:
     dependencies:
