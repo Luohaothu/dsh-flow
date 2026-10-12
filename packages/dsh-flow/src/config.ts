@@ -21,6 +21,7 @@ import type {
   FlowStartRequest,
 } from './types.ts';
 import { fail } from './errors.ts';
+import { MANAGEMENT_CAPABILITIES } from './core/management-authorization.ts';
 import { validateModelSelection } from './core/model-selection.ts';
 import {
   integer,
@@ -34,7 +35,7 @@ import {
   DEFAULT_LIMITS,
   validateDelegation,
   validateMessageFixture,
-  validateText,
+  validateText, validateWriteScope,
 } from './core/protocol.ts';
 import type {
   DelegationFixtureEntry,
@@ -82,6 +83,8 @@ export interface Config {
   /** Bounded deadline for teardown: drains the live turns, then closes the store. */
   readonly disposeTimeoutMs?: number | null
   /** Capabilities a start request that names none receives. */
+  readonly managementCapabilities?: FlowCapability[] | null
+  readonly managementWriteScope?: string[] | null
   readonly defaultCapabilities?: FlowCapability[] | null
   /** Root budget a start request that names none receives. */
   readonly defaultBudget?: FlowBudgetInput | null
@@ -105,6 +108,8 @@ export interface ResolvedConfig {
   readonly heartbeatMs: number
   readonly leaseTtlMs: number
   readonly disposeTimeoutMs: number
+  readonly managementCapabilities: FlowCapability[]
+  readonly managementWriteScope: string[]
   readonly defaultCapabilities: FlowCapability[]
   readonly defaultBudget: Volatile<FlowBudget>
   readonly defaultLimits: Volatile<FlowLimits>
@@ -185,6 +190,8 @@ const deploymentSchema: Schema<Config, ResolvedConfig> = Schema.object({
   heartbeatMs: Schema.number().step(1).min(1).default(20_000),
   leaseTtlMs: Schema.number().step(1).min(1).default(60_000),
   disposeTimeoutMs: Schema.number().step(1).min(1).default(5_000),
+  managementCapabilities: Schema.array(Schema.union(CAPABILITY_NAMES)).default([...MANAGEMENT_CAPABILITIES]),
+  managementWriteScope: Schema.array(Schema.string()).default(['.']),
   defaultCapabilities: Schema.array(Schema.union(CAPABILITY_NAMES)).default(['fs_read', 'fs_write']),
   defaultBudget: budgetSchema.default({ ...INTERACTIVE_BUDGET }).volatile(),
   defaultLimits: limitsSchema.default({ ...INTERACTIVE_LIMITS }).volatile(),
@@ -288,6 +295,8 @@ export function resolveConfig(
     fail(`heartbeatMs (${heartbeatMs}) must be shorter than leaseTtlMs (${leaseTtlMs})`);
   }
 
+  const managementCapabilities = validateCapabilities(config.managementCapabilities, 'managementCapabilities');
+  const managementWriteScope = validateWriteScope(config.managementWriteScope, 'managementWriteScope');
   const defaultCapabilities = validateCapabilities([...config.defaultCapabilities], 'defaultCapabilities');
   const defaultBudget = completeBudget(config.defaultBudget.get(), 'defaultBudget');
   const defaultLimits = completeLimits(config.defaultLimits.get(), 'defaultLimits');
@@ -302,7 +311,7 @@ export function resolveConfig(
   return {
     dataDir,
     workspace,
-    startDefaults: { workspace, capabilities: defaultCapabilities, budget: defaultBudget, limits: defaultLimits },
+    startDefaults: { workspace, capabilities: defaultCapabilities, managementCapabilities, managementWriteScope, budget: defaultBudget, limits: defaultLimits },
     runtime: {
       executionDefaults: () => {
         const budget = completeBudget(config.defaultBudget.get(), 'defaultBudget');
@@ -312,7 +321,7 @@ export function resolveConfig(
         const route = configured === null ? null : validateModelSelection(configured, 'defaultModel');
         const effort = config.defaultReasoningEffort.get();
         return {
-          start: { workspace, capabilities: defaultCapabilities, budget: serial ? { ...budget, max_active_agents: 1 } : budget,
+          start: { workspace, capabilities: defaultCapabilities, managementCapabilities, managementWriteScope, budget: serial ? { ...budget, max_active_agents: 1 } : budget,
             limits: serial ? { ...limits, max_active_agents: 1, max_llm_concurrency: 1 } : limits },
           model: route === null ? null : { provider: textField(route.provider, 'defaultModel.provider', 512), model: textField(route.model, 'defaultModel.model', 512) },
           options: effort === 'inherit' ? {} : { reasoningEffort: effort },
@@ -384,6 +393,8 @@ export function resolveStartRequest(
     ...(id === undefined ? {} : { id }),
     workspace,
     capabilities,
+    managementCapabilities: validateCapabilities(request.managementCapabilities ?? defaults.managementCapabilities ?? MANAGEMENT_CAPABILITIES, 'spec.managementCapabilities'),
+    managementWriteScope: validateWriteScope(request.managementWriteScope ?? defaults.managementWriteScope ?? ['.'], 'spec.managementWriteScope'),
     budget,
     limits,
     ...(initialTransactions === undefined ? {} : { initial_transactions: initialTransactions }),

@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -123,7 +123,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -170,7 +170,7 @@ test('a crash between taking a message and admitting it reopens it on recovery',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a turn that dies between taking and admitting', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -229,7 +229,7 @@ test('a turn whose flush is refused hands its messages back', async t => {
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a turn whose flush is refused', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 2 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -261,7 +261,7 @@ test('disposal drains the live turns before it resolves', async t => {
     provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a live turn at disposal', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 4 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -376,7 +376,7 @@ test('a durably answered message is never reopened by recovery', async t => {
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a message that is really answered', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -417,7 +417,7 @@ test('an addressed message and a subscribed blackboard change each wake an idle 
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'communication as work', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -514,7 +514,7 @@ test('a pre-dispatch failure never runs the tool and never costs quota', async t
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: ['fs_read'],
     objective: 'a barrier that fails closed', workspace: dir, capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -580,7 +580,7 @@ test('one tool hold is moved once: recover, resolve and a late completion stay c
     budget: { tool_calls: 20, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
   });
   const root = rootNode(runtime, clusterId);
-  const owner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'agent');
+  const owner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');
   const scope = required(runtime.store.budgetForScope(clusterId, 'agent', owner.id), 'agent budget').id;
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const counters = () => ({ reserved: required(runtime.store.getBudget(scope), 'budget').tool_calls_reserved, spent: required(runtime.store.getBudget(scope), 'budget').tool_calls_spent });
@@ -652,7 +652,7 @@ test('a role that only queries or is refused is stagnant, and stops at the bound
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a role that changes nothing', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 12 },
     budget: { tool_calls: 5_000, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -706,13 +706,14 @@ test('a long tool result is stored as valid JSON, never as a truncation of it', 
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: ['fs_read'],
     objective: 'a receipt that stays parseable', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const root = rootNode(runtime, clusterId);
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'agent');
+  for (const name of ['glob', 'grep']) host.registerTool({ name, description: 'filesystem fixture', parameters: {}, output: { schema: { type: 'string' }, render: () => [] }, async execute() { return ''; } });
   // Preserve escapes, newlines and message bodies longer than 8,000 characters.
   const long = `line "quoted" \\ backslash\n${'x'.repeat(20_000)}`;
   host.registerTool({
@@ -768,7 +769,7 @@ test('a long tool result is stored as valid JSON, never as a truncation of it', 
       call_id: 'call-long', cluster_id: clusterId, agent_id: agent.id, session_id: agent.session_id,
       turn_seq: 1, tool: 'read', args_hash: 'h', command_id: null,
       budget_scope_id: agentScope.id,
-      dispatch_status: 'DISPATCHED', result_body: null, error: null, 
+      dispatch_status: 'DISPATCHED', result_body: null, error: null,
     });
   });
   command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'resolve_effect', {

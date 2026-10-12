@@ -19,7 +19,7 @@ test('a different task, producer or management domain cannot supply the Worker i
     assert.equal(isCurrentWorkerProducer(tx, publication, agents, nodes, [{ ...allocation, ...patch }]), false);
   }
   assert.equal(isCurrentWorkerProducer(tx, publication, agents, [{ ...nodes[0], parent_id: 'other-manager' }], [allocation]), false);
-  assert.equal(isCurrentWorkerProducer(tx, publication, [{ ...agents[0], role: 'auditor' }], nodes, [allocation]), false);
+  assert.equal(isCurrentWorkerProducer(tx, publication, [{ ...agents[0], role: 'orchestrator' }], nodes, [allocation]), false);
 });
 
 test('historical allocations and publications cannot impersonate the current plan', () => {

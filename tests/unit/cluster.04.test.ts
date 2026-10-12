@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -116,7 +116,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -131,15 +131,6 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
 function actorFor(runtime: ClusterRuntime, clusterId: string, role: FlowAgentRole, nodeId: string): FlowAgentActor {
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: nodeId, role, limit: 5 }), `agent ${role}`);
   return { cluster_id: clusterId, agent_id: agent.id, node_id: nodeId, role, session_id: agent.session_id };
-}
-
-function scoreFinalHealth(runtime: ClusterRuntime, clusterId: string, nodeId: string): string {
-  const auditor = actorFor(runtime, clusterId, 'auditor', nodeId);
-  const dimensions = Object.fromEntries(runtime.healthMetricNames().map(metric => [metric, 0.5]));
-  const outcome = command(runtime, auditor, 'evaluate_health', {
-    dimensions, evaluation_window: 'subtree-close',
-  });
-  return textOf(outcome.result.health_id, 'health_id');
 }
 
 function rootNode(runtime: ClusterRuntime, clusterId: string): NodeRecord {
@@ -253,7 +244,7 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'one worker transaction', workspace: dir, capabilities: ['fs_read'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_attempts: 2, max_corrections: 1, max_role_turns: 2,},
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -262,9 +253,7 @@ test('a rejected flush neither acks a delivery nor dispatches a tool', async t =
   const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, role('orchestrator'), 'dispatch', { transaction_id: tx.id });
-  if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
-    command(runtime, role('auditor'), 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
+
   command(runtime, role('allocator'), 'allocate_agent', { transaction_id: tx.id });
   const agent = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
   // A delivery is queued for the worker before its turn starts.
@@ -310,7 +299,7 @@ test('an unreadable session is UNKNOWN: the attempted delivery stays withheld in
   runtime.attachPersistence(new ScriptedPersistence04(runtime.ctx, true));
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
+  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'validationOwner agent');
   runtime.store.tx(() => {
     runtime.store.insertMessage({
       id: 'unknown-msg', cluster_id: clusterId, from_agent: agent.id, from_node: root.id,
@@ -338,9 +327,7 @@ test('recovery requeues a RUNNING transaction that still holds its allocation', 
   const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, role('orchestrator'), 'dispatch', { transaction_id: tx.id });
-  if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
-    command(runtime, role('auditor'), 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
+
   const allocated = firstOf(recordsOf04(command(runtime, role('allocator'), 'allocate_agent', { transaction_id: tx.id }).result.allocations, 'allocations'), 'allocation');
   runtime.store.tx(() => runtime.store.updateTransaction(tx.id, { status: 'RUNNING', attempts: 1, __bump_revision: false }));
 
@@ -360,13 +347,13 @@ test('an identity with history but no durable session is blocked, never re-creat
   runtime.attachPersistence(new ScriptedPersistence04(runtime.ctx, false));
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const auditor = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
-  runtime.store.tx(() => runtime.store.updateAgent(auditor.id, { turns: 3 }));
+  const validationOwner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'validationOwner agent');
+  runtime.store.tx(() => runtime.store.updateAgent(validationOwner.id, { turns: 3 }));
 
   const report = await runtime.proveSessions(clusterId);
   assert.equal(report.length, 1);
-  assert.deepEqual(firstOf(report, 'session proof report').session_missing, [auditor.id]);
-  assert.equal(required(runtime.store.getAgent(auditor.id), 'auditor').status, 'BLOCKED');
+  assert.deepEqual(firstOf(report, 'session proof report').session_missing, [validationOwner.id]);
+  assert.equal(required(runtime.store.getAgent(validationOwner.id), 'orchestrator').status, 'BLOCKED');
   const events = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'session-missing');
   assert.equal(events.length, 1);
   assert.equal(jsonObject(firstOf(events, 'session-missing event').data, 'event data').code, 'SESSION_MISSING');
@@ -383,9 +370,7 @@ test('an uncertain effect blocks its owner and a human decision releases it', as
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
-    command(runtime, actorFor(runtime, clusterId, 'auditor', root.id), 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
+
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const worker = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
   runtime.store.tx(() => {
@@ -494,12 +479,9 @@ test('an unsafe reparent is refused without touching the turn or the ledger', t 
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id, fixture_execution: 'management' });
-  if (required(runtime.store.getTransaction(tx.id), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
+
   const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
     transaction_id: tx.id, scope: { objective: 'child domain' }, max_children: 4,
   }));
@@ -656,8 +638,7 @@ test('a completed delegated node returns its unspent role and node grants to its
     status: 'ACCEPTED', __bump_revision: false,
   }));
   runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'ACTIVE', 'refunding waits for the funded Auditor decision');
-  scoreFinalHealth(runtime, clusterId, child.node_id);
+
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'COMPLETED');
   assert.equal(available(required(runtime.store.getBudget(parentBudget.id), 'parent node budget')), before + expectedReturn,
@@ -680,7 +661,7 @@ test('a descendant request reclaims idle ancestor roles before declaring their n
   }));
   const parent = required(runtime.store.budgetForScope(clusterId, 'node', root.id), 'parent node budget');
   const childBudget = required(runtime.store.budgetForScope(clusterId, 'node', child.node_id), 'child node budget');
-  const sourceRole = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor' }), 'root Auditor');
+  const sourceRole = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator' }), 'root Orchestrator');
   const sourceGrant = required(runtime.store.budgetForScope(clusterId, 'agent', sourceRole.id), 'source role budget');
   const budget = (id: string) => required(runtime.store.getBudget(id), 'budget');
   runtime.grantBudget(parent, sourceGrant, {tool_calls:50});
@@ -688,8 +669,8 @@ test('a descendant request reclaims idle ancestor roles before declaring their n
   transferBudget(runtime.store, childBudget.id, parent.id, {tool_calls: dimensionAvailable(budget(childBudget.id), 'tool_calls')});
   const rootScope = required(runtime.store.budgetForScope(clusterId, 'root', clusterId), 'root budget');
   transferBudget(runtime.store, parent.id, rootScope.id, {tool_calls: dimensionAvailable(budget(parent.id), 'tool_calls')});
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: child.node_id, role: 'auditor' }), 'child Auditor');
-  const own = required(runtime.store.budgetForScope(clusterId, 'agent', agent.id), 'child Auditor budget');
+  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: child.node_id, role: 'orchestrator' }), 'child Orchestrator');
+  const own = required(runtime.store.budgetForScope(clusterId, 'agent', agent.id), 'child Orchestrator budget');
   const otherTokens = runtime.store.listAgents(clusterId, { node_id: child.node_id })
     .filter(role => role.id !== agent.id)
     .reduce((sum, role) => sum + dimensionAvailable(
@@ -708,125 +689,39 @@ test('a descendant request reclaims idle ancestor roles before declaring their n
     'the descendant cannot raid a root or sibling grant');
 });
 
-test('a delegated node waits for its Auditor to score final health after accepting the child', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-child-close-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'close a completed delegated branch while the parent still works',
-    acceptance_criteria: ['child complete'],
-    workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 4 },
-    budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const original = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  const child = managementNodeOf04(command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true,
-    transaction_id: original.id, scope: { objective: 'finish child result' },
-  }));
-  const childOrchestrator = actorFor(runtime, clusterId, 'orchestrator', child.node_id);
-  const childAuditor = actorFor(runtime, clusterId, 'auditor', child.node_id);
+test('a delegated node closes after its accepted delivery without a separate scoring turn', t => {
+  const runtime = makeRuntime(t), clusterId = startCluster(runtime), root = rootNode(runtime, clusterId);
+  const parent = firstOf(runtime.store.rootTransactions(clusterId), 'parent transaction');
+  const child = managementNodeOf04(command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'spawn_management_node', { fixture_prepare_management: true, transaction_id: parent.id }));
   prepareFixtureTask(runtime, child.delegated_transaction_id);
-  runtime.store.tx(() => runtime.store.updateTransaction(child.delegated_transaction_id, {
-    status: 'SUBMITTED', result: { evidence: 'child complete' }, __bump_revision: false,
-  }));
-  command(runtime, childOrchestrator, 'validate', {
-    transaction_id: child.delegated_transaction_id, accepted: true,
-    checks: [{ criterion: 'child complete', passed: true, evidence: 'child result' }],
-  });
-  let acceptedInLiveTurn = false;
-  host.setScript(async turn => {
-    if (turn.agentId !== required(runtime.store.getAgent(childAuditor.agent_id), 'child Auditor').session_id) return;
-    await turn.request({ purpose: 'role' });
-    command(runtime, childAuditor, 'inspect_validation', {
-      transaction_id: child.delegated_transaction_id, decision: 'approve',
-    });
-    assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'ACTIVE',
-      'acceptance cannot close the node under its Auditor turn');
-    acceptedInLiveTurn = true;
-  });
-  runtime.enableScheduling();
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    if (acceptedInLiveTurn && runtime.store.readEvents(clusterId, { limit: 300 })
-      .some(event => event.type === 'turn-end' && jsonObject(event.data, 'turn-end event').agent_id === childAuditor.agent_id)) break;
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-  assert.equal(acceptedInLiveTurn, true);
-  assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'ACTIVE', 'the undecided closeout retains the child node');
-  assert.equal(runtime.store.latestHealth(clusterId, { node_id: child.node_id })?.decided, 0);
-  scoreFinalHealth(runtime, clusterId, child.node_id);
+  runtime.store.updateTransaction(child.delegated_transaction_id, { status: 'SUBMITTED', result: { complete: true } });
+  command(runtime, actorFor(runtime, clusterId, 'orchestrator', child.node_id), 'validate', { transaction_id: child.delegated_transaction_id, accepted: true });
   runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getNode(child.node_id), 'child node').status, 'COMPLETED',
-    'only the scored Auditor decision permits child finalization');
-  assert.equal(required(runtime.store.getTransaction(original.id), 'parent transaction').status, 'READY',
-    'the unfinished parent is not accepted by closing the child');
+  assert.equal(runtime.store.getNode(child.node_id)?.status, 'COMPLETED');
+  assert.equal(runtime.store.getTransaction(parent.id)?.status, 'READY');
+  assert.equal(runtime.store.listAgents(clusterId, { node_id: child.node_id }).length, 2);
 });
 
-test('a root closes after its final Orchestrator turn and scored Auditor closeout, despite advisory reviews', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-root-release-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off', tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'finish after accepted work', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 2, max_active_agents: 1, max_llm_concurrency: 1, max_role_turns: 8 },
-    budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 1 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const transaction = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: transaction.id });
-  runtime.store.tx(() => runtime.store.updateTransaction(transaction.id, { status: 'ACCEPTED', __bump_revision: false }));
-  assert.equal(runtime.store.pendingAudits(clusterId, { kind: 'plan' }).length, 1);
-  let finishIssued = false;
-  let healthScored = false;
+test('a root closes only after its scheduled Orchestrator final turn exits', async t => {
+  const host = createFakeHost(), dir = mkdtempSync(join(tmpdir(), 'dsh-flow-close-turn-'));
+  const runtime = await startFlowPlugin(host, { dataDir: dir, provider: 'local-fake', model: 'fake-model', tickMs: 10000, heartbeatMs: 10000, leaseTtlMs: 60000 });
+  t.after(async () => { await runtime.dispose(); await host.dispose(); rmSync(dir, { recursive: true, force: true }); });
+  const clusterId = runtime.start({ managementCapabilities: [], objective: 'Finish the accepted work.', acceptance_criteria: ['The delivery is complete.'], workspace: dir, capabilities: [], budget: { tool_calls: 400, agents: 16, max_active_agents: 1 }, limits: { max_active_agents: 1, max_llm_concurrency: 1 } }).cluster.id;
+  const root = rootNode(runtime, clusterId), lead = actorFor(runtime, clusterId, 'orchestrator', root.id), tx = firstOf(runtime.store.rootTransactions(clusterId), 'transaction');
+  command(runtime, lead, 'dispatch', { transaction_id: tx.id }); runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: 'complete' }); command(runtime, lead, 'validate', { transaction_id: tx.id, accepted: true });
+  let finished = false;
   host.setScript(async turn => {
-    await turn.request({ purpose: 'role' });
-    if (turn.agentId === required(runtime.store.getAgent(auditor.agent_id), 'Auditor').session_id) {
-      const actions = runtime.pendingFor('auditor', required(runtime.store.getNode(root.id), 'root node'), required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(auditor.agent_id), 'Auditor'));
-      if (actions.some(item => item.action === 'evaluate_health' && jsonObject(item, 'pending action').evaluation_window === 'subtree-close')) {
-        scoreFinalHealth(runtime, clusterId, root.id);
-        healthScored = true;
-        assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'ACTIVE', 'a live scoring turn retains its node');
-      }
-      return;
-    }
-    if (turn.agentId !== required(runtime.store.getAgent(orchestrator.agent_id), 'Orchestrator').session_id || finishIssued) return;
-    command(runtime, orchestrator, 'finish_cluster', {});
-    finishIssued = true;
-    assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'RUNNING',
-      'the live final turn is still owned by the Orchestrator');
+    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'orchestrator') return;
+    const result = await turn.callTool('flow_transaction', { action: 'finish_cluster', params: {} });
+    assert.equal(result.isError, false); finished = true;
+    assert.equal(runtime.store.getCluster(clusterId)?.status, 'RUNNING');
+    assert.equal(runtime.store.getNode(root.id)?.status, 'ACTIVE');
   });
   runtime.enableScheduling();
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline && required(runtime.store.getCluster(clusterId), 'cluster').status === 'RUNNING') {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolve => setTimeout(resolve, 10));
+  for (let pass = 0; pass < 12 && runtime.store.getCluster(clusterId)?.status === 'RUNNING'; pass++) {
+    await runtime.tick(); await Promise.all(runtime.activeTurnIds().map(id => runtime.activeTurnFor(id)!.promise));
   }
-  assert.equal(finishIssued, true, 'the final request was made by the scheduled Orchestrator turn');
-  assert.equal(healthScored, true, 'the Auditor performed a distinct final model-backed turn');
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'COMPLETED',
-    'the scored final review closes the root without forging the advisory plan decision');
-  assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'COMPLETED');
-  assert.equal(runtime.store.pendingAudits(clusterId, { kind: 'plan' }).length, 1,
-    'an advisory plan decision is not forged at finalization');
+  assert.equal(finished, true); assert.equal(runtime.store.getCluster(clusterId)?.status, 'COMPLETED');
 });
 
 test('a cluster completes after every root transaction is accepted and the root Orchestrator finishes', t => {
@@ -834,32 +729,23 @@ test('a cluster completes after every root transaction is accepted and the root 
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'allocator', root.id);
   const second = commandId04(command(runtime, orchestrator, 'create_transaction', { objective: 'second root', acceptance_criteria: ['x'] }), 'transaction_id');
   runtime.store.tx(() => {
     for (const tx of runtime.store.rootTransactions(clusterId)) {
       runtime.store.updateTransaction(tx.id, { status: 'ACCEPTED', __bump_revision: false });
     }
   });
-  assert.throws(() => command(runtime, auditor, 'finish_cluster', {}), error => rejectionStatus(error) === 403,
-    'the Auditor cannot claim Orchestrator completion');
+  assert.throws(() => command(runtime, validationOwner, 'finish_cluster', {}), error => rejectionStatus(error) === 403,
+    'the Allocator cannot claim Orchestrator completion');
   command(runtime, orchestrator, 'finish_cluster', {});
   runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'RUNNING', 'closeout waits for the owning Auditor');
-  assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'ACTIVE');
-  assert.equal(required(runtime.store.latestHealth(clusterId, { node_id: root.id }), 'latest health').decided, 0);
-  assert.ok(runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(auditor.agent_id), 'Auditor'))
-    .some(item => item.action === 'evaluate_health' && jsonObject(item, 'pending action').evaluation_window === 'subtree-close'));
-  const finalHealthId = scoreFinalHealth(runtime, clusterId, root.id);
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'COMPLETED');
   assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'COMPLETED');
   const completed = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'management-node-completed');
   assert.equal(completed.length, 1, 'the closing sequence ran once');
-  assert.equal(required(runtime.store.latestHealth(clusterId, { node_id: root.id }), 'latest health').decided_by, auditor.agent_id);
-  // The three finishing acts are the node's own closing record: an aggregate
-  // written from durable summaries, the health evaluation, and the event that
-  // names both. A node that closes without a summary closes without an answer.
+  // Completion persists the aggregate and the event naming it.
   const completedEvent = firstOf(completed, 'management-node-completed event');
   const eventData = jsonObject(completedEvent.data, 'completion event data');
   const summaryId = textOf(eventData.summary_id, 'summary_id');
@@ -871,7 +757,7 @@ test('a cluster completes after every root transaction is accepted and the root 
   assert.equal(transactions.total, 2, 'the aggregate counts the whole domain, not its page');
   assert.equal(transactions.completed, 2);
   assert.equal(summaryData.confidence, 'high');
-  assert.equal(eventData.health_id, finalHealthId, 'the closing event names the Auditor-scored row');
+  assert.equal('health_id' in eventData, false);
   void second;
 });
 

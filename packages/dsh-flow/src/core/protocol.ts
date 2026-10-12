@@ -36,21 +36,21 @@ export const AGENT_TERMINAL: ReadonlySet<FlowAgentStatus> = new Set<FlowAgentSta
 );
 
 export const TRANSACTION_STATUSES = [
-  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'VALIDATING', 'ACCEPTED', 'REJECTED',
+  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'ACCEPTED', 'REJECTED',
   'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED', 'SUPERSEDED',
 ] as const satisfies readonly FlowTransactionStatus[];
 export const TRANSACTION_TERMINAL: ReadonlySet<FlowTransactionStatus> = new Set<FlowTransactionStatus>(
   ['ACCEPTED', 'CANCELLED', 'SUPERSEDED', 'FAILED'] as const satisfies readonly FlowTransactionStatus[],
 );
 
-export const MANAGEMENT_ROLES = ['orchestrator', 'allocator', 'auditor'] as const satisfies readonly FlowManagementRole[];
+export const MANAGEMENT_ROLES = ['orchestrator', 'allocator'] as const satisfies readonly FlowManagementRole[];
 export const WORKER_ROLE = 'worker';
 export const ROLES: readonly FlowAgentRole[] = [...MANAGEMENT_ROLES, WORKER_ROLE];
 
 /** Orchestrator: transaction/decomposition/validation authority inside its domain. */
 export const ORCHESTRATOR_ACTIONS = [
   'create_transaction', 'decompose', 'set_dependency', 'set_priority', 'dispatch', 'adjust_transaction',
-  'validate', 'accept_result', 'reject_result', 'aggregate', 'escalate', 'finish_cluster', 'request_user',
+  'validate', 'bind_validation', 'reject_result', 'reopen_transaction', 'resolve_issue', 'aggregate', 'escalate', 'finish_cluster', 'request_user',
   // Transaction-scoped lifecycle control: the cluster-level `pause`/`resume`/
   // `cancel` are the operator's whole-cluster switch, these are the
   // Orchestrator's inside its own domain.
@@ -62,16 +62,7 @@ export const ALLOCATOR_ACTIONS = [
   'allocate_agent', 'spawn_agent', 'spawn_management_node', 'release_agent',
   'allocate_budget', 'rebalance_budget', 'set_concurrency', 'scale_out', 'scale_in',
   'select_model', 'evaluate_allocation', 'replace_agent', 'reassign_agent', 'reparent',
-  'checkpoint', 'restore', 'resolve_effect',
-] as const satisfies readonly string[];
-
-/** Auditor: independent planning/validation gate inside its domain. */
-export const AUDITOR_ACTIONS = [
-  'inspect_plan', 'inspect_validation', 'request_correction', 'request_replan',
-  'request_revalidation', 'verify_correction', 'escalate',
-  // Supervision records signals, recommendations and the Auditor's scores
-  // for all eight health dimensions.
-  'notify', 'recommend', 'evaluate_health',
+  'checkpoint', 'restore', 'resolve_effect', 'resolve_issue',
 ] as const satisfies readonly string[];
 
 export const WORKER_ACTIONS = ['submit_result'] as const satisfies readonly string[];
@@ -79,7 +70,6 @@ export const WORKER_ACTIONS = ['submit_result'] as const satisfies readonly stri
 const ROLE_ACTION_MAP: Record<FlowActorRole, ReadonlySet<string>> = {
   orchestrator: new Set(ORCHESTRATOR_ACTIONS),
   allocator: new Set(ALLOCATOR_ACTIONS),
-  auditor: new Set(AUDITOR_ACTIONS),
   worker: new Set(WORKER_ACTIONS),
   user: new Set(['pause', 'resume', 'cancel', 'start', 'list', 'read', 'events', 'report']),
 };
@@ -87,7 +77,6 @@ const ROLE_ACTION_MAP: Record<FlowActorRole, ReadonlySet<string>> = {
 export const ROLE_TOOL: Record<FlowAgentRole, string> = {
   orchestrator: 'flow_transaction',
   allocator: 'flow_allocation',
-  auditor: 'flow_audit',
   worker: 'flow_transaction',
 };
 
@@ -179,12 +168,11 @@ export const TRANSITIONS: Record<'transaction', Record<FlowTransactionStatus, Re
     READY: new Set(['DISPATCHED', 'RUNNING', 'BLOCKED', 'PAUSED', 'CANCELLED', 'SUPERSEDED', 'FAILED', 'DRAFT', 'READY']),
     DISPATCHED: new Set(['RUNNING', 'READY', 'DRAFT', 'BLOCKED', 'PAUSED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'DISPATCHED']),
     RUNNING: new Set(['SUBMITTED', 'READY', 'DRAFT', 'BLOCKED', 'PAUSED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'RUNNING']),
-    SUBMITTED: new Set(['VALIDATING', 'REJECTED', 'DRAFT', 'BLOCKED', 'PAUSED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'SUBMITTED']),
-    VALIDATING: new Set(['ACCEPTED', 'REJECTED', 'SUBMITTED', 'DRAFT', 'BLOCKED', 'PAUSED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'VALIDATING']),
+    SUBMITTED: new Set(['ACCEPTED', 'REJECTED', 'DRAFT', 'BLOCKED', 'PAUSED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'SUBMITTED']),
     REJECTED: new Set(['READY', 'DRAFT', 'DISPATCHED', 'BLOCKED', 'PAUSED', 'CANCELLED', 'SUPERSEDED', 'FAILED', 'REJECTED']),
     ACCEPTED: new Set(['SUBMITTED', 'REJECTED', 'SUPERSEDED', 'ACCEPTED']),
     BLOCKED: new Set(['READY', 'DRAFT', 'DISPATCHED', 'RUNNING', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'BLOCKED']),
-    PAUSED: new Set(['READY', 'DRAFT', 'DISPATCHED', 'SUBMITTED', 'VALIDATING', 'REJECTED', 'BLOCKED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'PAUSED']),
+    PAUSED: new Set(['READY', 'DRAFT', 'DISPATCHED', 'SUBMITTED', 'REJECTED', 'BLOCKED', 'CANCELLED', 'FAILED', 'SUPERSEDED', 'PAUSED']),
     FAILED: new Set(['READY', 'SUPERSEDED', 'CANCELLED', 'FAILED']),
     CANCELLED: new Set(['CANCELLED']),
     SUPERSEDED: new Set(['SUPERSEDED']),
@@ -240,6 +228,8 @@ export interface FlowSpecValidation {
   readonly objective: string;
   readonly workspace: string;
   readonly capabilities: FlowCapability[];
+  readonly managementCapabilities: FlowCapability[];
+  readonly managementWriteScope: string[];
   readonly limits: FlowDefaultLimits;
   readonly budget: FlowBudgetInput;
   readonly delegation: readonly DelegationFixtureEntry[];
@@ -254,6 +244,8 @@ export function validateSpec(spec: unknown): FlowSpecValidation {
   const objective = validateText(source.objective, 'spec.objective', 16384);
   const workspace = validateText(source.workspace, 'spec.workspace', 4096);
   const capabilities = validateCapabilities(source.capabilities ?? ['fs_read'], 'spec.capabilities');
+  const managementCapabilities = validateCapabilities(source.managementCapabilities ?? Object.keys(CAPABILITY_TOOLS), 'spec.managementCapabilities');
+  const managementWriteScope = validateWriteScope(source.managementWriteScope ?? ['.'], 'spec.managementWriteScope');
   const limits: FlowDefaultLimits = { ...DEFAULT_LIMITS, ...validateLimits(source.limits ?? {}, 'spec.limits') };
   const budget = { ...validateBudget(source.budget ?? {}, 'spec.budget') };
   validateText(source.id ?? 'x', 'spec.id', 128);
@@ -263,7 +255,7 @@ export function validateSpec(spec: unknown): FlowSpecValidation {
     if (!Array.isArray(source.initial_transactions)) fail('Invalid spec.initial_transactions');
     if (source.initial_transactions.length > 4096) fail('spec.initial_transactions exceeds 4096 entries');
   }
-  return { objective, workspace, capabilities, limits, budget, delegation, message_fixture };
+  return { objective, workspace, capabilities, managementCapabilities, managementWriteScope, limits, budget, delegation, message_fixture };
 }
 
 /**

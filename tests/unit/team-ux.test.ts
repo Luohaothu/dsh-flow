@@ -37,7 +37,7 @@ test('native Flow session lineage preserves owner and actual allocating parent',
   const allocator=runtime.store.listAgents(team.cluster.id,{role:'allocator'})[0]!;
   assert.deepEqual(nativeSessionParent(runtime.store,lead),{parentSession:'main-session'});
   assert.deepEqual(nativeSessionParent(runtime.store,allocator),{parentSession:lead.session_id});
-  const other=runtime.start({objective:'standalone',workspace:dir});
+  const other=runtime.start({ managementCapabilities: [],objective:'standalone',workspace:dir});
   assert.deepEqual(nativeSessionParent(runtime.store,runtime.store.listAgents(other.cluster.id,{role:'orchestrator'})[0]!),{});
 });
 
@@ -158,11 +158,11 @@ test('one command intent starts once, same-name runs stay separate and owning se
   const before=runtime.store.latestEventSeq(first.cluster.id);
   const team=runtime.teamRead('main',first.cluster.id);
   assert.equal(runtime.store.latestEventSeq(first.cluster.id),before,'observing adds no execution event');
-  assert.equal(team.agents.length,3);
+  assert.equal(team.agents.length,2);
   const root=team.agents.find(a=>a.parent_id===null)!;
   assert.equal(root.role,'orchestrator');
-  assert.deepEqual(team.agents.filter(a=>a.parent_id===root.id).map(a=>a.role).sort(),['allocator','auditor'],'role colours use authoritative types rather than translated names');
-  assert.equal(team.agents.filter(a=>a.parent_id===root.id).length,2);
+  assert.deepEqual(team.agents.filter(a=>a.parent_id===root.id).map(a=>a.role).sort(),['allocator'],'role colours use authoritative types rather than translated names');
+  assert.equal(team.agents.filter(a=>a.parent_id===root.id).length,1);
   assert.equal(root.tokens.value,null,'absent usage is never zero');
   assert.equal(root.context_used,null);
   runtime.control(first.cluster.id,'cancel');
@@ -177,11 +177,11 @@ test('a later team cannot enlarge or drain another run Agent scheduling permits'
   const dir=mkdtempSync(join(tmpdir(),'flow-team-slots-'));
   const runtime=new ClusterRuntime(new Context(),{path:join(dir,'ledger.sqlite'),dataDir:dir,autoTick:false,logger:{warn(){},error(){},info(){}}});
   t.after(async()=>{await runtime.dispose();rmSync(dir,{recursive:true,force:true});});
-  const first=runtime.start({objective:'第一运行',workspace:dir,limits:{max_llm_concurrency:1}}).cluster.id;
+  const first=runtime.start({ managementCapabilities: [],objective:'第一运行',workspace:dir,limits:{max_llm_concurrency:1}}).cluster.id;
   const held=await runtime.acquireLlmSlot(first);
   let admitted=false;
   const queued=runtime.acquireLlmSlot(first).then(release=>{admitted=true;return release;});
-  const second=runtime.start({objective:'第二运行',workspace:dir,limits:{max_llm_concurrency:3}}).cluster.id;
+  const second=runtime.start({ managementCapabilities: [],objective:'第二运行',workspace:dir,limits:{max_llm_concurrency:3}}).cluster.id;
   const other=await runtime.acquireLlmSlot(second);
   runtime.setLlmConcurrency(4,second);
   await Promise.resolve();

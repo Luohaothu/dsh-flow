@@ -1,5 +1,7 @@
 # 模型执行限制移除：实施与验收记录
 
+> 历史归档（2026 年 10 月 12 日）：本文保留当时的方案与验证事实，不作为后续实现的执行指令。Auditor 角色、审核门禁及相关收尾流程以[当前移除方案](../../auditor-removal-plan.md)为准；其他内容须结合当前源码核对。见[归档索引](../README.md)。
+
 日期：2026 年 10 月 8 日。对应[实施方案](model-context-token-limits-plan.md)，依赖为锁定的 DSH `0.1.7-rc.2` 及仓库补丁。
 
 状态：完整实施、独立审查和最终全部门禁已通过。
@@ -49,16 +51,16 @@ Flow 使用原生 Agent 创建、恢复、输入、结果和取消接口。每�
 
 | 场景 | 报告 |
 | --- | --- |
-| 成员执行 | [smoke](../../.artifacts/smoke-20261008T042330Z-1d3aeb/report.json) |
-| 递归委派 | [recursion](../../.artifacts/recursion-20261008T042330Z-400884/report.json) |
-| 进程恢复 | [recovery](../../.artifacts/recovery-20261008T042330Z-37fe37/report.json) |
-| 默认压缩 | [context](../../.artifacts/context-20261008T042330Z-2b8e04/report.json) |
-| 原生浏览器工具 | [browser](../../.artifacts/browser-20261008T042330Z-069d03/report.json) |
-| 团队面板 | [panel](../../.artifacts/panel-20261008T042330Z-96f637/report.json) |
-| 16 成员 | [scale16](../../.artifacts/scale16-20261008T042330Z-1ff359/report.json) |
-| 64 成员 | [scale64](../../.artifacts/scale64-20261008T042330Z-be3e7f/report.json) |
+| 成员执行 | [smoke](../../../../.artifacts/smoke-20261008T042330Z-1d3aeb/report.json) |
+| 递归委派 | [recursion](../../../../.artifacts/recursion-20261008T042330Z-400884/report.json) |
+| 进程恢复 | [recovery](../../../../.artifacts/recovery-20261008T042330Z-37fe37/report.json) |
+| 默认压缩 | [context](../../../../.artifacts/context-20261008T042330Z-2b8e04/report.json) |
+| 原生浏览器工具 | [browser](../../../../.artifacts/browser-20261008T042330Z-069d03/report.json) |
+| 团队面板 | [panel](../../../../.artifacts/panel-20261008T042330Z-96f637/report.json) |
+| 16 成员 | [scale16](../../../../.artifacts/scale16-20261008T042330Z-1ff359/report.json) |
+| 64 成员 | [scale64](../../../../.artifacts/scale64-20261008T042330Z-be3e7f/report.json) |
 
-面板的[原生用量证据](../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-usage-information.json)、[实时检查](../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/checks.json)与[实际截图](../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-usage.png)证明当前 Orchestrator 的四条原生结算共 4,152 Token，与页面一致，缺失字段仍为未知且标记可能不完整。[原生命令记录](../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-command-requests.json)记录响应丢失后的同一提交 ID 重试，未重复创建团队。
+面板的[原生用量证据](../../../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-usage-information.json)、[实时检查](../../../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/checks.json)与[实际截图](../../../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-usage.png)证明当前 Orchestrator 的四条原生结算共 4,152 Token，与页面一致，缺失字段仍为未知且标记可能不完整。[原生命令记录](../../../../.artifacts/panel-20261008T042330Z-96f637/artifacts/team-ui/native-command-requests.json)记录响应丢失后的同一提交 ID 重试，未重复创建团队。
 
 当前机器没有系统 Chrome；完整 mock 验收通过既有的 `FLOW_CHROMIUM_PATH` 显式指定 `/home/leo/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome`。重跑浏览器场景时将该变量设为本机可用的 Chrome 路径。原生测试与场景汇总日志为 `/tmp/dsh-flow-native-final2-mock.log`。
 

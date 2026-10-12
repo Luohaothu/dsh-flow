@@ -7,7 +7,7 @@
 | 文件 / 符号 | 职责 |
 |---|---|
 | `core/actions.ts` 的 `allocateAgent`、`createWorkerForTransaction` | 为 `READY` 工作建立执行节点、智能体身份和 `ACTIVE` 执行分配 |
-| `spawn_management_node` | 创建下级管理域、三个管理角色的身份及委派约定 |
+| `spawn_management_node` | 创建下级管理域、两个管理角色的身份及委派约定 |
 | `release_agent`、`replace_agent`、`reassign_agent` | 在安全点回收、替换或重新分配身份 |
 | `reparent` | 检查并原子调整父子关系及预算归属 |
 | `core/scope.ts` 的 `checkWriteAccess` | 根据当前分配，检查受管写工具的路径权限 |

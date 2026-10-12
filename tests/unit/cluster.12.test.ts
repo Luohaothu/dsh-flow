@@ -1,25 +1,24 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
  * tick, so every assertion is about durable behaviour rather than a model.
  */
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { fixtureParams, prepareFixtureTask, publishFixtureResult } from './task-fixtures.ts';
+import { fixtureParams, publishFixtureResult } from './task-fixtures.ts';
 import { ClusterRuntime } from '../../packages/dsh-flow/src/core/cluster.ts';
 
 import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
-import { messageOf } from '../../packages/dsh-flow/src/errors.ts';
 import { objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
 import type { FlowActor, FlowAgentActor, FlowCommandOutcome, NodeRecord } from '../../packages/dsh-flow/src/core/model.ts';
 import type { FlowAgentRole } from '../../packages/dsh-flow/src/types.ts';
@@ -90,6 +89,20 @@ function command(
   return { deduped: outcome.deduped, revision: outcome.revision, result: jsonObject(outcome.result, 'command.result') };
 }
 
+
+function correctionFixture12(t: TestContext) {
+  const host = createFakeHost(), runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
+  t.after(async () => { await runtime.dispose(); await host.dispose(); });
+  const clusterId = runtime.start({ managementCapabilities: [], objective: 'Repair the arithmetic deliverable.', workspace: '/tmp', capabilities: [], acceptance_criteria: ['The answer equals 5.'],
+    budget: { tool_calls: 2000, agents: 16, max_active_agents: 2 }, limits: { max_active_agents: 2, max_corrections: 2 } }).cluster.id;
+  const root = rootNode(runtime, clusterId), lead = actorFor(runtime, clusterId, 'orchestrator', root.id), tx = firstOf(runtime.store.rootTransactions(clusterId), 'transaction');
+  command(runtime, lead, 'dispatch', { transaction_id: tx.id });
+  const publish = (value: number) => runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { value }, current_result_ref: null, current_validation_ref: null });
+  const reject = () => command(runtime, lead, 'validate', { transaction_id: tx.id, accepted: false, checks: [{ passed: false }] });
+  const repair = (value: number) => { command(runtime, lead, 'adjust_transaction', { transaction_id: tx.id, inputs: { candidate: value } }); command(runtime, lead, 'dispatch', { transaction_id: tx.id }); publish(value); };
+  return { host, runtime, clusterId, root, lead, tx, publish, reject, repair };
+}
+
 // ==== CHUNK START ====
 /**
  * Read string-list fields carried by pending actions but absent from their
@@ -111,7 +124,7 @@ test('a parent waits for its declared delegated generation before aggregation an
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a parent waits for its children', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
     budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
@@ -119,7 +132,6 @@ test('a parent waits for its declared delegated generation before aggregation an
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const parentId = textOf(command(runtime, orchestrator, 'create_transaction', {
     objective: 'the parent', acceptance_criteria: ['x'],
   }).result.transaction_id, 'parent id');
@@ -152,32 +164,26 @@ test('a parent waits for its declared delegated generation before aggregation an
   assert.throws(() => command(runtime, orchestrator, 'validate', { transaction_id: parentId, accepted: true }), /unfinished child work/);
   runtime.store.updateTransaction(parentId, { status: 'READY', result: null, current_result_ref: null, result_revision: null });
 
-  // Complete the child with its real formal plan, immutable publication and two verdicts.
+  // Complete the child with its real formal plan, immutable publication and direct business validation.
   const childOrchestrator = actorFor(runtime, clusterId, 'orchestrator', childNodeId);
-  const childAuditor = actorFor(runtime, clusterId, 'auditor', childNodeId);
   command(runtime, childOrchestrator, 'dispatch', { transaction_id: childTxId });
   runtime.store.updateTransaction(childTxId, { status: 'SUBMITTED', result: { file: 'deep/nested/result.txt' } });
   command(runtime, childOrchestrator, 'validate', { transaction_id: childTxId, accepted: true });
-  command(runtime, childAuditor, 'inspect_validation', { transaction_id: childTxId, decision: 'approve' });
   assert.equal(required(runtime.store.getTransaction(childTxId), 'child').status, 'ACCEPTED');
   assert.ok(!runtime.store.parentsAwaitingChildren(clusterId).includes(parentId));
   assert.throws(() => command(runtime, allocator, 'allocate_agent', { transaction_id: parentId }), /requires worker/);
   command(runtime, orchestrator, 'aggregate', { transaction_id: parentId });
   command(runtime, orchestrator, 'validate', { transaction_id: parentId, accepted: true });
-  const validation = required(runtime.store.getTransaction(parentId), 'parent').current_validation_ref;
-  const audit = required(runtime.store.findAudit(clusterId, parentId, 'validation', required(validation, 'validation').result_revision), 'audit');
-  assert.throws(() => command(runtime, orchestrator, 'aggregate', { transaction_id: parentId }), /VALIDATING/);
-  assert.equal(required(runtime.store.getAudit(audit.id), 'audit').decision, 'PENDING');
+  assert.equal(runtime.store.getTransaction(parentId)?.status, 'ACCEPTED');
 
   // A late child cannot be appended to the formal generation under review.
   assert.throws(() => command(runtime, orchestrator, 'create_transaction', {
     parent_transaction_id: parentId, objective: 'undeclared late child', acceptance_criteria: ['x'],
-  }), /prepared task child assignments/);
+  }), /ACCEPTED|prepared task child assignments/);
   assert.throws(() => command(runtime, allocator, 'spawn_management_node', {
     transaction_id: parentId, assignment_key: 'late-child',
   }), /assignment_key/);
   assert.equal(runtime.store.currentChildrenOfTransaction(clusterId, parentId).length, 1);
-  command(runtime, auditor, 'inspect_validation', { audit_id: audit.id, decision: 'approve' });
   assert.equal(required(runtime.store.getTransaction(parentId), 'parent').status, 'ACCEPTED');
   const publication = required(runtime.store.getResult(required(runtime.store.getTransaction(parentId), 'parent').current_result_ref), 'aggregate publication');
   assert.deepEqual(publication.source_validation_refs, [required(required(runtime.store.getTransaction(childTxId), 'child').current_validation_ref, 'child validation')]);
@@ -193,7 +199,7 @@ test('a role grant is sized for the turns the deployment gives it, not three', a
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'tool grants match the run', workspace: dir, capabilities: [],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6, max_llm_concurrency: 2, max_role_turns: 24, max_agents: 64 },
     budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
@@ -216,139 +222,25 @@ test('a role grant is sized for the turns the deployment gives it, not three', a
   assert.ok(Number(total) <= Number(declared), `the distribution stays inside the declared budget: ${total} of ${declared}`);
 });
 
-test('the correction budget counts failed rounds, not opened issues', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-correction-budget-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'issues are not rounds', workspace: dir, capabilities: ['fs_read', 'fs_write'],
-    // The recursion case's own budget: two correction rounds.
-    limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 24, max_corrections: 2 },
-    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
-  }).cluster.id;
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = command(runtime, orchestrator, 'create_transaction', { objective: 'the branch under correction', acceptance_criteria: ['x'] });
-  const txId = textOf(tx.result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  if (required(runtime.store.getTransaction(txId), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: txId, decision: 'approve' });
-  }
-  // Two freshly opened issues are not two spent rounds: the Auditor may still replan.
-  command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'first defect' });
-  command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'second defect' });
-  assert.equal(runtime.store.countCorrections(clusterId, txId), 0, 'no round has failed yet');
-  assert.equal(required(runtime.store.getNode(root.id), 'root node').status !== 'BLOCKED', true, 'so the node is not blocked');
-  // A third replan is still allowed while the configured rounds are unspent.
-  const third = (() => {
-    try {
-      command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'third defect' });
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.equal(third, null, `a third issue does not exhaust two correction rounds: ${String(third)}`);
-
-  // Real failed rounds do: two bumps of the counter block it.
-  runtime.store.tx(() => {
-    for (const issue of runtime.store.openIssues(clusterId, { transaction_id: txId, status: ['OPEN'] })) {
-      runtime.store.updateIssue(issue.id, { corrections: 1 });
-    }
-  });
-  assert.equal(runtime.store.countCorrections(clusterId, txId), 3, 'three failed rounds are counted');
-  const blocked = (() => {
-    try {
-      command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'fourth defect' });
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.ok(blocked, 'and then the budget refuses');
-  assert.match(messageOf(blocked), /correction budget exhausted/);
-  // The stop is recorded by the guard and applied by the scheduler, outside the
-  // refusal's transaction: one tick later the node is stopped for it.
-  runtime.enableScheduling();
-  await runtime.tick();
-  assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'BLOCKED', 'the node stops for it');
-  const events = runtime.store.readEvents(clusterId, { limit: 300 });
-  assert.ok(events.some(event => event.type === 'correction-budget-applied'), 'the applied stop is recorded');
-  assert.ok(events.some(event => event.type === 'node-blocked' && event.data !== null
-    && typeof event.data === 'object' && !Array.isArray(event.data) && event.data.code === 'CORRECTION_BUDGET_EXHAUSTED'),
-    'and so is the stop, with its code');
+test('the correction budget counts newly rejected repairs instead of issue creation', t => {
+  const f = correctionFixture12(t); f.publish(6); f.reject();
+  const issue = firstOf(f.runtime.store.openIssues(f.clusterId, { transaction_id: f.tx.id }), 'business issue');
+  assert.equal(issue.corrections, 0); assert.equal(f.runtime.store.getNode(f.root.id)?.status, 'ACTIVE');
+  f.repair(7); f.reject(); assert.equal(f.runtime.store.getIssue(issue.id)?.corrections, 1);
+  f.repair(8); f.reject(); assert.equal(f.runtime.store.getIssue(issue.id)?.corrections, 2);
+  assert.equal(f.runtime.store.getIssue(issue.id)?.status, 'ESCALATED');
 });
 
-test('a rejected repair costs one round, re-reviewing it costs none', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-rounds-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'a round is a repair, not a call', workspace: dir, capabilities: ['fs_read', 'fs_write'],
-    limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 24, max_corrections: 2 },
-    budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
-  }).cluster.id;
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = command(runtime, orchestrator, 'create_transaction', { objective: 'the transaction under repair', acceptance_criteria: ['x'] });
-  const txId = textOf(tx.result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  if (required(runtime.store.getTransaction(txId), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: txId, decision: 'approve' });
-  }
-  command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'produce the artifact' });
-  const issue = runtime.store.all("SELECT id FROM issues WHERE cluster_id=? AND transaction_id=?", clusterId, txId)[0];
-  assert.ok(issue, 'the issue exists');
-
-  // One repair — an adjustment *and* a validation, the two streams a verdict has to
-  // reconcile — then a failed verdict: one round, bound to the latest of them.
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: txId, patch: { inputs: { note: 'repaired once' } } });
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  runtime.store.tx(() => runtime.store.updateTransaction(txId, { status: 'SUBMITTED', result: { file: 'none' } }));
-  command(runtime, orchestrator, 'validate', {
-    transaction_id: txId, accepted: false,
-    checks: [{ criterion: 'the artifact is missing', passed: false, evidence: 'not present' }],
-  });
-  command(runtime, auditor, 'verify_correction', { issue_id: issue.id, decision: 'NOT_FIXED', evidence: {} });
-  assert.equal(required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').corrections, 1, 'the first repair cost one round');
-  // Re-reviewing that same state costs nothing: neither the adjustment nor the
-  // validation is newer than what the verdict already bound to.
-  const repeat = (() => {
-    try {
-      command(runtime, auditor, 'verify_correction', { issue_id: issue.id, decision: 'NOT_FIXED', evidence: {} });
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.ok(repeat, 'unchanged state cannot be charged again');
-  assert.match(messageOf(repeat), /no fresh correction/);
-  assert.equal(required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').corrections, 1, 'and the counter did not move');
-
-  // A second repair enables the second charge — and only then does the budget bite.
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: txId, patch: { inputs: { note: 'repaired twice' } } });
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: txId, patch: { inputs: { note: 'repaired twice' } } });
-  command(runtime, auditor, 'verify_correction', { issue_id: issue.id, decision: 'NOT_FIXED', evidence: {} });
-  assert.equal(required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').corrections, 2, 'the second repair cost the second round');
-  // A further repair with no fresh round left is refused and stops the branch.
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: txId, patch: { inputs: { note: 'repaired thrice' } } });
-  const refused = (() => {
-    try {
-      command(runtime, auditor, 'verify_correction', { issue_id: issue.id, decision: 'NOT_FIXED', evidence: {} });
-      return null;
-    } catch (error) { return error; }
-  })();
-  assert.equal(required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').status, 'ESCALATED',
-    'the issue escalates when its rounds are spent');
-  void refused;
+test('replaying the same rejected repair cannot consume another correction round', t => {
+  const f = correctionFixture12(t); f.publish(6); f.reject();
+  const issue = firstOf(f.runtime.store.openIssues(f.clusterId, { transaction_id: f.tx.id }), 'issue');
+  f.repair(7);
+  const params = fixtureParams(f.runtime, f.lead, 'validate', { transaction_id: f.tx.id, accepted: false, checks: [{ passed: false }] });
+  const request = { command_id: 'repeat-repair-rejection', action: 'validate', params };
+  f.runtime.command(f.lead, request); const revision = f.runtime.store.getTransaction(f.tx.id)?.revision;
+  assert.equal(f.runtime.command(f.lead, request).deduped, true);
+  assert.equal(f.runtime.store.getTransaction(f.tx.id)?.revision, revision);
+  assert.equal(f.runtime.store.getIssue(issue.id)?.corrections, 1);
 });
 
 test('a node whose roles have never run is served before busy branches', async t => {
@@ -361,7 +253,7 @@ test('a node whose roles have never run is served before busy branches', async t
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a deep node must not starve behind busy branches', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
     budget: { tool_calls: 4_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 2 },
@@ -380,12 +272,12 @@ test('a node whose roles have never run is served before busy branches', async t
   };
   const level1 = spawnChild(null, 'level one');
   const level2 = spawnChild(level1, 'level two');
-  // The failed node's own shape: its Orchestrator has taken a turn, its two plan audits
-  // are still pending, and its Auditor has never run. Continuous root work keeps the
+  // The deep Orchestrator has taken a turn while its Allocator has never run.
+  // Continuous root work keeps the
   // window busy so the deep node has to win a slot on merit.
   const deepest = required(runtime.store.getNode(level2), 'deep node');
   const deepOrchestrator = firstOf(runtime.store.listAgents(clusterId, { node_id: level2, role: 'orchestrator', limit: 1 }), 'deep orchestrator');
-  const deepAuditor = firstOf(runtime.store.listAgents(clusterId, { node_id: level2, role: 'auditor', limit: 1 }), 'deep auditor');
+  const deepAllocator = firstOf(runtime.store.listAgents(clusterId, { node_id: level2, role: 'allocator', limit: 1 }), 'deep allocator');
   runtime.store.tx(() => {
     runtime.store.updateAgent(deepOrchestrator.id, { turns: 1 });
     runtime.store.appendEvent(clusterId, 'turn-start', { agent_id: deepOrchestrator.id, role: 'orchestrator' });
@@ -416,15 +308,10 @@ test('a node whose roles have never run is served before busy branches', async t
     await runtime.tick();
     // eslint-disable-next-line no-await-in-loop
     await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-    if (startsForAgent(deepAuditor.id) > 0) break;
+    if (startsForAgent(deepAllocator.id) > 0) break;
   }
-  assert.ok(startsForAgent(deepAuditor.id) > 0,
-    `the never-run Auditor was admitted while the window stayed busy: ${startsForAgent(deepAuditor.id)}`);
-  const auditorTurn = runtime.store.all(
-    "SELECT json_extract(data,'$.actions') AS actions FROM events WHERE cluster_id=? AND type='turn-actions' AND json_extract(data,'$.role')='auditor'",
-    clusterId,
-  ).some(row => String(row.actions).includes('inspect_plan'));
-  assert.equal(auditorTurn, true, 'and the pending plan audits were offered to it');
+  assert.ok(startsForAgent(deepAllocator.id) > 0,
+    `the never-run Allocator was admitted while the window stayed busy: ${startsForAgent(deepAllocator.id)}`);
   void published;
 });
 
@@ -438,21 +325,21 @@ test('a mistaken issue can be dismissed without any revision and without blockin
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'an issue raised in error can be withdrawn', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
     budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const created = command(runtime, orchestrator, 'create_transaction', {
-    objective: 'the transaction the Auditor misjudged', acceptance_criteria: ['the file exists'],
+    objective: 'the transaction the Orchestrator misjudged', acceptance_criteria: ['the file exists'],
   });
   const txId = textOf(created.result.transaction_id, 'transaction_id');
   command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
   // The mistaken issue: nothing about the transaction has changed, and it never will.
-  command(runtime, auditor, 'request_replan', {
+  command(runtime, validationOwner, 'reopen_transaction', {
     transaction_id: txId, required_change: 'acceptance_criteria is empty', evidence: { checked: false },
   });
   const issue = firstOf(runtime.store.all("SELECT id, status FROM issues WHERE cluster_id=? AND transaction_id=?", clusterId, txId), 'issue');
@@ -460,20 +347,20 @@ test('a mistaken issue can be dismissed without any revision and without blockin
   // Closing it as a correction is impossible (nothing moved) — that is the trap the run hit.
   const closing = (() => {
     try {
-      command(runtime, auditor, 'verify_correction', { issue_id: textOf(issue.id, 'issue_id'), decision: 'VERIFIED', evidence: { rechecked: true } });
+      command(runtime, validationOwner, 'resolve_issue', { issue_id: textOf(issue.id, 'issue_id'), decision: 'CORRECTED', evidence: { rechecked: true } });
       return null;
     } catch (error) { return error; }
   })();
   assert.ok(closing, 'and it cannot be closed as a correction');
-  // Dismissing it is the legal exit, and it needs the Auditor's own evidence.
+  // Dismissing it is the legal exit, and it needs the Orchestrator's own evidence.
   const undocumented = (() => {
     try {
-      command(runtime, auditor, 'verify_correction', { issue_id: textOf(issue.id, 'issue_id'), decision: 'DISMISSED', evidence: {} });
+      command(runtime, validationOwner, 'resolve_issue', { issue_id: textOf(issue.id, 'issue_id'), decision: 'DISMISSED', evidence: {} });
       return null;
     } catch (error) { return error; }
   })();
   assert.ok(undocumented, 'a dismissal must say what was re-checked');
-  command(runtime, auditor, 'verify_correction', {
+  command(runtime, validationOwner, 'resolve_issue', {
     issue_id: textOf(issue.id, 'issue_id'), decision: 'DISMISSED',
     evidence: { rechecked: 'acceptance_criteria', found: ['the file exists'] },
     notes: 'the criteria are present; the issue was raised in error',
@@ -487,40 +374,6 @@ test('a mistaken issue can be dismissed without any revision and without blockin
   assert.equal(runtime.store.openIssues(clusterId, { status: 'OPEN' }).length, 0, 'and it is no longer open');
 });
 
-test('a plan audit carries the criteria it is judging, not just where to look', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-audit-facts-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'an audit names what it judges', workspace: dir, capabilities: ['fs_read', 'fs_write'],
-    limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tool_calls: 2_000, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
-  }).cluster.id;
-  const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const created = command(runtime, orchestrator, 'create_transaction', {
-    objective: 'produce the deep artifact', acceptance_criteria: ['exactly one child node exists', 'the file exists'],
-    expected_output: 'deep/nested/result.txt',
-  });
-  const txId = textOf(created.result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  const actions = runtime.pendingFor('auditor', root, cluster,
-    required(runtime.store.getAgent(firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 1 }), 'auditor').id), 'auditor agent'));
-  const audit = actions.find(action => action.action === 'inspect_plan' && action.transaction_id === txId);
-  assert.ok(audit, `the plan audit is offered: ${JSON.stringify(actions.map(a => a.action))}`);
-  assert.deepEqual(pendingStrings12(audit, 'acceptance_criteria'), ['exactly one child node exists', 'the file exists'],
-    'with the criteria it is judging, so an absent list cannot be read as an empty one');
-  assert.match(String(audit.objective), /produce the deep artifact/);
-  assert.equal(objectField(audit, 'pending action').expected_output, 'deep/nested/result.txt');
-});
-
 test('a spawned node is never born with a scrap tool allowance', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-toolshare-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -531,7 +384,7 @@ test('a spawned node is never born with a scrap tool allowance', async t => {
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'tool allowances are shared fairly', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6, max_llm_concurrency: 2, max_role_turns: 24, max_agents: 64 },
     budget: { tool_calls: 8_192, wall_time_ms: 3_600_000, agents: 64, max_active_agents: 6 },
@@ -552,7 +405,7 @@ test('a spawned node is never born with a scrap tool allowance', async t => {
   }
   for (const nodeId of spawned) {
     const budget = required(runtime.store.getBudget(required(runtime.store.budgetForScope(clusterId, 'node', nodeId), 'node budget').id), 'node budget');
-    // The node's file is handed to its three roles, so the endowment is the node plus
+    // The node's file is handed to its two roles, so the endowment is the node plus
     // what those roles hold.
     const roles = required(firstOf(runtime.store.all(
       "SELECT SUM(tool_calls_limit) AS c FROM budgets WHERE scope_kind='agent' AND node_id=?", nodeId), 'agent budget sum'), 'agent budget sum').c;
@@ -577,7 +430,7 @@ test('a management send yields its native turn after delivery so the recipient c
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'deliver an allocation request', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 100, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -605,225 +458,21 @@ test('a management send yields its native turn after delivery so the recipient c
   assert.equal(seen.concluded, true, 'the host must return control before this role polls the unchanged allocation');
 });
 
-test('the dismissal and the acceptance chain run through scheduled roles and their own tools', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-role-tools-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
+test('issue resolution and business validation run through the scheduled Orchestrator tool', async t => {
+  const f = correctionFixture12(t); f.publish(5);
+  const issue = required(f.runtime.store.insertIssue({ id: 'mistaken-business-report', cluster_id: f.clusterId, node_id: f.root.id, transaction_id: f.tx.id,
+    reporter_agent_id: f.lead.agent_id, required_change: 'Check whether the answer is absent.' }), 'issue');
+  let dismissed = false, accepted = false;
+  f.host.setScript(async turn => {
+    if (f.runtime.store.getAgentBySession(turn.session.id)?.id !== f.lead.agent_id) return;
+    const resolution = await turn.callTool('flow_transaction', { action: 'resolve_issue', params: { issue_id: issue.id, decision: 'DISMISSED', evidence: { observed: 'The current publication contains the answer 5.' } } });
+    dismissed = !resolution.isError;
+    const validation = await turn.callTool('flow_transaction', { action: 'validate', params: fixtureParams(f.runtime, f.lead, 'validate', { transaction_id: f.tx.id, accepted: true }) });
+    accepted = !validation.isError;
   });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'roles act through their own tools', workspace: dir, capabilities: ['fs_read', 'fs_write'],
-    limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 12 },
-    budget: { tool_calls: 4_000, wall_time_ms: 900_000, agents: 32, max_active_agents: 3 },
-  }).cluster.id;
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const created = command(runtime, orchestrator, 'create_transaction', {
-    objective: 'produce the artifact', acceptance_criteria: ['the file exists'],
-  });
-  const txId = textOf(created.result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  if (required(runtime.store.getTransaction(txId), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: txId, decision: 'approve' });
-  }
-  // A mistaken issue, exactly as the live run raised one.
-  command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'acceptance_criteria is empty' });
-  const issue = firstOf(runtime.store.all("SELECT id FROM issues WHERE cluster_id=? AND transaction_id=?", clusterId, txId), 'issue');
-  assert.ok(issue, 'the mistaken issue exists');
-
-  // The Auditor dismisses it through its *own* tool, in a scheduled turn.
-  let dismissedThroughTool = false;
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'auditor') return;
-    const result = await turn.callTool('flow_audit', {
-      action: 'verify_correction',
-      params: {
-        issue_id: textOf(issue.id, 'issue_id'), decision: 'dismissed',
-        evidence: { rechecked: 'acceptance_criteria', found: ['the file exists'] },
-      },
-    });
-    dismissedThroughTool = Boolean(result);
-  });
-  runtime.enableScheduling();
-  for (let pass = 0; pass < 20; pass += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-    if (required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').status === 'DISMISSED') break;
-  }
-  assert.equal(dismissedThroughTool, true, 'the Auditor acted through its own tool');
-  assert.equal(required(runtime.store.getIssue(textOf(issue.id, 'issue_id')), 'issue').status, 'DISMISSED', 'and the issue is dismissed');
-  assert.ok(runtime.store.readEvents(clusterId, { limit: 500 }).some(event => event.type === 'issue-dismissed'),
-    'the dismissal is on the record');
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status !== 'BLOCKED', true, 'nothing was blocked');
-
-  // The acceptance chain, also through real tool calls: a result, a validation, then the
-  // Auditor's approval of it.
-  prepareFixtureTask(runtime, txId);
-  runtime.store.tx(() => runtime.store.updateTransaction(txId, { status: 'SUBMITTED', result: { file: 'artifact.txt' } }));
-  publishFixtureResult(runtime, txId);
-  let validated = false;
-  let approved = false;
-  let turnRoles: (FlowAgentRole | undefined)[] = [];
-  let validationError: string | null = null;
-  let approvalError: string | null = null;
-  let approvedAuditId: string | null = null;
-  host.setScript(async turn => {
-    const identity = required(runtime.store.getAgentBySession(turn.session.id), 'scheduled identity');
-    const role = identity.role;
-    const actor = actorFor(runtime, clusterId, role, identity.node_id);
-    turnRoles.push(role);
-    if (role === 'orchestrator') {
-      try {
-        const result = await turn.callTool('flow_transaction', {
-          action: 'validate',
-          params: fixtureParams(runtime, actor, 'validate', { transaction_id: txId, accepted: true, checks: [{ criterion: 'the file exists', passed: true, evidence: 'observed' }] }),
-        });
-        // A tool-error result is not a successful action: the pipeline reports refusals as
-        // results, so the assertion is on the *outcome*, not on the call having returned.
-        validated = !result.isError;
-        if (!validated) validationError = `tool error: ${JSON.stringify(result).slice(0, 200)}`;
-      } catch (error) { validationError = messageOf(error); }
-      return;
-    }
-    if (role !== 'auditor') return;
-    const audit = runtime.store.pendingAudits(clusterId, { kind: 'validation', limit: 8 })
-      .filter(row => row.transaction_id === txId && (row.decision ?? 'PENDING') === 'PENDING').at(-1);
-    if (!audit) return;
-    const result = await turn.callTool('flow_audit', { action: 'inspect_validation', params: fixtureParams(runtime, actor, 'inspect_validation', { audit_id: audit.id, decision: 'approve' }) });
-    approved = !result.isError;
-    if (!approved) approvalError = `tool error: ${JSON.stringify(result).slice(0, 200)}`;
-    approvedAuditId = audit.id;
-  });
-  for (let pass = 0; pass < 25; pass += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-    if (required(runtime.store.getTransaction(txId), 'transaction').status === 'ACCEPTED') break;
-  }
-  assert.equal(validated, true, `the Orchestrator validated through its tool: ${validationError} turns ${JSON.stringify(turnRoles.slice(-4))}`);
-  assert.equal(approved, true, `and the Auditor approved through its own tool: ${approvalError}`);
-  const decided = firstOf(runtime.store.all("SELECT id, decision FROM audits WHERE id=?", approvedAuditId), 'decided audit');
-  assert.equal(decided?.decision, 'APPROVED', `the exact audit was decided: ${JSON.stringify(decided)}`);
-  assert.equal(required(runtime.store.getTransaction(txId), 'transaction').status, 'ACCEPTED', 'the chain completes through the tools');
-});
-
-test('an Auditor reviews unchanged issues without a preselected verdict', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-neutral-verdict-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'review both a real missing file and a mistaken issue', workspace: dir, capabilities: ['fs_read'],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 12 },
-    budget: { tool_calls: 200, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const missing = textOf(command(runtime, orchestrator, 'create_transaction', {
-    objective: 'write deep/nested/result.txt', acceptance_criteria: ['deep/nested/result.txt exists'],
-  }).result.transaction_id, 'transaction_id');
-  const valid = textOf(command(runtime, orchestrator, 'create_transaction', {
-    objective: 'plan a checkable file', acceptance_criteria: ['the file exists'],
-  }).result.transaction_id, 'transaction_id');
-  const genuine = textOf(command(runtime, auditor, 'request_replan', {
-    transaction_id: missing, required_change: 'deep/nested/result.txt is still absent; revise the write grant',
-  }).result.issue_id, 'issue_id');
-  const mistaken = textOf(command(runtime, auditor, 'request_replan', {
-    transaction_id: valid, required_change: 'the transaction has no acceptance criteria',
-  }).result.issue_id, 'issue_id');
-  const reviews = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), required(runtime.store.getAgent(auditor.agent_id), 'auditor agent'))
-    .filter(item => item.action === 'review_issue');
-  assert.deepEqual(new Set(reviews.map(item => textOf(objectField(item, 'pending action').issue_id, 'issue_id'))), new Set([genuine, mistaken]),
-    'both real and mistaken claims are offered for independent review');
-  assert.ok(reviews.every(item => !Object.hasOwn(item, 'decision_hint')),
-    'the control loop does not choose a verdict for the Auditor');
-  let queried = false;
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'auditor') return;
-    await turn.callTool('flow_query', { what: 'transaction', params: { id: missing } });
-    queried = true;
-    await turn.callTool('flow_audit', {
-      action: 'verify_correction',
-      params: { issue_id: mistaken, decision: 'dismissed',
-        evidence: { rechecked: 'acceptance_criteria', found: ['the file exists'] } },
-    });
-  });
-  runtime.enableScheduling();
-  for (let pass = 0; pass < 12 && required(runtime.store.getIssue(textOf(mistaken, 'issue_id')), 'mistaken issue').status !== 'DISMISSED'; pass += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-  }
-  assert.equal(queried, true, 'the scheduled Auditor inspected the actual transaction through its tool');
-  assert.equal(required(runtime.store.getIssue(textOf(genuine, 'issue_id')), 'genuine issue').status, 'OPEN', 'the real missing-file issue is not dismissed merely for being unchanged');
-  assert.equal(required(runtime.store.getIssue(textOf(mistaken, 'issue_id')), 'mistaken issue').status, 'DISMISSED', 'the same turn can retract a demonstrably mistaken issue');
-});
-
-test('an unchanged issue does not manufacture endless Auditor turns', async t => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'dsh-flow-oneshot-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'a stuck issue does not spin the Auditor', workspace: dir, capabilities: ['fs_read', 'fs_write'],
-    limits: { max_children: 4, max_depth: 4, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 6 },
-    budget: { tool_calls: 200, wall_time_ms: 600_000, agents: 32, max_active_agents: 3 },
-  }).cluster.id;
-  const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const created = command(runtime, orchestrator, 'create_transaction', { objective: 'a genuine issue', acceptance_criteria: ['x'] });
-  const txId = textOf(created.result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-  if (required(runtime.store.getTransaction(txId), 'transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: txId, decision: 'approve' });
-  }
-  // A genuine issue, and nothing is ever done about it.
-  command(runtime, auditor, 'request_replan', { transaction_id: txId, required_change: 'produce the missing evidence' });
-  let auditorTurns = 0;
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.role === 'auditor') auditorTurns += 1;
-  });
-  runtime.enableScheduling();
-  for (let pass = 0; pass < 30; pass += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-  }
-  const issue = firstOf(runtime.store.all("SELECT id, status FROM issues WHERE cluster_id=? AND transaction_id=?", clusterId, txId), 'issue');
-  assert.equal(issue.status, 'OPEN', 'the issue is still open and unaddressed');
-  // The Auditor was given the issue once, not once per pass.
-  assert.ok(auditorTurns <= 2, `the Auditor was not spun: ${auditorTurns} turns over 30 passes`);
-  // (A node whose roles take no-op turns is stopped by the stagnation bound — that is a
-  // different rule and a different test's subject; what this one bounds is the *Auditor's*
-  // work queue.)
-  // A repair re-arms review, without deciding whether it succeeded.
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: txId, patch: { inputs: { note: 'repaired' } } });
-  const rearmed = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'),
-    required(runtime.store.getAgent(firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 1 }), 'auditor').id), 'auditor agent'))
-    .filter(item => item.action === 'review_issue');
-  assert.ok(rearmed.length > 0, 'a repair re-arms review');
-  assert.ok(rearmed.every(item => objectField(item, 'pending action').changed_since_issue === true),
-    'the scheduler reports a durable change without claiming the correction was verified');
+  f.runtime.enableScheduling();
+  await f.runtime.tick(); await Promise.all(f.runtime.activeTurnIds().map(id => f.runtime.activeTurnFor(id)!.promise));
+  assert.equal(dismissed, true); assert.equal(accepted, true);
+  assert.equal(f.runtime.store.getIssue(issue.id)?.status, 'DISMISSED'); assert.equal(f.runtime.store.getTransaction(f.tx.id)?.status, 'ACCEPTED');
 });
 

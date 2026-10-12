@@ -4,23 +4,14 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fromPartial } from '@total-typescript/shoehorn';
-import { buildScenario, caseHooks, call } from '../../../src/host/mock-scenarios.ts';
+import { buildScenario, caseHooks } from '../../../src/host/mock-scenarios.ts';
 import { asRecord, classifyRequest } from '../../../src/host/mock-model.ts';
 import type { MockRequestRecord, MockScenarioReply } from '../../../src/host/mock-model.ts';
 
-function auditRequest(item: Record<string, unknown>, answer?: unknown, toolName = 'flow_audit'): MockRequestRecord {
-  return fromPartial<MockRequestRecord>({ classified: {
-    kind: 'role', role: 'auditor', agentId: 'auditor', nodeId: 'node', transactionId: null,
-    context: { work_items: [item] },
-    lastToolName: answer === undefined ? null : toolName,
-    lastToolResult: answer === undefined ? null : JSON.stringify(answer),
-  } });
-}
-
-function command(reply: MockScenarioReply | null, toolName = 'flow_audit') {
+function command(reply: MockScenarioReply | null) {
   const tool = reply?.toolCalls?.[0];
   assert.ok(tool);
-  assert.equal(tool.name, toolName);
+  assert.equal(tool.name, 'flow_transaction');
   const args = asRecord(JSON.parse(String(tool.arguments)));
   assert.ok(args);
   return { action: args.action, params: asRecord(args.params) ?? {} };
@@ -41,78 +32,64 @@ test('request identity comes only from host attribution and work starts with sco
   assert.equal(classifyRequest(body, { ...trusted, purpose: 'compaction' }).kind, 'compaction');
 });
 
-/** Exercise the correction script itself; its native query integration has separate coverage. */
-function recursionScenario(options: { workspace?: string } = {}) {
-  const hooks = caseHooks('recursion', options);
-  return { respond(request: MockRequestRecord) {
-    hooks.observe?.(request);
-    const pending = request.classified.context?.work_items;
-    const item = asRecord(Array.isArray(pending) ? pending[0] : null) ?? {};
-    if (request.classified.kind === 'worker') return hooks.worker?.(request, fromPartial({})) ?? null;
-    return hooks.auditor?.(request, item, fromPartial({})) ?? call('flow_audit', { action: item.action, params: { transaction_id: item.transaction_id, decision: 'approve' } });
-  } };
-}
-
-test('recursion retries failed corrections and suppresses only acknowledged unchanged evidence', async () => {
-  const scenario = recursionScenario();
-  const item = { action: 'request_replan', transaction_id: 'tx', refusal_seqs: [199], reason: 'write refused' };
-  const respond = (answer?: unknown, pending = item) => scenario.respond(auditRequest(pending, answer));
-  assert.equal(command(await respond()).action, 'request_replan');
-  assert.equal(command(await respond({ ok: false, action: 'request_replan', result: { transaction_id: 'tx', issue_id: 'failed' } })).action, 'request_replan');
-  assert.equal(command(await respond({ ok: true, action: 'request_replan', result: { transaction_id: 'tx', evidence: { issue_id: 'nested' } } })).action, 'request_replan');
-  assert.equal(command(await respond({ ok: true, action: 'request_replan', result: { transaction_id: 'foreign', issue_id: 'foreign' } })).action, 'request_replan');
-  const accepted = { ok: true, action: 'request_replan', result: { transaction_id: 'tx', issue_id: 'issue-a', status: 'DRAFT' } };
-  assert.equal((await respond(accepted))?.toolCalls, undefined, 'a successful tool result ends the stale correction');
-  assert.equal((await respond())?.toolCalls, undefined, 'an older work snapshot cannot reopen the same correction');
-  assert.equal(command(await respond(undefined, { ...item, refusal_seqs: [205] })).action, 'request_replan', 'a new refusal is new evidence');
-  assert.equal(command(await respond(undefined, { ...item, transaction_id: 'other' })).action, 'request_replan', 'another transaction remains independent');
-});
-
-test('recursion verifies delivery issues and audits replacement validation before compliance closure', async t => {
+test('recursion rejects the blocked delivery and verifies the replacement write receipt', async t => {
   const workspace = mkdtempSync(join(tmpdir(), 'flow-recursion-script-'));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
-  const scenario = recursionScenario({ workspace });
-  const submission = (text: string) => scenario.respond(fromPartial<MockRequestRecord>({ classified: {
+  const hooks = caseHooks('recursion', { workspace });
+  const worker = (text: string) => hooks.worker?.(fromPartial<MockRequestRecord>({ classified: {
     kind: 'worker', transactionId: 'tx', objective: 'write deep/nested/result.txt',
-    context: { allocation: { write_scope: ['deep/'] } },
-    lastToolName: 'write', lastToolResult: text,
-  } }));
-  await submission('write refused outside scope');
-  const item = { action: 'request_replan', transaction_id: 'tx', refusal_seqs: [199] };
-  const first = await scenario.respond(auditRequest(item));
-  assert.equal(command(first).action, 'request_replan');
-  const answer = (issue: string) => ({ ok: true, action: 'request_replan', result: { transaction_id: 'tx', issue_id: issue, status: 'DRAFT' } });
-  const secondItem = { ...item, refusal_seqs: [205] };
-  assert.equal(command(await scenario.respond(auditRequest(secondItem, answer('issue-a')))).action, 'request_replan');
-  assert.equal((await scenario.respond(auditRequest(secondItem, answer('issue-b'))))?.toolCalls, undefined);
-  const validation = { action: 'inspect_validation', transaction_id: 'tx', target_revision: 3 };
-  // The Worker has no replacement result yet, so an additional rejected audit
-  // is also remembered by its own revision and must not repeat on a stale step.
-  assert.equal(command(await scenario.respond(auditRequest(validation))).params.decision, 'reject');
-  const rejected = { ok: true, action: 'inspect_validation', result: { transaction_id: 'tx', issue_id: 'issue-c', decision: 'REJECTED' } };
-  assert.equal((await scenario.respond(auditRequest(validation, rejected)))?.toolCalls, undefined);
+    context: { allocation: { write_scope: ['deep/'] } }, lastToolName: 'write', lastToolResult: text,
+  } }), fromPartial({})) ?? null;
+  const rejected = command(worker('write refused outside scope'));
+  assert.equal(asRecord(rejected.params.result)?.completed, false);
+  const resultRef = { transaction_id: 'tx', publication_event_seq: 9 };
+  const detail = (completed: boolean) => ({
+    transaction: { id: 'tx', revision: 4 }, requirements: { acceptance_criteria: ['write the depth result'] },
+    plan: { ref: { transaction_id: 'tx', prepared_revision: 2 } },
+    result: { ref: resultRef, result: { completed, file: 'deep/nested/result.txt' } },
+  });
+  const manager = (action: string, completed: boolean, execution: unknown[] = []) => hooks.orchestrator?.(fromPartial<MockRequestRecord>({ classified: {
+    kind: 'role', role: 'orchestrator', context: { ancestors: [{ id: 'parent', kind: 'management' }],
+      transaction: detail(completed), execution_effects: execution },
+  } }), { action, transaction_id: 'tx' }, fromPartial({})) ?? null;
+  const negative = command(manager('validate', false));
+  assert.equal(negative.action, 'validate');
+  assert.equal(negative.params.accepted, false, 'the manager must not accept an explicitly incomplete delivery');
+  const repair = command(manager('correct-result', false));
+  assert.equal(repair.action, 'adjust_transaction');
+  assert.deepEqual(asRecord(repair.params.inputs)?.write_scope, ['deep/']);
   mkdirSync(join(workspace, 'deep/nested'), { recursive: true });
   writeFileSync(join(workspace, 'deep/nested/result.txt'), '3\n');
-  await submission('wrote result.txt');
-  const verify = (issue: string, ok = true) => ({ ok, action: 'verify_correction', result: { issue_id: issue, status: 'CORRECTED' } });
-  const pending = command(await scenario.respond(auditRequest(validation)));
-  assert.equal(pending.action, 'verify_correction');
-  assert.equal(pending.params.issue_id, 'issue-a');
-  assert.equal(command(await scenario.respond(auditRequest(validation, verify('issue-a', false)))).params.issue_id, 'issue-a', 'failed verification can retry');
-  assert.equal(command(await scenario.respond(auditRequest(validation, verify('issue-b')))).params.issue_id, 'issue-a', 'an unrelated successful reply cannot verify another issue');
-  assert.equal(command(await scenario.respond(auditRequest(validation, verify('issue-a')))).params.issue_id, 'issue-b');
-  const approved = command(await scenario.respond(auditRequest(validation, verify('issue-b'))));
-  assert.equal(approved.action, 'inspect_validation');
-  assert.equal(approved.params.decision, 'approve');
-  const compliance = { action: 'review_issue', transaction_id: 'tx', issue_id: 'issue-c', target_revision: 3, changed_since_issue: true };
-  const approval = { ok: true, action: 'inspect_validation', result: { transaction_id: 'tx', decision: 'APPROVED', status: 'ACCEPTED' } };
-  const query = command(await scenario.respond(auditRequest(compliance, approval)), 'flow_query');
-  assert.equal(query.params.id, 'tx', 'the compliance correction reads the actual replacement state after its approval');
-  const publication = { transaction: { id: 'tx', status: 'ACCEPTED', revision: 7, result_revision: 7 } };
-  const closure = command(await scenario.respond(auditRequest(compliance, publication, 'flow_query')));
-  assert.equal(closure.action, 'verify_correction');
-  assert.equal(closure.params.issue_id, 'issue-c', 'the original validation issue has its own explicit closure');
-  const final = command(await scenario.respond(auditRequest({ ...validation, target_revision: 7 }, verify('issue-c'))));
-  assert.equal(final.action, 'inspect_validation');
-  assert.equal(final.params.decision, 'approve');
+  assert.equal(asRecord(command(worker('wrote result.txt')).params.result)?.completed, true);
+  assert.equal(command(manager('validate', true)).params.accepted, false, 'a file claim without a settled matching write does not pass');
+  const receipt = { call_id: 'replacement-write', tool: 'write', status: 'SETTLED', args: { file_path: join(workspace, 'deep/nested/result.txt') }, body: { isError: false, text: 'written' } };
+  const accepted = command(manager('validate', true, [receipt]));
+  assert.equal(accepted.params.accepted, true);
+  assert.ok(JSON.stringify(accepted.params.checks).includes('replacement-write'));
+});
+
+test('the fixture executes a refusal agenda with current transaction and immutable references', async () => {
+  const scenario = buildScenario({ caseId: 'native' });
+  const request = (lastToolArguments?: Record<string, unknown>, answer?: unknown) => fromPartial<MockRequestRecord>({ classified: {
+    kind: 'role', role: 'orchestrator', agentId: 'manager', nodeId: 'node', depth: 0,
+    identity: { epoch: 1, turnSeq: 1 },
+    ...(lastToolArguments ? { lastToolName: 'flow_query', lastToolArguments, lastToolResult: JSON.stringify(answer) } : {}),
+  } });
+  await scenario.respond(request());
+  await scenario.respond(request({ what: 'assignment' }, { binding: { transaction_id: 'tx' }, requirements: { objective: 'write the file' } }));
+  await scenario.respond(request({ what: 'agenda' }, { items: [{ transaction_id: 'tx', details: {
+    action: 'reject_result', transaction_id: 'tx', reason: 'actual write refused', refusal_seqs: [12],
+    required_change: 'repair the granted scope',
+  } }] }));
+  const plan = { transaction_id: 'tx', prepared_revision: 3 };
+  const result = { transaction_id: 'tx', publication_event_seq: 13 };
+  const reply = await scenario.respond(request({ what: 'transaction' }, {
+    transaction: { id: 'tx', revision: 7 }, plan: { ref: plan }, result: { ref: result, result: { completed: false } },
+  }));
+  const rejected = command(reply);
+  assert.equal(rejected.action, 'reject_result');
+  assert.equal(rejected.params.expected_transaction_revision, 7);
+  assert.deepEqual(rejected.params.plan_ref, plan);
+  assert.deepEqual(rejected.params.result_ref, result);
+  assert.deepEqual(asRecord(rejected.params.evidence)?.refusal_seqs, [12]);
 });

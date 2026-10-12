@@ -43,7 +43,7 @@ test('main Agent reads a launch, creates with assessed overrides and checks actu
   const before=await f.call('agent_team_read',{});
   assert.equal(before.run,null);assert.equal(before.launches[0].launch_id,'launch');assert.equal(before.defaults.limits.max_active_agents,4);
   const created=await f.call('agent_team_create',{launch_id:'launch',...f.request});
-  assert.equal(created.run.state,'running');assert.equal(created.agents.length,3);
+  assert.equal(created.run.state,'running');assert.equal(created.agents.length,2);
   assert.deepEqual(created.parameters.capabilities,[]);assert.equal(created.parameters.budget.tool_calls,600);assert.equal(created.parameters.limits.max_depth,2);
   const checked=await f.call('agent_team_read',{launch_id:'launch'});
   assert.equal(checked.run_id,created.run_id);
@@ -114,7 +114,7 @@ test('finalize fences active and foreign teams, retains evidence and is idempote
   const version=finalized.run.version;
   const twice=await f.call('agent_team_finalize',{run_id:created.run_id});assert.equal(twice.run.version,version);
   const history=await f.call('agent_team_read',{run_id:created.run_id});
-  assert.equal(history.agents.length,3);assert.equal(history.run.name,'Sum [2,3]');assert.ok(history.agents.every((agent:{recycled:boolean})=>agent.recycled));
+  assert.equal(history.agents.length,2);assert.equal(history.run.name,'Sum [2,3]');assert.ok(history.agents.every((agent:{recycled:boolean})=>agent.recycled));
   assert.ok(f.runtime.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='team-created'",created.run_id));
 });
 
@@ -134,7 +134,7 @@ test('bounded read waits for a version change, respects terminal state and abort
 
 test('a selected native Agent receives one human prompt, with retry and recycling fences',async t=>{
   const f=fixture(t),created=await f.call('agent_team_create',{launch_id:'launch',...f.request});
-  const selected=f.runtime.store.listAgents(created.run_id,{role:'auditor'})[0]!;
+  const selected=f.runtime.store.listAgents(created.run_id,{role:'orchestrator'})[0]!;
   assert.equal(f.runtime.agentSession('main'),null);
   assert.equal(f.runtime.agentSession(selected.session_id)?.can_message,true);
   f.runtime.promptAgent(selected.session_id,'rpc','Check 5-3=2','Asia/Shanghai');
@@ -157,7 +157,7 @@ test('a selected native Agent receives one human prompt, with retry and recyclin
 for (const status of ['RUNNING','PAUSED','BLOCKED','COMPLETED','FAILED','CANCELLED'] as const) {
   test(`native continuation and browser seeding agree for a ${status} team and completed Agent`,async t=>{
     const f=fixture(t),created=await f.call('agent_team_create',{launch_id:'launch',...f.request});
-    const selected=f.runtime.store.listAgents(created.run_id,{role:'auditor'})[0]!;
+    const selected=f.runtime.store.listAgents(created.run_id,{role:'orchestrator'})[0]!;
     f.runtime.store.updateAgent(selected.id,{status:'COMPLETED'});
     f.runtime.store.updateCluster(created.run_id,{status});
     const team=f.runtime.teamRead('main',created.run_id),agent=team.agents.find(agent=>agent.id===selected.id)!;

@@ -46,11 +46,11 @@ export type FlowAgentStatus =
 
 /** Transaction lifecycle state. */
 export type FlowTransactionStatus =
-  | 'DRAFT' | 'READY' | 'DISPATCHED' | 'RUNNING' | 'SUBMITTED' | 'VALIDATING' | 'ACCEPTED'
+  | 'DRAFT' | 'READY' | 'DISPATCHED' | 'RUNNING' | 'SUBMITTED' | 'ACCEPTED'
   | 'REJECTED' | 'BLOCKED' | 'PAUSED' | 'FAILED' | 'CANCELLED' | 'SUPERSEDED';
 
 /** A node that owns management roles. */
-export type FlowManagementRole = 'orchestrator' | 'allocator' | 'auditor';
+export type FlowManagementRole = 'orchestrator' | 'allocator';
 
 /** A role a cluster agent can hold. */
 export type FlowAgentRole = FlowManagementRole | 'worker';
@@ -64,8 +64,8 @@ export type FlowCapability = 'fs_read' | 'fs_write' | 'shell' | 'web_fetch' | 'b
 /** Management-tree node kind. */
 export type FlowNodeKind = 'management' | 'worker';
 
-/** Audit-record lifecycle state. `DISMISSED` closes an issue found to be mistaken. */
-export type FlowIssueStatus = 'OPEN' | 'VERIFYING' | 'CORRECTED' | 'ESCALATED' | 'DISMISSED';
+/** Issue lifecycle state. `DISMISSED` closes an issue found to be mistaken. */
+export type FlowIssueStatus = 'OPEN' | 'CORRECTED' | 'ESCALATED' | 'DISMISSED';
 
 /** Durable effect receipt state. `EFFECT_UNCERTAIN` marks an effect that may have run before a restart and needs a human decision. */
 export type FlowEffectStatus = 'STARTED' | 'SETTLED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN' | 'EFFECT_UNCERTAIN';
@@ -85,29 +85,16 @@ export type FlowInboxStatus = 'PENDING' | 'CONSUMED';
 /** Communication group lifecycle state. */
 export type FlowGroupStatus = 'OPEN' | 'CLOSED';
 
-/** Which gate an audit record belongs to. */
-export type FlowAuditKind = 'plan' | 'validation';
-
-/** An auditor's verdict on one plan or result revision. */
-export type FlowAuditDecision =
-  | 'PENDING' | 'APPROVED' | 'REJECTED' | 'OVERRIDDEN' | 'STALE'
-  | 'CORRECTION_REQUESTED' | 'REPLAN_REQUESTED' | 'REVALIDATION_REQUESTED';
-
 /** The kind of scope a budget row funds. */
 export type FlowScopeKind = 'cluster' | 'root' | 'node' | 'transaction' | 'agent';
 
 /** The three operations a cluster may be told to perform on its own state. */
 export type FlowControlAction = 'pause' | 'resume' | 'cancel';
 
-/** The eight health dimensions scored by the Auditor. */
-export type FlowHealthMetric =
-  | 'transaction_coverage' | 'decomposition_quality' | 'responsiveness' | 'planning_stability'
-  | 'goal_alignment' | 'acceptance_quality' | 'result_integration' | 'escalation_quality';
-
 /** Every query a caller may ask of one cluster. */
 export type FlowQueryKind =
-  | 'cluster' | 'nodes' | 'node' | 'transactions' | 'transaction' | 'audit' | 'agents' | 'allocations'
-  | 'budgets' | 'issues' | 'issue' | 'audits' | 'effects' | 'effect' | 'usage' | 'deliveries'
+  | 'cluster' | 'nodes' | 'node' | 'transactions' | 'transaction' | 'agents' | 'allocations'
+  | 'budgets' | 'issues' | 'issue' | 'effects' | 'effect' | 'usage' | 'deliveries'
   | 'context' | 'health' | 'summary' | 'blackboard' | 'assignment' | 'agenda';
 
 /** Immutable references to the contract actually used for planning and delivery. */
@@ -163,13 +150,12 @@ export interface FlowClusterAssignmentQueryData extends FlowQueryProjection {
   readonly allocation?: FlowJsonValue
   readonly result?: FlowJsonValue
   readonly validation?: FlowJsonValue
-  readonly audit?: FlowJsonValue
   readonly issue?: FlowJsonValue
   readonly changes?: FlowJsonValue
   readonly evidence?: FlowJsonValue
 }
-export type FlowAgendaKind = 'prepare_plan' | 'arrange_execution' | 'review_plan' | 'validate_result'
-  | 'review_validation' | 'correction' | 'aggregate' | 'closeout' | 'notification' | 'resources';
+export type FlowAgendaKind = 'prepare_plan' | 'arrange_execution' | 'validate_result'
+  | 'correction' | 'aggregate' | 'closeout' | 'notification' | 'resources';
 export interface FlowAgendaItem {
   readonly kind: FlowAgendaKind
   readonly object: { readonly kind: string; readonly id: string }
@@ -276,6 +262,8 @@ export interface FlowStartRequest {
   readonly id?: string
   readonly workspace?: string
   readonly capabilities?: readonly FlowCapability[]
+  readonly managementCapabilities?: readonly FlowCapability[]
+  readonly managementWriteScope?: readonly string[]
   readonly budget?: FlowBudgetInput
   readonly limits?: FlowLimitsInput
   readonly initial_transactions?: readonly FlowJsonValue[]
@@ -456,23 +444,6 @@ export interface FlowIssueRecord {
   readonly corrections: number
   readonly created: number
   readonly updated: number
-}
-
-/** One audit record, with its evidence decoded. */
-export interface FlowAuditRecord {
-  readonly id: string
-  readonly cluster_id: string
-  readonly node_id: string | null
-  readonly transaction_id: string | null
-  readonly auditor_agent_id: string | null
-  readonly kind: FlowAuditKind
-  readonly target_revision: number | null
-  readonly plan_ref?: FlowPlanRef | null
-  readonly validation_ref?: FlowValidationRef | null
-  readonly decision: FlowAuditDecision
-  readonly evidence: FlowJsonValue
-  readonly created: number
-  readonly decided: number | null
 }
 
 /** One durable effect receipt. */
@@ -665,20 +636,6 @@ export interface FlowHealthPlanningStability {
   readonly rejection_cycles: number
 }
 
-/** One stored health evaluation, exactly as the `health` row holds it. */
-export interface FlowHealthEvaluation {
-  readonly id: string
-  readonly cluster_id: string
-  readonly node_id: string | null
-  readonly evaluation_window: string | null
-  readonly scores: FlowJsonValue
-  readonly signals: FlowJsonValue
-  readonly weights: FlowJsonValue
-  readonly decided: number
-  readonly decided_by: string | null
-  readonly created: number
-}
-
 /** The transaction-status tally the runtime builds from SQL counts. */
 export interface FlowTransactionStatusTally {
   readonly DRAFT?: number
@@ -686,7 +643,6 @@ export interface FlowTransactionStatusTally {
   readonly DISPATCHED?: number
   readonly RUNNING?: number
   readonly SUBMITTED?: number
-  readonly VALIDATING?: number
   readonly ACCEPTED?: number
   readonly REJECTED?: number
   readonly BLOCKED?: number
@@ -700,7 +656,6 @@ export interface FlowTransactionStatusTally {
 export interface FlowRoleTally {
   readonly orchestrator?: number
   readonly allocator?: number
-  readonly auditor?: number
   readonly worker?: number
 }
 
@@ -788,7 +743,6 @@ export interface FlowTransactionRecord {
   readonly result: FlowJsonValue
   readonly result_revision: number | null
   readonly validation: FlowJsonValue
-  readonly plan_approved_revision: number | null
   readonly result_staged_epoch: number | null
   readonly result_staged_turn: number | null
   readonly result_staged_agent: string | null
@@ -872,7 +826,6 @@ export interface FlowReportMechanism {
   readonly agents_by_role: FlowRoleTally
   readonly transactions_by_status: FlowTransactionStatusTally
   readonly transactions_total: number
-  readonly audits_pending: number
   readonly issues_open: number
   readonly issues_total: number
   readonly corrections: number
@@ -887,7 +840,6 @@ export interface FlowReportMechanism {
   readonly subtree_size: FlowSubtreeSizeTally
   readonly orchestrator_context: readonly FlowOrchestratorContext[]
   readonly agent_utilization: FlowAgentUtilization
-  readonly auditor_event_rate: FlowAuditorEventRate
   readonly communication_traffic: FlowCommunicationTraffic
 }
 
@@ -911,13 +863,6 @@ export interface FlowAgentUtilization {
   readonly live_agents: number
   readonly active_turns: number
   readonly ratio: number | null
-}
-
-/** How often an Auditor is woken. */
-export interface FlowAuditorEventRate {
-  readonly window_ms: number
-  readonly inbox_rows: number
-  readonly per_second: number
 }
 
 /** Message traffic, including how much of it crossed a subtree boundary. */
@@ -1032,7 +977,6 @@ export interface FlowClusterTransactionQueryData {
   readonly transaction: FlowTransactionReference | FlowTransactionDetail
   readonly dependencies: readonly string[]
   readonly dependents: readonly string[]
-  readonly audits: readonly FlowAuditRecord[]
   readonly issues: readonly FlowIssueRecord[]
   readonly allocation: FlowAllocationRecord | FlowAllocationReference | null
   readonly validation: FlowJsonValue
@@ -1066,7 +1010,6 @@ export interface FlowTransactionDetail {
   readonly acceptance_criteria: FlowJsonValue
   readonly capabilities: readonly FlowCapability[]
   readonly attempts: number
-  readonly plan_approved_revision: number | null
 }
 
 /** The allocation fields a model role may read. */
@@ -1076,18 +1019,6 @@ export interface FlowAllocationReference {
   readonly agent_id: string
   readonly write_scope: readonly string[]
   readonly status: FlowAllocationStatus
-}
-
-/** One audit record by id. */
-export interface FlowClusterAuditQueryData {
-  readonly audit: FlowAuditRecord
-  readonly projection?: boolean
-  readonly fields?: readonly string[]
-  readonly available_fields?: readonly string[]
-  readonly requirements?: FlowJsonValue
-  readonly plan?: FlowJsonValue
-  readonly validation?: FlowJsonValue
-  readonly evidence?: FlowJsonValue
 }
 
 /** Agents inside the actor's domain. */
@@ -1136,15 +1067,6 @@ export interface FlowClusterIssueQueryData {
   readonly evidence?: FlowJsonValue
 }
 
-/** Audits still awaiting a decision. */
-export interface FlowClusterAuditsQueryData {
-  readonly items: readonly FlowAuditRecord[]
-  readonly total: number
-  readonly offset: number
-  readonly limit: number
-  readonly next_offset: number | null
-}
-
 /** Durable effect receipts. */
 export interface FlowClusterEffectsQueryData {
   readonly items: readonly FlowEffectRecord[]
@@ -1185,10 +1107,8 @@ export interface FlowClusterContextQueryData {
   readonly summary: FlowSummary | null
 }
 
-/** The latest health evaluation plus the signals it was scored against. */
+/** Objective runtime signals derived from the durable ledger. */
 export interface FlowClusterHealthQueryData {
-  readonly health: FlowHealthEvaluation | null
-  readonly metrics: readonly FlowHealthMetric[]
   readonly signals: FlowHealthSignals
 }
 
@@ -1220,13 +1140,11 @@ export type FlowQueryResult =
   | { readonly what: 'node'; readonly data: FlowClusterNodeQueryData }
   | { readonly what: 'transactions'; readonly data: FlowClusterTransactionsQueryData }
   | { readonly what: 'transaction'; readonly data: FlowClusterTransactionQueryData }
-  | { readonly what: 'audit'; readonly data: FlowClusterAuditQueryData }
   | { readonly what: 'agents'; readonly data: FlowClusterAgentsQueryData }
   | { readonly what: 'allocations'; readonly data: FlowClusterAllocationsQueryData }
   | { readonly what: 'budgets'; readonly data: FlowClusterBudgetsQueryData }
   | { readonly what: 'issues'; readonly data: FlowClusterIssuesQueryData }
   | { readonly what: 'issue'; readonly data: FlowClusterIssueQueryData }
-  | { readonly what: 'audits'; readonly data: FlowClusterAuditsQueryData }
   | { readonly what: 'effects'; readonly data: FlowClusterEffectsQueryData }
   | { readonly what: 'effect'; readonly data: FlowClusterEffectQueryData }
   | { readonly what: 'usage'; readonly data: FlowClusterUsageQueryData }

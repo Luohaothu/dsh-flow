@@ -11,13 +11,6 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 function same(left: unknown, right: unknown): boolean { return canonical(left) === canonical(right); }
-function messageText(data: unknown): string {
-  const content = object(object(data)?.message)?.content;
-  return Array.isArray(content) ? content.map(block => object(block)?.text ?? '').join('\n') : '';
-}
-function parsed(text: unknown): Record<string, unknown> | null {
-  try { return typeof text === 'string' ? object(JSON.parse(text)) : null; } catch { return null; }
-}
 function nativeResult(facts: readonly NativeSessionFact[], call: NativeSessionFact): NativeSessionFact | undefined {
   const data = object(call.data);
   // Parallel duplicates have no further native correlation identity. Neither
@@ -32,7 +25,7 @@ function nativeResult(facts: readonly NativeSessionFact[], call: NativeSessionFa
 /** The caller has already checked the selected object's domain and immutable refs. */
 export function nativeToolEvidence(store: ClusterStore, actor: FlowActor, domain: ReadonlySet<string>, input: {
   transactionId: string; planRef: FlowPlanRef | null; result: ResultRecord | null; validation: ValidationRecord | null;
-  params: FlowQueryParams; what: 'transaction' | 'audit' | 'assignment'; id?: string;
+  params: FlowQueryParams; what: 'transaction' | 'assignment'; id?: string;
 }): Record<string, unknown> {
   const sources = new Map<string, { facts: NativeSessionFact[]; turns: Map<number, { association: string; binding: Record<string, unknown> | null; lastCallSeq: number | null }> }>();
   const includeAgent = (agentId: string | null | undefined) => {
@@ -48,16 +41,30 @@ export function nativeToolEvidence(store: ClusterStore, actor: FlowActor, domain
     return source;
   };
   const bindings = (agentId: string, facts: readonly NativeSessionFact[]) => {
-    const inputs = store.all("SELECT binding,native_message_id FROM member_inputs WHERE agent_id=? AND status='ADMITTED'", agentId);
-    const byMessage = new Map(inputs.map(row => [String(row.native_message_id), object(decodeJson(String(row.binding)))]));
     const byTurn = new Map<number, Record<string, unknown>>();
+    const owner = store.getAgent(agentId);
+    if (!owner) return byTurn;
+    // ADMITTED is acknowledged after the turn drains. During that same turn,
+    // the already-persisted native user/message is the precise admission proof;
+    // a merely queued PENDING input has no matching native fact and stays out.
+    const inputs = store.all('SELECT id,binding,native_message_id FROM member_inputs WHERE agent_id=? AND session_id=? AND cluster_id=?', agentId, owner.session_id, actor.cluster_id);
+    const byMessage = new Map(inputs.map(row => [String(row.native_message_id), { id: String(row.id), binding: object(decodeJson(String(row.binding))) }]));
+    const executions = store.all("SELECT data FROM events WHERE cluster_id=? AND type='member-input-execution-bound' AND json_extract(data,'$.agent_id')=? ORDER BY seq", actor.cluster_id, agentId)
+      .map(row => object(decodeJson(String(row.data)))).filter(row => row?.session_id === owner.session_id);
     let turn: number | null = null;
     for (const fact of facts) {
       const data = object(fact.data);
       if (fact.type === 'turn/start' && typeof data?.turn === 'number') turn = data.turn;
+      if (fact.type === 'turn/end') turn = null;
       if (fact.type === 'user/message' && turn !== null && typeof data?.id === 'string') {
-        const binding = byMessage.get(data.id);
-        if (binding) byTurn.set(turn, binding);
+        const saved = byMessage.get(data.id);
+        if (!saved) continue;
+        const execution = executions.findLast(row => row?.input_id === saved.id && row?.native_message_id === data.id
+          && typeof row.after_native_seq === 'number' && fact.native_seq > row.after_native_seq);
+        const binding = execution ? object(execution.binding) : saved?.binding;
+        if (binding?.agent_id === agentId && Number.isInteger(binding.epoch) && Number.isInteger(binding.turn_seq)) {
+          byTurn.set(turn, { ...binding, native_input_seq: fact.native_seq });
+        }
       }
     }
     return byTurn;
@@ -72,33 +79,22 @@ export function nativeToolEvidence(store: ClusterStore, actor: FlowActor, domain
     }
   }
   const validation = input.validation;
-  if (validation?.author_agent_id) {
-    const source = includeAgent(validation.author_agent_id);
-    if (source) {
-      const captured = bindings(validation.author_agent_id, source.facts);
-      // A manager can check another agenda item in the same turn. The successful
-      // validate command binds this native turn to the exact validation snapshot;
-      // transaction_id on the usage projection is only a captured input hint.
-      for (const fact of source.facts) {
-        const data = object(fact.data), args = parsed(data?.arguments), params = object(args?.params) ?? parsed(args?.params);
-        if (fact.type !== 'tool/call' || data?.name !== 'flow_transaction' || args?.action !== 'validate'
-          || params?.transaction_id !== input.transactionId || typeof data.turn !== 'number' || fact.time > validation.created) continue;
-        const returned = nativeResult(source.facts, fact);
-        const envelope = parsed(messageText(returned?.data));
-        const outcome = object(envelope?.result);
-        if (envelope?.ok !== true || envelope.action !== 'validate' || envelope.deduped !== false) continue;
-        if (object(object(returned?.data)?.message)?.isError === true || outcome?.transaction_id !== input.transactionId
-          || outcome.result_revision !== validation.ref.result_revision) continue;
-        source.turns.set(data.turn, { association: 'validation-author', binding: captured.get(data.turn) ?? null, lastCallSeq: fact.native_seq });
-      }
-    }
-  }
-  if (!validation && actor.role === 'orchestrator') {
-    const source = includeAgent(actor.agent_id);
-    if (source) for (const [turn, binding] of bindings(actor.agent_id, source.facts)) {
-      if (binding.transaction_id === input.transactionId && binding.turn_seq === actor.turn_seq && same(binding.plan_ref, input.planRef)) {
-        source.turns.set(turn, { association: 'current-manager', binding, lastCallSeq: null });
-      }
+  const managerCalls = new Map<string, { association: string; binding: Record<string, unknown>; lastCallSeq: null }>();
+  const boundCalls = store.all("SELECT data,at FROM events WHERE cluster_id=? AND type='manager-tool-bound' AND json_extract(data,'$.transaction_id')=? ORDER BY seq", actor.cluster_id, input.transactionId);
+  for (const row of boundCalls) {
+    const bound = object(decodeJson(String(row.data)));
+    if (!bound || typeof bound.agent_id !== 'string' || typeof bound.call_id !== 'string'
+      || !same(bound.plan_ref, input.planRef) || !same(bound.result_ref, result?.ref ?? null)
+      || validation && (bound.agent_id !== validation.author_agent_id || Number(row.at) > validation.created)) continue;
+    const manager = store.getAgent(bound.agent_id);
+    if (manager?.role !== 'orchestrator') continue;
+    const source = includeAgent(manager.id);
+    if (!source) continue;
+    // The native input establishes the epoch/turn identity; the per-call
+    // binding establishes which immutable result that particular call checked.
+    for (const [nativeTurn, turnBinding] of bindings(manager.id, source.facts)) {
+      if (turnBinding.epoch !== bound.epoch || turnBinding.turn_seq !== bound.turn_seq) continue;
+      managerCalls.set(`${manager.id}:${nativeTurn}:${bound.call_id}`, { association: validation ? 'validation-author' : 'current-manager', binding: { ...bound, native_input_seq: turnBinding.native_input_seq }, lastCallSeq: null });
     }
   }
   const refs = { ...(input.planRef ? { plan_ref: input.planRef } : {}), ...(result ? { result_ref: result.ref } : {}),
@@ -107,8 +103,11 @@ export function nativeToolEvidence(store: ClusterStore, actor: FlowActor, domain
   const readParams = { id: input.id ?? input.transactionId, ...refs, fields: ['evidence'] };
   const receipts: Record<string, unknown>[] = [];
   for (const [agentId, source] of sources) for (const fact of source.facts) {
-    const call = object(fact.data), turn = typeof call?.turn === 'number' ? source.turns.get(call.turn) : null;
-    if (fact.type !== 'tool/call' || !turn || typeof call?.callId !== 'string' || typeof call.name !== 'string'
+    const call = object(fact.data), turn = typeof call?.turn === 'number'
+      ? managerCalls.get(`${agentId}:${call.turn}:${String(call.callId)}`) ?? source.turns.get(call.turn) : null;
+    if (fact.type !== 'tool/call' || !turn
+      || typeof turn.binding?.native_input_seq === 'number' && fact.native_seq <= turn.binding.native_input_seq
+      || typeof call?.callId !== 'string' || typeof call.name !== 'string'
       || turn.lastCallSeq !== null && fact.native_seq > turn.lastCallSeq) continue;
     const returned = nativeResult(source.facts, fact);
     const ref = { agent_id: agentId, native_session_id: fact.native_session_id, native_turn: call.turn,
@@ -117,7 +116,7 @@ export function nativeToolEvidence(store: ClusterStore, actor: FlowActor, domain
       && input.params.native_call_seq === fact.native_seq;
     receipts.push({ ref, tool: call.name, status: returned ? object(object(returned.data)?.message)?.isError === true ? 'error' : 'returned' : 'pending',
       association: turn.association, captured_binding: turn.binding ? { agent_id: turn.binding.agent_id, turn_seq: turn.binding.turn_seq,
-        epoch: turn.binding.epoch ?? null, transaction_id: turn.binding.transaction_id, object: turn.binding.object, plan_ref: turn.binding.plan_ref, validation_ref: turn.binding.validation_ref } : null,
+        epoch: turn.binding.epoch ?? null, transaction_id: turn.binding.transaction_id, object: turn.binding.object, plan_ref: turn.binding.plan_ref, result_ref: turn.binding.result_ref ?? null, validation_ref: turn.binding.validation_ref } : null,
       read: { what: readWhat, params: { ...readParams, native_call_id: call.callId, native_session_id: fact.native_session_id, native_call_seq: fact.native_seq } },
       ...(detail ? { call: fact.data, result: returned?.data ?? null } : {}) });
   }

@@ -25,7 +25,7 @@ test('runtime and startup reject removed windows, output caps and model budgets'
 test('Allocator actions reject removed dimensions and nested output settings without mutating state', async t => {
   const runtime = new ClusterRuntime(new Context(), {autoTick:false,model:{provider:'fixture',model:'fixture'}});
   t.after(() => runtime.dispose());
-  const snapshot = runtime.start({objective:'clean action contract',workspace:'/tmp',budget:{tool_calls:100,agents:16,max_active_agents:4}});
+  const snapshot = runtime.start({ managementCapabilities: [],objective:'clean action contract',workspace:'/tmp',budget:{tool_calls:100,agents:16,max_active_agents:4}});
   const allocator = runtime.store.listAgents(snapshot.cluster.id,{role:'allocator'})[0]!;
   const actor:FlowAgentActor = {cluster_id:snapshot.cluster.id,node_id:allocator.node_id,agent_id:allocator.id,
     role:allocator.role,session_id:allocator.session_id};

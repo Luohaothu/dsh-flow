@@ -25,7 +25,7 @@ test('Flow passes native execution through without its former window and output 
     model: { provider: 'local-fake', model: 'fake-model', reasoningEffort: 'low' },
   });
   t.after(async () => { await runtime.dispose(); await host.dispose(); rmSync(dir, { recursive: true, force: true }); });
-  const cluster = runtime.start({ objective: 'Host owns capacity', workspace: dir, capabilities: [] });
+  const cluster = runtime.start({ managementCapabilities: [], objective: 'Host owns capacity', workspace: dir, capabilities: [] });
   const agent = runtime.store.listAgents(cluster.cluster.id, { role: 'orchestrator' })[0]!;
   const decisions: string[] = [];
   host.setScript(async turn => {

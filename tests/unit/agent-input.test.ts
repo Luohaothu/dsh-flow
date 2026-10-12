@@ -12,7 +12,7 @@ test('explicit handoff kind survives unrelated user input and resumes without re
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const started = runtime.start({ objective: 'test message provenance', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'test message provenance', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   const session = Session.create(SessionId(agent.session_id));
   session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'an unrelated earlier user message' }] }), { surfaceOp: 'append' });
@@ -53,7 +53,7 @@ test('native proof reconciles a handoff left pending by a crash before its deliv
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const started = runtime.start({ objective: 'recover handoff', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'recover handoff', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   const session = Session.create(SessionId(agent.session_id));
   const task = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'preserved task' }] });
@@ -78,7 +78,7 @@ test('an inbox splice is pending input, and recovery enters the original native 
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const started = runtime.start({ objective: 'recover queued handoff', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'recover queued handoff', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   const session = Session.create(SessionId(agent.session_id));
   const invoke = () => runTurn(host.ctx, { agent, role: agent.role, prompt: 'preserve the queued delegation',
@@ -101,7 +101,7 @@ test('an acknowledged handoff without its native journal proof fails without rep
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const started = runtime.start({ objective: 'missing native evidence', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'missing native evidence', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   const input = runtime.store.saveMemberInput({ cluster_id: agent.cluster_id, agent_id: agent.id, session_id: agent.session_id,
     delivery_key: 'missing-handoff', kind: 'initial', author: 'manager', plan_ref: null, binding: null,
@@ -121,7 +121,7 @@ test('compaction of the visible messages does not hide the original journal admi
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const started = runtime.start({ objective: 'compacted handoff', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'compacted handoff', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   const session = Session.create(SessionId(agent.session_id));
   const task = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'compacted business task' }] });

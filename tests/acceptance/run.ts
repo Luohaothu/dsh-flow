@@ -48,7 +48,7 @@ const ARTIFACTS_ROOT = join(PROJECT_ROOT, '.artifacts');
 export const MOCK_PROVIDER = 'mock-local';
 export const MOCK_MODEL_ID = 'mock-model';
 export const MOCK_API_KEY = 'acceptance-mock-key';
-/** Each file now includes scoped handoff reads and two independent audit rounds. */
+/** Each file now includes scoped handoff reads and business validation. */
 export const SCALE_TOOL_CALLS_PER_TRANSACTION = 64;
 
 /**
@@ -844,6 +844,7 @@ function buildSpec(
     objective: substitute(caseDef.objective ?? '', values),
     workspace,
     capabilities: caseDef.capabilities ?? ['fs_read'],
+    managementCapabilities: caseDef.id === 'browser' ? ['browser'] : [],
     limits,
     budget,
     ...(generated.length ? { generated_tier: true } : {}),
@@ -1551,7 +1552,7 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
     parsed.leases = all('SELECT COUNT(*) AS c FROM leases WHERE cluster_id=?', cluster)[0];
     parsed.lease_rows = all('SELECT id,cluster_id,agent_id,node_id,purpose,epoch,expires,event_upper_bound,created FROM leases WHERE cluster_id=? ORDER BY id', cluster);
     parsed.effects = all('SELECT status,COUNT(*) AS c FROM effects WHERE cluster_id=? GROUP BY status', cluster);
-    parsed.audits = all('SELECT kind,decision,COUNT(*) AS c FROM audits WHERE cluster_id=? GROUP BY kind,decision', cluster);
+    parsed.validations = all("SELECT json_extract(data,'$.accepted') AS accepted,COUNT(*) AS c FROM validation_records WHERE cluster_id=? GROUP BY accepted", cluster);
     parsed.issues = all('SELECT status,COUNT(*) AS c,SUM(corrections) AS corrections FROM issues WHERE cluster_id=? GROUP BY status', cluster);
     parsed.deliveries = all('SELECT status,COUNT(*) AS c FROM recipients WHERE message_id IN (SELECT id FROM messages WHERE cluster_id=?) GROUP BY status', cluster);
     parsed.budget_refusals = all("SELECT COUNT(*) AS c FROM events WHERE cluster_id=? AND type IN ('budget-refused','tool-call-refused')", cluster)[0]?.c;
@@ -1705,7 +1706,7 @@ export function readStoneLedger(layout: LedgerLayout, clusterId: string | null):
     leases: aggregateRow('leases'),
     lease_rows: ledgerRows(parsed, 'lease_rows'),
     effects: ledgerRows(parsed, 'effects'),
-    audits: ledgerRows(parsed, 'audits'),
+    validations: ledgerRows(parsed, 'validations'),
     issues: ledgerRows(parsed, 'issues'),
     deliveries: ledgerRows(parsed, 'deliveries'),
     duplicate_accepts: ledgerNumber(parsed, 'duplicate_accepts') ?? 0,

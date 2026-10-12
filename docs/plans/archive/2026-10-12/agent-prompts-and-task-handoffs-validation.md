@@ -1,5 +1,7 @@
 # 智能体提示词与任务交接实施验证
 
+> 历史归档（2026 年 10 月 12 日）：本文保留当时的方案与验证事实，不作为后续实现的执行指令。Auditor 角色、审核门禁及相关收尾流程以[当前移除方案](../../auditor-removal-plan.md)为准；其他内容须结合当前源码核对。见[归档索引](../README.md)。
+
 日期：2026 年 10 月 9 日。对应[实施方案](agent-prompts-and-task-handoffs.md)。状态：实现及验证完成。
 
 本次变更把业务交接、角色规则、正式计划、结果发布、调度校验和独立审核分别保存为可追溯的记录。以下确定性检查验证结构、权限和状态保证；真实模型检查实际规划、自然语言交接及完整执行。模型的自然语言判断仍由有权角色负责，字段检查不能证明业务判断正确。
@@ -52,21 +54,21 @@ final6 冻结产物的 `pnpm typecheck`、`pnpm build`、`pnpm test` 已通过�
 
 原生验收 **14/14** 通过，失败和跳过均为 0，日志为 `/tmp/mock-native-final-r15.txt`。它覆盖真实原生 Agent、工具往返、消息来源、上下文与压缩、取消、能力及 actor 隔离。
 
-确定性 mock 的 smoke、browser、context、panel、recovery、recursion、scale16、scale64 共 **8/8** 通过，机制检查均为 PASS，集群均为 COMPLETED，无失败检查或源码漂移。见[汇总](../../.artifacts/handoffs-final-mock-r15-summary.json)及 `/tmp/mock-suite-final-r15.txt`。八项共享同一源码及构建指纹，final6 的 `lib/index.js` SHA-256 为 `64b70e39ae9476dad5a67017b53202f90e2074db84d10876bdd9733429ac7669`。
+确定性 mock 的 smoke、browser、context、panel、recovery、recursion、scale16、scale64 共 **8/8** 通过，机制检查均为 PASS，集群均为 COMPLETED，无失败检查或源码漂移。见[汇总](../../../../.artifacts/handoffs-final-mock-r15-summary.json)及 `/tmp/mock-suite-final-r15.txt`。八项共享同一源码及构建指纹，final6 的 `lib/index.js` SHA-256 为 `64b70e39ae9476dad5a67017b53202f90e2074db84d10876bdd9733429ac7669`。
 
-r15 原生会话和 DOM 检查核对首条自然业务正文、独立成员输入来源、两条 wake 和两条通信。证据见[管理者原生输入](../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/native-orchestrator-inputs.json)、[执行者原生输入](../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/native-worker-inputs.json)及[完整检查](../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/checks.json)。不以截图或只有 initial 输入代替唤醒、通信验证。UI 可视正文的独立证据沿用 r13：[管理者首条输入](../../.artifacts/handoffs-final-mock-r13-20261009T050350Z-6ed904/artifacts/team-ui/native-first-management-input-visible.png)从持久化原生会话补拍，明确显示验收后的归档 **CANCELLED** 状态；[执行者业务输入](../../.artifacts/handoffs-final-mock-r13-20261009T050350Z-6ed904/artifacts/team-ui/native-worker-business-input.png)已通过本机 Chromium 查看。原始数据库、输入和检查报告保留不变。
+r15 原生会话和 DOM 检查核对首条自然业务正文、独立成员输入来源、两条 wake 和两条通信。证据见[管理者原生输入](../../../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/native-orchestrator-inputs.json)、[执行者原生输入](../../../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/native-worker-inputs.json)及[完整检查](../../../../.artifacts/handoffs-final-mock-r15-20261009T060051Z-c7089e/artifacts/team-ui/checks.json)。不以截图或只有 initial 输入代替唤醒、通信验证。UI 可视正文的独立证据沿用 r13：[管理者首条输入](../../../../.artifacts/handoffs-final-mock-r13-20261009T050350Z-6ed904/artifacts/team-ui/native-first-management-input-visible.png)从持久化原生会话补拍，明确显示验收后的归档 **CANCELLED** 状态；[执行者业务输入](../../../../.artifacts/handoffs-final-mock-r13-20261009T050350Z-6ed904/artifacts/team-ui/native-worker-business-input.png)已通过本机 Chromium 查看。原始数据库、输入和检查报告保留不变。
 
 真实模型使用 DeepSeek 官方端点 `https://api.deepseek.com`，最终五项均使用 `deepseek-flash`：简单任务和恢复为 `off`，拆分、两层委派及纠正为 `high`。[官方思考模式说明](https://api-docs.deepseek.com/guides/thinking_mode/)定义了配置选项；以下通过结果来自实际运行，不推断该配置保证其他任务成功。
 
 | 场景 | 推理设置 | 结果及原生证据 |
 | --- | --- | --- |
-| 简单任务 | `off` | [PASS](../../.artifacts/handoffs-simple-2026-10-09T06-00-54-693Z/report.json)：一个 Worker、一个事务，实际结果 5；调度实际检查后经独立审核接受 |
-| 拆分 | `high` | [PASS](../../.artifacts/handoffs-decompose-2026-10-09T06-02-08-599Z/report.json)：两个 Worker 分别发布 391 和 12；父整合引用当前子结果及校验 |
-| 两层管理委派 | `high` | [PASS](../../.artifacts/handoffs-delegation-2026-10-09T06-05-45-351Z/report.json)：根域 → 一级域 → 二级域 → Worker，四项正式任务全部接受；缺失校验证据经实际复算、新校验、独立审核及 CORRECTED 闭环；合法等待期间无误阻塞 |
-| 纠正 | `high` | [PASS](../../.artifacts/handoffs-correction-2026-10-09T06-10-47-022Z/report.json)：错误候选 6 被正式拒绝；修订后交付 5，补充正式输入后再次发布并校验、独立审核；错误候选从未验收通过 |
-| 重启恢复 | `off` | [PASS](../../.artifacts/handoffs-recovery-2026-10-09T06-10-50-469Z/report.json)：首条任务进入原生会话后重启，原消息身份保留且仅出现一次，随后正式接受 |
+| 简单任务 | `off` | [PASS](../../../../.artifacts/handoffs-simple-2026-10-09T06-00-54-693Z/report.json)：一个 Worker、一个事务，实际结果 5；调度实际检查后经独立审核接受 |
+| 拆分 | `high` | [PASS](../../../../.artifacts/handoffs-decompose-2026-10-09T06-02-08-599Z/report.json)：两个 Worker 分别发布 391 和 12；父整合引用当前子结果及校验 |
+| 两层管理委派 | `high` | [PASS](../../../../.artifacts/handoffs-delegation-2026-10-09T06-05-45-351Z/report.json)：根域 → 一级域 → 二级域 → Worker，四项正式任务全部接受；缺失校验证据经实际复算、新校验、独立审核及 CORRECTED 闭环；合法等待期间无误阻塞 |
+| 纠正 | `high` | [PASS](../../../../.artifacts/handoffs-correction-2026-10-09T06-10-47-022Z/report.json)：错误候选 6 被正式拒绝；修订后交付 5，补充正式输入后再次发布并校验、独立审核；错误候选从未验收通过 |
+| 重启恢复 | `off` | [PASS](../../../../.artifacts/handoffs-recovery-2026-10-09T06-10-50-469Z/report.json)：首条任务进入原生会话后重启，原消息身份保留且仅出现一次，随后正式接受 |
 
-五项共 **135 项在线检查全部通过**，并经完整离线 checker 再次核对当前接受引用、责任作者及原生来源。见[最终汇总](../../.artifacts/handoffs-live-final6-summary.json)及 `/tmp/handoffs-final6-offline-checks.log`。独立 `replay-report.json` 保留原报告摘要，原报告未覆盖。每项的 `native-evidence.json` 保存会话、输入、计划、发布、校验、审核、分配、命令和事件。
+五项共 **135 项在线检查全部通过**，并经完整离线 checker 再次核对当前接受引用、责任作者及原生来源。见[最终汇总](../../../../.artifacts/handoffs-live-final6-summary.json)及 `/tmp/handoffs-final6-offline-checks.log`。独立 `replay-report.json` 保留原报告摘要，原报告未覆盖。每项的 `native-evidence.json` 保存会话、输入、计划、发布、校验、审核、分配、命令和事件。
 
 简单任务的 Worker 没有调用提交工具，其成功原生正文由运行时在完成、持久化及当前分配检查后正式发布；离线核对正文与 `worker-output.summary` 完全一致。其余最终 Worker 产物核对成功的 `submit_result` 暂存回执及后续成功轮次；委派场景的首次提交因过期 revision 被拒绝，确认的是后一次成功提交。没有把失败暂存、取消轮次或自行构造的记录当作产物。
 
@@ -74,13 +76,13 @@ r15 原生会话和 DOM 检查核对首条自然业务正文、独立成员输�
 
 五项从同一 `dsh-flow-0.1.0.tgz` 安装，归档 SHA-256 为 `83f1edbabe9ac74436169d36707b54c0244f77931714e992e591b983b7c3d85f`。模型与 r15 mock 验证共同使用 `lib/index.js` SHA-256 `64b70e39ae9476dad5a67017b53202f90e2074db84d10876bdd9733429ac7669`。在线与离线报告均核对归档、已安装六个 JS 文件与当前构建的字节一致性，以及运行前后生产源码及构建指纹；源码变化期间的旧探索运行不计入最终通过数量。
 
-冻结版本的一次 [Flash 委派运行失败](../../.artifacts/handoffs-delegation-2026-10-09T04-49-25-976Z/report.json)：模型提出空拆分、错误责任分配和额外重算，计划被拒绝后未正确修复当前父计划，派发被治理门槛拒绝。该运行不计为通过。另一次同生产构建的 [Pro 非推理委派](../../.artifacts/handoffs-delegation-2026-10-09T05-07-03-454Z/report.json)准确建立两层管理及 Worker，二级交付已接受，但一级 Auditor 只读了原生回执第一页，错误断言管理者没有实际调用求和工具。原生会话能定位其两次真实调用，正确翻页也能读取；该节点因无进展而阻塞后停止运行，仍计为失败。模型运行是有界场景的观察证据，不能证明所有模型、任务或重复运行均会成功。
+冻结版本的一次 [Flash 委派运行失败](../../../../.artifacts/handoffs-delegation-2026-10-09T04-49-25-976Z/report.json)：模型提出空拆分、错误责任分配和额外重算，计划被拒绝后未正确修复当前父计划，派发被治理门槛拒绝。该运行不计为通过。另一次同生产构建的 [Pro 非推理委派](../../../../.artifacts/handoffs-delegation-2026-10-09T05-07-03-454Z/report.json)准确建立两层管理及 Worker，二级交付已接受，但一级 Auditor 只读了原生回执第一页，错误断言管理者没有实际调用求和工具。原生会话能定位其两次真实调用，正确翻页也能读取；该节点因无进展而阻塞后停止运行，仍计为失败。模型运行是有界场景的观察证据，不能证明所有模型、任务或重复运行均会成功。
 
-旧 final5 的 [Pro high 委派失败](../../.artifacts/handoffs-delegation-2026-10-09T05-36-53-013Z/report.json)暴露了真实调度缺口：事件序号 343 时一级独立审核仍为 PENDING，运行时却提前生成不可执行的 `report-to-parent` 待办，反复启动作者后被 no-progress 门槛阻塞。final6 最小修复删除了此阶段的不可执行待办，等待独立审核期间不再重复启动作者；没有放宽无进展保护。`delegated-audit-wait.test.ts` 验证真实原生审核异步等待、批准后接受及完整收尾，并以真实校验工作存在却空转三轮仍 BLOCKED 的控制用例保留该门槛。
+旧 final5 的 [Pro high 委派失败](../../../../.artifacts/handoffs-delegation-2026-10-09T05-36-53-013Z/report.json)暴露了真实调度缺口：事件序号 343 时一级独立审核仍为 PENDING，运行时却提前生成不可执行的 `report-to-parent` 待办，反复启动作者后被 no-progress 门槛阻塞。final6 最小修复删除了此阶段的不可执行待办，等待独立审核期间不再重复启动作者；没有放宽无进展保护。`delegated-audit-wait.test.ts` 验证真实原生审核异步等待、批准后接受及完整收尾，并以真实校验工作存在却空转三轮仍 BLOCKED 的控制用例保留该门槛。
 
-旧 final5 的 [Flash 拆分失败](../../.artifacts/handoffs-decompose-2026-10-09T05-38-10-287Z/report.json)还暴露了任务限制的作用域歧义：Allocator 把当前除法任务的“只处理除法”误当成本域所有资源工作的限制。final6 在 system 中明确管理角色覆盖本域已准备工作，在首次业务正文中标明限制所属的当前任务，保留正式任务约束及本轮绑定；原生 Allocator 两任务回归实际分别创建了除法与乘法分配。该失败运行中模型提交的无效审核参数及工具拒绝记录仍保留在原始证据中，失败未改记为通过。
+旧 final5 的 [Flash 拆分失败](../../../../.artifacts/handoffs-decompose-2026-10-09T05-38-10-287Z/report.json)还暴露了任务限制的作用域歧义：Allocator 把当前除法任务的“只处理除法”误当成本域所有资源工作的限制。final6 在 system 中明确管理角色覆盖本域已准备工作，在首次业务正文中标明限制所属的当前任务，保留正式任务约束及本轮绑定；原生 Allocator 两任务回归实际分别创建了除法与乘法分配。该失败运行中模型提交的无效审核参数及工具拒绝记录仍保留在原始证据中，失败未改记为通过。
 
-同一 final6 构建的 [Flash 非思考纠正失败](../../.artifacts/handoffs-correction-2026-10-09T06-05-34-521Z/report.json)中，Auditor 错把已持久化的管理者复算当作缺失证据，补正轮次耗尽后阻塞。只读副本使用正式证据函数翻页，能明确区分 Worker 与管理者回执，见[回执复核](../../.artifacts/handoffs-correction-2026-10-09T06-05-34-521Z/native-receipt-replay.json)。另一个 [Pro high 额外试验](../../.artifacts/handoffs-delegation-2026-10-09T06-00-51-511Z/report.json)由模型为二级管理域选择 `max_children: 0`，阻止 Worker 分配；五项验收完成后主动停止，保留为未通过的中止试验。两项均未改记为通过，也未放宽审核、容量或纠正门槛。
+同一 final6 构建的 [Flash 非思考纠正失败](../../../../.artifacts/handoffs-correction-2026-10-09T06-05-34-521Z/report.json)中，Auditor 错把已持久化的管理者复算当作缺失证据，补正轮次耗尽后阻塞。只读副本使用正式证据函数翻页，能明确区分 Worker 与管理者回执，见[回执复核](../../../../.artifacts/handoffs-correction-2026-10-09T06-05-34-521Z/native-receipt-replay.json)。另一个 [Pro high 额外试验](../../../../.artifacts/handoffs-delegation-2026-10-09T06-00-51-511Z/report.json)由模型为二级管理域选择 `max_children: 0`，阻止 Worker 分配；五项验收完成后主动停止，保留为未通过的中止试验。两项均未改记为通过，也未放宽审核、容量或纠正门槛。
 
 规模测试的固定工具预算改为每项事务 64 次，包含新的按需查询、正式计划、逐项校验和独立审核；不再沿用旧状态 dump 脚本的每项 16 次预算。报告同时保留真实扣费次数和执行者数量、真实文件读取、符号及行数核验、并发与完整收尾证据。更高预算下完成不能解释为工具消耗减少或性能提升。
 

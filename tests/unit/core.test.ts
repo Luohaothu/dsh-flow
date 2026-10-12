@@ -114,7 +114,7 @@ test('store rejects unsupported schema versions and workflow databases', t => {
   assert.throws(() => new ClusterStore(workflow), /use a new dataDir/);
 });
 
-test('schema-4 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
+test('schema-5 transaction JSON inputs survive creation, updates and reopened consumer reads', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-inputs-'));
   const path = join(dir, 'cluster.sqlite');
   const open = () => new ClusterRuntime(new Context(), {
@@ -135,7 +135,7 @@ test('schema-4 transaction JSON inputs survive creation, updates and reopened co
   const expected = new Map<string, FlowJsonValue>(samples.map((inputs, index) => [
     `json-input-${index}`, inputs ?? {},
   ]));
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'preserve transaction inputs', workspace: dir,
     capabilities: ['fs_read'],
     budget: { tool_calls: 100, agents: 16, max_active_agents: 4 },
@@ -257,7 +257,7 @@ test('schema-4 transaction JSON inputs survive creation, updates and reopened co
   checkConsumers();
   await runtime.dispose();
   runtime = open();
-  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 4);
+  assert.equal(runtime.store.get('PRAGMA user_version')?.user_version, 5);
   checkConsumers();
 });
 
@@ -265,7 +265,7 @@ test('read, report and scoped usage/context queries expose the same native recor
   const dir = mkdtempSync(join(tmpdir(), 'flow-query-native-'));
   const runtime = new ClusterRuntime(new Context(), { path: join(dir, 'flow.sqlite'), dataDir: dir, autoTick: false });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
-  const started = runtime.start({ objective: 'native query facts', workspace: dir, capabilities: [], budget: { tool_calls: 20 } });
+  const started = runtime.start({ managementCapabilities: [], objective: 'native query facts', workspace: dir, capabilities: [], budget: { tool_calls: 20 } });
   const clusterId = started.cluster.id;
   const identities = runtime.store.listAgents(clusterId);
   const agent = must(identities[0], 'native query identity');
@@ -294,14 +294,10 @@ test('context and summary queries decode transaction acceptance and node summari
   const dir = mkdtempSync(join(tmpdir(), 'flow-context-summary-'));
   const runtime = new ClusterRuntime(new Context(), { path: join(dir, 'flow.sqlite'), dataDir: dir, autoTick: false });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
-  const clusterId = runtime.start({ objective: 'summary decoding', workspace: dir, capabilities: [] }).cluster.id;
+  const clusterId = runtime.start({ managementCapabilities: [], objective: 'summary decoding', workspace: dir, capabilities: [] }).cluster.id;
   const agent = must(runtime.store.listAgents(clusterId, { role: 'orchestrator' })[0], 'summary identity');
-  const auditor = must(runtime.store.listAgents(clusterId, { role: 'auditor' })[0], 'summary auditor');
   const orchestratorActor: FlowAgentActor = {
     role: agent.role, cluster_id: clusterId, agent_id: agent.id, node_id: agent.node_id, session_id: agent.session_id,
-  };
-  const auditorActor: FlowAgentActor = {
-    role: auditor.role, cluster_id: clusterId, agent_id: auditor.id, node_id: auditor.node_id, session_id: auditor.session_id,
   };
   fixtureCommand(runtime, orchestratorActor, { command_id: 'create-summary-work', action: 'create_transaction',
     params: { objective: 'accepted summary fixture', acceptance_criteria: ['the check passes'] } });
@@ -310,9 +306,6 @@ test('context and summary queries decode transaction acceptance and node summari
   runtime.store.updateTransaction(transaction.id, { status: 'SUBMITTED', result: { summary: 'the result is recorded' } });
   fixtureCommand(runtime, orchestratorActor, { command_id: 'validate-summary-work', action: 'validate', params: {
     transaction_id: transaction.id, accepted: true, checks: [{ criterion: 'the check passes', passed: true, evidence: 'verified fixture' }],
-  } });
-  fixtureCommand(runtime, auditorActor, { command_id: 'accept-summary-work', action: 'inspect_validation', params: {
-    transaction_id: transaction.id, decision: 'approve',
   } });
   const actor = { role: 'user' as const, cluster_id: clusterId };
   const accepted = runtime.query(actor, 'context', { agent_id: agent.id, transaction_id: transaction.id }).summary;
@@ -360,16 +353,16 @@ test('events are append-only with a monotonic per-cluster cursor', t => {
 test('role authorization denies cross-role writes and unknown roles', () => {
   const orchestrator: FlowAgentActor = { role: 'orchestrator', cluster_id: 'c', agent_id: 'a', node_id: 'n', session_id: 's' };
   assert.doesNotThrow(() => authorize(orchestrator, 'dispatch'));
-  assert.doesNotThrow(() => authorize({ ...orchestrator, role: 'auditor' }, 'inspect_plan'));
+  assert.doesNotThrow(() => authorize({ ...orchestrator, role: 'orchestrator' }, 'validate'));
   assert.doesNotThrow(() => authorize({ ...orchestrator, role: 'allocator' }, 'spawn_management_node'));
   // Deliberately wrong identities: a partial actor, an unknown role and no
   // actor at all — the guard must refuse each with 403 rather than trusting it.
   const denied: Array<[FlowActor, string]> = [
     [fromAny({ role: 'worker' }), 'dispatch'],
-    [fromAny({ role: 'worker' }), 'accept_result'],
+    [fromAny({ role: 'worker' }), 'validate'],
     [fromAny({ role: 'orchestrator' }), 'spawn_agent'],
-    [fromAny({ role: 'auditor' }), 'validate'],
-    [fromAny({ role: 'allocator' }), 'accept_result'],
+    [fromAny({ role: 'allocator' }), 'validate'],
+    [fromAny({ role: 'allocator' }), 'validate'],
     [fromAny({ role: 'ghost' }), 'dispatch'],
     [fromAny(undefined), 'dispatch'],
   ];
@@ -389,9 +382,8 @@ test('worker capabilities map to host tools and reject unknown or forbidden capa
 
 test('transaction transitions reject illegal edges and allow the happy path', () => {
   assert.doesNotThrow(() => assertTransition('DRAFT', 'READY'));
-  assert.doesNotThrow(() => assertTransition('SUBMITTED', 'VALIDATING'));
-  assert.doesNotThrow(() => assertTransition('VALIDATING', 'ACCEPTED'));
-  assert.doesNotThrow(() => assertTransition('VALIDATING', 'REJECTED'));
+  assert.doesNotThrow(() => assertTransition('SUBMITTED', 'ACCEPTED'));
+  assert.doesNotThrow(() => assertTransition('SUBMITTED', 'REJECTED'));
   assert.doesNotThrow(() => assertTransition('REJECTED', 'READY'));
   assert.throws(() => assertTransition('DRAFT', 'ACCEPTED'), /Illegal transaction transition/);
   assert.throws(() => assertTransition('ACCEPTED', 'RUNNING'), /Illegal transaction transition/);
@@ -594,8 +586,8 @@ test('groups accept cross-subtree members and blackboard publishes are revision 
 test('subscribe returns a snapshot and cursor from one read cut', t => {
   const store = tempStore(t);
   const cluster = seedCluster(store);
-  const a = must(store.insertAgent({ id: 'a1', cluster_id: cluster.id, node_id: 'n1', role: 'auditor', session_id: 's1', status: 'READY' }), 'agent a1');
-  const actor: CommunicationActor = { cluster_id: cluster.id, agent_id: a.id, node_id: 'n1', role: 'auditor' };
+  const a = must(store.insertAgent({ id: 'a1', cluster_id: cluster.id, node_id: 'n1', role: 'orchestrator', session_id: 's1', status: 'READY' }), 'agent a1');
+  const actor: CommunicationActor = { cluster_id: cluster.id, agent_id: a.id, node_id: 'n1', role: 'orchestrator' };
   store.tx(() => communicate(store, cluster, actor, 'publish', { key: 'plan/a', value: 1 }));
   const cursorBefore = store.latestEventSeq(cluster.id);
   store.tx(() => communicate(store, cluster, actor, 'publish', { key: 'plan/b', value: 2 }));

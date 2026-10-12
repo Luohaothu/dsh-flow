@@ -12,7 +12,7 @@ test('team approval is session-local, durable and repinned before resumed execut
   t.after(async () => { await runtime.dispose(); await host.dispose(); });
   const ordinary = Session.create(SessionId('ordinary-permission'));
   setApprovalPolicy(ordinary, 'ask');
-  const started = runtime.start({ objective: 'verify team approval', workspace: '/tmp', capabilities: [] });
+  const started = runtime.start({ managementCapabilities: [], objective: 'verify team approval', workspace: '/tmp', capabilities: [] });
   const agent = runtime.store.listAgents(started.cluster.id, { role: 'orchestrator' })[0]!;
   host.setScript(turn => {
     assert.equal(turn.session.snapshotEvents().findLast(event => event.type === 'approval/policy')?.data.policy, 'never');

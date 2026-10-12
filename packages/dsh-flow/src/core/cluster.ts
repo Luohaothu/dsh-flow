@@ -8,6 +8,8 @@ import { agentSession, promptAgent, startTeam, createTeam, finalizeTeam, teamRun
  * scheduled, never awaited from inside a transaction.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, lstatSync, openSync, readdirSync, readlinkSync, readSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import { COMMUNICATION_LABELS, DELIVERY_MARKER, NOTIFICATION_LABELS, communicationBody, communicationCategory, communicationContent, communicationHeadline, notificationCategory, notificationHeadline, notificationTone } from '../messages.ts';
@@ -45,7 +47,8 @@ import {
 } from './budget.ts';
 import { communicate } from './communication.ts';
 import type { CommunicationActor, CommunicationResult } from './communication.ts';
-import { checkWriteAccess, canonicalScopeEntry } from './scope.ts';
+import { checkWriteAccess, canonicalScopeEntry, canonicalTarget, requestedPath, withinScope } from './scope.ts';
+import { managementAuthorization, managementAuthorizationJson, resolveManagementAuthorization } from './management-authorization.ts';
 import { createToolExecutionHook, runTurn, effectTool, sessionOffset } from './runtime.ts';
 import type {
   BudgetBlockFacts, BudgetRefusalFacts, LedgerAmounts, ToolAdmission, TurnOutcome,
@@ -54,28 +57,28 @@ import { memberBriefing, projectContext as renderContextProjection, selectedFiel
 import type { BoundTurn } from './briefing.ts';
 import { prepareDirectWorkerContract } from './contracts.ts';
 import { nativeToolEvidence } from './native-evidence.ts';
-import { HANDLERS, setTransactionStatus, writeNodeSummary } from './actions.ts';
+import { HANDLERS, invalidatePublishedArtifact, setTransactionStatus, writeNodeSummary } from './actions.ts';
 import type { ActionName } from './actions.ts';
 
 import type { FlowService } from '../service.ts';
 import type { FlowStartInternals } from './model.ts';
 import type {
   FlowAgendaItem, FlowAgendaKind, FlowAssignmentBinding, FlowClusterAssignmentQueryData, FlowClusterAgendaQueryData, FlowPlanRef, FlowAgentRecord, FlowAgentReference, FlowAgentRole, FlowAllocationRecord, FlowCapability, FlowClusterAgentsQueryData,
-  FlowClusterAllocationsQueryData, FlowClusterAuditQueryData, FlowClusterAuditsQueryData,
+  FlowClusterAllocationsQueryData,
   FlowClusterBlackboardQueryData, FlowClusterBudgetsQueryData, FlowClusterContextQueryData,
   FlowClusterDeliveriesQueryData, FlowClusterEffectQueryData, FlowClusterEffectsQueryData,
   FlowClusterHealthQueryData, FlowClusterIssueQueryData, FlowClusterIssuesQueryData,
   FlowClusterNodeQueryData, FlowClusterNodesQueryData, FlowClusterQueryData, FlowClusterStatus,
   FlowClusterSummaryQueryData, FlowClusterTransactionQueryData,
   FlowClusterTransactionsQueryData, FlowClusterUsageQueryData,
-  FlowControlAction, FlowCounts, FlowEventQuery,
+  FlowControlAction, FlowCounts, FlowEventQuery, FlowResultRef,
   FlowEventsResult, FlowHealthSignals, FlowJsonValue,
   FlowBudgetInput, FlowIssueStatus, FlowLimits, FlowListQuery, FlowListResult, FlowNodeAncestor, FlowNodeKind, FlowNodeRecord, FlowNodeReference,
   FlowQueryKind, FlowQueryParams, FlowQueryResult, FlowReadQuery, FlowReport, FlowSnapshot, FlowStartRequest, FlowSummary, FlowTransactionStatus, FlowUsageSummary,
   FlowTransactionRecord, FlowTransactionReference, FlowTeamCreateRequest,
 } from '../types.ts';
 import type {
-  AgentRecord, AllocationRecord, AuditRecord, BudgetRecord, ClusterRecord,
+  AgentRecord, AllocationRecord, BudgetRecord, ClusterRecord,
   DelegationFixtureEntry, FlowActor, FlowAgentActor, FlowCommand, FlowCommandOutcome,
   FlowLogger, FlowModelSelection, FlowRuntimeConfig, FlowUserActor, InboxRecord, IssueRecord, LeaseRecord,
   MessageFixtureEntry, NodeRecord, ResolvedRuntimeConfig, TransactionRecord, TurnIdentity,
@@ -89,30 +92,20 @@ const INBOX_PRIORITY_SUBJECTS = [
   // Human and peer messages, and the notices that say a role's own work is
   // blocked, ahead of the informational ones.
   'message', 'escalation', 'agent-anomaly', 'transaction-stale', 'result-withheld',
-  'issue-opened', 'plan-audit-requested',
-  'validation-audit-requested', 'result-submitted', 'child-blocked',
+  'issue-opened', 'write-refused', 'result-submitted', 'child-blocked',
 ];
 
 export const MUTATING_EFFECT_TOOLS = new Set(['write', 'edit', 'bash', 'job_kill']);
+const CONTROL_TOOLS = new Set(['flow_transaction', 'flow_allocation', 'flow_query', 'flow_communicate']);
 const INCOMPLETE_WORKER_RESULT = /^(?:blocked|failed|incomplete)(?:[_-]|$)/i;
 
-/** The eight health dimensions scored by the Auditor. */
-export const HEALTH_METRICS = [
-  'transaction_coverage',
-  'decomposition_quality',
-  'responsiveness',
-  'planning_stability',
-  'goal_alignment',
-  'acceptance_quality',
-  'result_integration',
-  'escalation_quality',
-];
 const CLUSTER_EVENTS_SKIP_PROGRESS = new Set([
   'turn-start', 'turn-end', 'lease-heartbeat', 'inbox-created',
   // Scheduling bookkeeping is not a state change: a role that only consumed a
   // notification must not look like it made progress, or it can never be
   // recognised as stagnant.
-  'turn-actions', 'load-changed', 'transaction-stale',
+  'turn-actions', 'load-changed', 'transaction-stale', 'member-input-execution-bound',
+  'manager-tool-bound', 'manager-artifacts-observed', 'validation-target-bound', 'tool-write-claim', 'write-refused', 'job-terminal-observed',
   // Metering, context management and refusals do not count as state changes.
   // Otherwise a role that only queries or repeats rejected actions could evade
   // the stagnation guard merely by spending requests and tool calls.
@@ -131,7 +124,7 @@ const CLUSTER_EVENTS_SKIP_PROGRESS = new Set([
  * by the funder after a concrete blocked-request envelope is recorded.
  */
 const CRITICAL_NOTIFICATION_SUBJECTS = new Set([
-  'agent-anomaly',
+  'agent-anomaly', 'write-refused',
   'child-blocked', 'issue-opened', 'result-withheld', 'delivery-unknown',
   'escalation',
   // Addressed messages and subscribed blackboard changes are pending work
@@ -315,13 +308,8 @@ function statusFilter(status: string | readonly string[] | undefined): string | 
   return Array.isArray(status) ? [...status] : undefined;
 }
 
-const AGENT_ROLES = ['orchestrator', 'allocator', 'auditor', 'worker'] as const satisfies readonly FlowAgentRole[];
-const AUDIT_KINDS = ['plan', 'validation'] as const;
-const AUDIT_DECISIONS = [
-  'PENDING', 'APPROVED', 'REJECTED', 'OVERRIDDEN', 'STALE',
-  'CORRECTION_REQUESTED', 'REPLAN_REQUESTED', 'REVALIDATION_REQUESTED',
-] as const;
-const ISSUE_STATUSES = ['OPEN', 'VERIFYING', 'CORRECTED', 'ESCALATED', 'DISMISSED'] as const;
+const AGENT_ROLES = ['orchestrator', 'allocator', 'worker'] as const satisfies readonly FlowAgentRole[];
+const ISSUE_STATUSES = ['OPEN', 'CORRECTED', 'ESCALATED', 'DISMISSED'] as const;
 const EFFECT_STATUSES = ['STARTED', 'SETTLED', 'FAILED', 'CANCELLED', 'UNKNOWN', 'EFFECT_UNCERTAIN'] as const;
 const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKED'] as const;
 
@@ -406,7 +394,6 @@ interface PendingAction {
   readonly subject?: string
   readonly transaction_id?: string | null
   readonly inbox_id?: string
-  readonly audit_id?: string | null
   readonly target_revision?: number | null
   readonly revision?: number
   readonly children?: number
@@ -498,7 +485,7 @@ export interface RecoveryOutcome {
 
 type IssueProgress =
   | { readonly progressed: false; readonly how: null }
-  | { readonly progressed: true; readonly how: 'plan-adjusted' | 'revalidated'; readonly revision: number };
+  | { readonly progressed: true; readonly how: 'plan-adjusted' | 'revalidated' | 'runtime-repaired'; readonly revision: number };
 
 interface CollectedDeliveries {
   readonly messages: readonly DeliveryPromptMessage[]
@@ -553,7 +540,7 @@ function stringColumnOrNull(value: unknown, label: string): string | null {
 }
 
 const TRANSACTION_STATUSES = [
-  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'VALIDATING',
+  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED',
   'ACCEPTED', 'REJECTED', 'FAILED', 'CANCELLED', 'BLOCKED', 'SUPERSEDED',
 ] as const satisfies readonly FlowTransactionStatus[];
 
@@ -622,13 +609,11 @@ export interface QueryDataMap {
   node: FlowClusterNodeQueryData
   transactions: FlowClusterTransactionsQueryData
   transaction: FlowClusterTransactionQueryData
-  audit: FlowClusterAuditQueryData
   agents: FlowClusterAgentsQueryData
   allocations: FlowClusterAllocationsQueryData
   budgets: FlowClusterBudgetsQueryData
   issues: FlowClusterIssuesQueryData
   issue: FlowClusterIssueQueryData
-  audits: FlowClusterAuditsQueryData
   effects: FlowClusterEffectsQueryData
   effect: FlowClusterEffectQueryData
   usage: FlowClusterUsageQueryData
@@ -791,6 +776,7 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
         objective: normalized.objective,
         workspace: normalized.workspace,
         capabilities: normalized.capabilities,
+        managementCapabilities: normalized.managementCapabilities, managementWriteScope: normalized.managementWriteScope,
         limits: normalized.limits,
         budget: normalized.budget,
         delegation: normalized.delegation,
@@ -809,7 +795,8 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
 
       const root = this.store.insertNode({
         id: randomUUID(), cluster_id: clusterId, parent_id: null, kind: 'management', depth: 0,
-        status: 'ACTIVE', scope: asJsonValue({ objective: normalized.objective, ...(execution ? {
+        status: 'ACTIVE', scope: asJsonValue({ objective: normalized.objective,
+          execution_authorization: managementAuthorizationJson(managementAuthorization(normalized.workspace, normalized.managementCapabilities, normalized.managementWriteScope)), ...(execution ? {
           team_model: { ...this.config.model, ...(execution.model ?? {}), ...execution.options },
           team_model_fixed: execution.model !== null,
           team_model_options: { ...execution.options },
@@ -1256,12 +1243,12 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
   query(actor: FlowActor, what: string, params?: FlowQueryParams): QueryDataMap[FlowQueryKind];
   query(actor: FlowActor, what: string, params: FlowQueryParams = {}): unknown {
     const answer = this.#queryObject(actor, what, params);
-    if (!params.fields || ['assignment', 'transaction', 'audit', 'issue', 'effect', 'allocations', 'budgets'].includes(what)) return answer;
+    if (!params.fields || ['assignment', 'transaction', 'issue', 'effect', 'allocations', 'budgets'].includes(what)) return answer;
     if (what === 'agenda') fail('agenda fields are fixed: items,total,offset,limit,next_offset,snapshot_id,read_version');
     const object = jsonRecordOf(answer) ?? fail('Query projection requires an object');
     const items = Array.isArray(object.items) ? object.items : null;
-    if (items && ['transactions', 'audits', 'issues', 'effects'].includes(what)) {
-      const detail = what === 'transactions' ? 'transaction' : what === 'audits' ? 'audit' : what === 'issues' ? 'issue' : 'effect';
+    if (items && ['transactions', 'issues', 'effects'].includes(what)) {
+      const detail = what === 'transactions' ? 'transaction' : what === 'issues' ? 'issue' : 'effect';
       selectedFields(detail, params, []);
       return { ...object, items: items.map(item => {
         const row = jsonRecordOf(item) ?? fail('Query item is not an object');
@@ -1370,27 +1357,17 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
               if (mode === 'worker' || mode === 'management') pending.push({ action: mode === 'worker' ? 'allocate_agent' : 'spawn_management_node', transaction_id: tx.id, revision: tx.revision });
             }
           }
-          if (actor.role === 'auditor') {
-            for (const row of this.store.all("SELECT id FROM audits WHERE cluster_id=? AND node_id=? AND decision='PENDING' ORDER BY created,id", clusterId, node.id)) {
-              const audit = this.store.getAudit(textField(row.id, 'audit.id', 128));
-              const tx = audit?.transaction_id ? this.store.getTransaction(audit.transaction_id) : null;
-              if (!audit || !tx || pending.some(item => item.audit_id === audit.id)) continue;
-              if (audit.kind === 'plan' ? !sameRef(audit.plan_ref, tx.current_plan_ref) : !sameRef(audit.validation_ref, tx.current_validation_ref)) continue;
-              pending.push({ action: audit.kind === 'plan' ? 'inspect_plan' : 'inspect_validation', audit_id: audit.id, transaction_id: tx.id, revision: tx.revision });
-            }
-          }
           const items: FlowAgendaItem[] = pending.flatMap(item => {
             const transactionIds = item.transactions?.length ? item.transactions : [item.transaction_id ?? null];
             return transactionIds.map(transactionId => {
               const tx = transactionId ? this.store.getTransaction(transactionId) : null;
-              const audit = item.audit_id ? this.store.getAudit(item.audit_id) : null;
               const kind = agendaKind(item.action);
-              const object = item.audit_id ? { kind: 'audit', id: item.audit_id } : item.issue_id ? { kind: 'issue', id: item.issue_id }
+              const object = item.issue_id ? { kind: 'issue', id: item.issue_id }
                 : transactionId ? { kind: 'transaction', id: transactionId } : item.inbox_id ? { kind: 'inbox', id: item.inbox_id } : { kind: 'node', id: node.id };
               return { kind, object, title: tx?.objective.slice(0, 160) ?? (kind === 'closeout' ? '完成本域最终交付与收尾' : kind === 'resources' ? '处理本域资源问题' : item.subject ?? '本域待办'),
                 reason: item.reason ?? item.required_change ?? this.#factNotice(actor.role, [item]),
-                transaction_id: transactionId, revision: tx?.revision ?? null, plan_ref: audit?.plan_ref ?? tx?.current_plan_ref ?? null,
-                validation_ref: audit?.validation_ref ?? (kind === 'review_validation' ? tx?.current_validation_ref ?? null : null), details: asJsonValue({ ...item, ...(transactionId ? { transaction_id: transactionId } : {}) }) };
+                transaction_id: transactionId, revision: tx?.revision ?? null, plan_ref: tx?.current_plan_ref ?? null,
+                validation_ref: tx?.current_validation_ref ?? null, details: asJsonValue({ ...item, ...(transactionId ? { transaction_id: transactionId } : {}) }) };
             });
           });
           snapshotId = randomUUID();
@@ -1457,19 +1434,12 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           const result = this.store.getResult(params.result_ref ?? validation?.result_ref ?? tx.current_result_ref);
           if (params.validation_ref && !validation) fail('Validation snapshot not found', 404);
           if (params.result_ref && !result) fail('Result snapshot not found', 404);
-          const auditsTotal = Number(this.store.get('SELECT COUNT(*) AS c FROM audits WHERE cluster_id=? AND transaction_id=?', clusterId, tx.id)?.c ?? 0);
-          const audits = this.store.all('SELECT id FROM audits WHERE cluster_id=? AND transaction_id=? ORDER BY created,rowid LIMIT ? OFFSET ?', clusterId, tx.id, limit, offset)
-            .flatMap(row => {
-              const audit = this.store.getAudit(textField(row.id, 'audit.id', 128));
-              return audit ? [{ id: audit.id, kind: audit.kind, decision: audit.decision, plan_ref: audit.plan_ref, validation_ref: audit.validation_ref }] : [];
-            });
           const issues = this.store.openIssues(clusterId, { transaction_id: tx.id, status: statusFilter(params.status) ?? '' });
           return this.#projectContext(actor, 'transaction', {
             requirements: { objective: contract.objective, expected_output: contract.expected_output, acceptance_criteria: contract.acceptance_criteria },
             inputs: contract.inputs, constraints: contract.constraints, plan, result, validation,
             dependencies: this.store.dependenciesOf(tx.id), dependents: this.store.dependentsOf(tx.id),
             allocation: this.store.activeAllocationForTransaction(tx.id),
-            audits: pageList(audits, auditsTotal),
             issues: pageList(issues.slice(offset, offset + limit).map(issue => ({ id: issue.id, status: issue.status, severity: issue.severity, required_change: issue.required_change })), issues.length),
             evidence: { result_ref: result?.ref ?? null, validation_ref: validation?.ref ?? null, plan_ref: planRef,
               native_tools: params.fields?.includes('evidence') ? nativeToolEvidence(this.store, actor, domain, { transactionId: tx.id, planRef, result, validation, params, what: 'transaction', id: tx.id }) : null,
@@ -1478,13 +1448,10 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
             current_revision: tx.revision, stale: !sameRef(planRef, tx.current_plan_ref), read_version: this.store.latestEventSeq(clusterId) }, transaction: { ...transactionReference(tx), current_plan_ref: tx.current_plan_ref,
             current_result_ref: tx.current_result_ref, current_validation_ref: tx.current_validation_ref } });
         }
-        if (actor.role !== 'user' && params.full === true) {
-          fail('A model cannot load every historical audit in one transaction response; read each audit by id with what:"audit" (or each issue with what:"issue")');
-        }
         const { result, validation, ...transaction } = tx;
         // The current validation and direct result remain complete; an
         // aggregate's child evidence is independently addressable through its
-        // child transaction. Historical audits/issues are references too:
+        // child transaction. Historical issues are references too:
         // replaying all earlier traces can strand a native role session.
         const full = actor.role === 'user';
         const visibleTransaction = full ? transaction : {
@@ -1495,7 +1462,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           acceptance_criteria: tx.acceptance_criteria,
           capabilities: tx.capabilities,
           attempts: tx.attempts,
-          plan_approved_revision: tx.plan_approved_revision,
         };
         // An aggregate embeds each child's full result a second time. The
         // child is itself a domain-checked transaction readable by id; keep
@@ -1515,21 +1481,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
               };
             }),
           };
-        const audits = full ? this.store.auditsForTransaction(clusterId, tx.id, { limit })
-          : this.store.all(
-            `SELECT id,node_id,kind,target_revision,decision,auditor_agent_id,created,decided
-               FROM audits WHERE cluster_id=? AND transaction_id=? ORDER BY created,rowid LIMIT ?`,
-            clusterId, tx.id, limit,
-          ).map(row => ({
-            id: textField(row.id, 'audit.id', 128),
-            node_id: optionalText(row.node_id, 'audit.node_id'),
-            kind: literalOf(row.kind, AUDIT_KINDS, 'audit.kind'),
-            target_revision: optionalInteger(row.target_revision, 'audit.target_revision'),
-            decision: literalOf(row.decision, AUDIT_DECISIONS, 'audit.decision'),
-            auditor_agent_id: optionalText(row.auditor_agent_id, 'audit.auditor_agent_id'),
-            created: integer(row.created, 0, 2 ** 53, 'audit.created'),
-            decided: optionalInteger(row.decided, 'audit.decided'),
-          }));
         const issues = full ? this.store.openIssues(clusterId, { transaction_id: tx.id, status: statusFilter(params.status) ?? '' })
           : this.store.all(
             `SELECT id,node_id,target_revision,severity,SUBSTR(required_change,1,200) AS required_change,
@@ -1552,7 +1503,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           transaction: visibleTransaction,
           dependencies: this.store.dependenciesOf(tx.id),
           dependents: this.store.dependentsOf(tx.id),
-          audits,
           issues,
           allocation: full || !active ? active : {
             id: active.id, node_id: active.node_id, agent_id: active.agent_id,
@@ -1562,26 +1512,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
           result: visibleResult ?? null,
           result_revision: tx.result_revision ?? null,
         };
-      }
-      case 'audit': {
-        if (typeof params.id !== 'string' || !params.id) fail('query "audit" needs params.id');
-        const audit = this.store.getAudit(params.id);
-        if (!audit || audit.cluster_id !== clusterId) fail('Audit not found', 404);
-        const tx = audit.transaction_id ? this.store.getTransaction(audit.transaction_id) : null;
-        if (!tx || !canReadTransaction(tx)) fail('audit is outside this agent\'s domain', 403);
-        if (actor.role !== 'user' || params.fields) {
-          const plan = this.store.getPlan(audit.plan_ref);
-          const validation = this.store.getValidation(audit.validation_ref);
-          const result = this.store.getResult(validation?.result_ref);
-          return this.#projectContext(actor, 'audit', { ...audit, plan, validation,
-            requirements: plan?.contract ?? null, result,
-            evidence: { ...(jsonRecordOf(audit.evidence) ?? { record: audit.evidence }),
-              native_tools: params.fields?.includes('evidence') ? nativeToolEvidence(this.store, actor, domain, { transactionId: tx.id, planRef: audit.plan_ref, result, validation, params, what: 'audit', id: audit.id }) : null } }, params,
-          audit.kind === 'validation' ? ['kind', 'decision', 'plan_ref', 'validation_ref', 'requirements', 'validation'] : ['kind', 'decision', 'plan_ref', 'requirements', 'plan'],
-          { id: audit.id, audit: { id: audit.id, transaction_id: audit.transaction_id, kind: audit.kind, decision: audit.decision,
-            plan_ref: audit.plan_ref, validation_ref: audit.validation_ref } });
-        }
-        return { audit };
       }
       case 'agents': {
         // A Worker has one transaction, not its manager's whole subtree. It
@@ -1669,28 +1599,6 @@ maxTurnMs: config.maxTurnMs ?? 900_000,
         if (actor.role !== 'user' || params.fields) return this.#projectContext(actor, 'issue', { ...issue }, params,
           ['status', 'severity', 'required_change'], { id: issue.id, issue: { id: issue.id, transaction_id: issue.transaction_id } });
         return { issue };
-      }
-      case 'audits': {
-        const audits = this.store.all(
-          "SELECT * FROM audits WHERE cluster_id=? AND decision='PENDING' ORDER BY created,id", clusterId)
-          .map(row => ({
-            id: textField(row.id, 'audit.id', 128),
-            cluster_id: textField(row.cluster_id, 'audit.cluster_id', 128),
-            node_id: optionalText(row.node_id, 'audit.node_id'),
-            transaction_id: optionalText(row.transaction_id, 'audit.transaction_id'),
-            auditor_agent_id: optionalText(row.auditor_agent_id, 'audit.auditor_agent_id'),
-            kind: literalOf(row.kind, AUDIT_KINDS, 'audit.kind'),
-            target_revision: optionalInteger(row.target_revision, 'audit.target_revision'),
-            decision: literalOf(row.decision, AUDIT_DECISIONS, 'audit.decision'),
-            evidence: decodeJson(row.evidence),
-            created: integer(row.created, 0, 2 ** 53, 'audit.created'),
-            decided: optionalInteger(row.decided, 'audit.decided'),
-          }))
-          .filter(audit => audit.node_id !== null && domain.has(audit.node_id));
-        return pageList(audits.slice(offset, offset + limit).map(audit => actor.role === 'user' ? audit : {
-          id: audit.id, transaction_id: audit.transaction_id, kind: audit.kind, decision: audit.decision,
-          plan_ref: this.store.getAudit(audit.id)?.plan_ref ?? null, validation_ref: this.store.getAudit(audit.id)?.validation_ref ?? null,
-        }), audits.length);
       }
 case 'effects': {
         const userView = actor.role === 'user';
@@ -1810,14 +1718,10 @@ case 'effects': {
         };
       }
       case 'health': {
-        // The latest evaluation, with the measured signals it was scored
-        // against, plus the node's own closing evaluation when one exists.
+        // Runtime-measured diagnostic signals do not gate business acceptance.
         const nodeId = params.node_id ?? (actor.role === 'user' ? null : actor.node_id);
         if (actor.role !== 'user' && (!nodeId || !domain.has(nodeId))) fail('health is outside this agent\'s domain', 403);
-        const latest = this.store.latestHealth(clusterId, { node_id: nodeId });
         return {
-          health: latest,
-          metrics: this.healthMetricNames(),
           signals: this.healthSignals(clusterId, { windowMs: this.config.staleMs }),
         };
       }
@@ -1871,13 +1775,11 @@ case 'effects': {
       case 'node': return { what: 'node', data: this.query(actor, 'node', params) };
       case 'transactions': return { what: 'transactions', data: this.query(actor, 'transactions', params) };
       case 'transaction': return { what: 'transaction', data: this.query(actor, 'transaction', params) };
-      case 'audit': return { what: 'audit', data: this.query(actor, 'audit', params) };
       case 'agents': return { what: 'agents', data: this.query(actor, 'agents', params) };
       case 'allocations': return { what: 'allocations', data: this.query(actor, 'allocations', params) };
       case 'budgets': return { what: 'budgets', data: this.query(actor, 'budgets', params) };
       case 'issues': return { what: 'issues', data: this.query(actor, 'issues', params) };
       case 'issue': return { what: 'issue', data: this.query(actor, 'issue', params) };
-      case 'audits': return { what: 'audits', data: this.query(actor, 'audits', params) };
       case 'effects': return { what: 'effects', data: this.query(actor, 'effects', params) };
       case 'effect': return { what: 'effect', data: this.query(actor, 'effect', params) };
       case 'usage': return { what: 'usage', data: this.query(actor, 'usage', params) };
@@ -1904,14 +1806,12 @@ case 'effects': {
     const agentsTotal = agentsByRole.reduce((sumTotal, row) => sumTotal + Number(row.c), 0);
     const liveAgents = agentsByRole.reduce((sumTotal, row) => sumTotal + Number(row.live), 0);
     const activatedAgents = agentsByRole.reduce((sumTotal, row) => sumTotal + Number(row.activated), 0);
-    const audits = this.store.all('SELECT kind, decision, COUNT(*) AS c FROM audits WHERE cluster_id=? GROUP BY kind, decision', id);
     const issues = this.store.all('SELECT status, COUNT(*) AS c, SUM(corrections) AS corrections FROM issues WHERE cluster_id=? GROUP BY status', id);
     const effects = this.store.all('SELECT status, COUNT(*) AS c FROM effects WHERE cluster_id=? GROUP BY status', id);
     const subtree = new Map(this.store.subtreeSizes(id).map(row => [row.node_id, Number(row.size)]));
     const contextByAgent = this.store.agentsInSubtree(id, null).filter(agent => agent.role === 'orchestrator')
       .map(agent => ({ agent_id: agent.id, total_tokens: this.store.latestNativeContext(agent.id).context_used }));
     const traffic = this.store.deliveryTraffic(id);
-    const windowMs = 5 * 60_000;
     const txPage = this.store.listTransactions({ cluster_id: id, limit: 200 });
     return {
       cluster: { id: cluster.id, status: cluster.status, objective: cluster.objective, workspace: cluster.workspace, limits: cluster.limits },
@@ -1927,7 +1827,6 @@ case 'effects': {
         agents_by_role: Object.fromEntries(agentsByRole.map(row => [row.role, Number(row.c)])),
         transactions_by_status: statusCounts,
         transactions_total: totalTransactions,
-        audits_pending: audits.filter(row => row.decision === 'PENDING').reduce((sumTotal, row) => sumTotal + Number(row.c), 0),
         issues_open: issues.filter(row => row.status === 'OPEN').reduce((sumTotal, row) => sumTotal + Number(row.c), 0),
         issues_total: issues.reduce((sumTotal, row) => sumTotal + Number(row.c), 0),
         corrections: issues.reduce((sumTotal, row) => sumTotal + Number(row.corrections ?? 0), 0),
@@ -1946,11 +1845,6 @@ case 'effects': {
           live_agents: liveAgents,
           active_turns: this.#activeTurnCount(id),
           ratio: liveAgents > 0 ? Number((this.#activeTurnCount(id) / liveAgents).toFixed(4)) : null,
-        },
-        auditor_event_rate: {
-          window_ms: windowMs,
-          inbox_rows: this.store.countInboxSince(id, { role: 'auditor', since: this.timestamp() - windowMs }),
-          per_second: Number((this.store.countInboxSince(id, { role: 'auditor', since: this.timestamp() - windowMs }) / (windowMs / 1000)).toFixed(4)),
         },
         communication_traffic: { ...traffic, cross_subtree_ratio: traffic.deliveries > 0 ? Number((traffic.cross_subtree / traffic.deliveries).toFixed(4)) : null },
       },
@@ -2367,6 +2261,7 @@ case 'effects': {
 
   async #scheduleClusterLocked(cluster: ClusterRecord): Promise<void> {
     const id = cluster.id;
+    this.#refreshFinishedJobs(id);
     // The caller may hold a stale RUNNING snapshot: a role can block the root
     // between that snapshot and admission. Only a successfully repaired cluster
     // may launch more turns, even if its child nodes are still ACTIVE.
@@ -2415,7 +2310,7 @@ case 'effects': {
     const rotation = this.#rotation.get(id) ?? 0;
     // Prioritize nodes with roles that have never been admitted, then rotate.
     // Readiness is checked per role: an admitted Orchestrator does not establish
-    // that its Allocator and Auditor have had a chance to run.
+    // that its Allocator and Orchestrator have had a chance to run.
     const freshRoles = (nodeId: string) => {
       const roles: FlowAgentRole[] = [];
       for (const role of MANAGEMENT_ROLES) {
@@ -2546,10 +2441,6 @@ case 'effects': {
       const status = textField(row.status, 'transaction.status', 128);
       // A transaction revision produces one stall notification, independently
       // of how many scheduler ticks observe the same stalled state.
-      this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, nodeId, 'auditor')?.id, {
-        subject: 'transaction-stale', payload: { transaction_id: transactionId, status, stale_ms: staleMs, revision },
-        dedupeKey: `stale:${transactionId}:${revision}`,
-      });
       this.notifyInternal(cluster.id, this.roleAgentOf(cluster.id, nodeId, 'orchestrator')?.id, {
         subject: 'transaction-stale', payload: { transaction_id: transactionId, status, stale_ms: staleMs, revision },
         dedupeKey: `stale:${transactionId}:${revision}`,
@@ -2669,13 +2560,13 @@ case 'effects': {
   /**
    * Who receives a fixture message: a Worker of another allocation (a different
    * worker node, so the delivery really crosses subtrees), or, when no sibling
-   * is allocated yet, the Auditor of the source's management node. The fixture
+   * is allocated yet, the Orchestrator of the source's management node. The fixture
    * must not depend on the model allocating one particular transaction.
    */
   #fixtureRecipient(cluster: ClusterRecord, entry: MessageFixtureEntry): AgentRecord | null {
-    // A stable identity first: the Auditor of the source's management node
+    // A stable identity first: the Orchestrator of the source's management node
     // exists from cluster start, so the fixture fires once and always targets
-    // the same agent. A sibling Worker is the fallback when no Auditor exists
+    // the same agent. A sibling Worker is the fallback when no Orchestrator exists
     // (a Worker node is a different node from the source's, so the delivery
     // still crosses subtrees).
     const source = this.store.getTransaction(entry.from);
@@ -2689,11 +2580,11 @@ case 'effects': {
       const node = this.store.getNode(agent.node_id);
       if (node && node.parent_id === sourceNode) return agent;
     }
-    // No sibling branch exists yet: the source's own management Auditor is a
+    // No sibling branch exists yet: the source's own management Orchestrator is a
     // different node, but the same management node as the sender.
     const rootId = source?.node_id ?? this.store.listNodes(cluster.id, { parent_id: null })[0]?.id;
-    const auditor = rootId ? this.roleAgentOf(cluster.id, rootId, 'auditor') : null;
-    return auditor && auditor.status !== 'TERMINATED' ? auditor : null;
+    const manager = rootId ? this.roleAgentOf(cluster.id, rootId, 'orchestrator') : null;
+    return manager && manager.status !== 'TERMINATED' ? manager : null;
   }
 
   /** Management children a node must still build according to the topology fixture. */
@@ -2765,25 +2656,11 @@ case 'effects': {
       // pending, and only a command that commits the matching correction or
       // escalation acknowledges it. Remembering just the seq dropped every refusal
       // whenever any unrelated command returned a transaction id — approving an
-      // audit is not a correction.
+      // an unrelated validation is not a correction.
       this.#pendingRefusals.set(agent.id, refusalItems);
     }
     // The paging cursor moves only for work this turn really took: the page the
-    // Auditor is about to decide.
-    if (role === 'auditor') {
-      const taken = (pending ?? []).map(item => item.audit_id).filter((auditId): auditId is string => typeof auditId === 'string');
-      if (taken.length) {
-        const rows = taken.map(auditId => this.store.getAudit(auditId)).filter((audit): audit is AuditRecord => audit !== null);
-        const last = rows.at(-1);
-        if (last) {
-          this.#auditCursor.set(node.id, { created: last.created, id: last.id });
-        }
-      } else if (this.#auditCursor.has(node.id)) {
-        // Restart the audit scan from the oldest pending decision once the current
-        // page sequence is exhausted, including audits inserted behind the cursor.
-        this.#auditCursor.delete(node.id);
-      }
-    }
+    // Orchestrator is about to decide.
     this.store.appendEvent(id, 'turn-actions', {
       agent_id: agent.id, role, actions: (pending ?? []).map(item => item.action).slice(0, 16),
       inbox_consumed: inboxIds.length,
@@ -2820,7 +2697,6 @@ case 'effects': {
     };
     // Deliveries are taken before the prompt is built: they are part of this
     // turn's input, and the prompt must name each message's stable id.
-    const policy = this.allowedToolsFor(cluster, role, agent);
     const before = this.progressSeq(id);
     const turn = (async () => {
       let deliveries: CollectedDeliveries = {
@@ -2834,6 +2710,7 @@ case 'effects': {
       // release its lease and return unanswered messages to the queue.
       try {
         slot = await this.acquireLlmSlot(id);
+        const policy = this.allowedToolsFor(cluster, role, agent);
         // Delivery collection happens inside the turn: it may have to prove
         // messages against the Session, and that wait must not hold the
         // scheduling pass that is filling the rest of the window.
@@ -3097,7 +2974,7 @@ case 'effects': {
       try {
         // A management node can finish only after its last live role turn
         // releases. Retry both delegated acceptance and the root's explicit
-        // finish request here, before a still-pending advisory audit admits
+        // finish request here, before a still-pending notification admits
         // another turn and starves root closure.
         const finishedNode = this.store.getNode(agent.node_id);
         const rootFinished = finishedNode?.kind === 'management' && !finishedNode.parent_id
@@ -3156,9 +3033,6 @@ case 'effects': {
       this.#settleHumanPrompts(cluster.id,agent.id,admitted,durable);
       this.store.tx(() => {
         const current = this.store.getTransaction(tx.id);
-        const rejectedRevision = current?.status === 'RUNNING'
-          && current.current_plan_ref !== null
-          && this.store.findAudit(cluster.id, tx.id, 'plan', current.current_plan_ref.prepared_revision)?.decision === 'REJECTED';
         const progress = this.progressSeq(cluster.id) !== before;
         const started = admitted || error === null;
         if (!started) {
@@ -3182,9 +3056,6 @@ case 'effects': {
             this.store.updateTransaction(tx.id, { status: 'READY', __bump_revision: false });
           }
           this.store.updateAgent(agent.id, { status: blocked ? 'BLOCKED' : 'READY' });
-          if (rejectedRevision && this.store.getTransaction(tx.id)?.status === 'RUNNING') {
-            setTransactionStatus(this.store, this, cluster, current, 'DRAFT');
-          }
           return;
         }
         failures = 0;
@@ -3198,7 +3069,7 @@ case 'effects': {
 
         // A fallback submission must carry the same native proof an explicit
         // result could cite. Tool names and statuses alone do not identify the
-        // path, bytes, writer, or successful receipt an Auditor needs to judge.
+        // path, bytes, writer, or successful receipt an Orchestrator needs to judge.
         // Do not attribute effects from a previous turn of this Worker to this
         // result; the original receipts remain queryable through flow_query effects.
         const evidence = this.store.effects(cluster.id, { agent_id: agent.id, limit: 50 })
@@ -3248,8 +3119,8 @@ case 'effects': {
             });
             // Models report inability through `completed: false`, `status`, or
             // `outcome`. Preserve all three spellings as one durable signal: the
-            // Auditor must see the original blocked revision even if the
-            // Orchestrator revises it before the validation audit is inspected.
+            // Orchestrator must see the original blocked revision even if the
+            // Orchestrator revises it before the business validation is inspected.
             const incomplete = resultFields?.completed === false
               || (typeof resultFields?.status === 'string' && INCOMPLETE_WORKER_RESULT.test(resultFields.status))
               || (typeof resultFields?.outcome === 'string' && INCOMPLETE_WORKER_RESULT.test(resultFields.outcome));
@@ -3297,16 +3168,6 @@ case 'effects': {
           }
         } else if (current && current.status === 'RUNNING') {
           this.store.updateTransaction(tx.id, { status: 'BLOCKED' });
-        }
-        if (rejectedRevision) {
-          const finished = this.store.getTransaction(tx.id);
-          if (finished && !TRANSACTION_TERMINAL.has(finished.status)
-            && !['DRAFT', 'BLOCKED'].includes(finished.status)) {
-            // The Worker finished under its original revision. Its native
-            // write receipts and result remain evidence, but a rejected plan
-            // cannot enter validation until the Orchestrator corrects it.
-            setTransactionStatus(this.store, this, cluster, finished, 'DRAFT');
-          }
         }
         this.store.insertCheckpoint({
           id: randomUUID(), cluster_id: cluster.id, agent_id: agent.id, session_id: agent.session_id,
@@ -3569,13 +3430,8 @@ case 'effects': {
     return null;
   }
 
-  healthMetricNames() {
-    return [...HEALTH_METRICS];
-  }
-
   /**
-   * Derive health signals from the durable ledger. The Auditor supplies its
-   * judgement through evaluate_health; measurement remains deterministic.
+   * Derive runtime health signals directly from the durable ledger.
    */
   healthSignals(clusterId: string, { windowMs = this.config.staleMs }: { windowMs?: number } = {}): FlowHealthSignals {
     if (!Number.isFinite(windowMs) || windowMs <= 0) fail('Health evaluation window must be a finite positive number');
@@ -3901,23 +3757,16 @@ case 'effects': {
     if (captured && captured.epoch !== lease.epoch) {
       return { ok: false, reason: `this instance belongs to lease epoch ${captured.epoch}, but the live lease is ${lease.epoch}` };
     }
-    if (!captured && MUTATING_EFFECT_TOOLS.has(exec.name)) {
+    if (!captured && (MUTATING_EFFECT_TOOLS.has(exec.name) || agent.role === 'orchestrator' && !CONTROL_TOOLS.has(exec.name))) {
       return { ok: false, reason: `${exec.name} requires a scheduled turn identity on this agent instance` };
     }
     const cluster = this.store.getCluster(agent.cluster_id) ?? fail('Cluster not found', 404);
-    // Per-allocation write isolation, checked against the canonical target the
-    // tool is about to touch rather than against the scope strings alone.
-    const allocation = this.store.activeAllocationForAgent(agent.id);
-    const writeDecision = checkWriteAccess({
-      tool: exec.name, workspace: cluster.workspace,
-      writeScope: allocation?.write_scope ?? [], writeScopeCanonical: allocation?.write_scope_canonical ?? null,
-      arguments: exec.arguments,
-    });
-    if (!writeDecision.allowed) {
-      this.store.appendEvent(agent.cluster_id, 'write-refused', {
-        agent_id: agent.id, tool: exec.name, reason: writeDecision.reason,
-      });
-      return { ok: false, reason: writeDecision.reason };
+    this.#refreshFinishedJobs(agent.cluster_id);
+    const authorization = this.#toolAuthorization(agent, exec, callId);
+    if (!authorization.ok) {
+      if (MUTATING_EFFECT_TOOLS.has(exec.name)) this.#recordWriteRefusal(agent, exec, authorization.reason ?? 'tool authorization refused');
+      else this.store.appendEvent(agent.cluster_id, 'tool-call-refused', { agent_id: agent.id, call_id: callId, tool: exec.name, reason: authorization.reason ?? 'tool authorization refused' });
+      return authorization;
     }
     const argumentsJson = safeJson(exec.arguments);
     // A side effect still in flight from a previous run may not be repeated by
@@ -3928,6 +3777,24 @@ case 'effects': {
       return { ok: false, reason: `EFFECT_UNCERTAIN: ${uncertain.tool} (call ${uncertain.call_id}) may or may not have executed before the restart; it cannot be repeated without a decision (flow_query what:"effects")` };
     }
     const budgetIds = this.agentBudgetChain(cluster, agent);
+    // File observation is deliberately outside the synchronous ledger callback.
+    // All known publications in this manager's domain are protected, including
+    // writes before validation binding and cleanup after acceptance.
+    let artifacts: { transaction_id: string; plan_ref: FlowPlanRef | null; result_ref: FlowResultRef | null; artifact_hashes: Record<string, string> }[] = [];
+    if (agent.role === 'orchestrator' && MUTATING_EFFECT_TOOLS.has(exec.name)) {
+      try {
+        const scan = { entries: 0, bytes: 0 };
+        artifacts = this.store.transactionsInSubtree(cluster.id, agent.node_id)
+          .filter(tx => ['SUBMITTED', 'ACCEPTED'].includes(tx.status) && tx.current_result_ref && tx.current_plan_ref)
+          .map(tx => ({ transaction_id: tx.id, plan_ref: tx.current_plan_ref, result_ref: tx.current_result_ref,
+            artifact_hashes: artifactHashes(cluster.workspace, this.store.getResult(tx.current_result_ref)?.result, scan) }))
+          .filter(artifact => Object.keys(artifact.artifact_hashes).length > 0);
+      } catch (error) {
+        const reason = messageOf(error);
+        this.#recordWriteRefusal(agent, exec, reason);
+        return { ok: false, reason };
+      }
+    }
     const reserve = () => this.store.tx(() => {
       reserveChain(this.store, budgetIds, { tool_calls: 1 }, { label: `tool call ${exec.name}` });
         // The receipt and its reservation are written together: a crash between
@@ -3938,6 +3805,37 @@ case 'effects': {
         turn_seq: agent.turns + 1, tool: exec.name, args_hash: sha1(JSON.stringify(argumentsJson)),
         budget_scope_id: budgetIds.length === 1 ? budgetIds[0] : null, dispatch_status: 'ADMITTED',
       });
+      if (agent.role === 'orchestrator' && !CONTROL_TOOLS.has(exec.name)) {
+        let target = this.#validationTargets.get(agent.id);
+        if (!target) {
+          const assigned = this.#boundTurns.get(agent.id)?.binding;
+          const assignedTx = assigned?.transaction_id ? this.store.getTransaction(assigned.transaction_id) : null;
+          if (assigned?.epoch === lease.epoch && assigned.turn_seq === agent.turns + 1 && assignedTx?.status === 'SUBMITTED'
+            && assignedTx.current_plan_ref && assignedTx.current_result_ref && sameRef(assigned.plan_ref, assignedTx.current_plan_ref)) {
+            target = { transaction_id: assignedTx.id, plan_ref: assignedTx.current_plan_ref, result_ref: assignedTx.current_result_ref,
+              epoch: lease.epoch, turn_seq: agent.turns + 1 };
+            this.#validationTargets.set(agent.id, target);
+          }
+        }
+        const targetTx = target ? this.store.getTransaction(target.transaction_id) : null;
+        const current = target?.epoch === lease.epoch && target.turn_seq === agent.turns + 1 && targetTx?.status === 'SUBMITTED'
+          && sameRef(target.plan_ref, targetTx.current_plan_ref) && sameRef(target.result_ref, targetTx.current_result_ref) ? target : null;
+        const node = this.store.getNode(agent.node_id) ?? fail('Node not found', 404);
+        this.store.appendEvent(agent.cluster_id, 'manager-tool-bound', {
+          agent_id: agent.id, call_id: callId, epoch: lease.epoch, turn_seq: agent.turns + 1,
+          transaction_id: current?.transaction_id ?? null, plan_ref: asJsonValue(current?.plan_ref ?? null), result_ref: asJsonValue(current?.result_ref ?? null),
+          execution_authorization: managementAuthorizationJson(resolveManagementAuthorization(cluster, node, id => this.store.getNode(id))),
+          artifact_hashes: artifacts.find(item => item.transaction_id === current?.transaction_id)?.artifact_hashes ?? {},
+        });
+      }
+      for (const artifact of artifacts) this.store.appendEvent(agent.cluster_id, 'manager-artifacts-observed', {
+        transaction_id: artifact.transaction_id, plan_ref: asJsonValue(artifact.plan_ref), result_ref: asJsonValue(artifact.result_ref), artifact_hashes: artifact.artifact_hashes, agent_id: agent.id, call_id: callId, epoch: lease.epoch, turn_seq: agent.turns + 1,
+      });
+      if (MUTATING_EFFECT_TOOLS.has(exec.name) && exec.name !== 'job_kill') {
+        this.store.appendEvent(agent.cluster_id, 'tool-write-claim', {
+          agent_id: agent.id, call_id: callId, paths: this.#toolWritePaths(cluster, exec),
+        });
+      }
       if (effectTool(exec.name)) {
         this.store.insertEffect({
           call_id: callId, cluster_id: agent.cluster_id, agent_id: agent.id, node_id: agent.node_id,
@@ -4144,10 +4042,26 @@ case 'effects': {
     // The text is bounded *once*, before either ledger is written — the tool
     // receipt and the effect row hold the same body — and the bound states what it
     // omitted, which a pre-truncated string cannot.
+    const resultError = error ? messageOf(error).slice(0, 2000) : result?.isError === true ? boundText(textOfResult(result), 2000) : null;
     const body = result ? { isError: result.isError === true, text: boundText(textOfResult(result), 8_000) } : null;
-    const source = result && result.isError !== true ? captureSource(agent, exec, result) : null;
+    const bindingRow = agent.role === 'orchestrator' ? this.store.get(
+      "SELECT data FROM events WHERE cluster_id=? AND type='manager-tool-bound' AND json_extract(data,'$.call_id')=? ORDER BY seq DESC LIMIT 1", agent.cluster_id, callId) : null;
+    const binding = bindingRow ? jsonRecordOf(decodeJson(String(bindingRow.data))) : null;
+    const transactionId = agent.role === 'orchestrator' ? typeof binding?.transaction_id === 'string' ? binding.transaction_id : null
+      : this.store.activeAllocationForAgent(agent.id)?.transaction_id ?? agent.meta?.transaction_id ?? null;
+    const source = result && result.isError !== true ? captureSource(agent, exec, result, transactionId) : null;
+    const mutations = charged && agent.role === 'orchestrator' && MUTATING_EFFECT_TOOLS.has(exec.name) ? this.#artifactMutations(agent, callId) : [];
     this.store.tx(() => {
-      if (source) this.store.insertSource(source);
+      if (source) {
+        this.store.insertSource(source);
+        this.store.appendEvent(agent.cluster_id, 'source-captured', {
+          source_id: source.id, call_id: callId, agent_id: agent.id, transaction_id: transactionId,
+          plan_ref: asJsonValue(binding?.plan_ref ?? this.store.activeAllocationForAgent(agent.id)?.plan_ref ?? null),
+          result_ref: asJsonValue(binding?.result_ref ?? null), epoch: typeof binding?.epoch === 'number' ? binding.epoch : agent.epoch,
+          turn_seq: typeof binding?.turn_seq === 'number' ? binding.turn_seq : agent.turns + 1,
+        });
+      }
+      this.#recordArtifactMutations(agent, callId, mutations);
       // Through the receipt-owned transition, once: `charged` means the call
       // really ran (consumed), anything else means it never dispatched
       // (released), and a receipt that is already terminal moves nothing.
@@ -4156,7 +4070,7 @@ case 'effects': {
         // A call that never dispatched was cancelled, whatever error text
         // explains the refusal: `FAILED` is reserved for a tool that really ran
         // and failed.
-        status: charged ? (error ? 'FAILED' : 'SETTLED') : 'CANCELLED',
+        status: charged ? (resultError ? 'FAILED' : 'SETTLED') : 'CANCELLED',
       });
       // One bounded body, both ledgers: the tool receipt and the effect row hold
       // the same text, and neither holds the full unbounded output.
@@ -4164,18 +4078,19 @@ case 'effects': {
       if (this.store.getToolCallReceipt(callId)) {
         this.store.settleToolCallReceipt(callId, {
           result_body: boundedBody === null ? null : JSON.stringify(boundedBody),
-          error: error ? messageOf(error).slice(0, 2000) : null,
+          error: resultError,
         });
       }
       const effect = this.store.getEffect(callId);
       if (effect) {
-        const jobId = jobIdOf(result);
-        this.store.settleEffect(callId, error
-          ? { status: 'FAILED', error: messageOf(error).slice(0, 2000) }
+        const jobId = ['bash', 'job_output', 'job_kill'].includes(exec.name) ? jobIdOf(result) : null;
+        this.store.settleEffect(callId, resultError
+          ? { status: 'FAILED', error: resultError, body: boundedBody ?? body }
           : { status: 'SETTLED', body: boundedBody ?? body, ...(jobId ? { job_id: jobId } : {}) });
-        this.store.appendEvent(agent.cluster_id, 'effect-settled', { call_id: callId, tool: exec.name, ok: !error, ...(jobId ? { job_id: jobId } : {}) });
+        this.store.appendEvent(agent.cluster_id, 'effect-settled', { call_id: callId, tool: exec.name, ok: resultError === null, ...(jobId ? { job_id: jobId } : {}) });
       }
     });
+    this.#refreshFinishedJobs(agent.cluster_id);
   }
 
   /**
@@ -4207,6 +4122,7 @@ case 'effects': {
       if (page.length < 200) break;
     }
     for (const cluster of clusters) {
+      this.#refreshFinishedJobs(cluster.id);
       const facts: RecoveryFacts = { cluster_id: cluster.id, status: cluster.status, fenced_leases: 0, uncertain_effects: 0, requeued: 0, blocked_agents: 0 };
       this.store.tx(() => {
         for (const lease of this.store.listLeases(cluster.id, {})) {
@@ -4236,27 +4152,23 @@ case 'effects': {
           this.store.settleEffect(callId, { status: 'EFFECT_UNCERTAIN', error: 'process restarted while the effect was in flight' });
           facts.uncertain_effects += 1;
         }
+        for (const effect of this.store.effectsAll(cluster.id)) {
+          if (!effect.job_id || effect.status === 'EFFECT_UNCERTAIN') continue;
+          const owner = this.store.getAgent(effect.agent_id);
+          if (!owner || !this.#jobUnsettled(owner, effect.job_id)) continue;
+          const live = this.ctx.get('jobs')?.list(SessionId(owner.session_id)).some(job => job.id === effect.job_id);
+          if (live) continue;
+          this.store.settleEffect(effect.call_id, { status: 'EFFECT_UNCERTAIN', error: 'background job state was lost during restart; reconcile the effect before continuing' });
+          facts.uncertain_effects += 1;
+        }
         this.store.run(
           "UPDATE agents SET status='READY', updated=? WHERE cluster_id=? AND status IN ('RUNNING','CREATED','WAITING')",
           this.store.now(), cluster.id,
         );
         facts.agents_requeued = this.store.changed();
         // Exhaustive, including RUNNING transactions with an ACTIVE allocation.
-        // An unreviewed plan resumes under the same identity; a plan the Auditor
-        // rejected while that identity was live returns to DRAFT instead, so
-        // recovery cannot dispatch work whose old turn lost its lease.
-        this.store.run(
-          `UPDATE transactions SET
-             status=CASE WHEN (
-               SELECT a.decision FROM audits a
-                WHERE a.cluster_id=transactions.cluster_id AND a.transaction_id=transactions.id
-                  AND a.kind='plan' AND a.target_revision=json_extract(transactions.current_plan_ref,'$.prepared_revision')
-                ORDER BY a.created DESC, a.rowid DESC LIMIT 1
-             )='REJECTED' THEN 'DRAFT' ELSE 'READY' END,
-             updated=?
-           WHERE cluster_id=? AND status='RUNNING'`,
-          this.store.now(), cluster.id,
-        );
+        // Restart abandoned execution under its current prepared plan.
+        this.store.run("UPDATE transactions SET status='READY', updated=? WHERE cluster_id=? AND status='RUNNING'", this.store.now(), cluster.id);
         facts.requeued = this.store.changed();
         // Restore structural reservations and still-live tool quota holds.
         this.store.run(
@@ -4535,8 +4447,7 @@ case 'effects': {
     if (captured && captured.epoch !== lease.epoch) {
       return { ok: false, reason: `this instance belongs to lease epoch ${captured.epoch}, but the live lease is ${lease.epoch}` };
     }
-    void callId;
-    return { ok: true };
+    return this.#toolAuthorization(agent, exec, callId, true);
   }
 
   /**
@@ -4544,6 +4455,7 @@ case 'effects': {
    * reservation is returned without charging and the refusal is recorded.
    */
   refuseToolCall(agent: AgentRecord, exec: ToolDispatchExecution, callId: string, reason: string): void {
+    if (MUTATING_EFFECT_TOOLS.has(exec.name)) this.#recordWriteRefusal(agent, exec, reason);
     this.store.tx(() => {
       this.store.appendEvent(agent.cluster_id, 'tool-call-refused', {
         agent_id: agent.id, call_id: callId, tool: exec?.name ?? null, reason: reason ?? 'refused before dispatch',
@@ -4586,17 +4498,18 @@ case 'effects': {
       .find(agent => agent.status !== 'TERMINATED') ?? null;
   }
 
-  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>, parentAgentId: string | null = null): Record<'orchestrator' | 'allocator' | 'auditor', string> {
-    const created: Record<'orchestrator' | 'allocator' | 'auditor', string> = {
-      orchestrator: '', allocator: '', auditor: '',
+  ensureRoles(clusterId: string, node: NodeRecord, budgets: ReadonlyMap<string, BudgetRecord>, parentAgentId: string | null = null): Record<'orchestrator' | 'allocator', string> {
+    const created: Record<'orchestrator' | 'allocator', string> = {
+      orchestrator: '', allocator: '',
     };
-    const managementRoles: readonly ('orchestrator' | 'allocator' | 'auditor')[] = ['orchestrator', 'allocator', 'auditor'];
+    const managementRoles = MANAGEMENT_ROLES;
     for (const role of managementRoles) {
       const nodeBudget = budgets.get(node.id);
       if (!nodeBudget) fail('Node budget not found', 404);
       const agent = this.store.insertAgent({
         id: randomUUID(), cluster_id: clusterId, node_id: node.id, role,
-        session_id: randomUUID(), status: 'READY', capabilities: [...node.capabilities],
+        session_id: randomUUID(), status: 'READY', capabilities: role === 'orchestrator'
+          ? [...resolveManagementAuthorization(this.store.getCluster(clusterId) ?? fail('Cluster not found', 404), node, id => this.store.getNode(id)).capabilities] : [],
         meta: { management: true, parent_agent_id: role === 'orchestrator' ? parentAgentId : created.orchestrator },
       });
       if (!agent) fail('Agent could not be created', 500);
@@ -5085,11 +4998,11 @@ case 'effects': {
       : [ROLE_TOOL[role], 'flow_query', 'flow_communicate', 'flow_sum'];
     const allocation = role === 'worker' ? this.store.activeAllocationForAgent(agent.id) : null;
     const capabilities: readonly FlowCapability[] = role === 'worker'
-      ? (allocation !== null && allocation.capabilities.length
-        ? allocation.capabilities
-        : agent.capabilities.length ? agent.capabilities : cluster.capabilities)
-      : [];
-    const tools = role === 'worker' ? toolsForCapabilities(capabilities) : [];
+      ? (allocation?.capabilities ?? agent.capabilities)
+      : role === 'orchestrator'
+        ? resolveManagementAuthorization(cluster, this.store.getNode(agent.node_id) ?? fail('Node not found', 404), id => this.store.getNode(id)).capabilities
+        : [];
+    const tools = toolsForCapabilities(capabilities);
     const inherited = new Set(capabilities
       .filter(capability => CAPABILITY_PACKAGES[capability].length === 0)
       .flatMap(capability => toolsForCapabilities([capability])));
@@ -5139,7 +5052,6 @@ case 'effects': {
         const payload = jsonRecordOf(row.payload);
         notifications.push({
           kind: 'notification', action: 'inbox', subject: row.subject, inbox_id: row.id,
-          audit_id: typeof payload?.audit_id === 'string' ? payload.audit_id : null,
           payload: truncate(JSON.stringify(row.payload ?? {}), 400),
           // A budget-blocked child is awaiting an authorized Allocator
           // transfer. Waking its parent's Orchestrator cannot fund it.
@@ -5148,7 +5060,43 @@ case 'effects': {
         });
       }
     }
+    for (const issue of this.store.openIssues(id, { status: 'OPEN' }).filter(issue => issue.node_id === node.id || issue.node_id === null && node.parent_id === null)) {
+      const kind = String(jsonRecordOf(issue.evidence)?.kind ?? '');
+      const resource = ['resource', 'allocation', 'effect', 'budget'].includes(kind);
+      if (role === 'allocator' && !resource || role === 'orchestrator' && resource) continue;
+      if (role === 'worker' || kind === 'business-result') continue;
+      const progress = this.issueProgressed(id, issue);
+      if (progress.progressed) items.push({ action: 'resolve_issue', issue_id: issue.id, transaction_id: issue.transaction_id,
+        changed_since_issue: true, required_change: issue.required_change,
+        note: 'A matching durable repair is recorded. Inspect the issue and repair evidence, then resolve_issue with CORRECTED and exact evidence; use DISMISSED only for a demonstrated false report.' });
+    }
     if (role === 'orchestrator') {
+      // Durable denials are corrective work for their owning domain. Match
+      // the recorded target first; old Worker facts can use their allocation.
+      const refusals = this.store.all(
+        `SELECT e.seq,e.data,COALESCE(json_extract(e.data,'$.transaction_id'),
+           (SELECT a.transaction_id FROM allocations a WHERE a.cluster_id=e.cluster_id AND a.agent_id=json_extract(e.data,'$.agent_id') ORDER BY a.created DESC LIMIT 1)) AS transaction_id
+         FROM events e JOIN transactions t ON t.id=COALESCE(json_extract(e.data,'$.transaction_id'),
+           (SELECT a.transaction_id FROM allocations a WHERE a.cluster_id=e.cluster_id AND a.agent_id=json_extract(e.data,'$.agent_id') ORDER BY a.created DESC LIMIT 1))
+         WHERE e.cluster_id=? AND e.type='write-refused' AND t.node_id=?
+           AND NOT EXISTS (SELECT 1 FROM events h WHERE h.cluster_id=e.cluster_id AND h.type='refusal-handled' AND json_extract(h.data,'$.seq')=e.seq)
+         ORDER BY e.seq DESC LIMIT 32`, id, node.id);
+      const seen = new Map<string, number[]>();
+      for (const refusal of refusals) {
+        const data = jsonRecordOf(decodeJson(String(refusal.data)));
+        const txId = String(refusal.transaction_id), sequence = Number(refusal.seq);
+        const prior = seen.get(txId);
+        if (prior) { prior.push(sequence); continue; }
+        const tx = this.store.getTransaction(txId);
+        if (!tx) continue;
+        const sequences = [sequence]; seen.set(txId, sequences);
+        const note = `a write with ${String(data?.tool ?? 'a tool')} was refused: ${String(data?.reason ?? '').slice(0, 200)}`;
+        const terminal = ['FAILED','CANCELLED','SUPERSEDED'].includes(tx.status);
+        items.push({ action: terminal ? 'escalate' : tx.status === 'SUBMITTED' ? 'reject_result' : 'reopen_transaction',
+          transaction_id: txId, node_id: tx.node_id, revision: tx.revision, status: tx.status,
+          refusal_seq: sequence, refusal_seqs: sequences, tool: typeof data?.tool === 'string' ? data.tool : null,
+          reason: note, note, required_change: 'repair the write authorization or conflicting active execution before submitting a new result' });
+      }
       // Query each status directly so pagination cannot hide pending work.
       for (const tx of this.store.listTransactions({ cluster_id: id, node_id: node.id, status: 'DRAFT', limit: 64 })) {
         const unanswered = this.store.openIssues(id, { transaction_id: tx.id, status: 'OPEN' })
@@ -5183,7 +5131,7 @@ case 'effects': {
         items.push({ action: 'aggregate', transaction_id: row.parent_id, children: Number(row.children) });
       }
       // Submitted delegated results require the validation action above; pending
-      // independent audits require no author turn. Acceptance exposes the current
+      // business validations require no author turn. Acceptance exposes the current
       // delivery to the parent's aggregation and unlocks evaluateCompletion closeout.
       if (!node.parent_id && !this.store.get(
         "SELECT seq FROM events WHERE cluster_id=? AND type='cluster-finish-requested' AND json_extract(data,'$.node_id')=? ORDER BY seq DESC LIMIT 1",
@@ -5218,7 +5166,7 @@ case 'effects': {
       // A hint the node cannot execute is not work. `allocate_agent` fails at the
       // child ceiling, so offering it to a full node booked three no-progress
       // Allocator turns and then blocked the node for stagnation — while the
-      // Workers that would have freed a slot were still waiting on the Auditor.
+      // Workers that would have freed a slot were still waiting on the Orchestrator.
       // The ceiling is the same one `createWorkerForTransaction` enforces.
       const occupiedChildren = this.store.childrenOf(node.id).filter(child => child.status !== 'RELEASED').length;
       const childCeiling = node.max_children ?? cluster.limits.max_children;
@@ -5313,124 +5261,6 @@ case 'effects': {
           break;
         }
       }
-    } else if (role === 'auditor') {
-      const auditorId = recipient;
-      const healthId = `${id}:${node.id}:final`;
-      const requested = this.store.get('SELECT id FROM health WHERE id=? AND cluster_id=?', healthId, id);
-      if (requested && !this.#finalHealthDecision(id, node.id, auditorId)) {
-        return [{
-          action: 'evaluate_health', evaluation_window: 'subtree-close',
-          node_id: node.id, dimensions: this.healthMetricNames(),
-          signals: asJsonValue(this.healthSignals(id, { windowMs: this.config.staleMs })),
-        }, ...notifications];
-      }
-      // Validation is the acceptance gate; advisory plan reviews must not fill
-      // its entire eight-item page while finished Worker results wait behind
-      // them. Keep the same keyset rotation within each kind, and return to the
-      // oldest pending item of that kind when its cursor has passed the end.
-      // A capacity probe only reads; #startTurn moves the cursor on admission.
-      const cursor = this.#auditCursor.get(node.id) ?? null;
-      let pending = this.store.pendingAudits(id, { node_id: node.id, kind: 'validation', limit: 8, after: cursor });
-      if (!pending.length && cursor) {
-        pending = this.store.pendingAudits(id, { node_id: node.id, kind: 'validation', limit: 8 });
-      }
-      if (!pending.length) {
-        pending = this.store.pendingAudits(id, { node_id: node.id, kind: 'plan', limit: 8, after: cursor });
-        if (!pending.length && cursor) {
-          pending = this.store.pendingAudits(id, { node_id: node.id, kind: 'plan', limit: 8 });
-        }
-      }
-      for (const audit of pending) {
-        // Carry the transaction's actual acceptance criteria with each audit
-        // action so the verdict refers to the exact contract being reviewed.
-        const subject = audit.transaction_id === null ? null : this.store.getTransaction(audit.transaction_id);
-        if (!subject || (audit.kind === 'plan' ? !sameRef(audit.plan_ref, subject.current_plan_ref) : !sameRef(audit.validation_ref, subject.current_validation_ref))) continue;
-        items.push({
-          action: audit.kind === 'plan' ? 'inspect_plan' : 'inspect_validation',
-          audit_id: audit.id, transaction_id: audit.transaction_id, target_revision: audit.target_revision,
-          objective: subject ? String(subject.objective ?? '').slice(0, 200) : null,
-          acceptance_criteria: subject ? (subject.acceptance_criteria ?? []) : [],
-          expected_output: subject ? String(subject.expected_output ?? '').slice(0, 200) : null,
-        });
-      }
-      // A refused write is the owning management node's Auditor's work, not
-      // every ancestor's: exposing one Worker refusal to the whole subtree
-      // opened several independent issues for one denied effect.
-      const refusals = this.store.all(
-        `SELECT e.seq, e.data, a.transaction_id FROM events e
-           JOIN allocations a ON a.cluster_id=e.cluster_id
-             AND a.agent_id=json_extract(e.data,'$.agent_id')
-           JOIN transactions t ON t.id=a.transaction_id AND t.cluster_id=e.cluster_id
-          WHERE e.cluster_id=? AND e.type='write-refused' AND t.node_id=?
-          ORDER BY e.seq DESC LIMIT 8`,
-        id, node.id,
-      );
-      // Only refusals nobody has taken up yet: a handled refusal must not reopen the
-      // same issue on every pass, while a genuinely new refusal still surfaces.
-      const handled = new Set(this.store.all(
-        "SELECT json_extract(data,'$.seq') AS seq FROM events WHERE cluster_id=? AND type='refusal-handled'",
-        id,
-      ).map(row => Number(row.seq)));
-      const seenRefusals = new Map<string, { refusal_seqs: number[] }>();
-      for (const refusal of refusals) {
-        const data = jsonRecordOf(decodeJson(textField(refusal.data, 'write-refused.data')));
-        if (!data) continue;
-        const sequence = integer(refusal.seq, 0, 2 ** 53, 'write-refused.seq');
-        const transactionId = optionalText(refusal.transaction_id, 'write-refused.transaction_id');
-        if (!transactionId || handled.has(sequence)) continue;
-        // Several denied attempts by one allocation have one corrective decision.
-        // Keep every sequence on that decision so committing it acknowledges all
-        // the refusals it saw, rather than reopening the same issue next turn.
-        const previous = seenRefusals.get(transactionId);
-        if (previous) {
-          previous.refusal_seqs.push(sequence);
-          continue;
-        }
-        // The action must be executable in the state the transaction is really in.
-        // Before a result is submitted there is no validation audit, a rejected
-        // `validate` leaves its audit OVERRIDDEN (so `inspect_validation` answers
-        // deduped and opens nothing), and `request_replan` transitions to DRAFT —
-        // which a terminal transaction forbids. A failed branch is escalated, not
-        // replanned.
-        const transaction = this.store.getTransaction(transactionId);
-        if (!transaction) continue;
-        const refusalSeqs = [sequence];
-        seenRefusals.set(transactionId, { refusal_seqs: refusalSeqs });
-        const refusalTool = typeof data.tool === 'string' ? data.tool : null;
-        const terminal = ['FAILED', 'CANCELLED', 'ACCEPTED', 'SUPERSEDED'].includes(transaction.status);
-        const note = `a write with ${refusalTool ?? 'a tool'} was refused under the current plan: ${String(data.reason ?? '').slice(0, 200)}`;
-        items.push(terminal
-          ? {
-            // A terminal transaction cannot be replanned or blocked again: the
-            // escalation that no status forbids is the *node-level* one, which records
-            // the refusal for the domain above without touching the transaction.
-            action: 'escalate', node_id: transaction.node_id, transaction_id: transactionId,
-            refusal_seq: sequence, refusal_seqs: refusalSeqs, tool: refusalTool, status: transaction.status,
-            reason: note, note,
-          }
-          : {
-            action: 'request_replan', transaction_id: transactionId,
-            refusal_seq: sequence, refusal_seqs: refusalSeqs,
-            tool: refusalTool, status: transaction.status,
-            reason: note, required_change: 'widen the write scope and re-allocate before resubmitting',
-            note,
-          });
-      }
-      // An open issue is review work, not an automatic verdict. A later plan
-      // revision or validation is evidence of activity, never evidence that the
-      // required change was satisfied; an unchanged issue may also be a real
-      // defect awaiting its Orchestrator rather than a mistaken report.
-      for (const issue of this.#issuesAwaitingVerdict(id, node.id, agent)) {
-        items.push({
-          action: 'review_issue', issue_id: issue.id, transaction_id: issue.transaction_id,
-          changed_since_issue: issue.progressed,
-          required_change: String(issue.required_change ?? '').slice(0, 200),
-          severity: issue.severity ?? null,
-          review: issue.progressed
-            ? 'A later transaction revision exists. Re-check the recorded criterion and new evidence before deciding whether it addresses this issue.'
-            : 'No durable correction exists. Re-check the original claim: leave a genuine issue open for the Orchestrator; dismiss only a mistaken claim with contrary evidence.',
-        });
-      }
     }
     // Notifications accompany pending work. Only critical messages wake an
     // otherwise idle role; load and context notices are coalesced by producers.
@@ -5439,41 +5269,27 @@ case 'effects': {
     return critical;
   }
 
-  /** Offer actionable review candidates, including one review of a newly raised issue. */
-  #issuesAwaitingVerdict(clusterId: string, nodeId: string, agent: AgentRecord | null = null): readonly (IssueRecord & { progressed: boolean })[] {
-    // Open issues can be verified after correction or dismissed on contrary
-    // evidence. Offer an unchanged issue once, after it is raised; durable
-    // progress makes it eligible again without scheduling idle review loops.
-    const lastTurnSeq = agent ? Number(this.store.get(
-      `SELECT MAX(seq) AS seq FROM events WHERE cluster_id=? AND type='turn-start'
-        AND json_extract(data,'$.agent_id')=?`, clusterId, agent.id)?.seq ?? 0) : 0;
-    const opened = new Map(this.store.all(
-      "SELECT json_extract(data,'$.issue_id') AS issue_id, seq FROM events WHERE cluster_id=? AND type='issue-opened'",
-      clusterId,
-    ).map(row => [row.issue_id, Number(row.seq)]));
-    return this.store.openIssues(clusterId, { node_id: nodeId, status: 'OPEN' })
-      .map(issue => ({ ...issue, progressed: this.issueProgressed(clusterId, issue).progressed }))
-      .filter(issue => {
-        if (issue.progressed) {
-          return !this.store.issueHasIncompleteWorkerResult(clusterId, issue)
-            || this.store.issueHasNewWorkerEvidence(clusterId, issue);
-        }
-        if (Number(issue.corrections ?? 0) !== 0 || issue.reviewed_revision || (opened.get(issue.id) ?? 0) < lastTurnSeq) return false;
-        // Only a mistaken observation can be withdrawn without a correction.
-        // A guard-confirmed denied write on unfinished work is still a defect,
-        // so offering a dismissal here sends the Auditor into a false verdict.
-        if (this.store.issueHasIncompleteWorkerResult(clusterId, issue)) return false;
-        return !this.store.hasConfirmedWriteRefusal(clusterId, issue.transaction_id, issue.evidence)
-          || (issue.transaction_id !== null && this.store.getTransaction(issue.transaction_id)?.status === 'ACCEPTED');
-      });
-  }
-
   /**
    * Compare the issue with later durable plan adjustments and validation
    * result revisions. issue.corrections counts failed verdicts and cannot
    * itself establish progress.
    */
   issueProgressed(clusterId: string, issue: IssueRecord, { since = 'reviewed' }: { since?: 'raised' | 'reviewed' } = {}): IssueProgress {
+    const evidence = jsonRecordOf(issue.evidence);
+    if (!issue.transaction_id || ['resource', 'allocation', 'effect', 'budget'].includes(String(evidence?.kind))) {
+      const issueEvent = this.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='issue-opened' AND json_extract(data,'$.issue_id')=? ORDER BY seq DESC LIMIT 1", clusterId, issue.id);
+      const after = Number(issueEvent?.seq ?? 0);
+      const repairs = this.store.all("SELECT seq,type,data FROM events WHERE cluster_id=? AND seq>? AND at>=? AND type IN ('effect-resolved','agent-allocated','agent-replaced','agent-reassigned','budget-allocated','budget-rebalanced','agent-released') ORDER BY seq DESC", clusterId, after, issue.created);
+      const match = repairs.find(row => {
+        const data = jsonRecordOf(decodeJson(String(row.data)));
+        if (!data || !evidence) return false;
+        if (row.type === 'effect-resolved') return typeof evidence.call_id === 'string' && data.call_id === evidence.call_id;
+        if (['budget-allocated','budget-rebalanced'].includes(String(row.type))) return typeof evidence.budget_id === 'string' && data.to === evidence.budget_id;
+        return typeof evidence.allocation_id === 'string' && data.allocation_id === evidence.allocation_id
+          || typeof evidence.agent_id === 'string' && (data.agent_id === evidence.agent_id || data.from === evidence.agent_id);
+      });
+      return match ? { progressed: true, how: 'runtime-repaired', revision: Number(match.seq) } : { progressed: false, how: null };
+    }
     const target = Number(issue.target_revision ?? 0);
     // A closing verdict needs progress since the issue was raised. A failed
     // verdict charges a round only for a revision later than reviewed_revision,
@@ -5485,7 +5301,7 @@ case 'effects': {
       clusterId, issue.transaction_id,
     );
     const validation = this.store.get(
-      "SELECT MAX(CAST(json_extract(data,'$.result_revision') AS INTEGER)) AS revision FROM events WHERE cluster_id=? AND type='validation-proposed' AND json_extract(data,'$.transaction_id')=?",
+      "SELECT MAX(CAST(json_extract(data,'$.result_revision') AS INTEGER)) AS revision FROM events WHERE cluster_id=? AND type='validation-recorded' AND json_extract(data,'$.transaction_id')=?",
       clusterId, issue.transaction_id,
     );
     // Compare the latest adjustment and validation together so each durable
@@ -5501,9 +5317,176 @@ case 'effects': {
     };
   }
 
-  #auditCursor = new Map();
 
   /** Captured before native admission; query never reselects another target. */
+  #validationTargets = new Map<string, { transaction_id: string; plan_ref: FlowPlanRef; result_ref: FlowResultRef | null; epoch: number; turn_seq: number }>();
+  #turnAuthorizations = new Map<string, string>();
+
+  /** Bind subsequent business tools to one immutable delivery, without ending this turn. */
+  bindValidationTarget(actor: FlowAgentActor, tx: TransactionRecord): void {
+    this.assertActorFence(actor);
+    if (actor.role !== 'orchestrator' || tx.cluster_id !== actor.cluster_id || !this.domainNodeIds(actor, actor.cluster_id).has(tx.node_id)) fail('validation target is outside the management domain', 403);
+    if (tx.status !== 'SUBMITTED' || !tx.current_plan_ref || !tx.current_result_ref) fail('validation target needs a current submitted result', 409);
+    const agent = this.store.getAgent(actor.agent_id) ?? fail('Agent not found', 404);
+    const target = { transaction_id: tx.id, plan_ref: tx.current_plan_ref, result_ref: tx.current_result_ref,
+      epoch: actor.epoch ?? 0, turn_seq: actor.turn_seq ?? agent.turns + 1 };
+    this.#validationTargets.set(actor.agent_id, target);
+    this.store.appendEvent(actor.cluster_id, 'validation-target-bound', { agent_id: actor.agent_id, target: asJsonValue(target) });
+  }
+
+  /** Acceptance waits for every tool bound to this immutable delivery. */
+  assertValidationExecutionSettled(clusterId: string, tx: TransactionRecord): void {
+    if (tx.cluster_id !== clusterId) fail('validation execution belongs to another cluster', 403);
+    if (!tx.current_result_ref) return;
+    const calls = this.store.all("SELECT data FROM events WHERE cluster_id=? AND type IN ('manager-tool-bound','manager-artifacts-observed') AND json_extract(data,'$.transaction_id')=? AND json_extract(data,'$.result_ref.publication_event_seq')=?", tx.cluster_id, tx.id, tx.current_result_ref.publication_event_seq);
+    for (const row of calls) {
+      const binding = jsonRecordOf(decodeJson(String(row.data)));
+      const receipt = typeof binding?.call_id === 'string' ? this.store.getToolCallReceipt(binding.call_id) : null;
+      if (receipt && ['ADMITTED', 'DISPATCHED'].includes(receipt.dispatch_status)) fail(`validation waits for manager tool ${receipt.call_id}`, 409);
+      const effect = typeof binding?.call_id === 'string' ? this.store.getEffect(binding.call_id) : null;
+      if (!effect) continue;
+      if (['STARTED', 'UNKNOWN', 'EFFECT_UNCERTAIN'].includes(effect.status)) fail(`validation waits for unsettled manager effect ${effect.call_id}`, 409);
+      const agent = this.store.getAgent(effect.agent_id);
+      if (agent && effect.job_id && this.#jobUnsettled(agent, effect.job_id)) fail(`validation waits for manager background job ${effect.job_id}`, 409);
+    }
+    if (this.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='manager-result-mutated' AND json_extract(data,'$.transaction_id')=? AND json_extract(data,'$.result_ref.publication_event_seq')=? LIMIT 1", clusterId, tx.id, tx.current_result_ref.publication_event_seq)) fail('the published artifact changed during manager execution; publish a new corrected result before validation', 409);
+  }
+
+  #toolWritePaths(cluster: ClusterRecord, exec: ToolDispatchExecution): string[] {
+    if (!MUTATING_EFFECT_TOOLS.has(exec.name) || exec.name === 'job_kill') return [];
+    const requested = exec.name === 'bash' ? '.' : requestedPath(exec);
+    const path = requested === null ? null : canonicalTarget(cluster.workspace, requested);
+    return path === null ? [] : [path];
+  }
+
+  /** Pure ledger guard: terminal native jobs need an outside-transaction observation first. */
+  #jobUnsettled(agent: AgentRecord, jobId: string): boolean {
+    const job = this.ctx.get('jobs')?.list(SessionId(agent.session_id)).find(item => item.id === jobId);
+    if (job && ['running', 'stopping'].includes(job.status)) return true;
+    return !this.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='job-terminal-observed' AND json_extract(data,'$.agent_id')=? AND json_extract(data,'$.job_id')=? LIMIT 1", agent.cluster_id, agent.id, jobId);
+  }
+
+  /** Compare admission snapshots without opening a ledger transaction. */
+  #artifactMutations(agent: AgentRecord, callId: string): Record<string, FlowJsonValue>[] {
+    const workspace = this.store.getCluster(agent.cluster_id)?.workspace;
+    if (!workspace) return [];
+    const scan = { entries: 0, bytes: 0 };
+    return this.store.all("SELECT data FROM events WHERE cluster_id=? AND type='manager-artifacts-observed' AND json_extract(data,'$.call_id')=? AND json_extract(data,'$.agent_id')=?", agent.cluster_id, callId, agent.id).flatMap(row => {
+      const observed = jsonRecordOf(decodeJson(String(row.data)));
+      const hashes = jsonRecordOf(observed?.artifact_hashes);
+      let observationError: string | null = null;
+      const changed = hashes ? Object.keys(hashes).filter(path => {
+        try { return artifactHash(path, workspace, scan) !== hashes[path]; }
+        catch (error) { observationError = messageOf(error); return true; }
+      }) : [];
+      return observed && changed.length ? [{ transaction_id: asJsonValue(observed.transaction_id),
+        plan_ref: asJsonValue(observed.plan_ref), result_ref: asJsonValue(observed.result_ref), paths: changed,
+        ...(observationError ? { observation_error: observationError } : {}) }] : [];
+    });
+  }
+
+  /** Only synchronous ledger mutations belong here; hashes were already read. */
+  #recordArtifactMutations(agent: AgentRecord, callId: string, mutations: readonly Record<string, FlowJsonValue>[]): void {
+    const cluster = this.store.getCluster(agent.cluster_id);
+    if (!cluster) return;
+    for (const mutation of mutations) {
+      const ref = jsonRecordOf(mutation.result_ref);
+      const duplicate = this.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='manager-result-mutated' AND json_extract(data,'$.call_id')=? AND json_extract(data,'$.transaction_id')=? AND json_extract(data,'$.result_ref.publication_event_seq')=? LIMIT 1", agent.cluster_id, callId, String(mutation.transaction_id), Number(ref?.publication_event_seq));
+      if (duplicate) continue;
+      const details = { ...mutation, agent_id: agent.id, call_id: callId };
+      this.store.appendEvent(agent.cluster_id, 'manager-result-mutated', details);
+      const tx = typeof mutation.transaction_id === 'string' ? this.store.getTransaction(mutation.transaction_id) : null;
+      if (tx && sameRef(tx.current_plan_ref, mutation.plan_ref) && sameRef(tx.current_result_ref, mutation.result_ref)) invalidatePublishedArtifact(this, cluster, tx, details);
+    }
+  }
+
+  /** Reconcile background outputs before admission/scheduling, never inside a command transaction. */
+  #refreshFinishedJobs(clusterId: string): void {
+    if (this.store.inTransaction) return;
+    for (const row of this.store.all('SELECT DISTINCT agent_id,session_id,job_id FROM effects WHERE cluster_id=? AND job_id IS NOT NULL', clusterId)) {
+      const agent = this.store.getAgent(String(row.agent_id));
+      if (!agent || agent.session_id !== row.session_id) continue;
+      const jobId = String(row.job_id);
+      if (this.store.get("SELECT seq FROM events WHERE cluster_id=? AND type='job-terminal-observed' AND json_extract(data,'$.agent_id')=? AND json_extract(data,'$.job_id')=? LIMIT 1", clusterId, agent.id, jobId)) continue;
+      const job = this.ctx.get('jobs')?.list(SessionId(agent.session_id)).find(item => item.id === jobId);
+      if (job && ['running', 'stopping'].includes(job.status)) continue;
+      // Missing process-local state remains uncertain until the host explicitly
+      // resolves its effect. Merely losing the job registry is not completion.
+      if (!job && !this.store.get("SELECT v.seq FROM effects e JOIN events v ON v.cluster_id=e.cluster_id AND v.type='effect-resolved' AND json_extract(v.data,'$.call_id')=e.call_id WHERE e.agent_id=? AND e.session_id=? AND e.job_id=? LIMIT 1", agent.id, agent.session_id, jobId)) continue;
+      const observations = this.store.all('SELECT call_id FROM effects WHERE cluster_id=? AND agent_id=? AND session_id=? AND job_id=?', clusterId, agent.id, agent.session_id, jobId)
+        .map(effect => ({ callId: String(effect.call_id), mutations: this.#artifactMutations(agent, String(effect.call_id)) }));
+      this.store.tx(() => {
+        for (const observation of observations) this.#recordArtifactMutations(agent, observation.callId, observation.mutations);
+        this.store.appendEvent(clusterId, 'job-terminal-observed', { agent_id: agent.id, session_id: agent.session_id, job_id: jobId, status: job?.status ?? 'resolved' });
+      });
+    }
+  }
+
+  #hasRunningJob(agent: AgentRecord): boolean {
+    return this.store.all('SELECT DISTINCT job_id FROM effects WHERE cluster_id=? AND agent_id=? AND session_id=? AND job_id IS NOT NULL', agent.cluster_id, agent.id, agent.session_id)
+      .some(row => this.#jobUnsettled(agent, String(row.job_id)));
+  }
+
+  #toolAuthorization(agent: AgentRecord, exec: ToolDispatchExecution, callId: string, recheck = false): ToolAdmission {
+    const cluster = this.store.getCluster(agent.cluster_id) ?? fail('Cluster not found', 404);
+    const allocation = this.store.activeAllocationForAgent(agent.id);
+    if (!exec.name.startsWith('flow_') && agent.role !== 'orchestrator') {
+      const capabilities = agent.role === 'worker' ? allocation?.capabilities ?? agent.capabilities : [];
+      if (!toolsForCapabilities(capabilities).includes(exec.name)) return { ok: false, reason: `${exec.name} is outside this agent's current capability grant` };
+    }
+    let writeScope = allocation?.write_scope ?? [], canonical = allocation?.write_scope_canonical ?? null;
+    if (agent.role === 'orchestrator') {
+      try {
+        const node = this.store.getNode(agent.node_id) ?? fail('Node not found', 404);
+        const authority = resolveManagementAuthorization(cluster, node, id => this.store.getNode(id));
+        const serialized = JSON.stringify(managementAuthorizationJson(authority));
+        const captured = this.#turnAuthorizations.get(agent.id);
+        if (captured !== undefined && captured !== serialized) return { ok: false, reason: 'management execution authorization changed during this turn' };
+        if (!exec.name.startsWith('flow_') && !toolsForCapabilities(authority.capabilities).includes(exec.name)) return { ok: false, reason: `${exec.name} is outside the management capability grant` };
+        if (recheck && !CONTROL_TOOLS.has(exec.name)) {
+          const row = this.store.get("SELECT data FROM events WHERE cluster_id=? AND type='manager-tool-bound' AND json_extract(data,'$.call_id')=? ORDER BY seq DESC LIMIT 1", agent.cluster_id, callId);
+          const admission = row ? jsonRecordOf(decodeJson(String(row.data))) : null;
+          if (!admission || JSON.stringify(admission.execution_authorization) !== serialized) return { ok: false, reason: 'management execution authorization changed before dispatch' };
+        }
+        writeScope = authority.write_scope; canonical = authority.write_scope_canonical;
+      } catch (error) { return { ok: false, reason: messageOf(error) }; }
+    }
+    if (exec.name === 'job_output' || exec.name === 'job_kill') {
+      const id = jsonRecordOf(exec.arguments)?.job_id;
+      if (typeof id !== 'string' || !this.store.get('SELECT call_id FROM effects WHERE cluster_id=? AND agent_id=? AND session_id=? AND job_id=? LIMIT 1', agent.cluster_id, agent.id, agent.session_id, id)) return { ok: false, reason: 'job tools require a recorded job owned by this agent session' };
+    }
+    const decision = checkWriteAccess({ tool: exec.name, workspace: cluster.workspace, writeScope, writeScopeCanonical: canonical, arguments: exec.arguments });
+    if (!decision.allowed) return { ok: false, reason: decision.reason };
+    const paths = this.#toolWritePaths(cluster, exec);
+    if (!paths.length) return { ok: true };
+    const overlaps = (other: readonly string[]) => paths.some(path => other.some(entry => withinScope(path, entry) || withinScope(entry, path)));
+    // A manager owns no Worker allocation. Its short-lived mutation cannot race
+    // a live Worker whose allocation grants an overlapping file or directory.
+    if (agent.role === 'orchestrator') for (const active of this.store.allocationsInSubtree(cluster.id, null, { status: 'ACTIVE' })) {
+      if (active.agent_id === agent.id || !this.store.leaseForAgent(active.agent_id)) continue;
+      if (overlaps(active.write_scope_canonical ?? [])) return { ok: false, reason: `WRITE_CONFLICT: active Worker ${active.agent_id} owns an overlapping write scope; wait for its turn to settle` };
+    }
+    // Claim rows outlive their effects for traceability; only an in-flight or
+    // uncertain effect, or a still-running native job, holds a temporary lock.
+    const claims = this.store.all("SELECT e.call_id,e.agent_id,e.cluster_id,e.status,e.job_id,v.data FROM effects e JOIN events v ON v.type='tool-write-claim' AND json_extract(v.data,'$.call_id')=e.call_id WHERE e.call_id<>? AND (e.status IN ('STARTED','UNKNOWN','EFFECT_UNCERTAIN') OR e.job_id IS NOT NULL)", callId);
+    for (const claim of claims) {
+      const owner = this.store.getAgent(String(claim.agent_id));
+      const active = ['STARTED', 'UNKNOWN', 'EFFECT_UNCERTAIN'].includes(String(claim.status)) || Boolean(owner && claim.job_id && this.#jobUnsettled(owner, String(claim.job_id)));
+      const data = jsonRecordOf(decodeJson(String(claim.data)));
+      if (active && overlaps(jsonStringList(data?.paths))) return { ok: false, reason: `WRITE_CONFLICT: tool call ${String(claim.call_id)} holds an overlapping temporary write claim` };
+    }
+    return { ok: true };
+  }
+
+  #recordWriteRefusal(agent: AgentRecord, exec: ToolDispatchExecution, reason: string): void {
+    const transactionId = this.store.activeAllocationForAgent(agent.id)?.transaction_id ?? this.#validationTargets.get(agent.id)?.transaction_id ?? null;
+    const payload = { agent_id: agent.id, tool: exec.name, reason, transaction_id: transactionId };
+    this.store.appendEvent(agent.cluster_id, 'write-refused', payload);
+    const node = this.store.getNode(agent.node_id);
+    const managerNode = node?.kind === 'worker' ? node.parent_id : agent.node_id;
+    for (const role of MANAGEMENT_ROLES) this.notifyInternal(agent.cluster_id, this.roleAgentOf(agent.cluster_id, managerNode, role)?.id, { subject: 'write-refused', payload });
+  }
+
   #boundTurns = new Map<string, BoundTurn>();
   #agendaSnapshots = new Map<string, { actor: string; expires: number; version: number; items: readonly FlowAgendaItem[] }>();
   #contentSnapshots = new Map<string, { actor: string; kind: string; id: string; expires: number; values: Readonly<Record<string, unknown>>; identity: Readonly<Record<string, unknown>> }>();
@@ -5559,21 +5542,18 @@ case 'effects': {
     const transactionId = typeof boundSaved?.transaction_id === 'string' ? boundSaved.transaction_id
       : directTx?.id ?? subject?.transaction_id ?? subject?.transactions?.[0] ?? null;
     const tx = transactionId ? this.store.getTransaction(transactionId) : null;
-    const auditId = typeof jsonRecordOf(boundSaved?.object)?.id === 'string' && jsonRecordOf(boundSaved?.object)?.kind === 'audit'
-      ? String(jsonRecordOf(boundSaved?.object)?.id) : subject?.audit_id;
-    const audit = auditId ? this.store.getAudit(auditId) : null;
     const issue = subject?.issue_id ? this.store.getIssue(subject.issue_id) : null;
-    const planRef = pendingInput ? pendingInput.plan_ref : audit?.plan_ref ?? allocation?.plan_ref ?? tx?.current_plan_ref ?? null;
+    const planRef = pendingInput ? pendingInput.plan_ref : allocation?.plan_ref ?? tx?.current_plan_ref ?? null;
     const plan = this.store.getPlan(planRef);
     const contract = plan?.contract ?? tx;
-    const validationRef = audit?.validation_ref ?? tx?.current_validation_ref ?? null;
+    const validationRef = tx?.current_validation_ref ?? null;
     const validation = this.store.getValidation(validationRef);
     const result = this.store.getResult(validation?.result_ref ?? tx?.current_result_ref ?? null);
     const criterionEntries = plan?.criterion_responsibilities.filter(entry => agent.role !== 'worker' || entry.evidence_provider === 'worker')
       .map(entry => ({ ref: entry.criterion, text: this.store.getPlan(entry.criterion)?.contract.acceptance_criteria[entry.criterion.criterion_index] ?? null })) ?? [];
     const requirements = contract ? { objective: contract.objective, expected_output: contract.expected_output,
       acceptance_criteria: agent.role === 'worker' && plan ? criterionEntries : contract.acceptance_criteria } : { objective: node.scope?.objective ?? cluster.objective };
-    const object = audit ? { kind: 'audit', id: audit.id } : issue ? { kind: 'issue', id: issue.id }
+    const object = issue ? { kind: 'issue', id: issue.id }
       : tx ? { kind: 'transaction', id: tx.id } : { kind: 'node', id: node.id };
     const binding: FlowAssignmentBinding = pendingInput && boundSaved
       ? decodeAssignmentBinding(boundSaved)
@@ -5592,18 +5572,18 @@ case 'effects': {
     const workspace = `工作区：${cluster.workspace}`;
     const initialBusiness = agent.role === 'worker' ? plan?.assignment ?? tx?.objective ?? cluster.objective
       : agent.role === 'orchestrator' ? delegatedPlan?.assignment ?? String(node.scope?.objective ?? cluster.objective)
-      : `${agent.role === 'auditor' ? '当前审核事项的业务目标' : '当前资源事项的业务目标'}：${contract?.objective ?? node.scope?.objective ?? cluster.objective}`;
+      : `当前资源事项的业务目标：${contract?.objective ?? node.scope?.objective ?? cluster.objective}`;
     const constraintSubject = agent.role === 'worker' ? '关键限制'
       : `当前关联任务的交付限制（${contract?.objective ?? node.scope?.objective ?? cluster.objective}）`;
     const notice = this.#factNotice(agent.role, pending);
     const brief = pendingInput?.kind === 'initial' ? pendingInput.content : [initialBusiness,
       limits.length ? `${constraintSubject}：\n${limits.map(value => `- ${value}`).join('\n')}` : '', workspace,
       agent.role === 'worker' && allocation ? allocation.write_scope.length ? `实际写入授权范围：${allocation.write_scope.join('、')}` : '当前未授予文件写入范围。' : '',
-      agent.role === 'allocator' || agent.role === 'auditor' ? notice : '',
+      agent.role === 'orchestrator' ? `管理域执行能力：${resolveManagementAuthorization(cluster, node, id => this.store.getNode(id)).capabilities.join('、') || '无'}；写入授权范围：${resolveManagementAuthorization(cluster, node, id => this.store.getNode(id)).write_scope.join('、') || '无'}。验收前先 bind_validation 绑定当前任务交付；修改交付后必须重新提交结果。` : '',
+      agent.role === 'allocator' ? notice : '',
     ].filter(Boolean).join('\n\n');
     const mainSession = this.store.get('SELECT main_session_id FROM team_runs WHERE run_id=?', cluster.id)?.main_session_id;
     const author: FlowJsonValue = pendingInput ? pendingInput.author : (inputKind === 'wake' ? { kind: 'flow' }
-      : agent.role === 'auditor' ? { kind: 'flow', audit_id: audit?.id ?? null }
       : agent.role === 'allocator' ? { kind: 'flow', plan_ref: asJsonValue(planRef) }
       : plan ? { role: plan.author_role, agent_id: plan.author_agent_id }
       : delegatedPlan ? { role: delegatedPlan.author_role, agent_id: delegatedPlan.author_agent_id }
@@ -5615,11 +5595,19 @@ case 'effects': {
       notice: pendingInput?.kind !== 'initial' && pendingInput ? pendingInput.content : inputKind === 'revision' ? `正式任务或执行方案已修订，请核对变化并调整本轮工作。\n\n${agent.role === 'worker' ? plan?.assignment ?? '' : `当前业务目标：${contract?.objective ?? ''}\n${notice}`}\n${limits.length ? `${constraintSubject}：${limits.join('；')}` : ''}` : notice,
       previous_plan_ref: pendingInput ? pendingInput.previous_plan_ref : previous?.plan_ref ?? null,
       context: jsonRecordOf(boundSaved?.context_snapshot) ?? { requirements, constraints: contract?.constraints ?? [], inputs: contract?.inputs ?? {}, plan, allocation,
-        result: result ?? tx?.result ?? null, validation: validation ?? tx?.validation ?? null, audit, issue,
+        result: result ?? tx?.result ?? null, validation: validation ?? tx?.validation ?? null, issue,
         changes: { reason: notice, current_plan_ref: tx?.current_plan_ref ?? null, previous_plan_ref: previous?.plan_ref ?? null },
         evidence: { result_ref: result?.ref ?? tx?.current_result_ref ?? null, validation_ref: validationRef } },
     };
-    this.#boundTurns.set(agent.id, turn);
+    // The saved delivery is immutable even when its first native admission is
+    // retried. The live assignment still belongs to this lease and Flow turn.
+    this.#boundTurns.set(agent.id, { ...turn, binding: { ...binding,
+      epoch: this.store.leaseForAgent(agent.id)?.epoch ?? null, turn_seq: agent.turns + 1,
+    } });
+    if (agent.role === 'orchestrator') {
+      this.#turnAuthorizations.set(agent.id, JSON.stringify(managementAuthorizationJson(resolveManagementAuthorization(cluster, node, id => this.store.getNode(id)))));
+      this.#validationTargets.delete(agent.id);
+    }
     return turn;
   }
 
@@ -5641,11 +5629,6 @@ case 'effects': {
       if (actions.has('spawn_management_node')) notes.push('已有准备好的管理委派，请安排对应管理身份与资源。');
       if (actions.has('release_agent')) notes.push('有已结束或失效的执行分配，请回收资源并保留会话和结果。');
       if ([...actions].some(action => /budget|concurrency|scale/.test(action))) notes.push('有资源容量或预算问题需要处理。');
-    } else if (role === 'auditor') {
-      if (actions.has('inspect_plan')) notes.push('有新的执行方案待独立审核，请审查目标理解、分工、交接及验收安排。');
-      if (actions.has('inspect_validation')) notes.push('有新的调度验收记录待独立审核，请审查必要校验是否实际完成、方法和证据是否足以支持验收结论。');
-      if ([...actions].some(action => /correction|replan|review_issue/.test(action))) notes.push('有管理问题或补正材料待审查，请核对记录和真实证据。');
-      if (actions.has('evaluate_health')) notes.push('本管理域等待收尾评价，请依据实际信号评价管理行为。');
     } else notes.push('当前分配有待处理工作，请依据本轮任务说明执行并向调度 Agent 交付。');
     if (pending.some(item => item.kind === 'notification')) notes.push('你收到了新的运行事件或成员消息。');
     return notes.join('\n') || '当前没有新增待办，等待相关事件。';
@@ -5709,12 +5692,12 @@ case 'effects': {
     if (actorAgentId !== null && pendingRefusals?.length && result.deduped !== true) {
       // A corrective action for the *same* target closes a refusal: the action the
       // pending set advertises can change with the transaction's state (a branch that
-      // fails between the turn and the command moves from `request_replan` to
+      // fails between the turn and the command moves from `reopen_transaction` to
       // `escalate`), so the test is the target and the kind of act, never the exact
       // name — while an unrelated approval is not a correction at all.
-      const corrective = new Set(['request_replan', 'revise-plan', 'escalate']);
+      const corrective = new Set(['reopen_transaction', 'reject_result', 'adjust_transaction', 'escalate']);
       const matches = pendingRefusals.filter(entry => {
-        if (!corrective.has(action)) return false;
+        if (!corrective.has(action) && !(action === 'validate' && result.status === 'REJECTED')) return false;
         // Match either the transaction carried by a replan or the node carried
         // by an escalation; node-level actions need no transaction identifier.
         const targetsTransaction = Boolean(entry.transaction_id)
@@ -5875,9 +5858,8 @@ case 'effects': {
     const cluster = this.store.getCluster(clusterId);
     if (!cluster || !['RUNNING', 'BLOCKED'].includes(cluster.status)) return;
     // A management node is done when its whole subtree has accepted. Its
-    // closing sequence is the design's three finishing acts, in order: the
-    // Orchestrator's aggregation, the Allocator's capacity return, and the
-    // Auditor's final health evaluation. Only then is the node COMPLETED.
+    // final aggregation, capacity returns, native effects and active turns
+    // must settle before the node is COMPLETED.
     for (const node of this.store.nodesInSubtree(clusterId, null)) {
       if (node.kind !== 'management' || node.status === 'COMPLETED' || node.status === 'CANCELLED') continue;
       const counts = Object.fromEntries(this.store.countTransactionsInSubtree(clusterId, node.id).map(row => [row.status, Number(row.c)]));
@@ -5941,22 +5923,6 @@ case 'effects': {
     return booked + 1;
   }
 
-  /** A closeout counts only when this node's own Auditor scored all eight metrics after its request. */
-  #finalHealthDecision(clusterId: string, nodeId: string, auditorId: string | null): string | null {
-    if (!auditorId) return null;
-    const marker = this.store.get('SELECT rowid FROM health WHERE id=? AND cluster_id=?',
-      `${clusterId}:${nodeId}:final`, clusterId);
-    if (!marker) return null;
-    const scored = this.store.get(
-      `SELECT h.* FROM health h WHERE h.cluster_id=? AND h.node_id=?
-         AND h.evaluation_window='subtree-close' AND h.decided=1 AND h.decided_by=? AND h.rowid>?
-         ORDER BY h.rowid DESC LIMIT 1`,
-      clusterId, nodeId, auditorId, marker.rowid);
-    const scores = jsonRecordOf(scored ? decodeJson(scored.scores) : null);
-    return scores && HEALTH_METRICS.every(metric => typeof scores[metric] === 'number' && Number.isFinite(scores[metric]))
-      ? textField(scored?.id, 'health.id', 128) : null;
-  }
-
   #completeManagementNode(cluster: ClusterRecord, node: NodeRecord, total: number): void {
     if (!node.parent_id && !this.store.get(
       "SELECT seq FROM events WHERE cluster_id=? AND type='cluster-finish-requested' AND json_extract(data,'$.node_id')=? ORDER BY seq DESC LIMIT 1",
@@ -5969,36 +5935,22 @@ case 'effects': {
       if (delegated && !['ACCEPTED', 'CANCELLED', 'SUPERSEDED'].includes(delegated.status)) return;
     }
     // Wait for the node's roles to finish their closing actions: capacity
-    // return, health evaluation and result aggregation. The next scheduling
+    // return and result aggregation. The next scheduling
     // pass retries; #abortHungTurns still bounds stalled turns.
-    const managementRoles: readonly FlowAgentRole[] = ['orchestrator', 'allocator', 'auditor'];
+    const managementRoles = MANAGEMENT_ROLES;
     const liveRoles = managementRoles
       .map(role => this.roleAgentOf(cluster.id, node.id, role))
       .filter(roleAgent => roleAgent && this.#activeTurns.has(roleAgent.id));
     if (liveRoles.length) return;
-    const healthId = `${cluster.id}:${node.id}:final`;
-    if (!this.store.get('SELECT id FROM health WHERE id=?', healthId)) {
-      // The summary is durable before the request. Leave the Auditor's grant
-      // and its parent node pool intact until the real final judgement settles.
-      this.store.tx(() => {
-        const summary = writeNodeSummary(this, cluster, node.id);
-        this.store.insertHealth({
-          id: healthId, cluster_id: cluster.id, node_id: node.id,
-          evaluation_window: 'subtree-close', signals: asJsonValue(this.healthSignals(cluster.id)),
-          scores: {}, weights: {}, decided: false, decided_by: null,
-        });
-        this.store.appendEvent(cluster.id, 'management-closeout-requested', {
-          node_id: node.id, health_id: healthId, summary_id: summary?.id ?? null,
-        });
-      });
-      return;
-    }
-    const auditor = this.roleAgentOf(cluster.id, node.id, 'auditor');
-    const scored = this.#finalHealthDecision(cluster.id, node.id, auditor?.id ?? null);
-    if (!scored) return;
+    const members = this.store.agentsInSubtree(cluster.id, node.id);
+    if (members.some(member => this.#activeTurns.has(member.id) || this.store.leaseForAgent(member.id))) return;
+    if (this.store.effectsAll(cluster.id).some(effect => members.some(member => member.id === effect.agent_id)
+      && ['STARTED', 'UNKNOWN', 'EFFECT_UNCERTAIN'].includes(effect.status))) return;
+    if (members.some(member => this.#hasRunningJob(member))) return;
+    if (this.store.childrenOf(node.id).some(child => child.kind === 'management' && !['COMPLETED', 'CANCELLED', 'RELEASED'].includes(child.status))) return;
     this.store.tx(() => {
-      // Only after the Auditor's turn ends can the Allocator refund its idle
-      // grant. Returning it on the request pass would make scoring impossible.
+      // Completed turns and settled effects permit returning the remaining capacity.
+      writeNodeSummary(this, cluster, node.id);
       const budget = this.store.budgetForScope(cluster.id, 'node', node.id);
       if (budget) this.reclaimAllIdleGrants(cluster.id, budget.id);
       const remaining = budget ? this.store.getBudget(budget.id) : null;
@@ -6030,7 +5982,7 @@ case 'effects': {
       this.store.updateNode(node.id, { status: 'COMPLETED' });
       this.store.appendEvent(cluster.id, 'management-node-completed', {
         node_id: node.id, transactions: total, returned_budget: returned,
-        health_id: scored, summary_id: summary?.id ?? null,
+        summary_id: summary?.id ?? null,
       });
     });
   }
@@ -6162,11 +6114,9 @@ function decodeAssignmentBinding(row: Record<string, unknown>): FlowAssignmentBi
 function agendaKind(action: string): FlowAgendaKind {
   if (action === 'prepare-plan' || action === 'dispatch' || action === 'decompose') return 'prepare_plan';
   if (action === 'allocate_agent' || action === 'spawn_management_node') return 'arrange_execution';
-  if (action === 'inspect_plan') return 'review_plan';
   if (action === 'validate') return 'validate_result';
-  if (action === 'inspect_validation') return 'review_validation';
   if (action === 'aggregate') return 'aggregate';
-  if (action === 'finish_cluster' || action === 'evaluate_health' || action === 'report-to-parent') return 'closeout';
+  if (action === 'finish_cluster' || action === 'report-to-parent') return 'closeout';
   if (action === 'inbox') return 'notification';
   if (/budget|release_agent|allocation|scale|concurrency/.test(action)) return 'resources';
   return 'correction';
@@ -6243,11 +6193,78 @@ function transactionReference(tx: TransactionRecord): FlowTransactionReference {
 }
 
 
+/** Hash only explicitly declared artifacts, with bounded reads and stable directory order. */
+interface ArtifactScan { entries: number; bytes: number }
+const ARTIFACT_SCAN_MAX_ENTRIES = 10_000;
+const ARTIFACT_SCAN_MAX_BYTES = 256 * 1024 * 1024;
+function artifactHash(path: string, workspace: string, scan: ArtifactScan, depth = 0, ancestors = new Set<string>()): string {
+  if (++scan.entries > ARTIFACT_SCAN_MAX_ENTRIES || depth > 64) throw new Error('ARTIFACT_SCAN_LIMIT: declared artifacts exceed 10000 entries or 64 directory levels; narrow the published artifact paths before executing this mutation');
+  const root = canonicalScopeEntry(workspace, '.');
+  const canonical = canonicalTarget(workspace, path);
+  if (!root || !canonical) return 'unresolvable';
+  if (!withinScope(canonical, root)) return 'outside-workspace';
+  let fd: number | null = null;
+  try {
+    const entry = lstatSync(path);
+    const link = entry.isSymbolicLink() ? readlinkSync(path) : null;
+    const stat = statSync(path);
+    const hash = createHash('sha256').update(JSON.stringify({ canonical, link }));
+    if (stat.isDirectory()) {
+      if (ancestors.has(canonical)) return `directory-cycle:${canonical}`;
+      const next = new Set(ancestors).add(canonical);
+      hash.update('directory');
+      for (const name of readdirSync(path).sort()) hash.update(JSON.stringify([name, artifactHash(join(path, name), workspace, scan, depth + 1, next)]));
+      return hash.digest('hex');
+    }
+    if (!stat.isFile()) return hash.update('non-file').digest('hex');
+    if (stat.size + scan.bytes > ARTIFACT_SCAN_MAX_BYTES) throw new Error('ARTIFACT_SCAN_LIMIT: declared artifacts exceed 256 MiB; narrow the published artifact paths before executing this mutation');
+    hash.update('file');
+    fd = openSync(path, 'r');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const bytes = readSync(fd, buffer, 0, buffer.length, null);
+      if (!bytes) break;
+      scan.bytes += bytes;
+      if (scan.bytes > ARTIFACT_SCAN_MAX_BYTES) throw new Error('ARTIFACT_SCAN_LIMIT: declared artifacts exceed 256 MiB; narrow the published artifact paths before executing this mutation');
+      hash.update(buffer.subarray(0, bytes));
+    }
+    return hash.digest('hex');
+  } catch (error) {
+    if (messageOf(error).startsWith('ARTIFACT_SCAN_LIMIT:')) throw error;
+    return `unreadable:${(error as NodeJS.ErrnoException).code ?? 'unknown'}`;
+  } finally { if (fd !== null) closeSync(fd); }
+}
+function artifactHashes(workspace: string, result: unknown, scan: ArtifactScan): Record<string, string> {
+  const paths = new Set<string>();
+  const visit = (value: unknown, pathContext = false): void => {
+    if (typeof value === 'string') { if (pathContext && !/^[a-z]+:\/\//i.test(value)) paths.add(value); return; }
+    if (Array.isArray(value)) { for (const item of value) visit(item, pathContext); return; }
+    const object = jsonRecordOf(value);
+    if (!object) return;
+    for (const [key, child] of Object.entries(object)) {
+      if (['paths', 'files', 'artifacts', 'path', 'file_path', 'file', 'filepath'].includes(key)) visit(child, true);
+      else if (typeof child === 'object' && child !== null) visit(child, false);
+    }
+  };
+  visit(result);
+  const root = canonicalScopeEntry(workspace, '.');
+  const hashes: Record<string, string> = {};
+  for (const path of paths) {
+    const canonical = canonicalTarget(workspace, path);
+    // Preserve the logical path so a later symlink replacement is observable.
+    if (root && canonical && withinScope(canonical, root)) {
+      const logical = resolve(workspace, path);
+      hashes[logical] = artifactHash(logical, workspace, scan);
+    }
+  }
+  return hashes;
+}
+
 /**
  * Capture a real web_fetch receipt: the runtime, not the model, records what
  * was actually fetched, when, its hash and the returned text.
  */
-function captureSource(agent: AgentRecord, exec: ToolDispatchExecution, result: ToolExecutionResult) {
+function captureSource(agent: AgentRecord, exec: ToolDispatchExecution, result: ToolExecutionResult, transactionId: string | null) {
   if (exec.name !== 'web_fetch') return null;
   const value = jsonRecordOf(result.value);
   if (!value) return null;
@@ -6259,7 +6276,7 @@ function captureSource(agent: AgentRecord, exec: ToolDispatchExecution, result: 
   const requestUrl = typeof argumentsFields?.url === 'string' ? argumentsFields.url : url;
   return {
     id: randomUUID(), cluster_id: agent.cluster_id, agent_id: agent.id, node_id: agent.node_id,
-    transaction_id: agent.meta?.transaction_id ?? null,
+    transaction_id: transactionId,
     request_url: requestUrl, final_url: url,
     status_code: typeof value.statusCode === 'number' ? value.statusCode : null,
     fetched_at: Date.now(), hash: sha1(text), bytes: Buffer.byteLength(text), text: text.slice(0, 512 * 1024),

@@ -154,6 +154,7 @@ export interface RunSpec {
   objective: string;
   workspace: string;
   capabilities: readonly string[];
+  managementCapabilities?: readonly string[];
   limits: Record<string, number>;
   budget: Record<string, number>;
   initial_transactions?: readonly SpecTransaction[];
@@ -227,7 +228,7 @@ export interface StoneLedger {
   leases?: LedgerRow | undefined;
   lease_rows?: LedgerRow[] | undefined;
   effects?: LedgerRow[] | undefined;
-  audits?: LedgerRow[] | undefined;
+  validations?: LedgerRow[] | undefined;
   issues?: LedgerRow[] | undefined;
   deliveries?: LedgerRow[] | undefined;
   budget_refusals?: number | null | undefined;

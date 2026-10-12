@@ -60,7 +60,7 @@ export default defineConfig({
             collapsed: false,
             items: [
               { text: '控制平面与调度', link: '/development/components/control-plane' },
-              { text: '任务单元与独立审计', link: '/development/components/transactions' },
+              { text: '任务单元与业务验收', link: '/development/components/transactions' },
               { text: '执行分配与组织调整', link: '/development/components/allocation' },
               { text: '智能体运行时', link: '/development/components/runtime' },
               { text: '持久化与恢复', link: '/development/components/persistence' },

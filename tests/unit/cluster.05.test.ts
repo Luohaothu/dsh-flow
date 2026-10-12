@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -120,7 +120,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -187,27 +187,26 @@ test('the inbox is real work: an event becomes an action and is consumed by the 
   const clusterId = startCluster(runtime, { limits: { max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 4 } });
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'allocator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
-  // A real producer: dispatch notifies the Auditor that there is a plan to
-  // inspect.
+  // A real producer: dispatch notifies the Allocator that a plan is ready.
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const queued = runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'PENDING' });
-  assert.ok(queued.length >= 1, 'dispatch queues a plan-audit request');
-  assert.equal(queued.some(row => row.subject === 'plan-audit-requested'), true);
+  const queued = runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: 'PENDING' });
+  assert.ok(queued.length >= 1, 'dispatch queues a allocation request');
+  assert.equal(queued.some(row => row.subject === 'plan-dispatched'), true);
 
   runtime.enableScheduling();
   const held = await runtime.acquireLlmSlot(clusterId);
   await runtime.tick();
   held();
-  const consumed = runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'CONSUMED' });
-  assert.ok(consumed.length >= 1, `the Auditor's turn consumed what it was asked to do: ${JSON.stringify(runtime.store.all('SELECT subject,status FROM inbox WHERE cluster_id=?', clusterId))}`);
+  const consumed = runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: 'CONSUMED' });
+  assert.ok(consumed.length >= 1, `the Allocator's turn consumed what it was asked to do: ${JSON.stringify(runtime.store.all('SELECT subject,status FROM inbox WHERE cluster_id=?', clusterId))}`);
   const actions = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'turn-actions');
   const inboxAction = actions.find(event => numberOf(jsonObject(event.data, 'turn-actions data').inbox_consumed, 0, 1e9, 'inbox_consumed') > 0);
   assert.ok(inboxAction, 'the turn records the actions it took');
   assert.ok(arrayOf05(jsonObject(inboxAction.data, 'turn-actions data').actions, 'actions').includes('inbox'), `the action list names the inbox: ${JSON.stringify(inboxAction.data)}`);
-  assert.equal(runtime.store.countInbox(clusterId, { recipient: auditor.agent_id, status: 'PENDING' }), 0, 'nothing is left pending for that decision');
+  assert.equal(runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: 'PENDING' }).filter(row => queued.some(original => original.id === row.id)).length, 0, 'nothing is left pending for that decision');
 });
 
 test('stale work, anomalies and load are published to the roles that own them', async t => {
@@ -218,7 +217,7 @@ test('stale work, anomalies and load are published to the roles that own them', 
   });
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
 
@@ -229,14 +228,14 @@ test('stale work, anomalies and load are published to the roles that own them', 
 
   // A turn may already have consumed the row, so the fact is asserted across
   // every status: the queue is the delivery mechanism, the row is the evidence.
-  const stale = runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: null }).filter(row => row.subject === 'transaction-stale');
-  assert.equal(stale.length, 1, 'the Auditor is told the work is stale');
+  const stale = runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: null }).filter(row => row.subject === 'transaction-stale');
+  assert.equal(stale.length, 1, 'the Orchestrator is told the work is stale');
   assert.equal(numberOf(jsonObject(firstOf(stale, 'stale inbox row').payload, 'stale payload').stale_ms, 0, 1e9, 'stale_ms') >= 1000, true, `the staleness is measured: ${JSON.stringify(firstOf(stale, 'stale inbox row').payload)}`);
   assert.ok(runtime.store.countInbox(clusterId, { status: 'PENDING' }) >= 1);
 
   // A second tick must not queue the same fact twice.
   await runtime.tick();
-  assert.equal(runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: null }).filter(row => row.subject === 'transaction-stale').length, 1,
+  assert.equal(runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: null }).filter(row => row.subject === 'transaction-stale').length, 1,
     'the same revision is reported once');
 
   // Saturation is a load signal for the Allocator.
@@ -249,7 +248,7 @@ test('stale work, anomalies and load are published to the roles that own them', 
   assert.equal(numberOf(jsonObject(firstOf(load, 'load inbox row').payload, 'load payload').max_active_agents, 0, 1e9, 'max_active_agents'), 1);
 
   // A failed model request is an anomaly for the Allocator.
-  runtime.recordAgentAnomaly(runtime.store.getAgent(auditor.agent_id), { code: 'PI_AI_ERROR', message: 'the route refused the request' });
+  runtime.recordAgentAnomaly(runtime.store.getAgent(validationOwner.agent_id), { code: 'PI_AI_ERROR', message: 'the route refused the request' });
   const anomaly = runtime.store.listInbox(clusterId, { recipient: allocator.agent_id, status: null }).filter(row => row.subject === 'agent-anomaly');
   assert.ok(anomaly.length >= 1, 'the anomaly reaches the Allocator');
   const anomalyFound = anomaly.find(row => jsonObject(row.payload, 'anomaly payload').code === 'PI_AI_ERROR');
@@ -262,10 +261,9 @@ test('stale READY work and budget notices do not wake roles that cannot allocate
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  runtime.notifyInternal(clusterId, auditor.agent_id, {
+  runtime.notifyInternal(clusterId, validationOwner.agent_id, {
     subject: 'transaction-stale', payload: { transaction_id: tx.id, status: 'READY' },
   });
   for (const subject of ['transaction-stale', 'budget-refused', 'child-blocked']) {
@@ -275,14 +273,14 @@ test('stale READY work and budget notices do not wake roles that cannot allocate
   }
   const pending = (role: FlowAgentRole) => runtime.pendingFor(role, root, required(runtime.store.getCluster(clusterId), 'cluster'),
     runtime.store.getAgent(actorFor(runtime, clusterId, role, root.id).agent_id));
-  assert.equal(pending('auditor').some(item => item.action === 'inbox'), false,
-    'the Auditor still receives the fact, but cannot allocate the stale READY transaction');
+  assert.equal(pending('orchestrator').some(item => item.action === 'inbox'), false,
+    'the Orchestrator still receives the fact, but cannot allocate the stale READY transaction');
   assert.equal(pending('orchestrator').some(item => item.action === 'inbox'), false,
     'a planning role cannot fix a temporary budget stop without an actionable local transaction');
   assert.ok(pending('allocator').some(item => item.action === 'allocate_agent'
     && 'transactions' in item && arrayOf05(item.transactions, 'allocatable transactions').includes(tx.id)));
-  assert.ok(runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'PENDING' })
-    .some(row => row.subject === 'transaction-stale'), 'the fact is queued for the next real Auditor turn');
+  assert.ok(runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: 'PENDING' })
+    .some(row => row.subject === 'transaction-stale'), 'the fact is queued for the next real Orchestrator turn');
   runtime.store.tx(() => runtime.store.updateTransaction(tx.id, {
     status: 'SUBMITTED', result: { evidence: 'ready for validation' },
   }));
@@ -298,7 +296,6 @@ test('a delegated parent is not stale while its child is still advancing', async
   });
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const parent = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'parent transaction');
   const child = textOf(jsonObject(firstOf(arrayOf05(command(runtime, orchestrator, 'decompose', {
     transaction_id: parent.id, children: [{ objective: 'produce delegated output', acceptance_criteria: ['the child ran'] }],
@@ -308,7 +305,6 @@ test('a delegated parent is not stale while its child is still advancing', async
   }).result.transaction_id, 'unrelated transaction');
   for (const id of [parent.id, child, unrelated]) {
     if (id !== parent.id) command(runtime, orchestrator, 'dispatch', { transaction_id: id });
-    command(runtime, auditor, 'inspect_plan', { transaction_id: id, decision: 'approve' });
   }
   assert.equal(runtime.store.parentsAwaitingChildren(clusterId, root.id).includes(parent.id), true);
   const old = now() - 60_000;
@@ -321,78 +317,26 @@ test('a delegated parent is not stale while its child is still advancing', async
   assert.equal(stale.includes(unrelated), true, 'a genuinely unhandled sibling is still reported');
 });
 
-test('a transaction modification reaches the other roles, and a goal change reaches all three', t => {
+test('a transaction modification reaches the other role, and a goal change reaches both managers', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
   runtime.store.tx(() => runtime.store.run("UPDATE inbox SET status='CONSUMED' WHERE cluster_id=?", clusterId));
   command(runtime, orchestrator, 'set_priority', { transaction_id: tx.id, priority: 5 });
   const modified = runtime.store.listInbox(clusterId, { status: 'PENDING' }).filter(row => row.subject === 'transaction-modified');
-  assert.ok(modified.length >= 2, `the change is routed to the roles that did not make it: ${JSON.stringify(modified.map(row => row.recipient))}`);
-  assert.equal(modified.some(row => row.recipient === auditor.agent_id), true, 'the Auditor supervises changes it did not make');
+  assert.ok(modified.length >= 1, `the change is routed to the roles that did not make it: ${JSON.stringify(modified.map(row => row.recipient))}`);
+  assert.equal(modified.some(row => row.recipient === allocator.agent_id), true, 'the Allocator sees the changed execution contract');
   assert.equal(modified.some(row => row.recipient === orchestrator.agent_id), false, 'the actor is not notified of its own change');
   void allocator;
 
   runtime.store.tx(() => runtime.store.run("UPDATE inbox SET status='CONSUMED' WHERE cluster_id=?", clusterId));
   command(runtime, orchestrator, 'adjust_transaction', { transaction_id: tx.id, objective: 'a different goal entirely' });
   const goal = runtime.store.listInbox(clusterId, { status: 'PENDING' }).filter(row => row.subject === 'goal-changed');
-  assert.equal(new Set(goal.map(row => row.recipient)).size, 3, 'a goal change reaches all three roles');
-});
-
-test('evaluate_health records the eight dimensions and refuses an invented one', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  runtime.store.tx(() => runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { ok: 1 } }));
-  command(runtime, orchestrator, 'validate', {
-    transaction_id: tx.id, accepted: true,
-    checks: [{ criterion: 'the result holds a value', passed: true, evidence: 'result.ok was recorded' }],
-  });
-  command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
-  const detail = runtime.query({ cluster_id: clusterId, role: 'user' }, 'transaction', { id: tx.id });
-  assert.deepEqual(detail.audits.map(({ kind, decision }) => [kind, decision]),
-    [['plan', 'APPROVED'], ['validation', 'APPROVED']],
-    'transaction detail exposes decided plan and validation reviews, not only pending requests');
-  assert.ok(detail.audits.every(audit => typeof audit.evidence === 'object'),
-    'the audit evidence is decoded for consumers');
-
-  const metrics = runtime.healthMetricNames();
-  assert.equal(metrics.length, 8);
-  assert.deepEqual(metrics, [
-    'transaction_coverage', 'decomposition_quality', 'responsiveness', 'planning_stability',
-    'goal_alignment', 'acceptance_quality', 'result_integration', 'escalation_quality',
-  ]);
-  const signals = runtime.healthSignals(clusterId);
-  assert.equal(signals.transaction_coverage, 1, 'the only root transaction is accepted');
-  assert.equal(signals.acceptance_quality, 1, 'and its checks carry evidence');
-  assert.equal(signals.goal_alignment, null, 'goal alignment is not computable deterministically');
-  assert.equal(typeof signals.decomposition_quality.orphans, 'number');
-
-  const dimensions = Object.fromEntries(metrics.map(metric => [metric, 0.5]));
-  const outcome = command(runtime, auditor, 'evaluate_health', { dimensions, weights: Object.fromEntries(metrics.map(metric => [metric, 1 / 8])) });
-  assert.ok(outcome.result.health_id);
-  const stored = required(runtime.store.latestHealth(clusterId), 'stored health');
-  assert.deepEqual(Object.keys(jsonObject(stored.scores, 'health scores')).sort(), [...metrics].sort());
-  assert.equal(stored.decided_by, auditor.agent_id);
-  assert.equal(stored.decided, 1);
-  assert.deepEqual(jsonObject(stored.signals, 'health signals').transaction_coverage, 1, 'the measured signals are stored next to the judgement');
-
-  assert.throws(() => command(runtime, auditor, 'evaluate_health', { dimensions: { invented_metric: 0.5 } }),
-    error => rejectionStatus(error) === 400 && /unknown health metric/.test(messageOf(error)));
-  assert.throws(() => command(runtime, auditor, 'evaluate_health', { dimensions: { transaction_coverage: 2 } }),
-    error => rejectionStatus(error) === 400 && /\[0,1\]/.test(messageOf(error)));
-  assert.throws(() => command(runtime, auditor, 'evaluate_health', { dimensions: { transaction_coverage: 0.5 }, weights: { transaction_coverage: 0.8 } }),
-    error => rejectionStatus(error) === 400 && /sum to 1/.test(messageOf(error)));
+  assert.equal(new Set(goal.map(row => row.recipient)).size, 2, 'a goal change reaches both roles');
 });
 
 test('transaction-scoped lifecycle control stays inside one subtree', t => {
@@ -400,7 +344,7 @@ test('transaction-scoped lifecycle control stays inside one subtree', t => {
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const parent = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'parent transaction');
   const child = textOf(jsonObject(firstOf(arrayOf05(command(runtime, orchestrator, 'decompose', {
     transaction_id: parent.id,
@@ -425,42 +369,7 @@ test('transaction-scoped lifecycle control stays inside one subtree', t => {
   assert.deepEqual(cancelled.result.cancelled, [child]);
   assert.equal(required(runtime.store.getTransaction(parent.id), 'parent transaction').status, 'READY', 'cancelling a child does not cancel its parent');
   assert.equal(required(runtime.store.getTransaction(sibling), 'sibling transaction').status, 'READY');
-  void auditor;
-});
-
-test('Auditor observations and recommendations are durable and routed without creating a blocking correction', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-
-  const notified = command(runtime, auditor, 'notify', {
-    transaction_id: tx.id, issue: 'the acceptance criteria name no artifact', severity: 'MAJOR', evidence: { checked: 'objective text' },
-  });
-  assert.ok(numberOf(notified.result.event_seq, 0, 1e9, 'event_seq') > 0);
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').status, 'DRAFT', 'a signal changes nothing');
-  command(runtime, auditor, 'notify', { transaction_id: tx.id });
-  const notifiedEvents = runtime.store.readEvents(clusterId, { limit: 500 })
-    .filter(event => event.type === 'auditor-notified');
-  assert.equal(notifiedEvents.length, 2);
-  assert.equal(jsonObject(firstOf(notifiedEvents, 'auditor-notified event').data, 'auditor-notified data').issue, 'the acceptance criteria name no artifact');
-
-  const recommended = command(runtime, auditor, 'recommend', {
-    transaction_id: tx.id, recommendation: 'split this into two transactions', expected_effect: 'shorter worker turns',
-  });
-  assert.equal(recommended.result.advisory, true);
-  assert.ok(numberOf(recommended.result.event_seq, 0, 1e9, 'event_seq') > numberOf(notified.result.event_seq, 0, 1e9, 'event_seq'));
-  assert.equal(runtime.store.openIssues(clusterId, { transaction_id: tx.id }).length, 0,
-    'only request_correction/replan should create a required-change issue');
-  assert.ok(runtime.store.listInbox(clusterId, { status: 'PENDING' })
-    .some(row => row.subject === 'auditor-recommended'));
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').status, 'READY',
-    'an observation or a suggestion cannot veto an otherwise actionable transaction');
-  void allocator;
+  void validationOwner;
 });
 
 test('a delegation chain descends one level per spawn, and the instruction wins', t => {
@@ -564,7 +473,7 @@ test('a delivery to an identity with no session yet is injected, not withheld', 
   });
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
+  const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'validationOwner agent');
   runtime.store.tx(() => {
     runtime.store.insertMessage({
       id: 'fresh-msg', cluster_id: clusterId, from_agent: agent.id, from_node: root.id,
@@ -574,7 +483,7 @@ test('a delivery to an identity with no session yet is injected, not withheld', 
   });
   const reconciled = await runtime.reconcileDeliveries(clusterId);
   assert.equal(reconciled.acknowledged, 0, 'nothing was injected yet, so nothing is acked');
-  assert.equal(required(runtime.store.getAgent(agent.id), 'auditor agent').status !== 'BLOCKED', true, 'and nothing is blocked for it');
+  assert.equal(required(runtime.store.getAgent(agent.id), 'validationOwner agent').status !== 'BLOCKED', true, 'and nothing is blocked for it');
 
   const collected = await runtime.collectDeliveries(agent);
   assert.deepEqual(collected.ids, ['fresh-msg'], 'the delivery is handed to the turn');
@@ -589,7 +498,7 @@ test('a stale transaction is reported once per revision, and a working one is no
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
   runtime.store.tx(() => runtime.store.run('UPDATE transactions SET created=?, updated=? WHERE id=?', clockNow - 60_000, clockNow - 60_000, tx.id));
@@ -600,7 +509,7 @@ test('a stale transaction is reported once per revision, and a working one is no
   await runtime.tick();
   const stale = runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'transaction-stale');
   assert.equal(stale.length, 1, `one report per revision, however many ticks pass: ${stale.length}`);
-  assert.equal(runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: null })
+  assert.equal(runtime.store.listInbox(clusterId, { recipient: validationOwner.agent_id, status: null })
     .filter(row => row.subject === 'transaction-stale').length, 1, 'and one notification per recipient');
 
   // A transaction whose identity holds a live lease is being worked on, not
@@ -657,70 +566,6 @@ test('stale notification reaches the ninth unreported transaction behind eight a
     .filter(event => event.type === 'transaction-stale').length, 9);
 });
 
-test('an audit that arrives after the cursor advanced is still decided', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-
-  // Two dispatches: the auditor's first turn sees both and its cursor moves to
-  // the second. A third dispatch then arrives *behind* the cursor.
-  const first = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: first.id });
-  const second = textOf(command(runtime, orchestrator, 'create_transaction', { objective: 'second', acceptance_criteria: ['x'] }).result.transaction_id, 'second transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: second });
-  assert.equal(runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id)).filter(item => item.action === 'inspect_plan').length, 2);
-  // The Auditor answers both, so the cursor is at the newest audit and the page
-  // is empty.
-  command(runtime, auditor, 'inspect_plan', { transaction_id: first.id, decision: 'approve' });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: second, decision: 'approve' });
-  const empty = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id));
-  assert.equal(empty.filter(item => item.action === 'inspect_plan').length, 0);
-
-  // A new plan audit arrives: it must be visible, not hidden behind the cursor.
-  const third = textOf(command(runtime, orchestrator, 'create_transaction', { objective: 'third', acceptance_criteria: ['x'] }).result.transaction_id, 'third transaction');
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: third, expected_output: 'anything' });
-  command(runtime, orchestrator, 'dispatch', { transaction_id: third });
-  const after = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id));
-  assert.equal(after.filter(item => item.action === 'inspect_plan').length, 1, 'the new plan is offered for inspection');
-  assert.equal(required(after.find(item => item.action === 'inspect_plan'), 'new plan audit').transaction_id, third);
-});
-
-test('a validation gate reaches the Auditor ahead of an older page of advisory plans', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  for (let index = 0; index < 8; index += 1) {
-    const id = textOf(command(runtime, orchestrator, 'create_transaction', {
-      objective: `plan ${index}`, acceptance_criteria: ['accepted'],
-    }).result.transaction_id, 'plan transaction');
-    command(runtime, orchestrator, 'dispatch', { transaction_id: id });
-  }
-  runtime.store.tx(() => runtime.store.updateTransaction(tx.id, {
-    status: 'SUBMITTED', result: { checked: true }, __bump_revision: false,
-  }));
-  command(runtime, orchestrator, 'validate', {
-    transaction_id: tx.id, accepted: true,
-    checks: [{ criterion: 'accepted', passed: true, evidence: 'recorded result checked' }],
-  });
-  assert.equal(runtime.store.pendingAudits(clusterId, { kind: 'plan' }).length, 9);
-  const offered = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
-    .filter(item => item.action.startsWith('inspect_'));
-  assert.equal(offered[0]?.action, 'inspect_validation',
-    'an independent plan-review backlog must not hide an acceptance-gating verdict');
-  assert.equal(offered[0]?.transaction_id, tx.id);
-  command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'root transaction').status, 'ACCEPTED');
-  assert.ok(runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'), runtime.store.getAgent(auditor.agent_id))
-    .some(item => item.action === 'inspect_plan'),
-  'the deferred advisory reviews remain available afterwards');
-});
-
 test('a turn that stops making progress is aborted, not left holding its transaction', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-hung-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -730,7 +575,7 @@ test('a turn that stops making progress is aborted, not left holding its transac
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000, maxTurnMs: 1_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'one worker transaction', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 2, max_llm_concurrency: 1, max_attempts: 1, max_corrections: 1, max_role_turns: 2,},
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 2 },
@@ -739,9 +584,6 @@ test('a turn that stops making progress is aborted, not left holding its transac
   const role = (name: FlowAgentRole) => actorFor(runtime, clusterId, name, root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, role('orchestrator'), 'dispatch', { transaction_id: tx.id });
-  // The Auditor decides the plan, so the management reserve is not held by a
-  // role with work of its own and a Worker slot is free.
-  command(runtime, role('auditor'), 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, role('allocator'), 'allocate_agent', { transaction_id: tx.id });
 
   // A turn that never returns: it holds its lease, its model permit and the
@@ -772,11 +614,9 @@ test('a RUNNING transaction whose turn vanished is returned to the scheduler', a
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   // A turn that died without its finisher: the transaction is RUNNING, no turn
   // is registered and no lease is live.

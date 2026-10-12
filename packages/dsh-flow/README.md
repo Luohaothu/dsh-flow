@@ -1,10 +1,10 @@
 # dsh-flow
 
-A hierarchical agent team for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), coordinated from the main conversation. The main Agent assesses the task, creates and monitors a team, sends instructions and finalizes completed runs. Each management node has an Orchestrator, Allocator and Auditor; Workers execute durable transactions under layered budgets and independent result review.
+A hierarchical agent team for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), coordinated from the main conversation. The main Agent assesses the task, creates and monitors a team, sends instructions and finalizes completed runs. Each management node has an Orchestrator and Allocator; Workers execute durable transactions under layered budgets. The Orchestrator checks deliverables against the formal criteria, and a positive `validate` atomically records validation and acceptance.
 
 The main conversation provides a team tree and topology view. Selecting an Agent opens its complete native conversation and trace. Active Agents accept messages through Flow scheduling; reclaimed Agents and terminal teams retain their records with input disabled. Inspectors and the sidebar provide read-only conversation views.
 
-See the repository [README](../../README.md) and [developer guide](../../docs/design/index.md) for the control model, deployment and validation.
+See the repository [README](https://github.com/Luohaothu/dsh-flow/blob/main/README.md) and [developer guide](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/index.md) for the control model, deployment and validation.
 
 ## Exports
 
@@ -38,6 +38,6 @@ Deployment parameters are validated by the schemastery schema in `src/config.ts`
 
 DSH owns model resolution, context capacity, output limits and official default compaction. Flow budgets cover tool calls, elapsed time, Agent identities and active execution capacity. Token statistics consume durable native Session events and preserve missing values and observation completeness. The UI distinguishes configured routes from the latest actual model request. Agent scheduling permits do not imply precise concurrency measurements for host auxiliary requests.
 
-The current data contract uses schema 4, including immutable task plans, published result snapshots, validation records and member input delivery identities. Use an empty database or a current schema database; old databases and retired configuration fields are rejected without migration or deletion. Select a new `dataDir` for old installations.
+The current data contract uses schema 5, including immutable task plans, published result snapshots, validation records and member input delivery identities. Use an empty database or a current schema database; old databases and retired configuration fields are rejected without migration or deletion. Select a new `dataDir` for old installations.
 
-The pinned host requires the public provider API patches included in this workspace. Use the frozen workspace install and its launcher. The [provider interface guide](../../docs/design/development/provider-interfaces.md) describes these dependencies, and the [validation guide](../../docs/design/development/validation.md) describes the checks.
+The pinned host requires the public provider API patches included in this workspace. Use the frozen workspace install and its launcher. The [provider interface guide](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/development/provider-interfaces.md) describes these dependencies, and the [validation guide](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/development/validation.md) describes the checks.

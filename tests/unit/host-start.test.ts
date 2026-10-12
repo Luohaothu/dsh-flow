@@ -53,7 +53,7 @@ test('service starts persist deployment defaults merged per field', t => {
     assert.equal(row.budget.max_active_agents, INTERACTIVE_BUDGET.max_active_agents);
     assert.ok(f.flow.events(row.id, {}).events.length > 0);
   }
-  const omitted = f.flow.start({ objective: 'omitted capabilities' });
+  const omitted = f.flow.start({ managementCapabilities: [], objective: 'omitted capabilities' });
   assert.deepEqual(omitted.cluster.capabilities, ['fs_read', 'fs_write']);
 });
 

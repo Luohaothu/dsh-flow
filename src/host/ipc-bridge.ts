@@ -353,6 +353,10 @@ function startRequest(payload: Record<string, unknown> | undefined): FlowStartRe
   const capabilities = Array.isArray(source.capabilities)
     ? source.capabilities.filter((entry): entry is string => typeof entry === 'string')
     : undefined;
+  const managementCapabilities = Array.isArray(source.managementCapabilities)
+    ? source.managementCapabilities.filter((entry): entry is string => typeof entry === 'string') : undefined;
+  const managementWriteScope = Array.isArray(source.managementWriteScope)
+    ? source.managementWriteScope.filter((entry): entry is string => typeof entry === 'string') : undefined;
   const acceptance = Array.isArray(source.acceptance_criteria)
     ? source.acceptance_criteria.filter((entry): entry is string => typeof entry === 'string')
     : undefined;
@@ -362,6 +366,8 @@ function startRequest(payload: Record<string, unknown> | undefined): FlowStartRe
     ...(stringField(source, 'id') === undefined ? {} : { id: stringField(source, 'id') }),
     ...(workspace === undefined ? {} : { workspace }),
     ...(capabilities === undefined ? {} : { capabilities }),
+    ...(managementCapabilities === undefined ? {} : { managementCapabilities }),
+    ...(managementWriteScope === undefined ? {} : { managementWriteScope }),
     ...(source.budget === undefined ? {} : { budget: objectField(source.budget) }),
     ...(source.limits === undefined ? {} : { limits: objectField(source.limits) }),
     ...(initial === undefined ? {} : { initial_transactions: initial }),

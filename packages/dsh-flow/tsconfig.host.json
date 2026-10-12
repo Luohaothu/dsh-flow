@@ -35,6 +35,7 @@
     "src/core/model.ts",
     "src/core/native-usage.ts",
     "src/core/model-selection.ts",
+    "src/core/management-authorization.ts",
     "src/core/protocol.ts",
     "src/core/role-tools.ts",
     "src/core/runtime.ts",

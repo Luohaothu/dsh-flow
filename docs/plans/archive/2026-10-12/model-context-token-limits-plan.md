@@ -1,5 +1,7 @@
 # Agent 上下文与模型执行限制移除方案
 
+> 历史归档（2026 年 10 月 12 日）：本文保留当时的方案与验证事实，不作为后续实现的执行指令。Auditor 角色、审核门禁及相关收尾流程以[当前移除方案](../../auditor-removal-plan.md)为准；其他内容须结合当前源码核对。见[归档索引](../README.md)。
+
 状态：已于 2026 年 10 月 8 日完整实施并通过验收，结果见[实施与验收记录](model-context-token-limits-validation.md)。方案源码核查基线为 `d2295af2098f8e64a59cec02827c03b3c0b90c34`，实际依赖为仓库锁定的 Harness `0.1.7-rc.2` 及补丁。
 
 Flow 以 DSH Agent 为最小操作单元，配置任务输入、结果交付和工具能力，并管理团队协作。模型解析、容量、输出和压缩全部由 DSH 实现。本次彻底删除 Flow 的上下文限制、输出截顶、累计 Token 预算和模型请求次数限制；统计改为消费宿主已经记录的用量。项目尚未稳定发布，直接采用新契约，不做历史兼容。
@@ -20,7 +22,7 @@ Flow 以 DSH Agent 为最小操作单元，配置任务输入、结果交付和�
 
 “使用最大上下文”表示 Flow 不再施加额外窗口限制，由 DSH 使用实际模型配置。DSH 可以按官方默认策略提前压缩；这不属于 Flow 需要覆盖的行为。模型容量缺失及服务错误同样由 DSH 处理。
 
-架构决策：[移除模型执行额度](../adr/0001-remove-flow-token-limits.md)、[采用新契约](../adr/0002-use-clean-resource-contract.md)、[Agent 职责归属](../adr/0003-use-host-model-capacity-and-compaction.md)。
+架构决策：[移除模型执行额度](../../../adr/0001-remove-flow-token-limits.md)、[采用新契约](../../../adr/0002-use-clean-resource-contract.md)、[Agent 职责归属](../../../adr/0003-use-host-model-capacity-and-compaction.md)。
 
 ## 职责与执行关系
 

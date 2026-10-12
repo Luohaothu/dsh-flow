@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -125,7 +125,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}, internals: FlowStartInternals = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -376,7 +376,7 @@ test('the scheduler never runs a Worker granted before its transaction revision'
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'write a scoped file', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2,
       max_role_turns: 6 },
@@ -452,7 +452,7 @@ test('a Worker can discover its management roles without reading sibling Workers
   };
   const visible = runtime.query(workerActor, 'agents', { limit: 10 }).items;
   assert.deepEqual(visible.filter(agent => agent.node_id === root.id).map(agent => agent.role).sort(),
-    ['allocator', 'auditor', 'orchestrator'], 'the Worker can address all three owning roles');
+    ['allocator', 'orchestrator'], 'the Worker can address both owning roles');
   assert.equal(visible.some(agent => agent.id === sibling.agent_id), false,
     'discovering the managers does not expose other Workers in their domain');
 });
@@ -462,7 +462,6 @@ test('acceptance closes an issue only when new Worker evidence answered it', t =
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const first = firstOf(runtime.store.rootTransactions(clusterId), 'first transaction');
   const second = { id: textOf(command(runtime, orchestrator, 'create_transaction', {
     objective: 'a second deliverable that is repaired after its issue',
@@ -475,7 +474,6 @@ test('acceptance closes an issue only when new Worker evidence answered it', t =
 
   for (const tx of [first, second]) {
     command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-    command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
     runtime.store.tx(() => {
       runtime.store.appendEvent(clusterId, 'result-submitted', { transaction_id: tx.id, result_completed: 0, revision: 2 });
       runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { completed: false }, __bump_revision: false });
@@ -507,7 +505,6 @@ test('acceptance closes an issue only when new Worker evidence answered it', t =
       transaction_id: tx.id, accepted: true,
       checks: [{ criterion: 'the deliverable exists', passed: true, evidence: 'recorded result checked' }],
     });
-    command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
     assert.equal(required(runtime.store.getTransaction(tx.id), 'validated transaction').status, 'ACCEPTED');
   }
 
@@ -526,24 +523,24 @@ test('a communication query returns the prefix view with the cursor of its read 
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
-  const publish = (key: string, value: unknown) => runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'publish', { key, value }));
+  const publish = (key: string, value: unknown) => runtime.store.tx(() => communicate(runtime.store, cluster, validationOwner, 'publish', { key, value }));
   publish('plan/alpha', { step: 1 });
   publish('result/beta', { ok: true });
   const before = runtime.store.latestEventSeq(clusterId);
 
-  const byPrefix = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { prefix: 'plan/' })));
+  const byPrefix = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, validationOwner, 'query', { prefix: 'plan/' })));
   assert.deepEqual(byPrefix.entries.map(entry => entry.key), ['plan/alpha'],
     'a prefix query returns that prefix and nothing else');
   assert.deepEqual(firstOf(byPrefix.entries, 'prefix entry').value, { step: 1 });
   assert.ok(required(byPrefix.cursor, 'cursor') >= before, 'the cursor is the read cut the snapshot came from');
 
-  const byKey = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { key: 'result/beta' })));
+  const byKey = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, validationOwner, 'query', { key: 'result/beta' })));
   assert.deepEqual(byKey.entries.map(entry => entry.key), ['result/beta']);
   assert.deepEqual(firstOf(byKey.entries, 'key entry').value, { ok: true });
 
-  const missing = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, auditor, 'query', { key: 'plan/absent' })));
+  const missing = queryView13(runtime.store.tx(() => communicate(runtime.store, cluster, validationOwner, 'query', { key: 'plan/absent' })));
   assert.deepEqual(missing.entries, [], 'an absent key is an empty view, not an error');
 });
 
@@ -552,11 +549,9 @@ test('an authorized Allocator spawns a Worker through spawn_agent', t => {
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
 
   const spawned = command(runtime, allocator, 'spawn_agent', { transaction_id: tx.id }).result;
   assert.equal(spawned.count, 1);

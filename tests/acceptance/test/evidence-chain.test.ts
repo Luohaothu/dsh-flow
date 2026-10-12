@@ -50,10 +50,10 @@ test('browser gate rejects launch failures and dashboards without an opened plug
   const data = join(root, 'data');
   mkdirSync(data);
   const db = new DatabaseSync(join(data, 'cluster.sqlite'));
-  db.exec('CREATE TABLE effects (cluster_id TEXT, tool TEXT, status TEXT, call_id TEXT, args TEXT, body TEXT);'
+  db.exec("CREATE TABLE agents (id TEXT, role TEXT); INSERT INTO agents VALUES ('browser-worker','worker'), ('browser-manager','orchestrator'); CREATE TABLE effects (cluster_id TEXT, tool TEXT, status TEXT, call_id TEXT, args TEXT, body TEXT, agent_id TEXT DEFAULT 'browser-worker');"
     + 'CREATE TABLE transactions (cluster_id TEXT, result TEXT);');
   const url = 'http://127.0.0.1:40100/?token=valid';
-  const insert = db.prepare('INSERT INTO effects VALUES (?, ?, ?, ?, ?, ?)');
+  const insert = db.prepare('INSERT INTO effects(cluster_id,tool,status,call_id,args,body) VALUES (?, ?, ?, ?, ?, ?)');
   for (const [tool, args] of [
     ['mcp__playwright-mcp__browser_navigate', { url }],
     ['mcp__playwright-mcp__browser_snapshot', {}],
@@ -93,7 +93,7 @@ test('browser gate rejects launch failures and dashboards without an opened plug
   assert.equal(required(dashboardOnly.checks.find(check => check.name === 'plugin-manager-visible')).passed, false);
 
   const panel = new DatabaseSync(join(data, 'cluster.sqlite'));
-  const addEffect = panel.prepare('INSERT INTO effects VALUES (?, ?, ?, ?, ?, ?)');
+  const addEffect = panel.prepare('INSERT INTO effects(cluster_id,tool,status,call_id,args,body) VALUES (?, ?, ?, ?, ?, ?)');
   addEffect.run('browser-cluster', 'mcp__playwright-mcp__browser_click', 'SETTLED', 'click-timeout',
     JSON.stringify({ element: 'Cluster', ref: 'e30' }),
     JSON.stringify({ isError: true, text: 'Timeout waiting for a modal overlay to clear' }));
@@ -105,6 +105,8 @@ test('browser gate rejects launch failures and dashboards without an opened plug
   panel.prepare('UPDATE transactions SET result=?').run(JSON.stringify({
     page_title: 'DSH Local Build', panel_heading: '插件',
   }));
+  // Actual manager receipts are a distinct acceptance requirement; Worker calls cannot stand in for them.
+  panel.exec("INSERT INTO effects SELECT cluster_id,tool,status,'manager-'||call_id,args,body,'browser-manager' FROM effects WHERE call_id IN ('mcp__playwright-mcp__browser_navigate','panel-snapshot')");
   panel.close();
   const opened = await checkBrowser({
     report: { cluster_id: 'browser-cluster', web_url: url }, layout: { data },
@@ -652,7 +654,7 @@ test('the fingerprint check keeps failure, unknown and pass apart', async () => 
   };
   const base = {
     cluster_id: 'c1', spec: {},
-    ledger: { usage_by_agent: [], audits: [] },
+    ledger: { usage_by_agent: [], validations: [] },
   };
   const evaluate = async (report: SmokeReportFixture) => {
     const out = await run({ workspace: dir, report, snapshot: { cluster: { status: 'COMPLETED' }, transactions: [], agents: [] }, events: [], single: null });
@@ -852,8 +854,8 @@ test('a closed correction needs a completed replacement, not a blocked or unknow
     'another transaction, the issue revision itself, and an older revision are not replacements');
 });
 
-test('a correction closed by acceptance alone is not an Auditor verification', async () => {
-  const { auditorVerifiedIssue } = recursionChecks
+test('a correction requires a matching successful acceptance or explicit resolution receipt', async () => {
+  const { correctionVerifiedIssue } = recursionChecks
   const issue = { id: 'i1', transaction_id: 'tx1', target_revision: 2 };
   // The ledger stores one tool result as `{isError, text}`, and `text` is the
   // tool's own JSON — the shape every receipt below uses, taken from a real run.
@@ -863,30 +865,35 @@ test('a correction closed by acceptance alone is not an Auditor verification', a
     dispatch_status: 'SETTLED',
     ...extra,
   });
-  const verified = { ok: true, action: 'verify_correction', deduped: false, revision: 1, result: { revision: 1, issue_id: 'i1', status: 'CORRECTED' } };
+  const verified = { ok: true, action: 'resolve_issue', deduped: false, revision: 1, result: { revision: 1, issue_id: 'i1', status: 'CORRECTED' } };
 
-  // The route the plan forbids: acceptance closed the issue on its way past.
+  // A closure event alone does not prove a matching successful acceptance.
   assert.deepEqual(
-    auditorVerifiedIssue({ issue, receipts: [], closedEvent: { issue_id: 'i1', reason: 'accepted-result-after-issue' } }),
+    correctionVerifiedIssue({ issue, receipts: [], closedEvent: { issue_id: 'i1', reason: 'accepted-result-after-issue' } }),
     { ok: false, closings: 0, reason: 'accepted-result-after-issue' },
   );
-  // The Auditor's own verdict is what counts.
+  // Explicit issue resolution must have its own successful settled receipt.
   assert.deepEqual(
-    auditorVerifiedIssue({ issue, receipts: [receipt(verified)], closedEvent: { issue_id: 'i1' } }),
+    correctionVerifiedIssue({ issue, receipts: [receipt(verified)], closedEvent: { issue_id: 'i1' } }),
     { ok: true, closings: 1, reason: null },
   );
+  const acceptance = { ok: true, action: 'validate', result: { transaction_id: 'tx1', status: 'ACCEPTED', result_revision: 4 } };
+  const acceptedClosure = { issue_id: 'i1', reason: 'accepted-result-after-issue', result_revision: 4 };
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt(acceptance)], closedEvent: acceptedClosure }).ok, true);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt(acceptance)], closedEvent: { ...acceptedClosure, result_revision: 5 } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt({ ...acceptance, result: { ...acceptance.result, transaction_id: 'foreign' } })], closedEvent: acceptedClosure }).ok, false);
   // A deduped answer is the plugin saying "already closed", not a verification.
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ...verified, deduped: true })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt({ ...verified, deduped: true })], closedEvent: { issue_id: 'i1' } }).ok, false);
   // Another action's answer is not a correction verdict, even if it names the issue.
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'inspect_validation', result: { issue_id: 'i1', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'aggregate', result: { issue_id: 'i1', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
   // A failed, unsettled, or unreadable call is not a verdict.
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt(verified, { error: 'X' })], closedEvent: { issue_id: 'i1' } }).ok, false);
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt(verified, { dispatch_status: 'DISPATCHED' })], closedEvent: { issue_id: 'i1' } }).ok, false);
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [{ result_body: 'not json', error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [{ result_body: JSON.stringify({ isError: true, text: JSON.stringify(verified) }), error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt(verified, { error: 'X' })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt(verified, { dispatch_status: 'DISPATCHED' })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [{ result_body: 'not json', error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [{ result_body: JSON.stringify({ isError: true, text: JSON.stringify(verified) }), error: null, dispatch_status: 'SETTLED' }], closedEvent: { issue_id: 'i1' } }).ok, false);
   // A verdict about another issue, or one that only charged a correction round.
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ...verified, result: { issue_id: 'other', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
-  assert.equal(auditorVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'verify_correction', result: { issue_id: 'i1', status: 'REJECTED', corrections: 1 } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt({ ...verified, result: { issue_id: 'other', status: 'CORRECTED' } })], closedEvent: { issue_id: 'i1' } }).ok, false);
+  assert.equal(correctionVerifiedIssue({ issue, receipts: [receipt({ ok: true, action: 'resolve_issue', result: { issue_id: 'i1', status: 'REJECTED', corrections: 1 } })], closedEvent: { issue_id: 'i1' } }).ok, false);
 });
 
 test('unknown acceptance boundaries preserve absence and nullable usage instead of inventing data', () => {

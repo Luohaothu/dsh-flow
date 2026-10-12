@@ -15,10 +15,10 @@ import type { FlowAgentActor, NodeRecord } from '../../packages/dsh-flow/src/cor
 import type { TurnOutcome } from '../../packages/dsh-flow/src/core/runtime.ts';
 import { objectField } from '../../packages/dsh-flow/src/validation.ts';
 import { createFakeHost } from './fake-host.ts';
-import { fixturePlan, fixtureParams, fixtureAuditEvidence } from './task-fixtures.ts';
+import { fixturePlan } from './task-fixtures.ts';
 
 function setup(runtime: ClusterRuntime) {
-  const start = runtime.start({ objective: '计算 2+3，并校验结果及独立审核验收。', workspace: '/tmp', capabilities: [],
+  const start = runtime.start({ managementCapabilities: [], objective: '计算 2+3，并验证交付与验收标准。', workspace: '/tmp', capabilities: [],
     acceptance_criteria: ['结果为 5'], budget: { tool_calls: 200, agents: 8, max_active_agents: 4 } });
   const clusterId = start.cluster.id;
   const lead = runtime.store.listAgents(clusterId, { role: 'orchestrator', limit: 1 })[0]!;
@@ -34,7 +34,7 @@ test('all member roles share stable system rules and explicit native input kinds
   const binding = { agent_id: 'actual-agent', turn_seq: 1, object: { kind: 'transaction', id: 'actual-task' }, transaction_id: 'actual-task', allocation_id: null,
     plan_ref: { transaction_id: 'actual-task', prepared_revision: 2 }, validation_ref: null, revision: 2, read_version: 9, stale: false, current_revision: 2,
     current_plan_ref: { transaction_id: 'actual-task', prepared_revision: 2 } };
-  for (const role of ['orchestrator', 'allocator', 'auditor', 'worker'] as const) {
+  for (const role of ['orchestrator', 'allocator', 'worker'] as const) {
     const turn: BoundTurn = { agent_id: 'actual-agent', role, node_id: 'actual-domain', turn_seq: 1, input_kind: 'initial', input_key: 'actual-input', author: 'actual-manager',
       binding, title: '加法', brief: '请计算 2+3，只使用纯文本。', notice: '有新的交付待校验。', previous_plan_ref: null, context: {} };
     const first = memberBriefing.prepareTurn(turn);
@@ -126,23 +126,17 @@ test('native assignment remains on its original task and reports a business revi
   assert.equal(checked, true);
 });
 
-test('ordinary state revisions preserve current plan supervision and auditors read scheduler validation', async t => {
+test('ordinary state revisions preserve the plan and offer its current publication for validation', t => {
   const runtime = new ClusterRuntime(new Context(), { path: ':memory:', autoTick: false });
   t.after(() => runtime.dispose());
   const { actor, tx, clusterId, node } = setup(runtime);
   runtime.command(actor, { command_id: 'prepare-direct', action: 'dispatch', params: { transaction_id: tx.id,
     expected_transaction_revision: tx.revision, plan: fixturePlan(tx) } });
-  const planned = runtime.store.getTransaction(tx.id)!;
-  const planRef = planned.current_plan_ref;
+  const planRef = runtime.store.getTransaction(tx.id)!.current_plan_ref;
   runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED' });
-  const auditor = runtime.store.listAgents(clusterId, { role: 'auditor', limit: 1 })[0]!;
-  const auditActor: FlowAgentActor = { ...actor, role: 'auditor', agent_id: auditor.id, session_id: auditor.session_id };
-  const agenda = runtime.query(auditActor, 'agenda');
-  assert.ok(agenda.items.some(item => item.kind === 'review_plan' && JSON.stringify(item.plan_ref) === JSON.stringify(planRef)));
-  assert.equal(agenda.items.some(item => item.kind === 'review_validation'), false, 'Worker output alone creates no auditor acceptance duty');
-  const planWork = agenda.items.find(item => item.kind === 'review_plan')!;
-  const detail = objectField(runtime.query(auditActor, 'audit', { id: planWork.object.id }), 'audit detail');
-  assert.equal(objectField(detail.plan, 'plan').ref && JSON.stringify(objectField(detail.plan, 'plan').ref), JSON.stringify(planRef));
+  assert.deepEqual(runtime.store.getTransaction(tx.id)!.current_plan_ref, planRef);
+  const detail = objectField(runtime.query(actor, 'transaction', { id: tx.id }), 'transaction detail');
+  assert.deepEqual(objectField(detail.transaction, 'transaction').current_plan_ref, planRef);
   assert.equal(runtime.pendingFor('orchestrator', node, runtime.store.getCluster(clusterId)!, runtime.store.getAgent(actor.agent_id)).some(item => item.action === 'validate'), true);
 });
 
@@ -177,46 +171,6 @@ test('single worker uses a user-authored direct contract and publishes only a co
   assert.equal(runtime.store.getCluster(failed.cluster_id)?.status, 'FAILED');
   assert.equal(failedTx.current_result_ref, null);
   assert.equal(failedTx.result, null);
-});
-
-test('alternating plan and validation audits use unique wakes instead of replaying a revision delivery', async t => {
-  const host = createFakeHost();
-  const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
-  t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const { actor, tx, clusterId, node } = setup(runtime);
-  const other = add(runtime, clusterId, node, '另一项结果交付');
-  for (const work of [tx, other]) runtime.command(actor, { command_id: `prepare:${work.id}`, action: 'dispatch',
-    params: { transaction_id: work.id, expected_transaction_revision: work.revision, plan: fixturePlan(work) } });
-  for (const role of ['allocator', 'orchestrator'] as const) {
-    const member = runtime.store.listAgents(clusterId, { role, limit: 1 })[0]!;
-    runtime.store.updateAgent(member.id, { status: 'BLOCKED' });
-  }
-  let decisions = 0;
-  host.setScript(async turn => {
-    const assignment = objectField(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: { fields: ['audit'] } })).value)), 'assignment');
-    const audit = objectField(assignment.audit, 'audit');
-    const result = await turn.callTool('flow_audit', { action: audit.kind === 'plan' ? 'inspect_plan' : 'inspect_validation', params: {
-      audit_id: audit.id, decision: 'approve', evidence: fixtureAuditEvidence(runtime, String(audit.transaction_id), audit.kind === 'plan' ? 'plan' : 'validation') } });
-    assert.equal(result.isError, false);
-    decisions += 1;
-  });
-  runtime.enableScheduling();
-  const step = async () => { await runtime.tick(); await Promise.all(runtime.activeTurnIds().map(id => runtime.activeTurnFor(id)!.promise)); };
-  await step();
-  await step();
-  assert.equal(decisions, 2);
-  for (const work of [tx, other]) {
-    runtime.store.updateTransaction(work.id, { status: 'SUBMITTED', result: { delivered: work.objective } });
-    runtime.command(actor, { command_id: `validate:${work.id}`, action: 'validate', params: fixtureParams(runtime, actor, 'validate', {
-      transaction_id: work.id, accepted: true, checks: [{ passed: true, evidence: 'The fixture output was inspected against the complete formal requirement.' }] }) });
-    await step();
-  }
-  assert.equal(decisions, 4);
-  const auditor = runtime.store.listAgents(clusterId, { role: 'auditor', limit: 1 })[0]!;
-  const inputs = runtime.store.all('SELECT kind,delivery_key FROM member_inputs WHERE agent_id=? ORDER BY created,rowid', auditor.id);
-  assert.equal(inputs.filter(row => row.kind === 'initial').length, 1);
-  assert.equal(inputs.filter(row => row.kind === 'revision').length, 0, 'a different work object does not mean its formal contract changed');
-  assert.equal(new Set(inputs.map(row => row.delivery_key)).size, inputs.length);
 });
 
 test('a pending native delivery preserves explicit null authors and plan references when restored', async t => {
@@ -442,98 +396,6 @@ test('standalone completion with an expired or replacement lease or unknown effe
   }
 });
 
-test('a later Auditor turn reads its old large assignment as stale without changing the validation or object', async t => {
-  const host = createFakeHost();
-  const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
-  t.after(async () => { await runtime.dispose(); await host.dispose(); });
-  const { actor, tx, clusterId } = setup(runtime);
-  runtime.command(actor, { command_id: 'prepare-paged-audit', action: 'dispatch', params: {
-    transaction_id: tx.id, expected_transaction_revision: tx.revision, plan: fixturePlan(tx),
-  } });
-  const auditor = runtime.store.listAgents(clusterId, { role: 'auditor', limit: 1 })[0]!;
-  const auditActor: FlowAgentActor = { ...actor, role: 'auditor', agent_id: auditor.id, session_id: auditor.session_id };
-  runtime.command(auditActor, { command_id: 'approve-paged-plan', action: 'inspect_plan', params: fixtureParams(runtime, auditActor, 'inspect_plan', {
-    transaction_id: tx.id, decision: 'approve',
-  }) });
-  runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { answer: 5 } });
-  const originalNotes = '原始验收观察。'.repeat(2_000);
-  runtime.command(actor, { command_id: 'original-paged-validation', action: 'validate', params: fixtureParams(runtime, actor, 'validate', {
-    transaction_id: tx.id, accepted: true, notes: originalNotes, checks: [{ passed: true, evidence: 'The published answer was checked against the formal result criterion.' }],
-  }) });
-  const originalValidation = runtime.store.getTransaction(tx.id)!.current_validation_ref;
-  for (const role of ['orchestrator', 'allocator'] as const) {
-    const member = runtime.store.listAgents(clusterId, { role, limit: 1 })[0]!;
-    runtime.store.updateAgent(member.id, { status: 'BLOCKED' });
-  }
-  let snapshotId = '';
-  let originalBinding: Record<string, unknown> | null = null;
-  let checked = false;
-  let callbackFailure: unknown = null;
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.id !== auditor.id) return;
-    try {
-      for (const input of turn.inputs) turn.emit('user/message', input);
-      const current = objectField(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: { fields: ['validation'] } })).value)), 'assignment');
-      if (!snapshotId) {
-        originalBinding = objectField(current.binding, 'original binding');
-        snapshotId = String(objectField(current.validation, 'validation reference').snapshot_id);
-        assert.deepEqual(originalBinding.validation_ref, originalValidation);
-        return;
-      }
-      const currentBinding = objectField(current.binding, 'current binding');
-      assert.notDeepEqual(currentBinding.validation_ref, originalValidation);
-      assert.notDeepEqual(currentBinding.object, originalBinding!.object, 'the native turn now owns a different audit object');
-      let offset = 0;
-      let assembled = '';
-      for (;;) {
-        const page = objectField(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: {
-          fields: ['validation'], content_field: 'validation', content_snapshot_id: snapshotId, content_offset: offset, content_limit: 2_000,
-        } })).value)), 'original page');
-        const binding = objectField(page.binding, 'original page binding');
-        assert.equal(binding.stale, true);
-        assert.deepEqual(binding.validation_ref, originalValidation);
-        assert.deepEqual(binding.object, originalBinding!.object);
-        const content = objectField(page.validation, 'validation page');
-        assembled += String(content.content);
-        if (content.next_offset === null) break;
-        offset = Number(content.next_offset);
-      }
-      const retained = objectField(JSON.parse(assembled), 'retained validation');
-      assert.deepEqual(retained.ref, originalValidation);
-      assert.equal(retained.notes, originalNotes);
-      const live = runtime.store.getTransaction(tx.id)!;
-      runtime.command(actor, { command_id: 'revoke-plan-during-paged-audit', action: 'adjust_transaction', params: {
-        transaction_id: tx.id, expected_transaction_revision: live.revision, objective: '修订目标并重新准备方案',
-      } });
-      const withdrawn = objectField(JSON.parse(String((await turn.callTool('flow_query', { what: 'assignment', params: {
-        fields: ['validation'], content_field: 'validation', content_snapshot_id: snapshotId, content_offset: 0, content_limit: 32_000,
-      } })).value)), 'withdrawn-plan page');
-      const withdrawnBinding = objectField(withdrawn.binding, 'withdrawn-plan binding');
-      assert.equal(withdrawnBinding.stale, true);
-      assert.equal(withdrawnBinding.current_plan_ref, null, 'an explicitly revoked plan does not fall back to the historical plan');
-      assert.deepEqual(withdrawnBinding.plan_ref, originalBinding!.plan_ref);
-      assert.equal(objectField(JSON.parse(String(objectField(withdrawn.validation, 'withdrawn-plan validation').content)), 'original validation').notes, originalNotes);
-      checked = true;
-    } catch (error) { callbackFailure = error; throw error; }
-  });
-  runtime.enableScheduling();
-  await runtime.tick();
-  await runtime.activeTurnFor(auditor.id)?.promise;
-  if (callbackFailure) throw callbackFailure;
-  assert.ok(snapshotId);
-  runtime.command(auditActor, { command_id: 'request-paged-revalidation', action: 'request_revalidation', params: {
-    transaction_id: tx.id, required_change: 'Record the second actual checking attempt as a new validation.',
-  } });
-  runtime.command(actor, { command_id: 'new-paged-validation', action: 'validate', params: fixtureParams(runtime, actor, 'validate', {
-    transaction_id: tx.id, accepted: true, notes: '新的验收记录，与原记录分开保存。',
-    checks: [{ passed: true, evidence: 'The current published answer was checked again against the complete formal requirement.' }],
-  }) });
-  await runtime.tick();
-  await runtime.activeTurnFor(auditor.id)?.promise;
-  if (callbackFailure) throw callbackFailure;
-  assert.equal(checked, true);
-});
-
 test('native Allocator keeps task constraints local while its agenda covers the management domain', async t => {
   const host = createFakeHost();
   const runtime = new ClusterRuntime(host.ctx, { path: ':memory:', autoTick: false });
@@ -553,7 +415,7 @@ test('native Allocator keeps task constraints local while its agenda covers the 
     },
   });
   const allocator = runtime.store.listAgents(clusterId, { node_id: node.id, role: 'allocator', limit: 1 })[0]!;
-  for (const role of ['orchestrator', 'auditor'] as const) {
+  for (const role of ['orchestrator'] as const) {
     const member = runtime.store.listAgents(clusterId, { node_id: node.id, role, limit: 1 })[0]!;
     runtime.store.updateAgent(member.id, { status: 'BLOCKED' });
   }

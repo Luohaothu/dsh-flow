@@ -18,9 +18,9 @@ test('system counts and visual verdicts follow recorded events, including incomp
   assert.equal(notificationHeadline('plan-dispatched', { transaction_ids: ['a', 'b', 'a', '', null] }), '派发 2 个任务');
   assert.equal(notificationHeadline('plan-dispatched', { text: '派发 6 个任务' }), '任务已派发');
   assert.equal(notificationHeadline('unknown-event', {}), '收到系统通知');
-  assert.equal(notificationTone('plan-audit-requested'), 'neutral');
-  assert.equal(notificationTone('validation-audit-requested'), 'neutral');
-  assert.equal(notificationTone('plan-approved'), 'success');
+  assert.equal(notificationTone('plan-dispatched'), 'neutral');
+  assert.equal(notificationTone('result-submitted'), 'neutral');
+  assert.equal(notificationTone('child-accepted'), 'success');
   assert.equal(notificationTone('issue-opened'), 'warning');
   assert.equal(notificationTone('result-withheld'), 'warning');
 });

@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -22,8 +22,7 @@ import type { FlowPersistenceSeam } from '../../packages/dsh-flow/src/core/clust
 import { apply } from '../../packages/dsh-flow/src/index.ts';
 import type { Config } from '../../packages/dsh-flow/src/config.ts';
 import { createFakeHost } from './fake-host.ts';
-import { integer, objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
-import { correctionWitness } from '../acceptance/checks/recursion.ts';
+import { objectField, textField } from '../../packages/dsh-flow/src/validation.ts';
 import type { FlowActor, FlowAgentActor, FlowCommandOutcome, FlowRuntimeConfig, NodeRecord } from '../../packages/dsh-flow/src/core/model.ts';
 import type { FlowAgentRole, FlowStartRequest } from '../../packages/dsh-flow/src/types.ts';
 
@@ -104,10 +103,6 @@ function textOf(value: unknown, label: string): string {
   return textField(value, label, 2 ** 31);
 }
 
-/** A required integer field of a JSON value. */
-function numberOf(value: unknown, min: number, max: number, label: string): number {
-  return integer(value, min, max, label);
-}
 
 /** A JSON value read as an object; every command handler answers with one. */
 function jsonObject(value: unknown, label: string): Record<string, unknown> {
@@ -120,7 +115,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -181,241 +176,6 @@ function eventActions07(event: { readonly data: unknown }): readonly unknown[] {
   const actions = eventData07(event).actions;
   return Array.isArray(actions) ? actions : [];
 }
-test('the Auditor reviews new or revised issues once, never spins on an unchanged one', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-verdict-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'one correction and its verdict', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 40 },
-    budget: { tool_calls: 200, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-
-  // The Auditor does its job on the turns it takes — deciding the plan audits it
-  // is offered, and recording a blackboard entry — because a turn that changes
-  // nothing is stagnation by design and three of those block the node.
-  let published = 0;
-  host.setScript(async () => {
-    published += 1;
-    // The script records a change (so its turns are not stagnation) but leaves
-    // the audits alone: this test drives every decision itself.
-    touchBlackboard(runtime, clusterId, `verdict/${published}`, auditor.agent_id);
-  });
-  runtime.enableScheduling();
-  // Which actions the Auditor's turns are actually offered in this phase — the
-  // interface the scheduler uses, read from the durable record rather than from a
-  // copy of the selection rule.
-  const auditorTurnActions = () => runtime.store.readEvents(clusterId, { limit: 500 })
-    .filter(event => event.type === 'turn-actions' && eventData07(event).role === 'auditor');
-  const offeredInPhase = async () => {
-    // Slice by *turn*, not by action count: a page's length varies, so counting
-    // flattened actions can cut a turn in half.
-    const before = auditorTurnActions().length;
-    for (let pass = 0; pass < 3; pass += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await runtime.tick();
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-    }
-    const turns = auditorTurnActions();
-    const all = turns.flatMap(event => eventActions07(event));
-    return { phase: turns.slice(before).flatMap(event => eventActions07(event)), all };
-  };
-
-  // 1. A dispatched plan leaves a plan audit pending: that is the Auditor's work
-  //    (and not a correction verdict).
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const dispatched = await offeredInPhase();
-  assert.ok(dispatched.phase.includes('inspect_plan'), `the pending plan audit is offered: ${JSON.stringify(dispatched.phase)}`);
-  assert.ok(!dispatched.phase.includes('review_issue'), 'and no issue to review yet');
-
-  // 2. The rejection opens an issue the Orchestrator owes a change for; the
-  // Auditor may check whether its original observation was mistaken.
-  const rejection = command(runtime, auditor, 'inspect_plan', {
-    transaction_id: tx.id, decision: 'reject', required_change: 'name the depth-3 node',
-  }).result;
-  assert.ok(rejection.issue_id);
-  const issueId = textOf(rejection.issue_id, 'issue_id');
-  const afterRejection = await offeredInPhase();
-  // The pending action asks for review without declaring an unchanged issue
-  // either resolved or mistaken. A wrong report can still be withdrawn.
-  assert.ok(afterRejection.phase.includes('review_issue'),
-    `the issue is offered for independent review: ${JSON.stringify(afterRejection.phase)}`);
-
-  // 3. Before any change there is nothing to verify at all: the call is refused,
-  //    and the correction budget is untouched.
-  assert.throws(() => command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'NOT_FIXED', evidence: {} }),
-    /correction to verify/);
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').corrections, 0, 'a verdict without a correction costs nothing');
-  const afterFailed = await offeredInPhase();
-  // The unprogressed candidate is one-shot: the Auditor has had a turn since the issue was
-  // opened and nothing has changed, so it is not queued again — a genuine issue that no
-  // repair has addressed must not manufacture an endless stream of Auditor turns (which
-  // would burn its turn budget and stop the node for stagnation). A repair re-arms the
-  // verdict through the ordinary `progressed` path.
-  const stillOffered = runtime.pendingFor('auditor', root, required(runtime.store.getCluster(clusterId), 'cluster'),
-    firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 1 }), 'auditor'))
-    .filter(item => item.action === 'review_issue');
-  assert.equal(stillOffered.length, 0,
-    `an unchanged issue is not queued again after the Auditor has looked: ${JSON.stringify(stillOffered)}`);
-  void afterFailed;
-
-  // 4. The durable change earns the verdict.
-  const adjusted = command(runtime, orchestrator, 'adjust_transaction', {
-    transaction_id: tx.id, acceptance_criteria: ['a depth-3 management node exists'],
-  }).result;
-  assert.ok(Number(adjusted.revision) > 1);
-  const afterAdjust = await offeredInPhase();
-  assert.ok(afterAdjust.phase.includes('review_issue'),
-    `the revised issue is offered for review: ${JSON.stringify(afterAdjust.phase)}`);
-  // The gate's witness reads the same durable facts.
-  const adjustments = runtime.store.readEvents(clusterId, { limit: 500 })
-    .filter(event => event.type === 'transaction-adjusted')
-    .map(event => {
-      const data = eventData07(event);
-      return {
-        transaction_id: textOf(data.transaction_id, 'transaction_id'),
-        revision: numberOf(data.revision, 0, Number.MAX_SAFE_INTEGER, 'revision'),
-      };
-    });
-  const issueForWitness = required(runtime.store.getIssue(issueId), 'issue');
-  const witnessIssue = {
-    transaction_id: issueForWitness.transaction_id,
-    target_revision: issueForWitness.target_revision,
-    corrections: issueForWitness.corrections,
-  };
-  assert.equal(correctionWitness([witnessIssue], adjustments).length, 1);
-  // A bare failed counter, with no durable change, is not a correction.
-  assert.equal(correctionWitness([{ ...witnessIssue, transaction_id: 'other', corrections: 2 }], adjustments).length, 0);
-  // And a failed verdict *after* a real change does move the counter, which is
-  // what bounds the loop.
-  command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'NOT_FIXED', evidence: {} });
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').corrections, 1, 'the failed attempt on a changed revision is counted');
-
-  // 5. Closed, and never offered again.
-  command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: { revision: adjusted.revision } });
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').status, 'CORRECTED');
-  const afterClosure = await offeredInPhase();
-  assert.ok(!afterClosure.phase.includes('review_issue'),
-    `a closed issue is never offered again: ${JSON.stringify(afterClosure.phase)}`);
-});
-
-test('an undecided audit is revisited turn after turn, and probing never consumes it', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-auditcursor-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'one plan audit nobody decides', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
-    budget: { tool_calls: 60, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: tx.id });
-
-  // The Auditor takes its turn and decides nothing: the audit stays pending. The
-  // scheduling pass probes for work (`#managementPending`) before every turn, and
-  // a probe that advanced the cursor would hand the real turn an empty page — the
-  // audit would then never be presented again.
-  const offered = [];
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.role !== 'auditor') return;
-    const promptText = required(firstOf(required(required(turn.prompt, 'prompt').content, 'prompt content'), 'prompt content item').text, 'prompt text');
-    offered.push(promptText.slice(0, 400));
-  });
-  runtime.enableScheduling();
-  for (let pass = 0; pass < 6; pass += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await runtime.tick();
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-  }
-  const actionEvents = runtime.store.readEvents(clusterId, { limit: 500 })
-    .filter(event => event.type === 'turn-actions' && eventData07(event).role === 'auditor');
-  const withAudit = actionEvents.filter(event => eventActions07(event).includes('inspect_plan'));
-  assert.ok(withAudit.length >= 2,
-    `the Auditor was offered the pending audit on more than one turn: ${JSON.stringify(actionEvents.map(event => eventActions07(event)))}`);
-  assert.equal(runtime.store.pendingAudits(clusterId, { node_id: root.id, kind: 'plan', limit: 5 }).length, 1,
-    'and the audit is still pending, because nobody decided it');
-  assert.ok(offered.length >= 2, `the turns really ran: ${offered.length}`);
-});
-
-
-test('a resumed Auditor receives parseable action evidence without a repeated full domain snapshot', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-audit-digest-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir,
-    provider: 'local-fake', model: 'fake-model', reasoningEffort: 'off',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const objective = 'Produce the actual artifacts under the workspace. '.repeat(25);
-  const transactions = [0, 1, 2].map(index => ({
-    id: `digest-${index}`, objective: `Verify the work in area ${index}. `.repeat(9),
-    expected_output: `Recorded output for area ${index}. `.repeat(8),
-    acceptance_criteria: [`The evidence for area ${index} is independently verifiable. `.repeat(5)],
-  }));
-  const clusterId = runtime.start({
-    objective, workspace: dir, capabilities: [],
-    initial_transactions: transactions,
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
-    budget: { tool_calls: 60, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  for (const tx of transactions) command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  runtime.store.tx(() => runtime.store.updateAgent(auditor.agent_id, { turns: 3 }));
-
-  let prompt: string | null = null;
-  let queriedAgenda: Record<string, unknown> | null = null;
-  host.setScript(async turn => {
-    if (runtime.store.getAgentBySession(turn.session.id)?.id === auditor.agent_id && prompt === null) {
-      const answer = await turn.callTool('flow_query', { what: 'agenda', params: { limit: 8 } });
-      assert.equal(answer.isError, false);
-      const body = answer.content.find(block => block.type === 'text');
-      assert.ok(body?.type === 'text');
-      queriedAgenda = jsonObject(JSON.parse(body.text), 'queried agenda');
-      prompt = required(firstOf(required(required(turn.prompt, 'prompt').content, 'prompt content'), 'prompt content item').text, 'prompt text');
-    }
-  });
-  runtime.enableScheduling();
-  for (let pass = 0; pass < 6 && prompt === null; pass += 1) {
-    await runtime.tick();
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
-  }
-  assert.ok(prompt, 'the pending audits activated the resumed Auditor');
-  const resumedPrompt = textOf(prompt, 'resumed prompt');
-  assert.ok(!/Role:|Current domain state|STATUS:/u.test(resumedPrompt));
-  const agenda = jsonObject(queriedAgenda, 'queried agenda');
-  const items: unknown[] = Array.isArray(agenda.items) ? agenda.items : [];
-  const planActions = items.map(entry => jsonObject(entry, 'agenda item')).filter(item => item.kind === 'review_plan');
-  assert.deepEqual(planActions.map(action => action.transaction_id).sort(), transactions.map(tx => tx.id).sort());
-  for (const action of planActions) {
-    const detail = runtime.query(auditor, 'transaction', { id: textOf(action.transaction_id, 'transaction id'), fields: ['requirements'] });
-    const transaction = required(transactions.find(tx => tx.id === action.transaction_id), 'transaction');
-    assert.deepEqual(jsonObject(detail.requirements, 'requirements').acceptance_criteria, transaction.acceptance_criteria);
-  }
-  assert.ok(resumedPrompt.length < 4_000, `the resumed prompt stays concise: ${resumedPrompt.length}`);
-});
 
 test('restore refuses a checkpoint the session is not at, and fences the instance it replaces', t => {
   const runtime = makeRuntime(t);
@@ -423,10 +183,8 @@ test('restore refuses a checkpoint the session is not at, and fences the instanc
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const worker = required(runtime.store.getAgent(firstOf(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }), 'active allocation').agent_id), 'worker agent');
 
@@ -511,7 +269,7 @@ test('a cluster tool call without a stable host call id is refused before anythi
     await runtime.dispose();
     rmSync(dir, { recursive: true, force: true });
   });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'one refused tool call', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -566,7 +324,7 @@ test('a critical notification alone wakes its role and is consumed exactly once'
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'an idle role with one critical message', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 6 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -641,96 +399,41 @@ test('a critical notification alone wakes its role and is consumed exactly once'
     'nothing hands it back');
 });
 
-test('a plan change waits for its new audit rather than waking idle governance turns', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-plan-notice-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const host = createFakeHost();
-  const runtime = await startFlowPlugin(host, {
-    dataDir: dir, provider: 'local-fake', model: 'fake-model',
-    tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
-  });
-  t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
-    objective: 'revise and review a plan', workspace: dir, capabilities: [],
-    limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 6 },
-    budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
-  }).cluster.id;
-  const root = rootNode(runtime, clusterId);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: tx.id, priority: 8 });
-  const notices = runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'PENDING' });
-  assert.equal(notices.some(row => row.subject === 'transaction-modified'), true);
-
-  runtime.enableScheduling();
-  await runtime.tick();
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-  assert.equal(firstOf(runtime.store.listAgents(clusterId, { role: 'auditor' }), 'auditor').turns, 0,
-    'a DRAFT edit has no audit yet; its notification must not burn a model turn');
-  assert.equal(runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'PENDING' })
-    .some(row => row.subject === 'transaction-modified'), true, 'the notice remains durable');
-
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const deadline = Date.now() + 3_000;
-  while (firstOf(runtime.store.listAgents(clusterId, { role: 'auditor' }), 'auditor').turns === 0 && Date.now() < deadline) {
-    await runtime.tick();
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-  }
-  assert.ok(firstOf(runtime.store.listAgents(clusterId, { role: 'auditor' }), 'auditor').turns > 0, 'the new plan audit wakes governance');
-  assert.equal(runtime.store.listInbox(clusterId, { recipient: auditor.agent_id, status: 'CONSUMED' })
-    .some(row => row.subject === 'transaction-modified'), true, 'the edit notice accompanies that decision');
-});
-
-test('a revalidation answers its issue: no plan edit is needed to close the round', t => {
+test('an Allocator waits until the revised contract is dispatched before allocating it', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
-
+  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
+  command(runtime, orchestrator, 'adjust_transaction', { transaction_id: tx.id, priority: 8 });
+  assert.equal(runtime.store.getTransaction(tx.id)?.status, 'DRAFT');
+  assert.equal(runtime.pendingFor('allocator', root, runtime.store.getCluster(clusterId)!, runtime.store.getAgent(allocator.agent_id)).some(item => item.action === 'allocate_agent'), false);
+  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
+  assert.equal(runtime.pendingFor('allocator', root, runtime.store.getCluster(clusterId)!, runtime.store.getAgent(allocator.agent_id)).some(item => item.action === 'allocate_agent'), true);
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  runtime.store.tx(() => runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { claim: 'done' } }));
-  command(runtime, orchestrator, 'validate', { transaction_id: tx.id, accepted: true, checks: [{ criterion: 'x', passed: true, evidence: 'y' }] });
+  const allocation = runtime.store.activeAllocationForTransaction(tx.id);
+  assert.ok(allocation);
+  assert.equal(runtime.store.getTransaction(tx.id)?.priority, 8);
+});
 
-  // The Auditor demands a re-validation of the current result revision.
-  const requested = command(runtime, auditor, 'request_revalidation', {
-    transaction_id: tx.id, required_change: 're-run validation against the current result revision',
-  });
-  const issueId = textOf(requested.result.issue_id, 'issue_id');
-  const issue = required(runtime.store.getIssue(issueId), 'issue');
-  assert.equal(issue.status, 'OPEN');
-  const target = Number(issue.target_revision);
-  // Nothing to verify yet.
-  const noProgress = runtime.issueProgressed(clusterId, issue);
-  assert.equal(noProgress.progressed, false);
-  assert.throws(() => command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: {} }), /new matching validation record and independent approval/);
-
-  // The Orchestrator does exactly what was asked — re-validate, no plan edit.
-  command(runtime, orchestrator, 'validate', {
-    transaction_id: tx.id, accepted: true, checks: [{ criterion: 'x', passed: true, evidence: 'y', revalidated: true }],
-  });
-  const progress = runtime.issueProgressed(clusterId, required(runtime.store.getIssue(issueId), 'issue'));
-  assert.equal(progress.progressed, true, `a re-validation is durable progress: ${JSON.stringify(progress)}`);
-  assert.equal(progress.how, 'revalidated');
-  assert.ok(Number(required(runtime.store.getTransaction(tx.id), 'transaction').result_revision) > target, 'and it is past the issue\'s revision');
-
-  // The new validation still needs the independent governance decision.
-  assert.throws(() => command(runtime, auditor, 'verify_correction', {
-    issue_id: issueId, decision: 'VERIFIED', evidence: { revalidated: true },
-  }), /independent approval/);
-  command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
-  // The matching, independently approved revalidation closes the round.
-  const verified = command(runtime, auditor, 'verify_correction', { issue_id: issueId, decision: 'VERIFIED', evidence: { revalidated: true } });
-  assert.equal(verified.result.status, 'CORRECTED');
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').status, 'CORRECTED');
-  assert.equal(required(runtime.store.getIssue(issueId), 'issue').corrections, 0, 'a first-try correction leaves the counter alone');
+test('a revalidation answers its issue with a new positive validation of the same publication', t => {
+  const runtime = makeRuntime(t), clusterId = startCluster(runtime), root = rootNode(runtime, clusterId);
+  const lead = actorFor(runtime, clusterId, 'orchestrator', root.id), tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'transaction');
+  command(runtime, lead, 'dispatch', { transaction_id: tx.id });
+  runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { claim: 'done' } });
+  command(runtime, lead, 'validate', { transaction_id: tx.id, accepted: true });
+  const accepted = required(runtime.store.getTransaction(tx.id), 'accepted');
+  const requested = command(runtime, lead, 'reopen_transaction', { transaction_id: tx.id, mode: 'revalidate', required_change: 'Repeat the acceptance check against the published artifact.' });
+  const issueId = textOf(requested.result.issue_id, 'issue');
+  assert.equal(runtime.store.getTransaction(tx.id)?.status, 'SUBMITTED');
+  assert.deepEqual(runtime.store.getTransaction(tx.id)?.current_result_ref, accepted.current_result_ref);
+  assert.throws(() => command(runtime, lead, 'resolve_issue', { issue_id: issueId, decision: 'CORRECTED', evidence: { checked: 'No fresh validation exists yet.' } }), /validation|accepted|current/i);
+  command(runtime, lead, 'validate', { transaction_id: tx.id, accepted: true });
+  command(runtime, lead, 'resolve_issue', { issue_id: issueId, decision: 'CORRECTED', evidence: { checked: 'The repeated acceptance check passed against the same immutable publication.' } });
+  assert.equal(runtime.store.getIssue(issueId)?.status, 'CORRECTED');
+  assert.equal(runtime.store.getIssue(issueId)?.corrections, 0);
 });
 test('a turn that never admitted its prompt hands the critical message back', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-inbox-atomic-'));
@@ -742,7 +445,7 @@ test('a turn that never admitted its prompt hands the critical message back', as
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a turn that fails before admitting', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 2, max_role_turns: 8 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -784,7 +487,7 @@ test('a dispatched tool call is charged once at recovery, across two restarts', 
     budget: { tool_calls: 20, wall_time_ms: 3_600_000, agents: 16, max_active_agents: 4 },
   });
   const root = rootNode(runtime, clusterId);
-  const owner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor');
+  const owner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'orchestrator');
   const scope = required(runtime.store.budgetForScope(clusterId, 'agent', owner.id), 'agent budget').id;
 
   runtime.store.tx(() => runtime.store.updateBudget(scope, { tool_calls_limit: 20, tool_calls_spent: 0, tool_calls_reserved: 0 }));

@@ -128,16 +128,13 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   checks.push(check('roles-ran', roleTurns >= 3, `${roleTurns} management role turns`));
   checks.push(check('workers-ran', workerTurns >= 2, `${workerTurns} worker turns`));
 
-  // The independent gate is the *result* gate: every acceptance must be an
-  // Auditor decision, evidenced by an approved validation audit for a transaction.
-  // Plan audits provide supervision: the Auditor may approve, reject, or leave
-  // one undecided while the work runs. Acceptance requires validation approval.
-  const requested = events.filter(event => event.type === 'dispatched' && event.data.audit_id).length;
-  const acceptedEvents = events.filter(event => event.type === 'result-accepted').length;
-  const validationApprovals = (ledger.audits ?? []).filter(row => row.kind === 'validation' && row.decision === 'APPROVED').reduce((sum, row) => sum + Number(row.c), 0);
-  checks.push(check('auditor-gated',
-    requested >= transactions.length && acceptedEvents >= transactions.length && validationApprovals >= transactions.length,
-    `${requested} plan audits requested, ${validationApprovals} approved validation audits, ${acceptedEvents} accepted results for ${transactions.length} transactions`));
+  // Every acceptance has a real current positive business validation.
+  const acceptedEvents = events.filter(event => event.type === 'result-accepted');
+  const positiveValidations = (ledger.validations ?? []).filter(row => Number(row.accepted) === 1).reduce((sum, row) => sum + Number(row.c), 0);
+  checks.push(check('business-acceptance-recorded',
+    acceptedEvents.length >= transactions.length && positiveValidations >= transactions.length
+      && acceptedEvents.every(event => event.data.validated_by && asObject(event.data.committed_by)?.action === 'validate'),
+    `${positiveValidations} positive validations, ${acceptedEvents.length} accepted results for ${transactions.length} transactions`));
 
   // Successful smoke execution cannot withhold a Worker result.
   const withheld = events.filter(event => event.type === 'result-withheld').length;
@@ -173,7 +170,7 @@ export async function run({ report, snapshot, events, single, layout }: SmokeCon
   checks.push(check('no-lost-transactions', (ledger.lost_transactions ?? 0) === 0, `non-terminal transactions ${ledger.lost_transactions ?? 0}`));
 
   const agentRoles = new Set((snapshot?.agents ?? []).filter(agent => (agent.turns ?? 0) > 0).map(agent => agent.role));
-  checks.push(check('three-roles-activated', ['orchestrator', 'allocator', 'auditor', 'worker'].every(role => agentRoles.has(role)),
+  checks.push(check('three-roles-activated', ['orchestrator', 'allocator', 'worker'].every(role => agentRoles.has(role)),
     `activated roles: ${[...agentRoles].sort().join(', ')}`));
 
   if (single) {

@@ -60,7 +60,9 @@ function startReview(flow: FlowService) {
 | `objective` | 必填，整体目标 |
 | `id` | 可选集群标识；用户工具不暴露此字段 |
 | `workspace` | 可选工作区；缺省使用部署配置 |
-| `capabilities` | `fs_read`、`fs_write`、`shell`、`web_fetch`、`browser` 的子集 |
+| `capabilities` | Worker 执行能力上限，支持 `fs_read`、`fs_write`、`shell`、`web_fetch`、`browser` |
+| `managementCapabilities` | 总协调的原生业务能力上限；省略默认五类，显式 `[]` 保持为空，与 Worker 能力独立 |
+| `managementWriteScope` | 管理身份在 workspace 内的授权范围，默认 `["."]`；子管理域只能收窄 |
 | `budget` | 局部覆盖 `tool_calls`、`wall_time_ms`、`agents`、`max_active_agents` |
 | `limits` | 身份数量、层级深度、直接子节点数、执行并发、尝试与纠正次数上限，管理轮次与工具约束等 |
 | `initial_transactions` | 可选的初始任务单元 JSON，用于指定集群启动时的工作安排 |
@@ -115,17 +117,16 @@ const roots = result.value.data.items;
 | `nodes` | `parent_id?`、分页 | 树节点引用；`parent_id: null` 取根，省略则不限父节点 |
 | `node` | `id`；`full?` | 节点、祖先拓扑、任务单元与智能体分页，以及子树数量 |
 | `transactions` | `node_id?`、`parent_id?`、`status?`、分页 | 任务单元引用 |
-| `transaction` | **`id`** | 任务单元、依赖、结果、验收记录，以及审查与纠正问题的引用 |
+| `transaction` | **`id`** | 任务单元、依赖、结果、验收记录，以及纠正问题的引用 |
 | `agents` | `role?`、单个 `status?`、分页 | 身份与角色引用 |
 | `allocations` | 分页 | 当前作用域内的执行分配 |
 | `budgets` | 分页 | 各预算账户的额度与账本视图 |
 | `issues` / `issue` | 列表分页 / 单条 `id` | 纠正问题与证据 |
-| `audits` / `audit` | 列表分页 / 单条 `id` | 待作出决定的审查 / 单条审查详情 |
 | `effects` / `effect` | 列表分页 / 单条 **`call_id`** | 副作用回执 |
 | `usage` | `agent_id?`、分页 | 宿主持久化事件与已记录用量汇总 |
 | `deliveries` | 分页 | 消息及接收方投递状态 |
 | `context` | `agent_id`；`transaction_id?` | 宿主已记录的上下文与摘要；无记录时未知；宿主端调用必须提供智能体标识 |
-| `health` | `node_id?` | 编排质量评估、八项维度及观测信号 |
+| `health` | `node_id?` | 基于账本的运行统计与客观信号 |
 | `summary` | `node_id?`、`transaction_id?` | 相应作用域最新摘要 |
 | `blackboard` | `prefix?`、分页 | 版本化黑板条目 |
 
@@ -141,7 +142,7 @@ const roots = result.value.data.items;
 
 `assignment.binding` 保留本轮实际输入对象，发生新事件不会切换目标。后续 agenda 页必须带原 `snapshot_id`；快照过期要求重新查询，稳定列表不授予动作权限。权限不足、对象不存在和状态冲突分别返回错误。
 
-`transaction`、`audit` 和 `assignment` 的 `fields:["evidence"]` 提供 `native_tools` 引用页。完整读取时保留返回的 `read.params`，包括 `native_session_id`、`native_call_id` 和 `native_call_seq`；它们定位真实原生工具调用与返回。产物按真实生产者和轮次关联，校验按成功创建该记录的原生调用关联。输入绑定只说明当轮接收的对象，不代替工具的业务含义。`effects` 只记录外部副作用，空列表不表示没有纯计算工具调用。尚未持久化或无法唯一配对的回执保持未知。
+`transaction` 和 `assignment` 的 `fields:["evidence"]` 提供 `native_tools` 引用页。完整读取时保留返回的 `read.params`，包括 `native_session_id`、`native_call_id` 和 `native_call_seq`；它们定位真实原生工具调用与返回。产物按真实生产者和轮次关联，校验按成功创建该记录的原生调用关联。输入绑定只说明当轮接收的对象，不代替工具的业务含义。`effects` 只记录外部副作用，空列表不表示没有纯计算工具调用。尚未持久化或无法唯一配对的回执保持未知。
 
 验收的 `result_ref` 及 `evidence_refs` 中的 `kind:"result"` 始终指向当前产物。需要检查纠正前的候选时，可用 `kind:"historical_result"`；其引用必须是同一任务已发布的更早产物，并以确切对象引用写入当前正式计划输入。历史证据不能充当当前产物，其他任务或临时声明的旧记录会被拒绝。
 
@@ -151,17 +152,17 @@ const roots = result.value.data.items;
 
 | 主会话工具 | 行为 |
 |---|---|
-| `agent_team_create {launch_id, objective, assessment, acceptance_criteria, workspace?, capabilities?, budget?, limits?}` | 校验当前主会话的启动意图，记录复杂度与依据，按字段继承部署默认值，返回真实启动状态和生效参数 |
-| `agent_team_read {run_id?, launch_id?, after_version?, wait_ms?, transaction_id?}` | 创建前读取启动意图和默认参数；创建后读取真实状态、事务结果和通信；transaction_id 读取独立审查详情。等待上限 30 秒，支持取消 |
+| `agent_team_create {launch_id, objective, assessment, acceptance_criteria, workspace?, capabilities?, managementCapabilities?, managementWriteScope?, budget?, limits?}` | 校验当前主会话的启动意图，记录复杂度与依据，按字段继承部署默认值，返回真实启动状态和生效参数 |
+| `agent_team_read {run_id?, launch_id?, after_version?, wait_ms?, transaction_id?}` | 创建前读取启动意图和默认参数；创建后读取真实状态、事务结果和通信；transaction_id 读取完整结果与验收详情。等待上限 30 秒，支持取消 |
 | `agent_team_message {run_id?, text}` | 主 Agent 整理用户追加要求或问题答复，再通过可见工具调用投递。进度提问不自动转发 |
 | `agent_team_control {run_id?, action}` | 处理用户明确的 pause / resume / cancel 指令，返回实际状态 |
-| `agent_team_finalize {run_id}` | completed / failed / cancelled 后收尾；拒绝活跃团队与仍在退出的轮次，保留会话、审查、通信和结果 |
+| `agent_team_finalize {run_id}` | completed / failed / cancelled 后收尾；拒绝活跃团队与仍在退出的轮次，保留会话、验收、通信和结果 |
 
 工具从原生执行上下文取得主会话身份，内部团队 Agent 不能调用这些主会话工具。所有读取和操作校验运行归属。同一 launch_id 的相同创建参数返回已有团队；更换参数会拒绝，不会启动第二个团队。命令确认丢失时复用原始请求消息；模型创建确认丢失时先 read，再以原参数重试。
 
 skill 每个主会话轮次最多进行三次有等待上限的 read。重要终态、受阻或等待用户的通知只唤醒主 Agent，实际报告先经过 read；通知不会代替 Agent 创建、转发指令或收尾。
 
-read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘要为空不表示没有事务交付。初始列表最多 32 个事务，truncated 明示截断，单个事务可通过 transaction_id 读取完整结果和审查。skill 在缺乏用户额度约束或实测依据时继承默认预算，给管理、审查和收尾保留资源。
+read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘要为空不表示没有事务交付。初始列表最多 32 个事务，truncated 明示截断，单个事务可通过 transaction_id 读取完整结果和验收。skill 在缺乏用户额度约束或实测依据时继承默认预算，给管理、验收和收尾保留资源。
 
 ## 角色工具
 
@@ -169,20 +170,19 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 
 | 角色 | 命令工具 | 当前动作 |
 |---|---|---|
-| 编排智能体 | `flow_transaction` | `create_transaction`、`decompose`、`set_dependency`、`set_priority`、`dispatch`、`adjust_transaction`、`validate`、`accept_result`、`reject_result`、`aggregate`、`escalate`、`request_user`、`finish_cluster`、`pause_transaction`、`resume_transaction`、`cancel_transaction` |
-| 资源分配智能体 | `flow_allocation` | `allocate_agent`、`spawn_agent`、`spawn_management_node`、`release_agent`、`allocate_budget`、`rebalance_budget`、`set_concurrency`、`scale_out`、`scale_in`、`select_model`、`evaluate_allocation`、`replace_agent`、`reassign_agent`、`reparent`、`checkpoint`、`restore`、`resolve_effect` |
-| 审计智能体 | `flow_audit` | `inspect_plan`、`inspect_validation`、`request_correction`、`request_replan`、`request_revalidation`、`verify_correction`、`escalate`、`notify`、`recommend`、`evaluate_health` |
+| 编排智能体 | `flow_transaction` | `create_transaction`、`decompose`、`set_dependency`、`set_priority`、`dispatch`、`adjust_transaction`、`bind_validation`、`validate`、`reject_result`、`reopen_transaction`、`resolve_issue`、`aggregate`、`escalate`、`request_user`、`finish_cluster`、`pause_transaction`、`resume_transaction`、`cancel_transaction` |
+| 资源分配智能体 | `flow_allocation` | `allocate_agent`、`spawn_agent`、`spawn_management_node`、`release_agent`、`allocate_budget`、`rebalance_budget`、`set_concurrency`、`scale_out`、`scale_in`、`select_model`、`evaluate_allocation`、`replace_agent`、`reassign_agent`、`reparent`、`checkpoint`、`restore`、`resolve_effect`、`resolve_issue` |
 | 执行智能体 | `flow_transaction` | 仅 `submit_result` |
 
-每个角色还可以使用 `flow_query`、`flow_communicate`，以及用于检查工具调用链路的确定性工具 `flow_sum`。执行智能体能否使用文件、命令行、网页或浏览器工具，由分配给它的能力 `capabilities` 决定。
+每个角色还可以使用 `flow_query`、`flow_communicate`，以及用于检查工具调用链路的确定性工具 `flow_sum`。执行智能体的业务工具由 Worker 能力及分配决定；编排智能体的实际验收使用独立的 `managementCapabilities` 与 `managementWriteScope` 授权。明确声明但宿主无法提供的工具能力返回 `CAPABILITY_UNAVAILABLE`，不会静默缩减。
 
 命令工具统一接收 `{action, params, expected_revision?}`。顶层 `expected_revision` 比较的是**集群版本**，而非任务单元版本或黑板条目版本。`command_id` 由工具根据原生调用身份产生，无需模型提交。
 
-任务变更在 `params.expected_transaction_revision` 中比较读取到的事务修订号。相同基准修订和内容的计划操作在新 call ID 下也幂等；相同语义键的不同内容返回冲突。`dispatch` 批量使用 `transactions: [{transaction_id, expected_transaction_revision, plan?}]`，每个目标分别需要有效计划；`limit` 不能代替明确目标。
+任务变更在 `params.expected_transaction_revision` 中比较读取到的事务修订号。相同基准修订和内容的计划操作在新 call ID 下也幂等；相同语义键的不同内容返回冲突。`dispatch` 批量使用 `transactions: [{transaction_id, expected_transaction_revision, plan?}]`，每个目标分别需要有效计划；`limit` 不能代替明确目标。`reject_result` 同样要求 `expected_transaction_revision`，并可附当前 `plan_ref`、`result_ref`；过期引用拒绝整次命令，不能误拒更新后的交付。
 
 ### 从创建任务单元到正式接受结果
 
-以下片段应由相应角色在满足状态要求时分别调用，不能由同一智能体越权依次执行。`<transaction_id>` 和 `<audit_id>` 必须替换为前序返回或查询得到的真实标识。
+以下片段应由相应角色在满足状态要求时分别调用，不能由同一智能体越权依次执行。`<transaction_id>` 必须替换为前序返回或查询得到的真实标识。
 
 编排智能体创建任务单元：
 
@@ -240,7 +240,13 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 
 `submit_result` 返回的 `STAGED` 是动作结果，不是任务单元的状态枚举。工具会结束该执行智能体的当前轮次；只有原生执行正常结束、租约有效且记账可确认后，运行时才发布结果并转为 `SUBMITTED`。
 
-编排智能体完成实际检查后，提交接受意见：
+编排智能体默认核对本轮 assignment 指定的交付。若在同一轮切换核验对象，先调用 `bind_validation`，再通过已授权原生工具实际检查；该绑定动作保持本轮执行。
+
+```json
+{"action":"bind_validation","params":{"transaction_id":"<transaction_id>","plan_ref":{"transaction_id":"<transaction_id>","prepared_revision":2},"result_ref":{"transaction_id":"<transaction_id>","publication_event_seq":42}}}
+```
+
+完成实际检查后，提交接受意见：
 
 ```json
 {
@@ -264,31 +270,11 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 }
 ```
 
-审计智能体核对返回的验收审查记录后，提交独立决定：
+示例中的版本与发布事件序号仅说明参数位置，须用查询返回的真实引用替换。正向验收必须覆盖全部正式标准，实际填写方法、观察、判断及证据。成功时，同一命令原子保存 validation、`ACCEPTED`、摘要、事件与回执；守卫失败整次回滚。负向 `validate` 记录失败依据并进入 `REJECTED`，由编排智能体组织修订和返工。执行智能体无权自行验收。
 
-```json
-{
-  "action": "inspect_validation",
-  "params": {
-    "audit_id": "<audit_id>",
-    "decision": "APPROVED",
-    "evidence": {
-      "checks": [
-        {"rule":"standard_coverage","method":"逐项比对正式标准与检查引用","observation":"全部标准均有对应检查，未被放宽","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
-        {"rule":"checks_performed","method":"核对检查方法、观察与执行记录","observation":"源码读取及逐项比对实际完成","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
-        {"rule":"evidence_applicability","method":"核对产物发布与所引记录身份","observation":"证据对应本次交付和执行轮次","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
-        {"rule":"conclusion_support","method":"检查观察是否支持逐项通过判断","observation":"对应源码与导出项支持记录的验收结论","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]},
-        {"rule":"authority","method":"核对正式任务、分配及调度作者","observation":"校验范围及作者符合本管理域权限","passed":true,"evidence_refs":[{"kind":"validation","ref":{"transaction_id":"<transaction_id>","result_revision":5}}]}
-      ],
-      "issues": []
-    }
-  }
-}
-```
+`reopen_transaction` 由编排智能体调用，参数包含 `transaction_id`、`expected_transaction_revision`、`reason` 和 `evidence`。`mode: "revalidate"` 保留已发布结果并返回 `SUBMITTED`；重新规划则使接受与祖先汇总失效。已收尾子域需要活跃父域安排新的纠正任务。
 
-示例中的版本与发布事件序号仅说明参数位置，须用查询返回的真实引用替换。正向验收必须覆盖所有标准，实际填写方法、观察及证据。`inspect_validation` 审查调度 Agent 的验收行为，合规决定只能接受匹配的正向验收记录。驳回验收依据时保留结果并返回 `SUBMITTED`，由总协调补充校验；产物有缺陷才安排 Worker 返工。规划审核继续异步监督。
-
-审核记录的 `checks` 必须覆盖固定治理规则。计划规则为 `goal_coverage`、`responsibility`、`dependencies`、`handoff`、`acceptance_arrangement`；验收规则为上述五项。每项写明方法、实际观察、判断和匹配的计划或验收引用。批准需全部通过，拒绝需指出具体失败项和补正事项；服务端记录真实审核作者、适用规则及合规结论。
+`resolve_issue` 接收 `issue_id`、`decision: "CORRECTED" | "DISMISSED"` 和非空 `evidence`。编排智能体处理业务问题，资源分配智能体仅处理资源、分配、预算或副作用问题；集群级问题要求根管理者。未知副作用须先明确处置，关闭 issue 不代替 `resolve_effect`。业务纠正需要新版本正向验收，误报撤销需要反证。
 
 通信的参数与示例见 [通信组件](/development/components/communication)。`flow_sum` 参数为 `{values: [15, 40]}`，返回数值 `55`；它只检查原生工具调用能否往返完成，不验证智能体的业务工作质量。
 
@@ -300,6 +286,6 @@ read 的 execution 同时提供事务结果、验证数据与聚合摘要；摘�
 
 ## 源码依据
 
-规划监督通过 `inspect_plan` 检查计划、依赖与管理决策；结果接受通过 `inspect_validation` 复核指定版本。角色动作集合由 `protocol.ts` 定义并在运行时检查。
+`dispatch` 保存正式计划并派发；`validate` 在实际检查之后提交当前版本的业务验收。角色动作集合由 `protocol.ts` 定义并在运行时检查。
 
 具体参数以 [role-tools.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/role-tools.ts)、[actions.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/actions.ts)、[protocol.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/core/protocol.ts) 为准；公共接口定义见 [service.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/service.ts)、[types.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/types.ts)、[web.ts](https://github.com/Luohaothu/dsh-flow/blob/main/packages/dsh-flow/src/web.ts)。

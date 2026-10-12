@@ -237,15 +237,11 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
 
   const roles = ledger.all("SELECT role, COUNT(*) AS c, SUM(CASE WHEN turns>0 THEN 1 ELSE 0 END) AS activated FROM agents WHERE cluster_id=? GROUP BY role", clusterId);
   const management = roles.filter(row => row.role !== 'worker');
-  push('management-roles-ran', management.length === 3 && management.every(row => Number(row.activated) > 0), JSON.stringify(roles));
+  push('management-roles-ran', management.length === 2 && management.every(row => Number(row.activated) > 0), JSON.stringify(roles));
 
-  // A control-plane tool call that was refused at *lookup* time ("no plan audit
-  // for transaction … at revision …") is not a domain refusal: it means the
-  // caller asked about a revision nothing was offered for, or under a reference
-  // the item did not carry. Verdicts must use the offered `audit_id` so they
-  // refer to the exact plan revision under review.
+  // Control actions must use the current formal object references.
   const controlCalls = ledger.all(
-    "SELECT tool, result_body, error FROM tool_call_receipts WHERE cluster_id=? AND tool IN ('flow_audit','flow_transaction','flow_allocation','flow_query')",
+    "SELECT tool, result_body, error FROM tool_call_receipts WHERE cluster_id=? AND tool IN ('flow_transaction','flow_allocation','flow_query')",
     clusterId,
   );
   const lookupRefusals = controlCalls.filter(row => {
@@ -256,12 +252,12 @@ export async function run({ caseDef, workspace, report, layout, events }: ScaleC
       if (parsed?.isError === false) return false;
       text = asString(parsed?.text) ?? text;
     } catch { /* raw text */ }
-    return /no plan audit|no validation audit|is a \w+ audit, not|audit requires audit_id|no .* audit for transaction/i.test(text);
+    return /revision conflict|plan_ref is stale|result_ref is stale|transaction not found/i.test(text);
   });
   push('control-plane-calls-clean',
     mockScoped ? controlCalls.length > 0 && lookupRefusals.length === 0 : null,
     mockScoped
-      ? `${controlCalls.length} control-plane call(s), ${lookupRefusals.length} refused for a missing or mismatched audit reference: ${JSON.stringify(lookupRefusals.slice(0, 2))}`
+      ? `${controlCalls.length} control-plane call(s), ${lookupRefusals.length} refused for a missing or mismatched object reference: ${JSON.stringify(lookupRefusals.slice(0, 2))}`
       : 'not asserted outside a mock run');
 
   // The corpus must exist with the recorded hashes, and every worker that

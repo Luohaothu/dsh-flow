@@ -32,6 +32,7 @@ import { openLedger, usageSummary } from '../../../src/host/ledger.ts';
 import type { SqlRow } from '../../../src/host/ledger.ts';
 import { MOCK_API_KEY, MOCK_MODEL_ID, MOCK_PROVIDER, mockPatchText, ipcBridgePatchText, startAcceptanceHost } from '../run.ts';
 import { asArray, asObject, asString, decodeSingleReply, decodeStartReply, requiredString } from '../context.ts';
+import { readNativeToolReceipts } from '../native-tool-receipts.ts';
 
 const ARTIFACTS_ROOT = join(PROJECT_ROOT, '.artifacts');
 let sequence = 0;
@@ -250,6 +251,7 @@ test('N-communication: classified messages retain full bodies, independent sourc
     },
   });
   const created = decodeStartReply(await host.request('start', undefined, {
+    managementCapabilities: [],
     objective: 'Sum [2,3] and retain incoming review evidence.', workspace: layout.workspace, capabilities: ['fs_read'],
     limits: { max_children: 2, max_depth: 2, max_agents: 8, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
     budget: singleBudget,
@@ -283,11 +285,11 @@ test('N-communication: classified messages retain full bodies, independent sourc
     const preceding = session.events.slice(0, position).findLast(event => event.type === 'user/message');
     assert.ok(['user', 'flow'].includes(String(asObject(asObject(preceding?.data)?.source)?.kind)), 'a task or scheduling prompt shares the same admitted step');
   }
-  assert.equal(received, 3, 'all three native management roles receive their own copy');
+  assert.equal(received, 2, 'both native management roles receive their own copy');
   const db = openLedger(join(layout.data, 'cluster.sqlite'));
   try {
     const deliveries = db.all('SELECT status FROM recipients WHERE message_id=?', 'native-classified-message');
-    assert.equal(deliveries.length, 3);
+    assert.equal(deliveries.length, 2);
     assert.ok(deliveries.every(row => row.status === 'ACKED'), 'delivery is acknowledged after native persistence');
   } finally { db.close(); }
   assert.equal(mock.errors.length, 0, `fixture errors: ${mock.errors.join('; ')}`);
@@ -375,6 +377,7 @@ test('F-arguments: sharded arguments assemble, both params spellings persist, il
     },
   });
   const spec = {
+    managementCapabilities: [],
     objective: 'Sum [2,3] twice: once with params as an object, once with params as a JSON string.',
     workspace: layout.workspace,
     capabilities: ['fs_read'],
@@ -527,6 +530,7 @@ test('F-transport: a 500 and an aborted stream produce no success and no duplica
   ];
   for (const [id, objective] of cases) {
     const spec = {
+      managementCapabilities: [],
       objective,
       workspace: layout.workspace,
       capabilities: ['fs_read'],
@@ -755,6 +759,7 @@ test('N-scopes: ordinary Agents receive team lifecycle tools while role tools st
   assert.ok(ordinaryTools.includes('agent_team_finalize'));
 
   const created = decodeStartReply(await host.request('start', undefined, {
+    managementCapabilities: [],
     objective: 'Sum [2,3] and submit 5 through the native tool.',
     workspace: layout.workspace,
     capabilities: ['fs_read'],
@@ -767,7 +772,6 @@ test('N-scopes: ordinary Agents receive team lifecycle tools while role tools st
   const expected: Record<string, readonly string[]> = {
     orchestrator: ['flow_communicate', 'flow_query', 'flow_sum', 'flow_transaction'],
     allocator: ['flow_allocation', 'flow_communicate', 'flow_query', 'flow_sum'],
-    auditor: ['flow_audit', 'flow_communicate', 'flow_query', 'flow_sum'],
     worker: ['flow_communicate', 'flow_query', 'flow_sum', 'flow_transaction'],
   };
   const ledger = openLedger(join(layout.data, 'cluster.sqlite'));
@@ -941,6 +945,7 @@ test('N-summary-cancel: native cancellation preserves incomplete compaction evid
   });
   writeFileSync(join(layout.workspace, 'pressure.txt'), 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau\n'.repeat(1600));
   const created = decodeStartReply(await host.request('start', undefined, {
+    managementCapabilities: [],
     objective: 'Read pressure.txt and report what it contains.',
     workspace: layout.workspace,
     capabilities: ['fs_read'],
@@ -1037,7 +1042,7 @@ test('N-capabilities: requested fs, shell/jobs and web tools execute through nat
     for (const tool of ['write', 'read', 'bash', 'job_output', 'web_fetch']) {
       const receipts = ledger.toolCalls().filter(row => row.tool === tool);
       assert.equal(receipts.length, 1, `${tool} dispatched once`);
-      assert.equal(receipts[0]?.dispatch_status, 'SETTLED');
+      assert.equal(receipts[0]?.dispatch_status, tool === 'web_fetch' ? 'FAILED' : 'SETTLED');
       if (tool === 'web_fetch') {
         const body = asObject(JSON.parse(requiredString(receipts[0]?.result_body, `${tool} result body`)));
         assert.equal(body?.isError, true, 'the real web tool refuses the non-public loopback destination');
@@ -1049,6 +1054,111 @@ test('N-capabilities: requested fs, shell/jobs and web tools execute through nat
   } finally {
     ledger.close();
   }
+});
+
+test('N-management-capabilities: validation binds real manager fs, shell/jobs and web calls in one native turn', async t => {
+  let fetchUrl = '';
+  let bound = false;
+  let verified = false;
+  let receiptQuery: 'list' | 'detail' | null = null;
+  let ownReadRef: Record<string, unknown> | null = null;
+  const { host, mock, layout } = await harness(t, {
+    name: 'management-capabilities',
+    hooks: { orchestrator(request, item) {
+      if (item.action !== 'validate' || verified) return null;
+      const c = request.classified;
+      if (!bound) {
+        const detail = asObject(c.context?.transaction);
+        bound = true;
+        return call('flow_transaction', { action: 'bind_validation', params: {
+          transaction_id: item.transaction_id, plan_ref: asObject(detail?.plan)?.ref, result_ref: asObject(detail?.result)?.ref,
+        } });
+      }
+      if (c.lastToolName === 'flow_transaction') {
+        assert.match(c.lastToolResult ?? '', /"ok":true/, 'binding succeeds without ending the native turn');
+        return call('write', { file_path: 'manager-check.txt', content: 'MANAGER-CHECK 5\n' });
+      }
+      if (c.lastToolName === 'write') return call('read', { file_path: 'manager-check.txt' });
+      if (c.lastToolName === 'read') {
+        assert.match(c.lastToolResult ?? '', /MANAGER-CHECK 5/);
+        return call('bash', { command: 'printf MANAGER-CHECK-5', description: 'Run the manager verification command', run_in_background: true });
+      }
+      if (c.lastToolName === 'bash') {
+        const jobId = /started background job (\S+)/u.exec(c.lastToolResult ?? '')?.[1];
+        assert.ok(jobId, 'manager receives a real registered shell job');
+        return call('job_output', { job_id: jobId, wait: true });
+      }
+      if (c.lastToolName === 'job_output') {
+        assert.match(c.lastToolResult ?? '', /MANAGER-CHECK-5/);
+        return call('web_fetch', { url: fetchUrl });
+      }
+      if (c.lastToolName === 'web_fetch') {
+        assert.match(c.lastToolResult ?? '', /non-public IP/i, 'the native network policy also applies to managers');
+        receiptQuery = 'list';
+        return call('flow_query', { what: 'transaction', params: {
+          id: item.transaction_id, fields: ['requirements', 'plan', 'result', 'evidence'], limit: 8,
+        } });
+      }
+      if (c.lastToolName === 'flow_query' && receiptQuery !== null) {
+        const receipts = readNativeToolReceipts(JSON.parse(c.lastToolResult ?? 'null'));
+        const ownRead = receipts.find(receipt => receipt.tool === 'read' && asObject(receipt.ref)?.agent_id === c.agentId);
+        assert.ok(ownRead, 'the manager can query its own persisted read before the native turn ends');
+        assert.equal(ownRead.status, 'returned');
+        assert.equal(ownRead.association, 'current-manager');
+        if (receiptQuery === 'list') {
+          ownReadRef = asObject(ownRead.ref);
+          const read = asObject(ownRead.read);
+          assert.ok(read);
+          assert.equal(read.what, 'transaction');
+          const params = asObject(read.params);
+          assert.ok(params, 'the receipt exposes an exact native call lookup');
+          receiptQuery = 'detail';
+          return call('flow_query', { what: read.what, params: {
+            ...params, fields: ['requirements', 'plan', 'result', 'evidence'],
+          } });
+        }
+        assert.deepEqual(ownRead.ref, ownReadRef);
+        assert.match(JSON.stringify(ownRead.result), /MANAGER-CHECK 5/, 'the same-turn detail contains the real native read result');
+        verified = true;
+        return null;
+      }
+      throw new Error(`Unexpected manager continuation ${c.lastToolName}`);
+    } },
+  });
+  fetchUrl = `${mock.baseURL}/models`;
+  const created = decodeStartReply(await host.request('start', undefined, {
+    objective: 'Sum [2,3] with flow_sum, then verify using the manager native execution tools.',
+    workspace: layout.workspace, capabilities: [],
+    managementCapabilities: ['fs_read', 'fs_write', 'shell', 'web_fetch'], managementWriteScope: ['.'],
+    budget: singleBudget,
+    limits: { max_children: 2, max_depth: 2, max_agents: 4, max_active_agents: 2, max_llm_concurrency: 1, max_role_turns: 12 },
+    initial_transactions: [{ objective: 'Sum [2,3] with flow_sum and submit the result.', acceptance_criteria: ['The verified total is 5'] }],
+  }));
+  assert.ok(created);
+  await host.request('settle', created.cluster.id, { timeout_ms: 180_000, poll_ms: 100 }, 240_000);
+  assert.equal(verified, true);
+  assert.equal(readFileSync(join(layout.workspace, 'manager-check.txt'), 'utf8'), 'MANAGER-CHECK 5\n');
+  const first = mock.requests.find(request => request.classified.role === 'orchestrator');
+  assert.ok(first);
+  for (const name of ['read', 'glob', 'grep', 'write', 'edit', 'bash', 'job_output', 'job_kill', 'web_fetch'])
+    assert.ok(first.tools.includes(name), `manager mounts ${name} even when Worker capabilities is []`);
+  const manager = sessionsOf(layout, created.cluster.id).find(session => session.role === 'orchestrator');
+  assert.ok(manager);
+  const nativeCalls = manager.events.filter(event => event.type === 'tool/call' && ['write', 'read', 'bash', 'job_output', 'web_fetch'].includes(String(asObject(event.data)?.name)));
+  assert.equal(nativeCalls.length, 5);
+  assert.equal(new Set(nativeCalls.map(event => asObject(event.data)?.turn)).size, 1, 'binding and verification retain the native turn');
+  const ledger = openLedger(join(layout.data, 'cluster.sqlite'));
+  try {
+    const tx = ledger.get('SELECT status,current_plan_ref,current_result_ref FROM transactions WHERE cluster_id=?', created.cluster.id);
+    assert.equal(tx?.status, 'ACCEPTED');
+    const bindings = ledger.all("SELECT data FROM events WHERE cluster_id=? AND type='manager-tool-bound'", created.cluster.id).map(row => asObject(JSON.parse(String(row.data))));
+    for (const call of nativeCalls) {
+      const matching = bindings.find(binding => binding?.call_id === asObject(call.data)?.callId);
+      assert.equal(matching?.agent_id, manager.id);
+      assert.deepEqual(matching?.plan_ref, JSON.parse(String(tx?.current_plan_ref)));
+      assert.deepEqual(matching?.result_ref, JSON.parse(String(tx?.current_result_ref)));
+    }
+  } finally { ledger.close(); }
 });
 
 test('N-identity: model-supplied identities cannot cross a live cluster domain', async t => {
@@ -1077,6 +1187,7 @@ test('N-identity: model-supplied identities cannot cross a live cluster domain',
     } },
   });
   const foreign = decodeStartReply(await host.request('start', undefined, {
+    managementCapabilities: [],
     objective: 'Foreign domain must remain unchanged.', workspace: layout.workspace,
     capabilities: ['fs_read'], budget: singleBudget,
     initial_transactions: [{ id: 'foreign-transaction', objective: 'Do not overwrite this transaction.' }],

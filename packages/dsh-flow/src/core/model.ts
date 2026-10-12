@@ -13,8 +13,6 @@ import type {
   FlowAgentRole,
   FlowAgentStatus,
   FlowAllocationStatus,
-  FlowAuditDecision,
-  FlowAuditKind,
   FlowBudget,
   FlowBudgetInput,
   FlowCapability,
@@ -229,6 +227,8 @@ export interface StoredSpec {
   readonly objective?: string
   readonly workspace?: string
   readonly capabilities?: readonly FlowCapability[]
+  readonly managementCapabilities?: readonly FlowCapability[]
+  readonly managementWriteScope?: readonly string[]
   readonly limits?: FlowLimitsInput
   readonly budget?: FlowBudgetInput
   readonly delegation?: readonly DelegationFixtureEntry[]
@@ -314,7 +314,6 @@ export interface TransactionRecord {
   readonly result: FlowJsonValue
   readonly result_revision: number | null
   readonly validation: FlowValidation | null
-  readonly plan_approved_revision: number | null
   readonly current_plan_ref: PlanRef | null
   readonly current_result_ref: ResultRef | null
   readonly current_validation_ref: ValidationRef | null
@@ -377,23 +376,6 @@ export interface BudgetRecord {
   readonly wall_deadline: number | null
   readonly created: number
   readonly updated: number
-}
-
-/** One audit row, evidence decoded. */
-export interface AuditRecord {
-  readonly id: string
-  readonly cluster_id: string
-  readonly node_id: string | null
-  readonly transaction_id: string | null
-  readonly auditor_agent_id: string | null
-  readonly kind: FlowAuditKind
-  readonly target_revision: number | null
-  readonly plan_ref: PlanRef | null
-  readonly validation_ref: ValidationRef | null
-  readonly decision: FlowAuditDecision
-  readonly evidence: FlowJsonValue
-  readonly created: number
-  readonly decided: number | null
 }
 
 /** One issue row, evidence decoded. */
@@ -556,6 +538,8 @@ export interface FlowStartSpec {
   readonly id?: string
   readonly workspace: string
   readonly capabilities: readonly FlowCapability[]
+  readonly managementCapabilities?: readonly FlowCapability[]
+  readonly managementWriteScope?: readonly string[]
   readonly budget: FlowBudgetInput
   readonly limits: FlowLimits
   readonly initial_transactions?: readonly FlowJsonValue[]
@@ -573,6 +557,8 @@ export interface FlowStartSpec {
 export interface FlowStartDefaults {
   readonly workspace: string
   readonly capabilities: readonly FlowCapability[]
+  readonly managementCapabilities?: readonly FlowCapability[]
+  readonly managementWriteScope?: readonly string[]
   readonly budget: FlowBudget
   readonly limits: FlowLimits
 }
@@ -653,7 +639,6 @@ export interface TransactionPatch {
   readonly result?: FlowJsonValue
   readonly result_revision?: number | null
   readonly validation?: FlowValidation | null
-  readonly plan_approved_revision?: number | null
   readonly current_plan_ref?: PlanRef | null
   readonly current_result_ref?: ResultRef | null
   readonly current_validation_ref?: ValidationRef | null

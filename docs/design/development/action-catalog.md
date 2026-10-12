@@ -10,17 +10,20 @@
 |---|---|
 | `create_transaction` / `decompose` | 创建工作单元或将目标分解为子任务，记录约束与验收标准 |
 | `set_dependency` / `set_priority` | 设置无环依赖和执行优先级 |
-| `dispatch` | 原子保存执行方案与任务简报，再派发并发起异步规划审查；未准备的任务不能派发 |
+| `dispatch` | 原子保存执行方案与任务简报，再派发；未准备的任务不能派发 |
 | `adjust_transaction` | 在安全点修订计划，增加版本并使过期分配失效 |
-| `validate` / `accept_result` | 保存覆盖正式标准的不可变校验记录；独立复核通过后提交接受状态 |
-| `reject_result` | 驳回候选结果并记录理由 |
+| `bind_validation` | 将本轮实际检查绑定到指定当前计划与结果，不结束原生轮次 |
+| `validate` | 正向原子保存不可变验收记录并接受；负向记录业务失败并进入返工 |
+| `reject_result` | 校验当前 `expected_transaction_revision` 后驳回候选结果并记录理由；可附计划与结果引用 |
+| `reopen_transaction` | 基于当前版本与原因撤销接受，重验收或重规划，并使受影响汇总失效 |
+| `resolve_issue` | 基于实际修复证据关闭问题，或以反证撤销误报 |
 | `aggregate` | 基于已接受的下级工作生成汇总候选结果 |
 | `pause_transaction` / `resume_transaction` / `cancel_transaction` | 控制本管理域内的单个任务单元 |
 | `request_user` | 记录需要用户回答的问题，并暂停相应角色的自主推进 |
 | `escalate` | 将本管理域无法解决的问题提交上级 |
 | `finish_cluster` | 根编排智能体请求整体收尾；运行时仍检查交付和资源条件 |
 
-`ACCEPTED` 必须同时匹配当前 `plan_ref`、`result_ref`、`validation_ref`、正向校验及独立审核，并核对当前子任务的接受状态。普通状态推进增加 `revision`，不会使仍适用的计划失效。见[任务单元与独立审计](/development/components/transactions)。
+`ACCEPTED` 必须同时匹配当前 `plan_ref`、`result_ref`、`validation_ref`及正向逐项校验，并核对当前子任务的接受状态。普通状态推进增加 `revision`，不会使仍适用的计划失效。见[任务单元与业务验收](/development/components/transactions)。
 
 ## 资源分配智能体
 
@@ -29,7 +32,7 @@
 | 动作 | 职责 |
 |---|---|
 | `allocate_agent` / `spawn_agent` | 为任务建立执行分配与身份 |
-| `spawn_management_node` | 为需独立规划的任务建立下级管理域和三类管理身份 |
+| `spawn_management_node` | 为需独立规划的任务建立下级管理域和两类管理身份 |
 | `release_agent` / `replace_agent` / `reassign_agent` | 在轮次与租约结束后回收、替换或重新分配执行身份 |
 | `allocate_budget` / `rebalance_budget` | 在授权范围内分配或调拨尚未占用的额度 |
 | `set_concurrency` / `scale_out` / `scale_in` | 调整执行容量和执行者数量，仍受全局限制与预算约束 |
@@ -37,25 +40,10 @@
 | `reparent` | 在无活跃执行和未结算副作用等前提下移动子树 |
 | `checkpoint` / `restore` | 保存检查点或按有效证据恢复身份 |
 | `resolve_effect` | 依据实际证据处置未知副作用，决定是否允许继续执行 |
+| `resolve_issue` | 仅处理资源、分配、预算及副作用问题，不能改变业务结论 |
 | `evaluate_allocation` | 保存资源配置的评估依据 |
 
 资源动作不能隐式改变目标、验收标准或根预算总额。写路径检查、迁移和分配条件见[执行分配与组织调整](/development/components/allocation)。
-
-## 审计智能体
-
-工具为 `flow_audit`。
-
-| 动作 | 职责 |
-|---|---|
-| `inspect_plan` | 审查规划、依赖和管理决策，记录证据与结论 |
-| `inspect_validation` | 针对指定不可变校验记录独立审核调度的验收行为，核对方法、证据及结论 |
-| `request_correction` / `request_replan` / `request_revalidation` | 明确纠正要求、重新规划或重新验收的原因 |
-| `verify_correction` | 用修复证据复核纠正项 |
-| `notify` / `recommend` | 记录监督信号或管理建议 |
-| `evaluate_health` | 依据观测信号评价八项编排质量维度 |
-| `escalate` | 将持续或严重的问题提交上级处理 |
-
-规划审查不阻塞每次派发，验收审核是正式接受的必要条件。审核引用与当前记录不一致时，结论不能使当前结果通过。验收审核拒绝保留已发布结果，任务回到 `SUBMITTED`，由调度补充校验；业务结果不合格时才安排 Worker 返工。
 
 ## 执行智能体与共享工具
 

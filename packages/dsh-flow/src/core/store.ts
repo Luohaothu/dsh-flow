@@ -30,8 +30,6 @@ import { DEFAULT_LIMITS } from './protocol.ts';
 import { nativeUsageEvents, summarizeNativeUsage, nativeContext } from './native-usage.ts';
 import type { NativeUsageProjection, NativeSessionFact } from './native-usage.ts';
 import type {
-  FlowAuditDecision,
-  FlowAuditKind,
   FlowAgentRole,
   FlowAgentStatus,
   FlowAllocationStatus,
@@ -59,7 +57,6 @@ import type {
   AgentRecord,
   AllocationPatch,
   AllocationRecord,
-  AuditRecord,
   BlackboardRecord,
   BudgetPatch,
   BudgetRecord,
@@ -83,7 +80,7 @@ import type {
   PlanRef, PlanRecord, ResultRef, ResultRecord, ValidationRef, ValidationRecord, MemberInputRecord,
 } from './model.ts';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** One SQLite row as the driver returns it. */
 type Row = Record<string, SQLOutputValue>;
@@ -225,21 +222,17 @@ const CLUSTER_STATUSES = ['RUNNING', 'PAUSED', 'COMPLETED', 'BLOCKED', 'FAILED',
 const NODE_STATUSES = ['ACTIVE', 'DRAINING', 'PAUSED', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELLED', 'RELEASED'] as const satisfies readonly FlowNodeStatus[];
 const NODE_KINDS = ['management', 'worker'] as const satisfies readonly FlowNodeKind[];
 const AGENT_STATUSES = ['CREATED', 'READY', 'RUNNING', 'WAITING', 'BLOCKED', 'PAUSED', 'COMPLETED', 'FAILED', 'TERMINATED'] as const satisfies readonly FlowAgentStatus[];
-const AGENT_ROLES = ['orchestrator', 'allocator', 'auditor', 'worker'] as const satisfies readonly FlowAgentRole[];
+const AGENT_ROLES = ['orchestrator', 'allocator', 'worker'] as const satisfies readonly FlowAgentRole[];
 const TRANSACTION_STATUSES = [
-  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'VALIDATING', 'ACCEPTED', 'REJECTED',
+  'DRAFT', 'READY', 'DISPATCHED', 'RUNNING', 'SUBMITTED', 'ACCEPTED', 'REJECTED',
   'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED', 'SUPERSEDED',
 ] as const satisfies readonly FlowTransactionStatus[];
 const ALLOCATION_STATUSES = ['ACTIVE', 'RELEASED'] as const satisfies readonly FlowAllocationStatus[];
 const INBOX_STATUSES = ['PENDING', 'CONSUMED'] as const satisfies readonly FlowInboxStatus[];
 const GROUP_STATUSES = ['OPEN', 'CLOSED'] as const satisfies readonly FlowGroupStatus[];
 const SCOPE_KINDS = ['cluster', 'root', 'node', 'transaction', 'agent'] as const satisfies readonly FlowScopeKind[];
-const AUDIT_KINDS = ['plan', 'validation'] as const satisfies readonly FlowAuditKind[];
-const AUDIT_DECISIONS = [
-  'PENDING', 'APPROVED', 'REJECTED', 'OVERRIDDEN', 'STALE',
-  'CORRECTION_REQUESTED', 'REPLAN_REQUESTED', 'REVALIDATION_REQUESTED',
-] as const satisfies readonly FlowAuditDecision[];
-const ISSUE_STATUSES = ['OPEN', 'VERIFYING', 'CORRECTED', 'ESCALATED', 'DISMISSED'] as const satisfies readonly FlowIssueStatus[];
+
+const ISSUE_STATUSES = ['OPEN', 'CORRECTED', 'ESCALATED', 'DISMISSED'] as const satisfies readonly FlowIssueStatus[];
 const EFFECT_STATUSES = ['STARTED', 'SETTLED', 'FAILED', 'CANCELLED', 'UNKNOWN', 'EFFECT_UNCERTAIN'] as const satisfies readonly FlowEffectStatus[];
 const DISPATCH_STATUSES = ['ADMITTED', 'DISPATCHED', 'SETTLED', 'FAILED', 'CANCELLED', 'UNKNOWN'] as const satisfies readonly FlowDispatchStatus[];
 const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKED'] as const satisfies readonly FlowDeliveryStatus[];
@@ -369,20 +362,6 @@ interface DeliveryTraffic {
   readonly cross_subtree: number
 }
 
-/** One health evaluation row, its JSON columns decoded. */
-interface HealthRecord {
-  readonly id: string
-  readonly cluster_id: string
-  readonly node_id: string | null
-  readonly evaluation_window: string | null
-  readonly signals: FlowJsonValue
-  readonly scores: FlowJsonValue
-  readonly weights: FlowJsonValue
-  readonly decided: number
-  readonly decided_by: string | null
-  readonly created: number
-}
-
 /** One durable summary row, its data decoded. */
 interface SummaryRecord {
   readonly id: string
@@ -461,6 +440,8 @@ interface ClusterInsert {
   readonly objective: string
   readonly workspace: string
   readonly capabilities: readonly string[]
+  readonly managementCapabilities?: readonly string[]
+  readonly managementWriteScope?: readonly string[]
   readonly limits: FlowLimitsInput
   /**
    * Accepted so a caller can build a whole cluster from one spec object, but
@@ -681,19 +662,6 @@ interface ToolCallSettlement {
   readonly error?: string | null | undefined
 }
 
-/** One health evaluation to insert. */
-interface HealthInsert {
-  readonly id: string
-  readonly cluster_id: string
-  readonly node_id?: string | null | undefined
-  readonly evaluation_window?: string | null | undefined
-  readonly signals?: FlowJsonValue | undefined
-  readonly scores?: FlowJsonValue | undefined
-  readonly weights?: FlowJsonValue | undefined
-  readonly decided?: boolean | undefined
-  readonly decided_by?: string | null | undefined
-}
-
 /** One source receipt to insert. */
 interface SourceInsert {
   readonly id: string
@@ -708,21 +676,6 @@ interface SourceInsert {
   readonly hash: string
   readonly bytes: number
   readonly text: string
-}
-
-/** One audit gate to insert. */
-interface AuditInsert {
-  readonly id: string
-  readonly cluster_id: string
-  readonly transaction_id: string
-  readonly node_id: string
-  readonly kind: FlowAuditKind
-  readonly target_revision: number
-  readonly plan_ref?: PlanRef | null | undefined
-  readonly validation_ref?: ValidationRef | null | undefined
-  readonly decision?: FlowAuditDecision | undefined
-  readonly auditor_agent_id?: string | null | undefined
-  readonly evidence?: FlowJsonValue | undefined
 }
 
 /** One issue to insert. */
@@ -786,7 +739,7 @@ CREATE TABLE IF NOT EXISTS transactions(
   expected_output TEXT NOT NULL, acceptance_criteria TEXT NOT NULL, needs TEXT NOT NULL,
   priority INTEGER NOT NULL, capabilities TEXT NOT NULL, status TEXT NOT NULL,
   revision INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, result TEXT,
-  result_revision INTEGER, validation TEXT, plan_approved_revision INTEGER,
+  result_revision INTEGER, validation TEXT,
   current_plan_ref TEXT, current_result_ref TEXT, current_validation_ref TEXT,
   result_staged_epoch INTEGER, result_staged_turn INTEGER, result_staged_agent TEXT,
   pre_pause_status TEXT, pre_pause_revision INTEGER,
@@ -891,11 +844,7 @@ CREATE TABLE IF NOT EXISTS tool_call_receipts(
   budget_scope_id TEXT, dispatch_status TEXT NOT NULL, result_body TEXT, error TEXT,
   created INTEGER NOT NULL, settled INTEGER);
 CREATE INDEX IF NOT EXISTS tool_call_agent ON tool_call_receipts(cluster_id,agent_id,dispatch_status);
-CREATE TABLE IF NOT EXISTS health(
-  id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, node_id TEXT, evaluation_window TEXT,
-  signals TEXT NOT NULL, scores TEXT NOT NULL, weights TEXT NOT NULL,
-  decided INTEGER NOT NULL, decided_by TEXT, created INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS health_cluster ON health(cluster_id,created);
+
 CREATE TABLE IF NOT EXISTS effects(
   call_id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, agent_id TEXT NOT NULL, node_id TEXT,
   lease_epoch INTEGER NOT NULL, session_id TEXT, turn_seq INTEGER, tool TEXT NOT NULL,
@@ -907,12 +856,7 @@ CREATE TABLE IF NOT EXISTS sources(
   transaction_id TEXT, request_url TEXT NOT NULL, final_url TEXT NOT NULL, status_code INTEGER,
   fetched_at INTEGER NOT NULL, hash TEXT NOT NULL, bytes INTEGER NOT NULL, text TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sources_cluster ON sources(cluster_id,fetched_at);
-CREATE TABLE IF NOT EXISTS audits(
-  id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, transaction_id TEXT NOT NULL, node_id TEXT NOT NULL,
-  kind TEXT NOT NULL, target_revision INTEGER NOT NULL, decision TEXT NOT NULL,
-  plan_ref TEXT, validation_ref TEXT,
-  auditor_agent_id TEXT, evidence TEXT NOT NULL, created INTEGER NOT NULL, decided INTEGER);
-CREATE INDEX IF NOT EXISTS audits_target ON audits(cluster_id,transaction_id,kind,target_revision);
+
 CREATE TABLE IF NOT EXISTS issues(
   id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, node_id TEXT NOT NULL, transaction_id TEXT,
   reporter_agent_id TEXT, target_revision INTEGER NOT NULL, severity TEXT NOT NULL,
@@ -982,6 +926,7 @@ export class ClusterStore {
       try {
         expected.exec(SCHEMA);
         const tables = expected.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+        if (names.length !== tables.length) fail(`cluster database does not contain the current schema ${SCHEMA_VERSION} contract; use a new dataDir (existing data is left untouched)`, 409);
         for (const entry of tables) {
           const table = textOf(entry.name, 'table name');
           const columns = this.#db.prepare(`PRAGMA table_info(${table})`).all().map(row => textOf(row.name, 'column name'));
@@ -1503,13 +1448,13 @@ export class ClusterStore {
   insertTransaction(tx: TransactionInsert): TransactionRecord | null {
     const at = this.now();
     this.run(
-      `INSERT INTO transactions(id,cluster_id,node_id,owner_management_id,parent_transaction_id,objective,inputs,constraints,expected_output,acceptance_criteria,needs,priority,capabilities,status,revision,attempts,result,result_revision,validation,plan_approved_revision,created,updated)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO transactions(id,cluster_id,node_id,owner_management_id,parent_transaction_id,objective,inputs,constraints,expected_output,acceptance_criteria,needs,priority,capabilities,status,revision,attempts,result,result_revision,validation,created,updated)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       tx.id, tx.cluster_id, tx.node_id, tx.owner_management_id, tx.parent_transaction_id ?? null,
       tx.objective, j(tx.inputs ?? {}), j(tx.constraints ?? []), tx.expected_output ?? '',
       j(tx.acceptance_criteria ?? []), j(tx.needs ?? {}), tx.priority ?? 0, j(tx.capabilities ?? []),
       tx.status ?? 'DRAFT', 1, 0, tx.result === undefined ? null : j(tx.result), tx.result_revision ?? null,
-      tx.validation === undefined ? null : j(tx.validation), null, at, at,
+      tx.validation === undefined ? null : j(tx.validation), at, at,
     );
     return one(this.get('SELECT * FROM transactions WHERE id=?', tx.id), decodeTransaction);
   }
@@ -1725,7 +1670,7 @@ export class ClusterStore {
     const businessKeys = ['objective', 'inputs', 'constraints', 'expected_output', 'acceptance_criteria', 'needs', 'capabilities'] as const;
     const current = decodeTransaction(row);
     const businessChanged = businessKeys.some(key => patch[key] !== undefined && canonical(patch[key]) !== canonical(current[key]));
-    if (businessChanged) patch = { ...patch, current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null };
+    if (businessChanged) patch = { ...patch, current_plan_ref: null, current_validation_ref: null, validation: null, };
     const bump = businessChanged || patch.__bump_revision !== false;
     for (const [key, column] of TRANSACTION_COLUMNS) {
       const value = patch[key];
@@ -1745,12 +1690,12 @@ export class ClusterStore {
 
   addDependency(transactionId: string, dependsOn: string): void {
     const change = this.run('INSERT OR IGNORE INTO dependencies(transaction_id,depends_on,created) VALUES(?,?,?)', transactionId, dependsOn, this.now());
-    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null });
+    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, });
   }
 
   removeDependency(transactionId: string, dependsOn: string): void {
     const change = this.run('DELETE FROM dependencies WHERE transaction_id=? AND depends_on=?', transactionId, dependsOn);
-    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, plan_approved_revision: null });
+    if (Number(change.changes) > 0) this.updateTransaction(transactionId, { current_plan_ref: null, current_validation_ref: null, validation: null, });
   }
 
   dependenciesOf(transactionId: string): string[] {
@@ -2098,8 +2043,8 @@ export class ClusterStore {
 
   /**
    * Parents in one management node whose children have all been accepted
-   * and whose own result has not yet been submitted. A SUBMITTED/VALIDATING
-   * parent is waiting for its Auditor, not eligible for another aggregation.
+   * and whose own result has not yet been submitted. A SUBMITTED
+   * parent already has a publication and is not eligible for another aggregation.
    */
   aggregatableParents(clusterId: string, nodeId: string, { limit = 64 }: { limit?: number | undefined } = {}): AggregatableParent[] {
     const parents = this.transactionsInSubtree(clusterId, nodeId, { status: 'READY' }).filter(parent => parent.node_id === nodeId);
@@ -2203,7 +2148,7 @@ export class ClusterStore {
     }
     // Optional subject priority: the page is what a role sees, so the subjects
     // it must act on have to be inside it. Without this, a handful of older
-    // informational rows (a `plan-approved` for an unrelated transaction) fill
+    // informational rows (a `plan-saved` for an unrelated transaction) fill
     // every page and the later `message`/`agent-anomaly` rows behind them are
     // never shown — the page is a *window*, not a filter, so the ordering is
     // what decides who starves.
@@ -2757,30 +2702,6 @@ export class ClusterStore {
     return this.all(`SELECT * FROM tool_call_receipts WHERE ${where.join(' AND ')} ORDER BY created, call_id`, ...args).map(decodeToolCallReceipt);
   }
 
-  // ----------------------------------------------------------------- health
-
-  insertHealth(row: HealthInsert): HealthRecord | null {
-    this.run(
-      'INSERT INTO health(id,cluster_id,node_id,evaluation_window,signals,scores,weights,decided,decided_by,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
-      row.id, row.cluster_id, row.node_id ?? null, row.evaluation_window ?? null,
-      j(row.signals ?? {}), j(row.scores ?? {}), j(row.weights ?? {}), row.decided ? 1 : 0,
-      row.decided_by ?? null, this.now(),
-    );
-    return this.latestHealth(row.cluster_id, {});
-  }
-
-  latestHealth(clusterId: string, { node_id = null }: { node_id?: string | null | undefined } = {}): HealthRecord | null {
-    const row = node_id
-      ? this.get('SELECT * FROM health WHERE cluster_id=? AND node_id=? ORDER BY created DESC, rowid DESC LIMIT 1', clusterId, node_id)
-      : this.get('SELECT * FROM health WHERE cluster_id=? ORDER BY created DESC, rowid DESC LIMIT 1', clusterId);
-    return row ? decodeHealth(row) : null;
-  }
-
-  listHealth(clusterId: string, { limit = 20 }: { limit?: number | undefined } = {}): HealthRecord[] {
-    return this.all('SELECT * FROM health WHERE cluster_id=? ORDER BY created DESC LIMIT ?', clusterId, normalizeLimit(limit, 20, 200))
-      .map(decodeHealth);
-  }
-
   // ----------------------------------------------------------------- sources
 
   insertSource(source: SourceInsert): SourceRecord | null {
@@ -2806,76 +2727,6 @@ export class ClusterStore {
 
   countSources(clusterId: string): number {
     return numOf(this.get('SELECT COUNT(*) AS c FROM sources WHERE cluster_id=?', clusterId)?.c, 'sources.count');
-  }
-
-  // ------------------------------------------------------------------ audits
-
-  insertAudit(audit: AuditInsert): AuditRecord | null {
-    this.run(
-      `INSERT INTO audits(id,cluster_id,transaction_id,node_id,kind,target_revision,decision,auditor_agent_id,evidence,created,decided,plan_ref,validation_ref)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      audit.id, audit.cluster_id, audit.transaction_id, audit.node_id, audit.kind, audit.target_revision,
-      audit.decision ?? 'PENDING', audit.auditor_agent_id ?? null, j(audit.evidence ?? {}), this.now(), null,
-      audit.plan_ref ? j(audit.plan_ref) : null, audit.validation_ref ? j(audit.validation_ref) : null,
-    );
-    return one(this.get('SELECT * FROM audits WHERE id=?', audit.id), decodeAudit);
-  }
-
-  getAudit(id: string): AuditRecord | null {
-    return one(this.get('SELECT * FROM audits WHERE id=?', id), decodeAudit);
-  }
-
-  auditsForTransaction(clusterId: string, transactionId: string, { limit }: { limit?: number | undefined } = {}): AuditRecord[] {
-    return this.all(
-      'SELECT * FROM audits WHERE cluster_id=? AND transaction_id=? ORDER BY created, rowid LIMIT ?',
-      clusterId, transactionId, normalizeLimit(limit, 100, 500),
-    ).map(decodeAudit);
-  }
-
-  findAudit(clusterId: string, transactionId: string, kind: string, targetRevision: number): AuditRecord | null {
-    return one(this.get('SELECT * FROM audits WHERE cluster_id=? AND transaction_id=? AND kind=? AND target_revision=? ORDER BY created DESC, rowid DESC LIMIT 1',
-      clusterId, transactionId, kind, targetRevision), decodeAudit);
-  }
-
-  decideAudit(id: string, decision: FlowAuditDecision, auditorAgentId: string | null | undefined, evidence: FlowJsonValue | null | undefined): AuditRecord | null {
-    const row = this.getAudit(id);
-    if (!row) fail('Audit not found', 404);
-    if (row.decision !== 'PENDING') return row;
-    const prior = objectField(row.evidence, 'audits.evidence');
-    const patch = evidence === null || evidence === undefined ? {} : objectField(evidence, 'audits.evidence');
-    this.run('UPDATE audits SET decision=?,auditor_agent_id=?,evidence=?,decided=? WHERE id=?',
-      decision, auditorAgentId ?? null, j({ ...prior, ...patch }), this.now(), id);
-    return this.getAudit(id);
-  }
-
-  pendingAudits(
-    clusterId: string,
-    { kind, node_id, limit, after = null }: {
-      kind?: string | undefined
-      node_id?: string | undefined
-      limit?: number | undefined
-      after?: { created: number; id: string } | null | undefined
-    } = {},
-  ): AuditRecord[] {
-    const where = ["cluster_id=?", "decision='PENDING'"];
-    const args: BindValue[] = [clusterId];
-    if (kind) {
-      where.push('kind=?');
-      args.push(kind);
-    }
-    if (node_id) {
-      where.push('node_id=?');
-      args.push(node_id);
-    }
-    // A keyset cursor, not an offset: the caller is the Auditor, and taking the
-    // oldest eight pending decisions on every turn would starve the ninth
-    // forever. `(created, id)` is stable under the decisions it makes.
-    if (after) {
-      where.push('(created > ? OR (created = ? AND id > ?))');
-      args.push(after.created, after.created, after.id);
-    }
-    args.push(normalizeLimit(limit, 100, 500));
-    return this.all(`SELECT * FROM audits WHERE ${where.join(' AND ')} ORDER BY created, id LIMIT ?`, ...args).map(decodeAudit);
   }
 
   // ------------------------------------------------------------------ issues
@@ -2935,14 +2786,14 @@ export class ClusterStore {
   }
 
   /**
-   * Count correction rounds spent on a transaction. verify_correction advances
-   * issue.corrections when a correction fails verification; opening an issue
+   * Count correction rounds spent on a transaction. Business rejection advances
+   * issue.corrections when a replacement result fails validation; opening an issue
    * does not itself spend a correction round.
    */
   countCorrections(clusterId: string, transactionId: string): number {
     return numOf(this.get(
       `SELECT COALESCE(SUM(corrections), 0) AS c FROM issues
-        WHERE cluster_id=? AND transaction_id=? AND status IN ('OPEN','VERIFYING','CORRECTED','ESCALATED')`,
+        WHERE cluster_id=? AND transaction_id=? AND status IN ('OPEN','CORRECTED','ESCALATED')`,
       clusterId, transactionId,
     )?.c, 'issues.corrections');
   }
@@ -3004,7 +2855,7 @@ const TRANSACTION_COLUMNS = [
   ['needs', 'needs'], ['priority', 'priority'], ['capabilities', 'capabilities'],
   ['status', 'status'], ['attempts', 'attempts'], ['result', 'result'],
   ['result_revision', 'result_revision'], ['validation', 'validation'],
-  ['plan_approved_revision', 'plan_approved_revision'], ['node_id', 'node_id'],
+  ['node_id', 'node_id'],
   ['pre_pause_status', 'pre_pause_status'], ['pre_pause_revision', 'pre_pause_revision'],
   ['owner_management_id', 'owner_management_id'], ['parent_transaction_id', 'parent_transaction_id'],
   ['result_staged_epoch', 'result_staged_epoch'], ['result_staged_turn', 'result_staged_turn'],
@@ -3146,7 +2997,6 @@ function decodeTransaction(row: Row): TransactionRecord {
     result: jsonOf(p(row.result), 'transactions.result'),
     result_revision: numOrNull(row.result_revision, 'transactions.result_revision'),
     validation: objectOrNull(p(row.validation), 'transactions.validation'),
-    plan_approved_revision: numOrNull(row.plan_approved_revision, 'transactions.plan_approved_revision'),
     current_plan_ref: decodeRef<PlanRef>(row.current_plan_ref),
     current_result_ref: decodeRef<ResultRef>(row.current_result_ref),
     current_validation_ref: decodeRef<ValidationRef>(row.current_validation_ref),
@@ -3215,24 +3065,6 @@ function decodeBudgetRow(row: Row): BudgetRecord {
     wall_deadline: numOrNull(row.wall_deadline, 'budgets.wall_deadline'),
     created: numOf(row.created, 'budgets.created'),
     updated: numOf(row.updated, 'budgets.updated'),
-  };
-}
-
-function decodeAudit(row: Row): AuditRecord {
-  return {
-    id: textOf(row.id, 'audits.id'),
-    cluster_id: textOf(row.cluster_id, 'audits.cluster_id'),
-    node_id: textOrNull(row.node_id, 'audits.node_id'),
-    transaction_id: textOrNull(row.transaction_id, 'audits.transaction_id'),
-    auditor_agent_id: textOrNull(row.auditor_agent_id, 'audits.auditor_agent_id'),
-    kind: oneOf(row.kind, AUDIT_KINDS, 'audits.kind'),
-    target_revision: numOrNull(row.target_revision, 'audits.target_revision'),
-    plan_ref: decodeRef<PlanRef>(row.plan_ref),
-    validation_ref: decodeRef<ValidationRef>(row.validation_ref),
-    decision: oneOf(row.decision, AUDIT_DECISIONS, 'audits.decision'),
-    evidence: jsonOf(p(row.evidence), 'audits.evidence'),
-    created: numOf(row.created, 'audits.created'),
-    decided: numOrNull(row.decided, 'audits.decided'),
   };
 }
 
@@ -3394,21 +3226,6 @@ function decodeSummary(row: Row): SummaryRecord {
     as_of_seq: numOf(row.as_of_seq, 'summaries.as_of_seq'),
     data: jsonOf(p(row.data), 'summaries.data'),
     created: numOf(row.created, 'summaries.created'),
-  };
-}
-
-function decodeHealth(row: Row): HealthRecord {
-  return {
-    id: textOf(row.id, 'health.id'),
-    cluster_id: textOf(row.cluster_id, 'health.cluster_id'),
-    node_id: textOrNull(row.node_id, 'health.node_id'),
-    evaluation_window: textOrNull(row.evaluation_window, 'health.evaluation_window'),
-    signals: jsonOf(p(row.signals), 'health.signals'),
-    scores: jsonOf(p(row.scores), 'health.scores'),
-    weights: jsonOf(p(row.weights), 'health.weights'),
-    decided: numOf(row.decided, 'health.decided'),
-    decided_by: textOrNull(row.decided_by, 'health.decided_by'),
-    created: numOf(row.created, 'health.created'),
   };
 }
 

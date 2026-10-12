@@ -1,5 +1,5 @@
 {
-  "title": "Cluster smoke: real three-role loop over two arithmetic transactions",
+  "title": "Cluster smoke: two-manager loop over two arithmetic transactions",
   "objective": "Produce two verified sums through the cluster. Transaction {{runId}}-a must use the flow_sum tool on [2,3] and submit the resulting value; transaction {{runId}}-b must use the flow_sum tool on [15,40] and submit the resulting value.",
   "capabilities": [
     "fs_read"
@@ -42,7 +42,7 @@
     }
   ],
   "acceptance_criteria": [
-    "Both transactions reach ACCEPTED through an independent auditor decision",
+    "Both transactions reach ACCEPTED through actual Orchestrator validation",
     "Each durable native assistant settlement and successful compaction usage event is projected exactly once"
   ]
 }

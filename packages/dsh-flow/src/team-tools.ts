@@ -53,6 +53,15 @@ export async function pollTeam(read: () => FlowTeamSnapshot, afterVersion: numbe
   return team;
 }
 
+function teamParameters(ctx: Context, id: string) {
+  const snapshot = ctx.flow.read(id, { include_events: false });
+  const { workspace, capabilities, budget, limits } = snapshot.cluster;
+  const scope = snapshot.nodes.find(node => node.parent_id === null)?.scope;
+  const authority = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope.execution_authorization : null;
+  const saved = authority && typeof authority === 'object' && !Array.isArray(authority) ? authority : null;
+  return { workspace, capabilities, budget, limits, managementCapabilities: saved?.capabilities ?? null, managementWriteScope: saved?.write_scope ?? null };
+}
+
 const output = { schema: { type: 'string' as const }, render: (_args: unknown, value: string) => [{ type: 'text' as const, text: value }] };
 const present = (title: string, kind: 'read' | 'execute' = 'execute') => () => ({ card: 'generic' as const, title, kind });
 
@@ -69,7 +78,9 @@ export function registerTeamTools(ctx: Context): void {
       } },
       acceptance_criteria: { type: 'array', required: true, items: { type: 'string' } },
       workspace: { type: 'string', description: 'Defaults to the main conversation workspace.' },
-      capabilities: { type: 'array', items: { type: 'string', enum: ['fs_read', 'fs_write', 'shell', 'web_fetch', 'browser'] } },
+      managementCapabilities: { type: 'array', description: 'Explicit manager execution ceiling; omitted grants all five business capabilities. An empty list disables business tools for managers.', items: { type: 'string', enum: ['fs_read', 'fs_write', 'shell', 'web_fetch', 'browser'] } },
+      managementWriteScope: { type: 'array', description: 'Manager workspace authorization, default ["."]. Independent of Worker write allocations; child domains may only narrow it.', items: { type: 'string' } },
+      capabilities: { description: 'Capabilities selected for Worker execution; this does not restrict manager validation tools.', type: 'array', items: { type: 'string', enum: ['fs_read', 'fs_write', 'shell', 'web_fetch', 'browser'] } },
       budget: { type: 'json', description: 'Optional overrides: tool_calls, wall_time_ms, agents, max_active_agents. Omitted dimensions inherit deployment defaults.' },
       limits: { type: 'json', description: 'Optional overrides: max_children, max_depth, max_agents, max_active_agents, max_llm_concurrency, max_attempts, max_corrections, max_role_turns, max_tool_calls_per_turn, max_scale_batch.' },
     },
@@ -85,11 +96,12 @@ export function registerTeamTools(ctx: Context): void {
         objective: args.objective, assessment: args.assessment, acceptance_criteria: args.acceptance_criteria,
         ...(startWorkspace === undefined ? {} : { workspace: startWorkspace }),
         ...(args.capabilities === undefined ? {} : { capabilities: args.capabilities }),
+        ...(args.managementCapabilities === undefined ? {} : { managementCapabilities: args.managementCapabilities }),
+        ...(args.managementWriteScope === undefined ? {} : { managementWriteScope: args.managementWriteScope }),
         ...(args.budget === undefined ? {} : { budget: validateBudget(args.budget) }),
         ...(args.limits === undefined ? {} : { limits: validateLimits(args.limits, 'limits') }),
       }, mainModel(ctx, agent.session));
-      const { workspace, capabilities, budget, limits } = ctx.flow.read(team.run.id, { include_events: false }).cluster;
-      return JSON.stringify({ ...team, run_id: team.run.id, version: team.run.version, parameters: { workspace, capabilities, budget, limits } });
+      return JSON.stringify({ ...team, run_id: team.run.id, version: team.run.version, parameters: teamParameters(ctx, team.run.id) });
     },
   })));
   ctx.tools.register(strictTool(defineTool({
@@ -114,8 +126,7 @@ export function registerTeamTools(ctx: Context): void {
         return JSON.stringify({ run: null, runs, launches, defaults: ctx.flow.teamStartDefaults() ?? null });
       }
       const team = await pollTeam(() => ctx.flow.teamRead(agent.session.id, id), after, wait, exec.signal);
-      const { workspace, capabilities, budget, limits } = ctx.flow.read(id, { include_events: false }).cluster;
-      return JSON.stringify({ ...team, run_id: id, version: team.run.version, runs, launches, defaults: ctx.flow.teamStartDefaults() ?? null, parameters: { workspace, capabilities, budget, limits }, execution: executionEvidence(ctx,id,args.transaction_id) });
+      return JSON.stringify({ ...team, run_id: id, version: team.run.version, runs, launches, defaults: ctx.flow.teamStartDefaults() ?? null, parameters: teamParameters(ctx, id), execution: executionEvidence(ctx,id,args.transaction_id) });
     },
   })));
   ctx.tools.register(strictTool(defineTool({

@@ -1,4 +1,4 @@
-/** Real provider acceptance for saved plans, readable handoffs and independent governance. */
+/** Real provider acceptance for saved plans, readable handoffs and business acceptance. */
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -14,12 +14,12 @@ import { isCurrentWorkerProducer } from './handoff-worker-identity.ts';
 import { readNativeToolReceipts } from './native-tool-receipts.ts';
 
 const cases = [
-  { id: 'artifact', objective: 'Use one Worker to create arithmetic-report.md in the current workspace. Include the title 算术核验报告, 2+3=5, 17×23=391, 144÷12=12 and reproducible calculation steps. The Worker must use write, then read the completed file and submit that actual native receipt as evidence. The Allocator must grant write_scope ["arithmetic-report.md"], inherited from the transaction inputs. The Orchestrator has evidence-query tools rather than a file tool: query the current transaction fields:["evidence"], find the Worker read receipt, and follow its exact read.what and read.params to inspect the actual file contents. Independently compute flow_sum([2,3]), flow_sum with 23 copies of 17, and flow_sum with 12 copies of 12. These prove the addition, repeated-addition multiplication, and inverse check of division. Record the actual methods truthfully: flow_sum adds numbers, it does not multiply. The Auditor independently reviews the Orchestrator’s native receipt reads, computations and validation. State the limitation that file content was inspected through the persisted Worker read receipt; do not claim a direct file-tool call by the manager. Do not decompose this single-file task. Deliver the real file path and the validation and audit conclusions.', criteria: ['当前工作区存在 arithmetic-report.md，含三个正确结果与计算依据', '总协调读取当前交付的原生文件回执并独立校验计算及内容'] },
-  { id: 'simple', objective: '请安排成员计算 2+3，由总协调实际校验，并让 Auditor 独立审核验收过程。一个执行者即可完成，无需分解。全程纯文本，不读写文件、不运行终端。最终交付结果、验收结论和审核结论。', criteria: ['计算结果为 5，包含简短计算依据', '全程纯文本，不读写文件或运行终端'] },
-  { id: 'decompose', objective: '制作一份纯文本算术报告：分别计算 17×23 和 144÷12，两部分是独立交付，请拆分为两个工作单元，最后由总协调整合报告并检查两个结果及报告完整性。每份局部交付和最终整合均由对应总协调实际校验，Auditor 审核其验收。全程不读写文件、不运行终端。', criteria: ['第一部分给出 391 及乘法依据', '第二部分给出 12 及除法依据', '最终报告同时保留两个结果、计算依据及整体验收结论'] },
-  { id: 'delegation', objective: '形成纯文本指标核验报告，并演示两层自主管理委派。结构应为根管理域→一级指标核验管理域→二级原始计算复核管理域→执行者：根总协调委派一级域，一级总协调自主规划并委派二级域，二级总协调自主规划一个执行者计算 2+3。每个管理者校验自己接收的下游交付并逐层整合；各层验收记录由本层 Auditor 独立审核后才能接受。根协调整合最终报告，保留计算依据与逐层交付关系。不得用 Worker 充当第二层管理域，也不得把独立计算交给 Auditor；全程不使用文件或终端。', criteria: ['最终计算结果为 5 且依据可核对', '存在两层真实子管理域，各自保存规划并逐层交接整合', '最终报告保留原始计算依据及逐层交付关系'] },
-  { id: 'correction', objective: '这是明确的纠正流程演练：只用纯文本完成 2+3。首次执行者请提交候选 6，并说明这是演练中的错误候选；总协调必须实际检查并拒绝错误候选，然后正式修订任务，要求执行者提交正确结果与依据。最终总协调校验正确结果，Auditor 审核验收行为。不要把首次错误候选标为验收通过。全程不读写文件、不运行终端。', criteria: ['首次错误候选被总协调实际识别并记录拒绝及纠正', '最终提交正确结果 5 及计算依据', '最终交付区分首次错误候选与纠正后的正确结果'] },
-  { id: 'recovery', objective: 'Use one Worker to compute 2+3 with flow_sum and explain the basis. The Orchestrator independently verifies the actual result; the Auditor independently audits that validation. The host may restart. Continue the same saved transaction and plan, preserving the original task and the actual delivery evidence. No files or shell tools. Deliver the result, validation and audit conclusions.', criteria: ['The result is 5 with verifiable calculation evidence', 'After host restart, continue the same formal task and preserve the original input and actual delivery evidence'] },
+  { id: 'artifact', objective: 'Use one Worker to create arithmetic-report.md in the current workspace. Include the title 算术核验报告, 2+3=5, 17×23=391, 144÷12=12 and reproducible calculation steps. The Worker must use write, then read the completed file and submit that actual native receipt as evidence. The Allocator must grant write_scope ["arithmetic-report.md"], inherited from the transaction inputs. The Orchestrator must bind_validation to the current plan_ref and result_ref before business verification, directly use native read to inspect arithmetic-report.md, and use native bash to independently calculate 2+3, 17*23 and 144/12. Also compute flow_sum([2,3]), flow_sum with 23 copies of 17, and flow_sum with 12 copies of 12. Read your own settled native read receipt: query the current transaction fields:["evidence"], find your read call, and follow its exact read.what and read.params. Include the real read and bash native receipts in validation evidence text; evidence_refs must use supported result or effect references from the query, never invent receipt IDs or reference kinds. Record actual methods truthfully: flow_sum adds numbers. Do not decompose this single-file task. Deliver the real file path and your actual acceptance conclusion.', criteria: ['当前工作区存在 arithmetic-report.md，含三个正确结果与计算依据', '总协调直接读取文件、执行终端复算并保存本人的原生验收证据'] },
+  { id: 'simple', objective: '请安排成员计算 2+3，由总协调实际校验。一个执行者即可完成，无需分解。全程纯文本，不读写文件、不运行终端。最终交付结果和验收结论。', criteria: ['计算结果为 5，包含简短计算依据', '全程纯文本，不读写文件或运行终端'] },
+  { id: 'decompose', objective: '制作一份纯文本算术报告：分别计算 17×23 和 144÷12，两部分是独立交付，请拆分为两个工作单元，最后由总协调整合报告并检查两个结果及报告完整性。每份局部交付和最终整合均由对应总协调实际校验。全程不读写文件、不运行终端。', criteria: ['第一部分给出 391 及乘法依据', '第二部分给出 12 及除法依据', '最终报告同时保留两个结果、计算依据及整体验收结论'] },
+  { id: 'delegation', objective: '形成纯文本指标核验报告，并演示两层自主管理委派。结构应为根管理域→一级指标核验管理域→二级原始计算复核管理域→执行者：根总协调委派一级域，一级总协调自主规划并委派二级域，二级总协调自主规划一个执行者计算 2+3。每个管理者校验自己接收的下游交付并逐层整合，各层保存自己的实际验收记录后接受。根协调整合最终报告，保留计算依据与逐层交付关系。不得用 Worker 充当第二层管理域；全程不使用文件或终端。', criteria: ['最终计算结果为 5 且依据可核对', '存在两层真实子管理域，各自保存规划并逐层交接整合', '最终报告保留原始计算依据及逐层交付关系'] },
+  { id: 'correction', objective: '这是明确的纠正流程演练：只用纯文本完成 2+3。首次执行者请提交候选 6，并说明这是演练中的错误候选；总协调必须实际检查并拒绝错误候选；若使用 reject_result 须带刚读取的 expected_transaction_revision 和当前计划/结果引用，然后正式修订任务，要求执行者提交正确结果与依据。最终总协调校验正确结果。不要把首次错误候选标为验收通过。全程不读写文件、不运行终端。', criteria: ['首次错误候选被总协调实际识别并记录拒绝及纠正', '最终提交正确结果 5 及计算依据', '最终交付区分首次错误候选与纠正后的正确结果'] },
+  { id: 'recovery', objective: 'Use one Worker to compute 2+3 with flow_sum and explain the basis. The Orchestrator independently verifies the actual result. The host may restart. Continue the same saved transaction and plan, preserving the original task and the actual delivery evidence. No files or shell tools. Deliver the result, validation conclusion.', criteria: ['The result is 5 with verifiable calculation evidence', 'After host restart, continue the same formal task and preserve the original input and actual delivery evidence'] },
 ] as const;
 
 const key = process.env.FLOW_MODEL_API_KEY;
@@ -52,8 +52,6 @@ const correctFileMath = (text: string): boolean => {
   const compact = text.replace(/\s/g, '');
   return /算术核验报告/.test(text) && /2\+3=5/.test(compact) && /17[×*x]23=391/.test(compact) && /144[÷/]12=12/.test(compact);
 };
-// Explain the existing tool contract without supplying any audit judgment.
-const auditFormat = 'Auditor interface reminder: read the pending audit object and its bound immutable plan or validation. inspect_plan checks cover goal_coverage, responsibility, dependencies, handoff, acceptance_arrangement. inspect_validation checks cover standard_coverage, checks_performed, evidence_applicability, conclusion_support, authority. Every check requires rule, method, observation, passed (boolean), and evidence_refs. For a plan check use {kind:"plan",ref:<the exact audit.plan_ref object>}; for a validation check use {kind:"validation",ref:<the exact audit.validation_ref object>}. Copy the reference object from the actual audit; never use a transaction ID alone, invent a reference, or mix another audit’s revision. Judge each check independently from real evidence. If a tool rejects the format, read its error and repair the missing field or reference; do not repeat an unchanged rejected call.';
 
 for (const scenario of cases.filter(entry => !selected || entry.id === selected)) {
   const layout = createRunLayout(join(PROJECT_ROOT, '.artifacts'), `handoffs-${scenario.id}-${stamp}`);
@@ -92,9 +90,9 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
   };
   try {
     await startAcceptanceHost(host);
-    const objective = `${scenario.objective}\n\n${auditFormat}`;
+    const objective = scenario.objective;
     const started = asObject(await host.request('start', undefined, { objective,
-      workspace: layout.workspace, capabilities: scenario.id === 'artifact' ? ['fs_read', 'fs_write'] : [], acceptance_criteria: [...scenario.criteria],
+      workspace: layout.workspace, managementCapabilities: scenario.id === 'artifact' ? ['fs_read', 'fs_write', 'shell'] : [], capabilities: scenario.id === 'artifact' ? ['fs_read', 'fs_write'] : [], acceptance_criteria: [...scenario.criteria],
       ...(scenario.id === 'artifact' ? { initial_transactions: [{ objective, acceptance_criteria: [...scenario.criteria], inputs: { write_scope: ['arithmetic-report.md'] } }] } : {}),
       limits: { max_depth: 4, max_role_turns: 80, max_attempts: 4 },
       budget: { tool_calls: 1200, agents: 24, max_active_agents: 8, wall_time_ms: timeout } }, 120_000));
@@ -160,7 +158,6 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
       const plans = db.prepare('SELECT * FROM plans WHERE cluster_id=?').all(clusterId);
       const validations = db.prepare('SELECT * FROM validation_records WHERE cluster_id=?').all(clusterId);
       const publications = db.prepare('SELECT * FROM result_snapshots WHERE cluster_id=?').all(clusterId);
-      const audits = db.prepare('SELECT * FROM audits WHERE cluster_id=?').all(clusterId);
       const inputs = db.prepare('SELECT * FROM member_inputs WHERE cluster_id=?').all(clusterId);
       const nodes = db.prepare('SELECT * FROM nodes WHERE cluster_id=?').all(clusterId);
       const allocations = db.prepare('SELECT * FROM allocations WHERE cluster_id=?').all(clusterId);
@@ -177,13 +174,10 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
       const resultFor = (tx: Row) => decodedResults.find(row => same(row.ref, decoded(tx.current_result_ref)));
       const validationFor = (tx: Row) => decodedValidations.find(row => same(row.ref, decoded(tx.current_validation_ref)));
       const acceptedRecord = (tx: Row): boolean => {
-        const planRef = decoded(tx.current_plan_ref), resultRef = decoded(tx.current_result_ref), validationRef = decoded(tx.current_validation_ref);
+        const planRef = decoded(tx.current_plan_ref), resultRef = decoded(tx.current_result_ref);
         const plan = planFor(tx), result = resultFor(tx), validation = validationFor(tx);
         const author = agents.find(agent => agent.id === validation?.author_agent_id);
         const planner = agents.find(agent => agent.id === plan?.author_agent_id);
-        const audit = audits.find(row => row.kind === 'validation' && row.decision === 'APPROVED'
-          && same(decoded(row.validation_ref), validationRef) && same(decoded(row.plan_ref), planRef));
-        const auditor = agents.find(agent => agent.id === audit?.auditor_agent_id);
         const contract = asObject(plan?.contract), planIdentity = asObject(planRef);
         const criteria = Array.isArray(contract?.acceptance_criteria) ? contract.acceptance_criteria : [];
         const checks = Array.isArray(validation?.checks) ? validation.checks.map(asObject) : [];
@@ -196,8 +190,7 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           && plan.author_role === 'orchestrator' && planner?.role === 'orchestrator' && planner.node_id === tx.node_id
           && same(validation.result_ref, resultRef) && same(validation.plan_ref, planRef)
           && same(result.plan_ref, planRef) && same(result.result, decoded(tx.result))
-          && audit !== undefined && auditor?.role === 'auditor' && auditor.node_id === tx.node_id
-          && audit.auditor_agent_id !== validation.author_agent_id && completeChecks;
+          && completeChecks;
       };
       const currentDelivery = (parent: Row, child: Row): boolean => {
         const publication = resultFor(parent);
@@ -207,8 +200,9 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           && publication.source_validation_refs.some(ref => same(ref, decoded(child.current_validation_ref)));
       };
       const transcripts: unknown[] = [];
-      const fileToolEvidence: {role: string; session_id: string; seq: number; name: string; call_id: unknown; arguments: unknown; native_success: boolean}[] = [];
+      const fileToolEvidence: {role: string; session_id: string; seq: number; name: string; call_id: unknown; arguments: unknown; native_success: boolean; content_matches: boolean; before_validation: boolean}[] = [];
       const receiptReads: {call_id: unknown; seq: number; source_call_id: unknown; source_session_id: unknown; source_seq: unknown; source_tool: unknown; native_success: boolean; content_matches: boolean; before_validation: boolean}[] = [];
+      const managerShell: {call_id: unknown; output: string; native_success: boolean; before_validation: boolean}[] = [];
       const managerSums: {call_id: unknown; seq: number; values: unknown; result: number; native_success: boolean; before_validation: boolean}[] = [];
       const nativeInitialCounts = new Map<string, number>();
       for (const agent of agents) {
@@ -238,10 +232,11 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           if (!data) continue;
           const message = resultForCall(call), nativeSuccess = message?.isError === false;
           if (['read', 'write'].includes(String(data.name)) && JSON.stringify(data.arguments).includes('arithmetic-report.md')) {
-            fileToolEvidence.push({role: String(agent.role), session_id: String(agent.session_id), seq: call.seq, name: String(data.name), call_id: data.callId, arguments: data.arguments, native_success: nativeSuccess});
+            fileToolEvidence.push({role: String(agent.role), session_id: String(agent.session_id), seq: call.seq, name: String(data.name), call_id: data.callId, arguments: data.arguments, native_success: nativeSuccess, content_matches: correctFileMath(resultText(message)), before_validation: call.seq < currentValidationSeq});
           }
           if (agent.role !== 'orchestrator') continue;
           const args = parsedObject(data.arguments), params = asObject(args?.params);
+          if (data.name === 'bash') managerShell.push({call_id: data.callId, output: resultText(message), native_success: nativeSuccess, before_validation: call.seq < currentValidationSeq});
           if (data.name === 'flow_sum') managerSums.push({call_id: data.callId, seq: call.seq, values: args?.values,
             result: Number(resultText(message)), native_success: nativeSuccess, before_validation: call.seq < currentValidationSeq});
           if (data.name !== 'flow_query' || !params?.native_call_id) continue;
@@ -277,7 +272,7 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
       }
       check('saved-manager-plans', plans.length > 0);
       check('immutable-validations', validations.length > 0);
-      check('independent-audit-decisions', audits.some(audit => audit.kind === 'validation' && audit.decision === 'APPROVED'));
+      check('two-manager-roles', agents.filter(agent => agent.role !== 'worker').every(agent => ['orchestrator', 'allocator'].includes(String(agent.role))));
       check('all-formal-work-accepted', transactions.length > 0 && transactions.every(tx => ['ACCEPTED', 'SUPERSEDED', 'CANCELLED'].includes(String(tx.status))));
       const accepted = transactions.filter(tx => tx.status === 'ACCEPTED');
       check('accepted-current-records-and-authors', accepted.length > 0 && accepted.every(acceptedRecord));
@@ -289,9 +284,11 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
         const content = existsSync(path) ? readFileSync(path, 'utf8') : '';
         check('independently-read-delivered-file', correctFileMath(content), path);
         check('worker-native-file-write', fileToolEvidence.some(call => call.role === 'worker' && call.name === 'write' && call.native_success));
-        check('manager-native-file-receipt-read', receiptReads.some(read => read.native_success && read.content_matches && read.before_validation
-          && read.source_tool === 'read' && fileToolEvidence.some(call => call.role === 'worker' && call.name === 'read' && call.native_success
+        check('manager-own-native-file-receipt-read', receiptReads.some(read => read.native_success && read.content_matches && read.before_validation
+          && read.source_tool === 'read' && fileToolEvidence.some(call => call.role === 'orchestrator' && call.name === 'read' && call.native_success
             && call.call_id === read.source_call_id && call.session_id === read.source_session_id && call.seq === read.source_seq)));
+        check('manager-direct-file-read', fileToolEvidence.some(call => call.role === 'orchestrator' && call.name === 'read' && call.native_success && call.content_matches && call.before_validation));
+        check('manager-shell-recalculation', managerShell.some(call => call.native_success && call.before_validation && /\b5\b/.test(call.output) && /\b391\b/.test(call.output) && /\b12\b/.test(call.output)));
         check('manager-native-arithmetic-checks', [[2, 3], Array(23).fill(17), Array(12).fill(12)].every((values, index) =>
           managerSums.some(call => call.native_success && call.before_validation && same(call.values, values) && call.result === [5, 391, 144][index])));
       }
@@ -346,7 +343,7 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
         const rejectionSequences = (wrong: Record<string, unknown>): number[] => {
           const identity = asObject(wrong.ref), transactionId = identity?.transaction_id;
           const negative = decodedValidations.filter(record => record.accepted === false && same(record.result_ref, wrong.ref));
-          const negativeEvents = events.filter(event => event.type === 'validation-proposed' && event.data?.transaction_id === transactionId
+          const negativeEvents = events.filter(event => event.type === 'validation-recorded' && event.data?.transaction_id === transactionId
             && event.data?.accepted === false && negative.some(record => asObject(record.ref)?.result_revision === event.data?.result_revision));
           const rejectedCommands = commands.filter(command => command.action === 'reject_result' && command.actor?.role === 'orchestrator'
             && command.result?.transaction_id === transactionId && command.result?.status === 'REJECTED');
@@ -382,7 +379,7 @@ for (const scenario of cases.filter(entry => !selected || entry.id === selected)
           && inputs.some(input => input.id === preserved.id && input.native_message_id === preserved.native_message_id && input.status === 'ADMITTED'),
         JSON.stringify(preserved));
       }
-      writeFileSync(join(layout.root, 'native-evidence.json'), redact(JSON.stringify({ plans, publications, validations, audits, inputs, nodes, allocations, assignments, events, commands, restart_input: restartInput, file_tool_evidence: fileToolEvidence, manager_receipt_reads: receiptReads, manager_native_sums: managerSums, transcripts }, null, 2)));
+      writeFileSync(join(layout.root, 'native-evidence.json'), redact(JSON.stringify({ plans, publications, validations, inputs, nodes, allocations, assignments, events, commands, restart_input: restartInput, file_tool_evidence: fileToolEvidence, manager_receipt_reads: receiptReads, manager_native_sums: managerSums, manager_native_shell: managerShell, transcripts }, null, 2)));
     } finally { db.close(); }
   }
   const buildAfter = computeBuildHashes({ id: '' }, patches);

@@ -1,8 +1,8 @@
 # dsh-flow
 
-A hierarchical agent team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), with durable transactions, independent result review, layered budgets and native agent conversations.
+A hierarchical agent team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), with durable transactions, evidence-bound business acceptance, layered budgets and native agent conversations.
 
-The main Agent manages a team's lifecycle through a skill and tools. Each management node has its own Orchestrator, Allocator and Auditor; Workers execute allocated transactions. Every turn uses the host's agent loop, tool pipeline and Session persistence.
+The main Agent manages a team's lifecycle through a skill and tools. Each management node has its own Orchestrator and Allocator; Workers execute allocated transactions. Every turn uses the host's agent loop, tool pipeline and Session persistence.
 
 ## Documentation
 
@@ -23,7 +23,7 @@ pnpm run docs:preview
 
 ## Using a team
 
-Enter `/agent-team <objective>` in the main conversation. The command submits a user prompt and loads the `agent-team` skill. The main Agent assesses the work, carries relevant context into a self-contained objective and calls `agent_team_create`. It confirms startup and polls with `agent_team_read`, sends further instructions through `agent_team_message`, and handles explicit pause, resume or cancel requests through `agent_team_control`. After a terminal result, `agent_team_finalize` releases resources while retaining results, reviews and conversations.
+Enter `/agent-team <objective>` in the main conversation. The command submits a user prompt and loads the `agent-team` skill. The main Agent assesses the work, carries relevant context into a self-contained objective and calls `agent_team_create`. It confirms startup and polls with `agent_team_read`, sends further instructions through `agent_team_message`, and handles explicit pause, resume or cancel requests through `agent_team_control`. After a terminal result, `agent_team_finalize` releases resources while retaining results, validation and conversations.
 
 The main Agent and the team's root Orchestrator have independent Sessions. The main conversation remains the user's ordinary dialogue; the team header and **智能体** tab show the bound team's topology, hierarchy and read-only details.
 
@@ -35,7 +35,7 @@ The plugin settings expose deployment defaults for model selection, reasoning, d
 
 ## Installation
 
-Requirements: Node `^22.19.0 || >=24.0.0` and pnpm `12.9.1`. The supported Harness baseline is `0.1.7-rc.2` with the public interface patches declared in `pnpm-workspace.yaml`. A standalone unpatched host of that version does not provide all required interfaces.
+Requirements: Node `^22.19.0 || >=24.0.0` and pnpm `12.9.1`. The supported Harness baseline is `0.2.0-rc.2` with the public interface patches declared in `pnpm-workspace.yaml`. A standalone unpatched host of that version does not provide all required interfaces.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -57,20 +57,20 @@ The standard bundle provides the service, observing Remote API and `/agent-team`
 
 ## Execution model
 
-Transactions progress through `DRAFT`, `READY`, `RUNNING`, `SUBMITTED`, `VALIDATING` and `ACCEPTED`, with explicit rejection, blocking, pause, failure and cancellation paths. A Worker submits evidence; acceptance requires an independent Auditor decision matching the exact result revision. Plan audits supervise planning and can request correction; they do not gate dispatch.
+Transactions progress through `DRAFT`, `READY`, `RUNNING`, `SUBMITTED` and `ACCEPTED`, with explicit rejection, blocking, pause, failure and cancellation paths. Workers submit deliverables and evidence. The Orchestrator performs the business checks, then `validate` atomically stores its immutable validation, commits acceptance and writes the summary. Current plan/result references, complete criteria, child results, permissions and execution safety remain enforced.
 
 A parent aggregates only accepted children. Accepted root transactions still require the root Orchestrator's `finish_cluster` action before the cluster completes. Resource reclamation and task success are distinct states.
 
 Budgets account for tool calls, wall time, agent identities and active execution capacity. DSH owns model context, output and default compaction. Token statistics passively project durable native Session events as host-recorded usage; missing fields remain unknown and incomplete observations are marked. Agent scheduling permits do not prove the concurrency of all host auxiliary model requests. Shared grants are not summed once per agent. Declared write scopes support allocation checks and managed-tool authorization; filesystem access also depends on the host's sandbox and permission policy.
 
-SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 4 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
+SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 5 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
 
 ## Workspace
 
 | Path | Responsibility |
 |---|---|
 | `packages/dsh-flow` | Published Cordis plugin, Host and Client TypeScript programs, team skill and bundle configuration |
-| `packages/dsh-flow/src/core` | Scheduling, transactions, allocations, audit, communication, budgets and persistence |
+| `packages/dsh-flow/src/core` | Scheduling, transactions, allocations, validation, communication, budgets and persistence |
 | `packages/dsh-flow/src/client` | Team observation, native session navigation, inspectors and settings |
 | `packages/typert-protocol` | Private declaration face used by Typert generation; runtime resolves the published protocol |
 | `src/host` | Development launcher, isolated acceptance host, deterministic model and evidence readers |

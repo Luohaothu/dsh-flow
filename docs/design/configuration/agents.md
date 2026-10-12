@@ -44,7 +44,9 @@ description: 模型路由由 Flow 配置，上下文、输出和官方默认压�
 
 ## 能力与工具范围
 
-启动请求中的 `capabilities` 确定集群可用的能力，再由资源分配智能体分配给具体的执行智能体。默认值为 `fs_read`、`fs_write`；显式传入 `[]` 表示不授予执行智能体任何能力，空数组不会被默认值替换。
+启动请求中的 `capabilities` 确定 Worker 的能力上限，省略时默认 `fs_read`、`fs_write`，再由资源分配智能体为具体执行者配置能力。总协调使用独立的 `managementCapabilities`，省略时默认五类能力；`managementWriteScope` 默认 `["."]`。两者可显式收窄，空数组保持为空；子管理域的同名参数只能在父域授权内收窄。资源分配智能体保留控制面工具，不因管理域授权而获得业务执行工具。
+
+总协调使用这些工具理解输入、检查产物和验收。文件写入受管理写入范围及活跃 Worker 冲突检查约束；Shell 需要 `["."]` 工作区写入授权，不能用文件级范围声称限制任意 Shell 命令。验收前用 `bind_validation` 绑定实际检查的当前计划与结果，同一原生轮次可继续调用工具；切换检查对象后，回执按调用分别绑定。
 
 | 能力 | 对应工具 | 宿主要求 |
 | --- | --- | --- |
@@ -52,9 +54,9 @@ description: 模型路由由 Flow 配置，上下文、输出和官方默认压�
 | `fs_write` | `write`、`edit` | 文件插件与有效写入范围 |
 | `shell` | `bash`、`job_output`、`job_kill` | Bash / Jobs 插件与宿主权限策略 |
 | `web_fetch` | `web_fetch` | 网页插件，启用抓取、关闭搜索 |
-| `browser` | 固定允许列表中的 Playwright MCP 工具 | 由宿主组合提供；仅声明能力不会自动安装或连接浏览器 |
+| `browser` | 固定允许列表中的 Playwright MCP 工具 | 由宿主组合提供；声明后宿主必须提供相应工具，否则返回 CAPABILITY_UNAVAILABLE |
 
-角色命令工具也在各自的作用域中注册：编排智能体使用 `flow_transaction`，资源分配智能体使用 `flow_allocation`，审计智能体使用 `flow_audit`；执行智能体只能通过 `flow_transaction` 提交自身结果。共享工具 `flow_query`、`flow_communicate` 不会赋予调用者其他角色的决策权。
+角色命令工具也在各自的作用域中注册：编排智能体使用 `flow_transaction`，资源分配智能体使用 `flow_allocation`；执行智能体只能通过 `flow_transaction` 提交自身结果。共享工具 `flow_query`、`flow_communicate` 不会赋予调用者其他角色的决策权。
 
 参见：[集群预算与运行限制](/configuration/cluster)、[宿主兼容性](/development/compatibility)、[API 接口](/development/api)。
 

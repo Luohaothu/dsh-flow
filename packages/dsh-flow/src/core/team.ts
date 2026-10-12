@@ -11,12 +11,12 @@ import { communicationCategory, communicationContent } from '../messages.ts';
 import { projectAgentSession } from '../agent-session.ts';
 import type { FlowJsonValue, FlowAgentSession, FlowTeamAgent, FlowTeamAllowance, FlowTeamCreateRequest, FlowTeamMetric, FlowTeamRun, FlowTeamSnapshot, FlowTeamState } from '../types.ts';
 import { validateBudget, validateCapabilities, textField, isFlowJsonValue } from '../validation.ts';
-import { validateLimits } from './protocol.ts';
+import { validateLimits, validateWriteScope } from './protocol.ts';
 
 /** Validate at the service boundary too; callers cannot bypass the model schema. */
 function createRequest(request: FlowTeamCreateRequest): FlowTeamCreateRequest {
   if (!request || typeof request !== 'object' || Array.isArray(request)) fail('团队创建参数必须是对象', 400);
-  const allowed = new Set(['objective', 'assessment', 'acceptance_criteria', 'workspace', 'capabilities', 'budget', 'limits']);
+  const allowed = new Set(['objective', 'assessment', 'acceptance_criteria', 'workspace', 'capabilities', 'managementCapabilities', 'managementWriteScope', 'budget', 'limits']);
   for (const key of Object.keys(request)) if (!allowed.has(key)) fail(`团队创建参数 ${key} 不受支持`, 400);
   const complexity = request.assessment?.complexity;
   if (!['simple', 'moderate', 'complex'].includes(complexity)) fail('请提供任务复杂度评估', 400);
@@ -30,6 +30,8 @@ function createRequest(request: FlowTeamCreateRequest): FlowTeamCreateRequest {
     acceptance_criteria: criteria.map(item => textField(textField(item, 'acceptance_criteria', 4096).trim(), 'acceptance_criteria', 4096)),
     ...(request.workspace === undefined ? {} : { workspace: textField(request.workspace, 'workspace', 4096) }),
     ...(request.capabilities === undefined ? {} : { capabilities: validateCapabilities(request.capabilities) }),
+    ...(request.managementCapabilities === undefined ? {} : { managementCapabilities: validateCapabilities(request.managementCapabilities) }),
+    ...(request.managementWriteScope === undefined ? {} : { managementWriteScope: validateWriteScope(request.managementWriteScope) }),
     ...(request.budget === undefined ? {} : { budget: validateBudget(request.budget, 'budget') }),
     ...(request.limits === undefined ? {} : { limits: validateLimits(request.limits, 'limits') }),
   };
@@ -95,7 +97,7 @@ function state(raw: string): FlowTeamState {
 function reasonOf(runtime:ClusterRuntime,runId:string,reason:string|null,code:string|null,nodeId:string|null,before:number):string|null {
   if(!reason)return null;
   if(/made no state change across \d+ turns/.test(reason)) {
-    const role=reason.match(/^(orchestrator|allocator|auditor) /)?.[1];
+    const role=reason.match(/^(orchestrator|allocator) /)?.[1];
     const latest=role&&nodeId?runtime.store.get("SELECT e.data FROM events e JOIN agents a ON a.id=json_extract(e.data,'$.agent_id') WHERE e.cluster_id=? AND e.type='turn-end' AND a.node_id=? AND a.role=? AND e.seq<=? ORDER BY e.seq DESC LIMIT 1",runId,nodeId,role,before):undefined;
     const data=latest?json(latest.data):null;
     const detail=field(data,'stop_detail');
@@ -107,11 +109,11 @@ function reasonOf(runtime:ClusterRuntime,runId:string,reason:string|null,code:st
     }
     return `${ROLES[role as keyof typeof ROLES]??'智能体'}连续多轮未取得进展`;
   }
-  const exhausted=reason.match(/^role (orchestrator|allocator|auditor|worker) exhausted its turn budget \((\d+)\)$/);
+  const exhausted=reason.match(/^role (orchestrator|allocator|worker) exhausted its turn budget \((\d+)\)$/);
   if(exhausted)return `${ROLES[exhausted[1] as keyof typeof ROLES]}已达到运行轮次上限（${exhausted[2]}）`;
   if(reason.includes('cluster wall-time deadline passed'))return '已达到团队运行时限';
   if(code==='BUDGET_EXHAUSTED')return reason.replace(/^BUDGET: /,'');
-  return reason.replace(/^orchestrator\b/,'总协调').replace(/^allocator\b/,'资源协调').replace(/^auditor\b/,'质量审核');
+  return reason.replace(/^orchestrator\b/,'总协调').replace(/^allocator\b/,'资源协调');
 }
 
 /** Start and bind atomically; a lost command acknowledgment never starts a second run. */
@@ -188,7 +190,7 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
     });
     const ended = new Map(store.all('SELECT * FROM team_observations WHERE run_id=?', runId).map(row => [text(row.agent_id), row]));
     const allocations = new Map(store.all('SELECT agent_id,status FROM allocations WHERE cluster_id=? ORDER BY created', runId).map(row => [text(row.agent_id), text(row.status)]));
-    const dependencies=store.all(`SELECT t.id,t.owner_management_id,t.status,t.updated,a.agent_id FROM transactions t LEFT JOIN allocations a ON a.transaction_id=t.id AND a.status='ACTIVE' WHERE t.cluster_id=? AND t.status IN ('RUNNING','VALIDATING') ORDER BY t.updated DESC`,runId);
+    const dependencies=store.all(`SELECT t.id,t.owner_management_id,t.status,t.updated,a.agent_id FROM transactions t LEFT JOIN allocations a ON a.transaction_id=t.id AND a.status='ACTIVE' WHERE t.cluster_id=? AND t.status='RUNNING' ORDER BY t.updated DESC`,runId);
     const blocks=new Map(store.all("SELECT seq,data FROM events WHERE cluster_id=? AND type='node-blocked' ORDER BY seq",runId).map(row=>{const data=json(row.data);return [text(field(data,'node_id')),{data,seq:number(row.seq)??0}];}));
     const agents: FlowTeamAgent[] = identities.map(agent => {
       const node = nodes.get(agent.node_id);
@@ -200,7 +202,7 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
       const blockReason=text(field(block??null,'reason')),blockCode=text(field(block??null,'code'));
       const reported = text(field(meta, 'ui_state'));
       const dependency=agent.role==='orchestrator'&&raw==='READY'?dependencies.find(row=>row.owner_management_id===agent.node_id):undefined;
-      const collaborator=dependency?.status==='VALIDATING'?identities.find(candidate=>candidate.node_id===agent.node_id&&candidate.role==='auditor'&&candidate.status!=='TERMINATED')?.id:text(dependency?.agent_id);
+      const collaborator=text(dependency?.agent_id);
       const awaitingWork = raw === 'READY' && agent.turns > 0;
       const waiting = reported === 'waiting_user' || reported === 'waiting_agent' ? reported : collaborator?'waiting_agent':null;
       const context = store.latestNativeContext(agent.id);
@@ -214,7 +216,7 @@ export function readTeam(runtime: ClusterRuntime, sessionId: string, runId: stri
         name: text(field(meta, 'display_name')) ?? agentGivenName(agent.id),
         responsibility: text(field(meta, 'responsibility')) ?? text(field(node?.scope ?? null, 'objective')) ?? '',
         state: observation||TERMINAL.has(raw)||raw==='BLOCKED' ? state(raw) : waiting ?? (awaitingWork?'ready':state(raw)), raw_state: raw,
-        reason: blockReason?reasonOf(runtime,runId,blockReason,blockCode,agent.node_id,blockRow?.seq??0):text(field(meta, 'status_reason'))??(collaborator?(dependency?.status==='VALIDATING'?'等待质量审核确认任务结果':'等待执行智能体提交任务结果'):awaitingWork?'等待调度':null), waiting_for: text(field(meta, 'waiting_for'))??collaborator??null,
+        reason: blockReason?reasonOf(runtime,runId,blockReason,blockCode,agent.node_id,blockRow?.seq??0):text(field(meta, 'status_reason'))??(collaborator?'等待执行智能体提交任务结果':awaitingWork?'等待调度':null), waiting_for: text(field(meta, 'waiting_for'))??collaborator??null,
         waiting_since: number(field(meta, 'waiting_since'))??(collaborator?number(dependency?.updated):null),
         recycled: agent.status === 'TERMINATED' || allocations.get(agent.id) === 'RELEASED',
         created: agent.created, ended: number(observation?.ended), version: run.version,

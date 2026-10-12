@@ -24,14 +24,14 @@ export interface ExecutionField {
 export const EXECUTION_FIELDS: readonly ExecutionField[] = [
   { key:'depth',label:'最大子代理层数',path:['defaultLimits','max_depth'],min:1,max:32,hint:'总协调为第 0 层；1 层允许直接派发任务执行代理。' },
   { key:'children',label:'每个节点最多子代理',path:['defaultLimits','max_children'],min:1,max:4096 },
-  { key:'agents',label:'团队代理总数上限',path:['defaultLimits','max_agents'],mirror:['defaultBudget','agents'],min:3,max:100000,hint:'包含总协调、资源协调和质量审核。' },
+  { key:'agents',label:'团队代理总数上限',path:['defaultLimits','max_agents'],mirror:['defaultBudget','agents'],min:2,max:100000,hint:'包含总协调、资源协调和任务执行代理。' },
   { key:'minutes',label:'最长运行时间（分钟）',path:['defaultBudget','wall_time_ms'],factor:60000,min:1,max:10080 },
   { key:'active',label:'同时运行代理上限',path:['defaultLimits','max_active_agents'],mirror:['defaultBudget','max_active_agents'],min:1,max:512 },
   { key:'llm',label:'同时持有模型调度许可的代理上限',path:['defaultLimits','max_llm_concurrency'],min:1,max:64 },
   { key:'tools',label:'团队工具调用上限',path:['defaultBudget','tool_calls'],min:1,max:2**40 },
   { key:'turns',label:'管理代理轮数上限',path:['defaultLimits','max_role_turns'],min:1,max:512 },
   { key:'attempts',label:'任务尝试次数',path:['defaultLimits','max_attempts'],min:1,max:16 },
-  { key:'corrections',label:'审核修正次数',path:['defaultLimits','max_corrections'],min:0,max:16 },
+  { key:'corrections',label:'业务返工次数',path:['defaultLimits','max_corrections'],min:0,max:16 },
 ];
 const scalarPaths = { mode:['defaultDispatchMode'], model:['defaultModel'], effort:['defaultReasoningEffort'] };
 function at(value:unknown,path:readonly string[]):unknown {

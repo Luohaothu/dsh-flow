@@ -86,7 +86,7 @@ try {
     assert(recipients.every(row=>row.status==='ACKED'));
     const transactions=db.prepare('SELECT * FROM transactions WHERE cluster_id=?').all(runId);
     assert(transactions.length>0&&transactions.every(row=>row.status==='ACCEPTED'));
-    evidence.governance={transactions,validations:db.prepare('SELECT * FROM validation_records WHERE cluster_id=?').all(runId),audits:db.prepare('SELECT * FROM audits WHERE cluster_id=?').all(runId),recipients};
+    evidence.governance={transactions,validations:db.prepare('SELECT * FROM validation_records WHERE cluster_id=?').all(runId),recipients};
   } finally {db.close();}
   await host.stop();
   host=makeHost('-restarted');

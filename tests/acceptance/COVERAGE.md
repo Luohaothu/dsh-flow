@@ -28,7 +28,7 @@ pnpm run accept:mock --case recovery
 
 | 层次 | 测试入口 | 证明范围 |
 | --- | --- | --- |
-| 协议与运行时 | [core.test.ts](../unit/core.test.ts)、`tests/unit/cluster.*.test.ts`、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) | 真实 SQLite 上的状态转换、权限、原子性、预算、审计与恢复；模型和宿主边界可精确注入 |
+| 协议与运行时 | [core.test.ts](../unit/core.test.ts)、`tests/unit/cluster.*.test.ts`、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) | 真实 SQLite 上的状态转换、权限、原子性、预算、验收与恢复；模型和宿主边界可精确注入 |
 | 主会话与团队接口 | [team-lifecycle.test.ts](../unit/team-lifecycle.test.ts)、[main-dialog.test.ts](../unit/main-dialog.test.ts)、[team-ux.test.ts](../unit/team-ux.test.ts) | 启动意图、生命周期工具、拥有者隔离、展示投影、订阅与输入策略 |
 | 宿主提供方契约 | `tests/unit/provider-*.test.ts` | 已安装宿主包的作用域、消息分类、观察模式编解码及 Session 持久化行为 |
 | 原生宿主 | [mock-runtime.test.ts](native/mock-runtime.test.ts) | 真实 Agent 循环、工具执行、Session 和守卫；模型输出由确定性端点提供 |
@@ -56,13 +56,14 @@ pnpm run accept:mock --case recovery
 
 | 当前契约 | 测试入口与关键断言 |
 | --- | --- |
-| Orchestrator 负责计划、分解、派发、验证与收尾；Allocator 负责身份、预算和拓扑；Auditor 独立审核；Worker 只提交自身结果 | [core.test.ts](../unit/core.test.ts)、`tests/unit/cluster.*.test.ts`、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) 的角色动作和域越权测试 |
-| 结果接受要求正确的事务 revision、result revision 与审核决定；未完成子事务阻止父聚合与收尾 | `tests/unit/cluster.*.test.ts` 的 validation、correction、aggregate、finish_cluster 测试 |
+| Orchestrator 负责计划、分解、派发、原生业务工具验证、原子接受与收尾；Allocator 负责身份、预算和拓扑；Worker 只提交自身结果 | [core.test.ts](../unit/core.test.ts)、`tests/unit/cluster.*.test.ts`、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) 的角色动作和域越权测试 |
+| 结果接受要求当前事务 revision、计划/结果引用、完整逐项验收及已结算执行；未完成子事务阻止父聚合与收尾 | `tests/unit/cluster.*.test.ts` 的 validation、correction、aggregate、finish_cluster 测试 |
 | 事务关系必须存在、同域且无环；拒绝不留下部分状态 | [transaction-relationships-regression.test.ts](../unit/transaction-relationships-regression.test.ts) |
 | 命令回执绑定身份与请求，预算转移、结算和嵌套事务具有原子性 | [ledger-command-regression.test.ts](../unit/ledger-command-regression.test.ts)、[actions-correctness.test.ts](../unit/actions-correctness.test.ts) |
 | 通信先验证全部目标，再原子记录消息和投递；flush 后确认收取；重试不重复投递 | [communication-regression.test.ts](../unit/communication-regression.test.ts)、`tests/unit/cluster.*.test.ts` 的消息持久化窗口测试；原生 recovery 场景检查接收方 Session 中的消息次数 |
 | Worker 工具由 capability 和授权范围约束；权限拒绝不能写文件或创建分配 | [core.test.ts](../unit/core.test.ts)、原生 `F-permission`、`N-missing-capability`、`N-identity`；声明写范围不等于操作系统文件锁 |
-| 普通会话使用三个原生权限模式及 `workspace-write / ask` 默认；只有团队成员采用 `never`，冷恢复保持策略和工作区沙箱 | 原生 `N-permission-rpc` 检查实际目录与普通会话日志；`N0`、`N-scopes` 检查 Worker 与三类管理角色；`N-default-compaction` 检查冷恢复 |
+| 总协调授权独立于 Worker，子域只能收窄；原生调用按当前计划和结果绑定 | [management-authorization.test.ts](../unit/management-authorization.test.ts)、[native-evidence.test.ts](../unit/native-evidence.test.ts)；原生 `N-management-capabilities` 检查实际 read/write/bash/job_output/web_fetch 与同轮绑定；browser 场景检查总协调实际浏览器调用 |
+| 普通会话使用三个原生权限模式及 `workspace-write / ask` 默认；只有团队成员采用 `never`，冷恢复保持策略和工作区沙箱 | 原生 `N-permission-rpc` 检查实际目录与普通会话日志；`N0`、`N-scopes` 检查 Worker 与两类管理角色；`N-default-compaction` 检查冷恢复 |
 | 原生事件被动计量；未知值保留，重放幂等；工具额度与副作用独立恢复 | 原生用量投影与默认压缩组合测试、工具预算与恢复单元测试 |
 | 取消、重启和卸载使失效身份失去执行权；依赖未就绪或恢复失败时不发布服务 | [lifecycle-regression.test.ts](../unit/lifecycle-regression.test.ts)、`tests/unit/cluster.*.test.ts`、原生 recovery 场景 |
 | 查询按域过滤后分页，按 id 可读完整证据；非法访问被拒绝 | `tests/unit/cluster.*.test.ts` 的 query、paging、domain 测试；页面 `authenticated-observer-route` |
@@ -71,11 +72,11 @@ pnpm run accept:mock --case recovery
 
 | 场景 | 通过判据与证据 |
 | --- | --- |
-| smoke | Worker 的独立 Session 中存在实际 `flow_sum` 调用和结果；提交值等于工具结果；事务独立审核后接受 |
-| recursion | 递归管理链与同层 Worker 同时执行；越界写入被拒；纠正由更高 revision 的完成结果及 Auditor 核销证明 |
+| smoke | Worker 的独立 Session 中存在实际 `flow_sum` 调用和结果；提交值等于工具结果；总协调实际验收后原子接受 |
+| recursion | 递归管理链与同层 Worker 同时执行；越界写入被拒；纠正由更高 revision 的完成结果及本轮真实验收证明 |
 | recovery | 在持住的请求上终止并重启真实宿主；失效租约被隔离；原生事件游标和投影一致，失败窗口保留不完整状态；消息不丢失或重复 |
 | context | 原生默认压缩的持久化摘要；宿主用量投影不重复；任务仍按正确结果提交 |
-| browser | 真实 Playwright MCP 导航、引用点击和点击后快照；工具调用与持久效果收据一致 |
+| browser | Worker 交付后，总协调绑定当前结果并通过真实 Playwright MCP 独立导航、引用点击和快照；工具调用、角色及持久效果收据一致 |
 | panel | 主 Agent 团队启动、原生成员会话、只读拓扑与检查器、宿主用量及未知/不完整展示、配置与实际模型区分、分页、断线恢复、主题、响应式布局和设置持久化 |
 | scale16 / scale64 | 以冻结任务的文件分配为判据；成功 read 收据的路径、结果符号与行号匹配；每文件独立 Worker；Agent 调度许可、独立 HTTP 并发与工具预算分别有证据 |
 

@@ -35,7 +35,7 @@ packages/dsh-flow/
       model.ts             内部对象类型与组件接口
       model-selection.ts   团队与成员模型选择的合并及输出限制
       cluster.ts           控制循环、调度、完成收尾、恢复及查询
-      actions.ts           任务单元、分配和审查动作处理
+      actions.ts           任务单元、分配和验收动作处理
       role-tools.ts        智能体作用域内的模型工具
       runtime.ts           一轮原生智能体执行与请求、工具钩子
       team.ts              同一版本团队投影与等待/回收语义
@@ -80,7 +80,7 @@ flowchart TD
 | 要解决的问题 | 建议入口 | 组件说明 |
 |---|---|---|
 | 为什么某个角色被唤醒，为什么任务单元没有启动 | `core/cluster.ts` 的 `tick`、调度候选与租约逻辑 | [控制平面与调度](/development/components/control-plane) |
-| 谁能创建、修改或正式接受任务单元 | `core/protocol.ts`、`core/actions.ts` | [任务单元与独立审计](/development/components/transactions) |
+| 谁能创建、修改或正式接受任务单元 | `core/protocol.ts`、`core/actions.ts` | [任务单元与业务验收](/development/components/transactions) |
 | 分配、替换或迁移为什么被拒绝 | `core/actions.ts`、`core/scope.ts` | [执行分配与组织调整](/development/components/allocation) |
 | 一次模型或工具调用怎样记账并结束 | `core/runtime.ts`、`core/role-tools.ts` | [智能体运行时](/development/components/runtime) |
 | 重启后怎样判断命令、消息和副作用是否发生 | `core/store.ts`、`core/cluster.ts` 的恢复路径 | [持久化与恢复](/development/components/persistence) |

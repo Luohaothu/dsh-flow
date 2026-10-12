@@ -84,7 +84,7 @@ function fixture(t: TestContext): Fixture {
     model: { provider: 'local-sglang', model: 'Qwen3.8-7B', reasoningEffort: 'off',},
   });
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
-  const id = runtime.start({
+  const id = runtime.start({ managementCapabilities: [],
     objective: 'check governance actions', workspace: dir, capabilities: ['fs_read', 'fs_write'],
     limits: { max_children: 5, max_depth: 5, max_active_agents: 4, max_llm_concurrency: 2, max_corrections: 2, max_role_turns: 8 },
     budget: { tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
@@ -394,21 +394,16 @@ test('reassignment rejects disjoint contracts and narrows a valid target grant w
   assert.equal(f.runtime.store.allocationOutdated(f.id, moved), true);
 });
 
-test('scoped pause/resume restores DRAFT, READY, SUBMITTED and VALIDATING without losing review identity', t => {
+test('scoped pause/resume restores DRAFT, READY and SUBMITTED without losing publication identity', t => {
   const f = fixture(t);
   const orchestrator = f.role('orchestrator');
-  for (const phase of ['DRAFT', 'READY', 'SUBMITTED', 'VALIDATING']) {
+  for (const phase of ['DRAFT', 'READY', 'SUBMITTED']) {
     const id = f.create();
     if (phase !== 'DRAFT') f.send(orchestrator, 'dispatch', { transaction_id: id });
-    if (phase === 'SUBMITTED' || phase === 'VALIDATING') {
+    if (phase === 'SUBMITTED') {
       f.runtime.store.tx(() => f.runtime.store.updateTransaction(id, { status: 'SUBMITTED', result: { value: phase } }));
     }
-    if (phase === 'VALIDATING') f.send(orchestrator, 'validate', {
-      transaction_id: id, accepted: true, checks: [{ criterion: 'observable result', passed: true, evidence: 'recorded value' }],
-    });
     const before = must(f.runtime.store.getTransaction(id), 'transaction');
-    const audit = phase === 'VALIDATING'
-      ? f.runtime.store.findAudit(f.id, id, 'validation', must(before.result_revision, 'result_revision')) : null;
     f.send(orchestrator, 'pause_transaction', { transaction_id: id });
     f.send(orchestrator, 'resume_transaction', { transaction_id: id });
     const after = must(f.runtime.store.getTransaction(id), 'transaction');
@@ -418,18 +413,16 @@ test('scoped pause/resume restores DRAFT, READY, SUBMITTED and VALIDATING withou
     assert.deepEqual(after.result, before.result);
     assert.deepEqual(after.validation, before.validation);
     assert.equal(after.result_revision, before.result_revision);
-    if (audit) assert.equal(must(f.runtime.store.getAudit(audit.id), 'audit').decision, 'PENDING');
     if (phase === 'READY') {
       assert.deepEqual(after.current_plan_ref, before.current_plan_ref);
-      assert.equal(f.runtime.store.findAudit(f.id, id, 'plan', must(before.current_plan_ref, 'plan ref').prepared_revision)?.decision, 'PENDING');
     }
   }
 });
 
-test('Auditor reopens accepted work as REJECTED, invalidates stale result, and respects correction cap', t => {
+test('Orchestrator reopens accepted work as REJECTED, invalidates stale result, and respects correction cap', t => {
   const f = fixture(t);
   const orchestrator = f.role('orchestrator');
-  const auditor = f.role('auditor');
+  const validationOwner = f.role('orchestrator');
   const id = f.create();
   const dependent = f.create();
   f.runtime.store.tx(() => f.runtime.store.addDependency(dependent, id));
@@ -438,62 +431,19 @@ test('Auditor reopens accepted work as REJECTED, invalidates stale result, and r
   f.send(orchestrator, 'validate', {
     transaction_id: id, accepted: true, checks: [{ criterion: 'observable result', passed: true, evidence: 'version 1' }],
   });
-  f.send(auditor, 'inspect_validation', { transaction_id: id, decision: 'approve' });
   assert.equal(must(f.runtime.store.getTransaction(id), 'transaction').status, 'ACCEPTED');
-  const correction = recordOf(f.send(auditor, 'request_replan', { transaction_id: id, required_change: 'replace version 1' }), 'request_replan');
+  const correction = recordOf(f.send(validationOwner, 'reopen_transaction', { transaction_id: id, required_change: 'replace version 1' }), 'reopen_transaction');
   const reopened = must(f.runtime.store.getTransaction(id), 'transaction');
   assert.equal(reopened.status, 'REJECTED');
   assert.equal(reopened.result, null);
   assert.equal(reopened.result_revision, null);
   assert.equal(reopened.validation, null);
-  assert.equal(reopened.plan_approved_revision, null);
   assert.equal(must(f.runtime.store.getTransaction(dependent), 'transaction').status, 'PAUSED');
   const summary = recordOf(must(f.runtime.store.latestSummary(f.id, { transaction_id: id }), 'summary').data, 'summary data');
   assert.equal(summary.invalidated_by_issue, correction.issue_id);
   f.runtime.store.tx(() => f.runtime.store.updateIssue(textOf(correction.issue_id, 'issue_id'), { corrections: 2 }));
-  assert.throws(() => f.send(auditor, 'request_replan', { transaction_id: id }),
+  assert.throws(() => f.send(validationOwner, 'reopen_transaction', { transaction_id: id }),
     error => rejectionStatus(error) === 409 && /correction budget exhausted/.test(messageOf(error)));
   const draft = f.create();
-  assert.equal(textOf(recordOf(f.send(auditor, 'request_replan', { transaction_id: draft }), 'request_replan').status, 'status'), 'DRAFT');
-});
-
-test('health evaluation validates weights and window; final closeout is scored by its owning Auditor', t => {
-  const f = fixture(t);
-  const auditor = f.role('auditor');
-  const metric = 'planning_stability';
-  for (const weights of [
-    { [metric]: 'invalid' }, { [metric]: -1 }, { [metric]: Infinity },
-    { invented: 1 }, { [metric]: 0.8 },
-  ]) {
-    assert.throws(() => f.send(auditor, 'evaluate_health', {
-      dimensions: { [metric]: 0.5 }, weights,
-    }), error => rejectionStatus(error) === 400);
-  }
-  for (const window of [0, -1, Infinity, 'yesterday', null]) {
-    assert.throws(() => f.send(auditor, 'evaluate_health', {
-      dimensions: { [metric]: 0.5 }, evaluation_window: window,
-    }), error => rejectionStatus(error) === 400);
-  }
-  const rootTx = must(f.runtime.store.listTransactions({ cluster_id: f.id })[0], 'root transaction');
-  f.runtime.store.tx(() => {
-    const event = f.runtime.store.appendEvent(f.id, 'transaction-adjusted', {
-      transaction_id: rootTx.id, fields: ['objective'], revision: rootTx.revision + 1,
-    });
-    f.runtime.store.run('UPDATE events SET at=? WHERE seq=?', instant - 5_000, event.seq);
-  });
-  const short = recordOf(f.send(auditor, 'evaluate_health', { dimensions: { [metric]: 0.5 }, evaluation_window: 1000 }), 'health');
-  const long = recordOf(f.send(auditor, 'evaluate_health', { dimensions: { [metric]: 0.5 }, evaluation_window: 10_000 }), 'health');
-  assert.equal(recordOf(recordOf(short.signals, 'signals').planning_stability, 'planning_stability').revisions_per_transaction, 0);
-  assert.equal(recordOf(recordOf(long.signals, 'signals').planning_stability, 'planning_stability').revisions_per_transaction, 1);
-  assert.equal(Number(must(f.runtime.store.get('SELECT evaluation_window FROM health WHERE id=?', textOf(short.health_id, 'health_id')), 'health row').evaluation_window), 1000);
-  assert.throws(() => f.send(auditor, 'evaluate_health', {
-    dimensions: { [metric]: 0.5 }, evaluation_window: 'subtree-close',
-  }), error => rejectionStatus(error) === 403);
-  const dimensions: Record<string, number> = Object.fromEntries(f.runtime.healthMetricNames().map(name => [name, 0.5]));
-  const closeout = recordOf(f.send(auditor, 'evaluate_health', { dimensions, evaluation_window: 'subtree-close' }), 'health');
-  const row = must(f.runtime.store.get('SELECT * FROM health WHERE id=?', textOf(closeout.health_id, 'health_id')), 'health row');
-  assert.equal(row.evaluation_window, 'subtree-close');
-  assert.equal(row.decided, 1);
-  assert.equal(row.decided_by, auditor.agent_id);
-  assert.equal(row.node_id, f.root.id);
+  assert.equal(textOf(recordOf(f.send(validationOwner, 'reopen_transaction', { transaction_id: draft }), 'reopen_transaction').status, 'status'), 'DRAFT');
 });

@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -123,7 +123,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -169,7 +169,7 @@ function pageParams00(nextOffset: number | null): { offset?: number } {
   return nextOffset === null ? {} : { offset: nextOffset };
 }
 
-test('start builds one root management node with three roles and a root transaction', t => {
+test('start builds one root management node with two roles and a root transaction', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const nodes = runtime.store.listNodes(clusterId, {});
@@ -178,7 +178,7 @@ test('start builds one root management node with three roles and a root transact
   assert.equal(root.kind, 'management');
   assert.equal(root.depth, 0);
   const roles = runtime.store.listAgents(clusterId, { limit: 10 }).map(agent => agent.role).sort();
-  assert.deepEqual(roles, ['allocator', 'auditor', 'orchestrator']);
+  assert.deepEqual(roles, ['allocator', 'orchestrator']);
   const transactions = runtime.store.listTransactions({ cluster_id: clusterId });
   assert.equal(transactions.length, 1);
   assert.equal(firstOf(transactions, 'root transaction').status, 'DRAFT');
@@ -192,27 +192,23 @@ test('a management node hosts worker and management children at once, and reject
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id, fixture_execution: 'management' });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   const spawned = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true, transaction_id: tx.id, scope: { objective: 'child domain' } });
   // A second transaction under the same node is the one a worker may run: the first
   // now has delegated work, and its own attempts wait for the child results.
   const flat = command(runtime, orchestrator, 'create_transaction', { objective: 'a flat sibling', acceptance_criteria: ['x'] });
   const flatId = textOf(flat.result.transaction_id, 'transaction_id');
   command(runtime, orchestrator, 'dispatch', { transaction_id: flatId });
-  if (required(runtime.store.getTransaction(flatId), 'flat transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: flatId, decision: 'approve' });
-  }
+
   const allocated = command(runtime, allocator, 'allocate_agent', { transaction_id: flatId });
 
   const children = runtime.store.childrenOf(root.id);
   assert.deepEqual(children.map(node => node.kind).sort(), ['management', 'worker']);
   const spawnedNodeId = textOf(spawned.result.node_id, 'node_id');
   assert.equal(required(runtime.store.getNode(spawnedNodeId), 'spawned node').parent_id, root.id);
-  assert.equal(runtime.store.countAgents(clusterId, { live: true }), 7);
+  assert.equal(runtime.store.countAgents(clusterId, { live: true }), 5);
 
   const childTx = required(
     runtime.store.getTransaction(textOf(spawned.result.delegated_transaction_id, 'delegated_transaction_id')),
@@ -264,8 +260,8 @@ test('a child role cannot select another domain through context or summary refer
   const parentTx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
   const childId = textOf(command(runtime, actorFor(runtime, clusterId, 'allocator', root.id),
     'spawn_management_node', { fixture_prepare_management: true, transaction_id: parentTx.id, scope: { objective: 'private child' } }).result.node_id, 'node_id');
-  const child = actorFor(runtime, clusterId, 'auditor', childId);
-  const rootAuditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const child = actorFor(runtime, clusterId, 'orchestrator', childId);
+  const rootOrchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   runtime.store.insertSummary({
     id: 'private-parent-summary', cluster_id: clusterId, node_id: root.id,
     transaction_id: parentTx.id, as_of_seq: runtime.store.latestEventSeq(clusterId),
@@ -278,12 +274,12 @@ test('a child role cannot select another domain through context or summary refer
   });
   runtime.store.insertEffect({
     call_id: 'root-private-effect', cluster_id: clusterId, node_id: root.id,
-    agent_id: rootAuditor.agent_id, lease_epoch: 1, tool: 'read',
+    agent_id: rootOrchestrator.agent_id, lease_epoch: 1, tool: 'read',
     body: { secret: 'root-only effect evidence' },
   });
 
   assert.equal(runtime.query(child, 'context', { agent_id: child.agent_id }).summary, null);
-  assert.throws(() => runtime.query(child, 'context', { agent_id: rootAuditor.agent_id }),
+  assert.throws(() => runtime.query(child, 'context', { agent_id: rootOrchestrator.agent_id }),
     error => rejectionStatus(error) === 403);
   assert.throws(() => runtime.query(child, 'context', { agent_id: child.agent_id, transaction_id: parentTx.id }),
     error => rejectionStatus(error) === 403);
@@ -300,13 +296,13 @@ test('a child role cannot select another domain through context or summary refer
   assert.throws(() => runtime.query(child, 'effect', { call_id: 'root-private-effect' }),
     error => rejectionStatus(error) === 403);
   const parentContext = runtime.query({ cluster_id: clusterId, role: 'user' }, 'context',
-    { agent_id: rootAuditor.agent_id });
+    { agent_id: rootOrchestrator.agent_id });
   assert.equal(textOf(jsonObject(required(parentContext.summary, 'parent summary'), 'summary').objective, 'objective'),
     'only the parent may read this conclusion');
   assert.equal(runtime.query(child, 'summary').summary, null);
 });
 
-test('scoped transaction, audit, issue and usage pages do not lose a child behind earlier root rows', t => {
+test('scoped transaction, issue and usage pages do not lose a child behind earlier root rows', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
@@ -326,8 +322,8 @@ test('scoped transaction, audit, issue and usage pages do not lose a child behin
     'spawn_management_node', { fixture_prepare_management: true, transaction_id: rootTx.id, scope: { objective: 'child domain' } }).result;
   const child = required(runtime.store.getNode(textOf(spawned.node_id, 'node_id')), 'child node');
   const childRows: string[] = [];
-  const childAgent = firstOf(runtime.store.listAgents(clusterId, { node_id: child.id, role: 'auditor' }), 'child auditor');
-  const rootAgent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor' }), 'root auditor');
+  const childAgent = firstOf(runtime.store.listAgents(clusterId, { node_id: child.id, role: 'orchestrator' }), 'child validationOwner');
+  const rootAgent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator' }), 'root validationOwner');
   runtime.store.tx(() => {
     for (let index = 0; index < 50; index += 1) {
       const id = `zzz-child-${String(index).padStart(3, '0')}`;
@@ -336,18 +332,6 @@ test('scoped transaction, audit, issue and usage pages do not lose a child behin
         objective: `child item ${index}`, acceptance_criteria: ['child result'],
       });
       childRows.push(id);
-    }
-    for (let index = 0; index < 505; index += 1) {
-      runtime.store.insertAudit({
-        id: `aaa-audit-${index}`, cluster_id: clusterId, node_id: root.id,
-        transaction_id: required(rootRows[index], 'root transaction row'), kind: 'plan', target_revision: 1,
-      });
-    }
-    for (let index = 0; index < 13; index += 1) {
-      runtime.store.insertAudit({
-        id: `zzz-audit-${index}`, cluster_id: clusterId, node_id: child.id,
-        transaction_id: required(childRows[index], 'child transaction row'), kind: 'plan', target_revision: 1,
-      });
     }
     for (let index = 0; index < 53; index += 1) {
       runtime.store.insertIssue({
@@ -367,7 +351,7 @@ test('scoped transaction, audit, issue and usage pages do not lose a child behin
       });
     }
   });
-  const actor = actorFor(runtime, clusterId, 'auditor', child.id);
+  const actor = actorFor(runtime, clusterId, 'orchestrator', child.id);
   const transactions = runtime.query(actor, 'transactions', { limit: 20, offset: 40 });
   assert.equal(transactions.total, 51, 'a role sees its entire domain before the global row limit');
   assert.equal(transactions.items.length, 11);
@@ -376,9 +360,6 @@ test('scoped transaction, audit, issue and usage pages do not lose a child behin
   const node = runtime.query(actor, 'node', { id: child.id, limit: 20, offset: 40 });
   assert.equal(node.transactions.total, 51);
   assert.equal(node.transactions.items.length, 11);
-  const audits = runtime.query(actor, 'audits', { limit: 20 });
-  assert.equal(audits.total, 13, 'root audits beyond the former 500-row cap cannot hide child audits');
-  assert.ok(audits.items.every(audit => runtime.store.getAudit(textOf(audit.id, 'audit id'))?.node_id === child.id));
   const issues = runtime.query(actor, 'issues', { limit: 20, offset: 40 });
   assert.equal(issues.total, 53);
   assert.equal(issues.limit, 4, 'a model receives bounded issue references rather than every historical verdict');
@@ -426,11 +407,11 @@ test('transaction pages honor parent_id before counting and paging the role doma
       });
     }
   });
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const first = runtime.query(auditor, 'transactions', { parent_id: parent.id, limit: 1 });
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  const first = runtime.query(validationOwner, 'transactions', { parent_id: parent.id, limit: 1 });
   assert.equal(first.total, 2);
   assert.equal(first.next_offset, 1);
-  const second = runtime.query(auditor, 'transactions', { parent_id: parent.id, ...pageParams00(first.next_offset), limit: 1 });
+  const second = runtime.query(validationOwner, 'transactions', { parent_id: parent.id, ...pageParams00(first.next_offset), limit: 1 });
   assert.deepEqual(new Set([...first.items, ...second.items].map(row => row.id)), new Set(['first-child', 'second-child']));
   assert.equal(second.next_offset, null);
 });
@@ -440,19 +421,19 @@ test('list queries bound model context while per-id transaction evidence remains
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const evidence = 'e'.repeat(20_000);
   runtime.store.updateNode(root.id, { scope: { objective: evidence, root: true } });
-  runtime.store.updateAgent(auditor.agent_id, { meta: { session_note: evidence } });
+  runtime.store.updateAgent(validationOwner.agent_id, { meta: { session_note: evidence } });
   runtime.store.updateTransaction(tx.id, {
     status: 'SUBMITTED', result: { evidence }, result_revision: tx.revision,
     validation: { checks: [{ criterion: 'the recorded output is correct', passed: true, evidence }] },
   });
 
-  const nodes = runtime.query(auditor, 'nodes', { parent_id: null, limit: 10 });
-  const agents = runtime.query(auditor, 'agents', { limit: 10 });
-  const transactions = runtime.query(auditor, 'transactions', { limit: 10 });
-  const node = runtime.query(auditor, 'node', { id: root.id, limit: 10 });
+  const nodes = runtime.query(validationOwner, 'nodes', { parent_id: null, limit: 10 });
+  const agents = runtime.query(validationOwner, 'agents', { limit: 10 });
+  const transactions = runtime.query(validationOwner, 'transactions', { limit: 10 });
+  const node = runtime.query(validationOwner, 'node', { id: root.id, limit: 10 });
   assert.ok(JSON.stringify(nodes).length < 1_000, 'the tree page identifies nodes without their full scopes');
   assert.ok(JSON.stringify(agents).length < 1_500, 'the identity page excludes private session metadata');
   assert.ok(JSON.stringify(transactions).length < 1_000, 'the transaction list excludes full result evidence');
@@ -460,16 +441,16 @@ test('list queries bound model context while per-id transaction evidence remains
   assert.ok(JSON.stringify(node.agents).length < 1_500, 'the node agent page has the same bound');
   assert.ok(JSON.stringify(node).length < 4_000, 'per-id topology lookup does not replay a long delegation scope into a role');
   assert.equal(textOf(jsonObject(node.node.scope, 'node scope').objective, 'objective').length <= 160, true);
-  assert.equal(textOf(jsonObject(runtime.query(auditor, 'node', { id: root.id, full: true }).node.scope, 'full node scope').objective, 'objective'), evidence,
+  assert.equal(textOf(jsonObject(runtime.query(validationOwner, 'node', { id: root.id, full: true }).node.scope, 'full node scope').objective, 'objective'), evidence,
     'the owning role can still inspect the complete scope explicitly');
   assert.equal(textOf(jsonObject(runtime.query({ cluster_id: clusterId, role: 'user' }, 'node', { id: root.id }).node.scope, 'user node scope').objective, 'objective'), evidence,
     'the host sees the full source of truth');
   publishFixtureResult(runtime, tx.id);
-  const result = jsonObject(readFixtureField(runtime, auditor, 'transaction', { id: tx.id }, 'result'), 'result snapshot');
+  const result = jsonObject(readFixtureField(runtime, validationOwner, 'transaction', { id: tx.id }, 'result'), 'result snapshot');
   assert.equal(textOf(jsonObject(result.result, 'result').evidence, 'evidence'), evidence);
-  assert.equal(runtime.query(auditor, 'transaction', { id: tx.id }).result, undefined, 'unselected result evidence is absent from the default projection');
+  assert.equal(runtime.query(validationOwner, 'transaction', { id: tx.id }).result, undefined, 'unselected result evidence is absent from the default projection');
   assert.equal(firstOf(nodes.items, 'node').id, root.id);
-  assert.equal(required(agents.items.find(agent => agent.id === auditor.agent_id), 'auditor agent').role, 'auditor');
+  assert.equal(required(agents.items.find(agent => agent.id === validationOwner.agent_id), 'validationOwner agent').role, 'orchestrator');
   assert.equal(firstOf(transactions.items, 'transaction').id, tx.id);
 });
 test('a high-fanout agent list pages role identities without hiding host-visible agents', t => {
@@ -484,18 +465,18 @@ test('a high-fanout agent list pages role identities without hiding host-visible
     });
   });
   const first = runtime.query(actor, 'agents', { limit: 100 });
-  assert.equal(first.total, 18, 'all fifteen new identities and the three root roles remain discoverable');
+  assert.equal(first.total, 17, 'all fifteen new identities and the two root roles remain discoverable');
   assert.equal(first.items.length, 8, 'one native query cannot dump the whole subtree into a role session');
   assert.ok(JSON.stringify(first).length < 2_000);
   const second = runtime.query(actor, 'agents', pageParams00(first.next_offset));
   const third = runtime.query(actor, 'agents', pageParams00(second.next_offset));
-  assert.deepEqual([first.items.length, second.items.length, third.items.length], [8, 8, 2]);
+  assert.deepEqual([first.items.length, second.items.length, third.items.length], [8, 8, 1]);
   assert.equal(third.next_offset, null);
   const host = runtime.query({ cluster_id: clusterId, role: 'user' }, 'agents', { limit: 100 });
-  assert.equal(host.items.length, 18, 'the host may still request a full identity page');
+  assert.equal(host.items.length, 17, 'the host may still request a full identity page');
 });
 
-test('unresolved Auditor issues stay on the first bounded model page ahead of historical verdicts', t => {
+test('unresolved Orchestrator issues stay on the first bounded model page ahead of historical verdicts', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
@@ -513,11 +494,11 @@ test('unresolved Auditor issues stay on the first bounded model page ahead of hi
       transaction_id: tx.id, required_change: 'fix the actual output',
     });
   });
-  const page = runtime.query(actorFor(runtime, clusterId, 'auditor', root.id), 'issues');
+  const page = runtime.query(actorFor(runtime, clusterId, 'orchestrator', root.id), 'issues');
   assert.equal(firstOf(page.items, 'issue').id, 'needs-review');
   assert.equal(firstOf(page.items, 'issue').status, 'OPEN');
   assert.equal(page.total, 6);
-  assert.equal(runtime.query(actorFor(runtime, clusterId, 'auditor', root.id), 'issues',
+  assert.equal(runtime.query(actorFor(runtime, clusterId, 'orchestrator', root.id), 'issues',
     pageParams00(page.next_offset)).items.length, 2);
 });
 
@@ -526,26 +507,26 @@ test('issue and effect list pages reference complete per-id evidence without rep
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const evidence = 'trace:'.repeat(3_500);
   const issue = required(runtime.store.insertIssue({
     id: 'issue-with-evidence', cluster_id: clusterId, node_id: root.id,
-    transaction_id: tx.id, reporter_agent_id: auditor.agent_id,
+    transaction_id: tx.id, reporter_agent_id: validationOwner.agent_id,
     required_change: 'correct the write scope', evidence: { trace: evidence },
   }), 'issue');
   const effect = required(runtime.store.insertEffect({
-    call_id: 'effect-with-evidence', cluster_id: clusterId, agent_id: auditor.agent_id,
+    call_id: 'effect-with-evidence', cluster_id: clusterId, agent_id: validationOwner.agent_id,
     node_id: root.id, lease_epoch: 1, tool: 'read', status: 'SETTLED',
     args: { file_path: 'result.txt' }, body: { trace: evidence },
   }), 'effect');
-  const issues = runtime.query(auditor, 'issues');
-  const effects = runtime.query(auditor, 'effects');
+  const issues = runtime.query(validationOwner, 'issues');
+  const effects = runtime.query(validationOwner, 'effects');
   assert.ok(JSON.stringify(issues).length < 1_500, 'issue lists carry ids and change summaries, not the raw trace');
   assert.ok(JSON.stringify(effects).length < 1_500, 'effect lists carry ids and outcomes, not the raw tool body');
   assert.equal(firstOf(issues.items, 'issue').id, issue.id);
   assert.equal(firstOf(effects.items, 'effect').call_id, effect.call_id);
-  assert.equal(textOf(jsonObject(readFixtureField(runtime, auditor, 'issue', { id: issue.id }, 'evidence'), 'issue evidence').trace, 'trace'), evidence);
-  assert.equal(jsonObject(JSON.parse(textOf(readFixtureField(runtime, auditor, 'effect', { call_id: effect.call_id }, 'body'), 'effect body text')), 'effect body').trace, evidence);
+  assert.equal(textOf(jsonObject(readFixtureField(runtime, validationOwner, 'issue', { id: issue.id }, 'evidence'), 'issue evidence').trace, 'trace'), evidence);
+  assert.equal(jsonObject(JSON.parse(textOf(readFixtureField(runtime, validationOwner, 'effect', { call_id: effect.call_id }, 'body'), 'effect body text')), 'effect body').trace, evidence);
   const panelIssue = firstOf(runtime.query({ cluster_id: clusterId, role: 'user' }, 'issues').items, 'issue');
   assert.equal(textOf(jsonObject(jsonObject(panelIssue, 'issue').evidence, 'issue evidence').trace, 'trace'), evidence,
     'the host dashboard still reads complete issue details');
@@ -556,22 +537,17 @@ test('issue and effect list pages reference complete per-id evidence without rep
     error => rejectionStatus(error) === 404);
 });
 
-test('transaction detail keeps current result evidence but references historical audits and issues for model roles', t => {
+test('transaction detail keeps current results and references historical issues for model roles', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const tx = firstOf(runtime.store.rootTransactions(clusterId), 'root transaction');
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   prepareFixtureTask(runtime, tx.id);
-  const priorEvidence = 'prior audit transcript '.repeat(1_000);
-  const audit = required(runtime.store.insertAudit({
-    id: 'large-prior-audit', cluster_id: clusterId, transaction_id: tx.id,
-    node_id: root.id, kind: 'plan', target_revision: tx.revision,
-  }), 'prior audit');
-  runtime.store.decideAudit(audit.id, 'APPROVED', auditor.agent_id, { trace: priorEvidence });
+  const priorEvidence = 'prior issue transcript '.repeat(1_000);
   const issue = required(runtime.store.insertIssue({
     id: 'large-prior-issue', cluster_id: clusterId, node_id: root.id,
-    transaction_id: tx.id, reporter_agent_id: auditor.agent_id,
+    transaction_id: tx.id, reporter_agent_id: validationOwner.agent_id,
     evidence: { trace: priorEvidence }, required_change: 'check the current evidence',
   }), 'prior issue');
   runtime.store.updateTransaction(tx.id, {
@@ -580,21 +556,18 @@ test('transaction detail keeps current result evidence but references historical
     result_revision: tx.revision,
   });
   publishFixtureResult(runtime, tx.id);
-  const detail = runtime.query(auditor, 'transaction', { id: tx.id, fields: ['result', 'audits', 'issues'] });
+  const detail = runtime.query(validationOwner, 'transaction', { id: tx.id, fields: ['result', 'issues'] });
   assert.ok(JSON.stringify(detail).length < 4_000,
-    'a repeated per-id read does not replay every prior audit and issue trace');
+    'a repeated per-id read does not replay every prior issue trace');
   assert.deepEqual(jsonObject(detail.result, 'published result').result, { output: 'real result' });
   assert.equal(detail.validation, undefined, 'unselected validation is omitted from the projection');
-  assert.ok(arrayOf00(jsonObject(detail.audits, 'audits').items, 'audit items').some(row => jsonObject(row, 'audit').id === audit.id));
   assert.equal(jsonObject(firstOf(arrayOf00(jsonObject(detail.issues, 'issues').items, 'issues items'), 'issue'), 'issue').id, issue.id);
-  assert.equal(textOf(jsonObject(readFixtureField(runtime, auditor, 'audit', { id: audit.id }, 'evidence'), 'audit evidence').trace, 'trace'), priorEvidence);
-  assert.equal(textOf(jsonObject(readFixtureField(runtime, auditor, 'issue', { id: issue.id }, 'evidence'), 'issue evidence').trace, 'trace'), priorEvidence);
-  assert.equal(runtime.query(auditor, 'transaction', { id: tx.id, full: true }).result, undefined, 'full does not bypass the explicit field projection');
-  assert.throws(() => runtime.query(auditor, 'transaction', { transaction_id: tx.id }),
+  assert.equal(textOf(jsonObject(readFixtureField(runtime, validationOwner, 'issue', { id: issue.id }, 'evidence'), 'issue evidence').trace, 'trace'), priorEvidence);
+  assert.equal(runtime.query(validationOwner, 'transaction', { id: tx.id, full: true }).result, undefined, 'full does not bypass the explicit field projection');
+  assert.throws(() => runtime.query(validationOwner, 'transaction', { transaction_id: tx.id }),
     error => rejectionStatus(error) === 400 && /params\.id/.test(messageOf(error)),
     'a model passing the mutation API key must get the query key, not an ambiguous missing transaction');
   const panel = runtime.query({ cluster_id: clusterId, role: 'user' }, 'transaction', { id: tx.id });
-  assert.equal(textOf(jsonObject(required(panel.audits.find(row => row.id === audit.id), 'historical audit').evidence, 'audit evidence').trace, 'trace'), priorEvidence);
   assert.equal(textOf(jsonObject(jsonObject(firstOf(panel.issues, 'issue'), 'issue').evidence, 'issue evidence').trace, 'trace'), priorEvidence);
 });
 
@@ -661,7 +634,7 @@ test('a role pages budget ledgers without forcing the whole tree into one model 
 });
 
 
-test('an Auditor can attribute a Worker write to its owning management node', t => {
+test('an Orchestrator can attribute a Worker write to its owning management node', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime, { capabilities: ['fs_read', 'fs_write'] });
   const root = rootNode(runtime, clusterId);
@@ -678,12 +651,12 @@ test('an Auditor can attribute a Worker write to its owning management node', t 
     call_id: 'child-worker-write', cluster_id: clusterId, agent_id: worker.id, node_id: worker.node_id,
     lease_epoch: 1, tool: 'write', args: { file_path: 'deep/nested/result.txt' }, status: 'SETTLED',
   }));
-  const result = runtime.query(actorFor(runtime, clusterId, 'auditor', child.id),
+  const result = runtime.query(actorFor(runtime, clusterId, 'orchestrator', child.id),
     'effects', { agent_id: worker.id });
   const effect = required(result.items.find(entry => entry.call_id === 'child-worker-write'), 'child write effect');
   assert.equal(effect.node_id, worker.node_id, 'the effect keeps the physical Worker node');
   assert.notEqual(worker.node_id, child.id, 'the agent runs in a child Worker node');
-  assert.equal(textOf(jsonObject(effect, 'effect').owner_management_id, 'owner_management_id'), child.id, 'the Auditor can judge the parent-management ownership independently');
+  assert.equal(textOf(jsonObject(effect, 'effect').owner_management_id, 'owner_management_id'), child.id, 'the Orchestrator can judge the parent-management ownership independently');
 });
 
 test('a parent cannot escalate unfinished delegated work before its child can correct', t => {
@@ -718,15 +691,13 @@ test('role permissions reject cross-role actions and domain escapes', t => {
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
 
   assert.throws(() => command(runtime, orchestrator, 'spawn_agent', { transaction_id: tx.id }), error => rejectionStatus(error) === 403);
-  assert.throws(() => command(runtime, allocator, 'accept_result', { transaction_id: tx.id }), error => rejectionStatus(error) === 403);
-  assert.throws(() => command(runtime, auditor, 'validate', { transaction_id: tx.id, accepted: true }), error => rejectionStatus(error) === 403);
+  assert.throws(() => command(runtime, allocator, 'validate', { transaction_id: tx.id }), error => rejectionStatus(error) === 403);
+  assert.throws(() => command(runtime, allocator, 'reopen_transaction', { transaction_id: tx.id }), error => rejectionStatus(error) === 403);
 
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const worker = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
   const workerActor = actorFor(runtime, clusterId, 'worker', worker.node_id);
@@ -740,11 +711,10 @@ test('an open correction requires a new plan revision before redispatch', t => {
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  const issueId = textOf(command(runtime, auditor, 'request_replan', {
+  const issueId = textOf(command(runtime, validationOwner, 'reopen_transaction', {
     transaction_id: tx.id, required_change: 'correct the write scope before sending another Worker',
   }).result.issue_id, 'issue_id');
   const issue = required(runtime.store.getIssue(issueId), 'issue');
@@ -755,38 +725,33 @@ test('an open correction requires a new plan revision before redispatch', t => {
   assert.throws(() => runtime.command(orchestrator, { command_id: 'retry-unprepared', action: 'dispatch', params: { transaction_id: tx.id } }),
     error => rejectionStatus(error) === 409 && /issue|correct|revis|prepared plan/i.test(messageOf(error)));
   assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'DRAFT',
-    'a rejected dispatch cannot move the transaction or reuse its old audit');
+    'a rejected dispatch cannot move the transaction or reuse its old plan');
   command(runtime, orchestrator, 'adjust_transaction', {
     transaction_id: tx.id, inputs: { write_scope: ['output'] },
   });
   assert.ok(required(runtime.store.getTransaction(tx.id), 'transaction').revision > required(issue.target_revision, 'target_revision'));
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
   assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'READY');
-  assert.equal(runtime.store.findAudit(clusterId, tx.id, 'plan', required(required(runtime.store.getTransaction(tx.id), 'transaction').current_plan_ref, 'current plan').prepared_revision)?.decision, 'PENDING');
 
   const falseId = textOf(command(runtime, orchestrator, 'create_transaction', {
     objective: 'a separate valid plan', acceptance_criteria: ['the separate output exists'],
   }).result.transaction_id, 'transaction_id');
   command(runtime, orchestrator, 'dispatch', { transaction_id: falseId });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: falseId, decision: 'approve' });
-  const oldAudit = required(runtime.store.findAudit(clusterId, falseId, 'plan', required(required(runtime.store.getTransaction(falseId), 'transaction').current_plan_ref, 'current plan').prepared_revision), 'old audit');
-  const falseIssue = textOf(command(runtime, auditor, 'request_replan', {
+  const oldPlan = required(runtime.store.getTransaction(falseId), 'transaction').current_plan_ref;
+  const falseIssue = textOf(command(runtime, validationOwner, 'reopen_transaction', {
     transaction_id: falseId, required_change: 'incorrectly claimed that criteria were absent',
   }).result.issue_id, 'issue_id');
-  command(runtime, auditor, 'verify_correction', {
-    issue_id: falseIssue, decision: 'dismissed',
+  command(runtime, validationOwner, 'resolve_issue', {
+    issue_id: falseIssue, decision: 'DISMISSED',
     evidence: { rechecked: 'acceptance_criteria', found: ['the separate output exists'] },
   });
-  assert.equal(runtime.query(auditor, 'issues', { status: 'DISMISSED' }).items
+  assert.equal(runtime.query(validationOwner, 'issues', { status: 'DISMISSED' }).items
     .find(row => row.id === falseIssue)?.status, 'DISMISSED',
   'a dismissed issue remains readable through the role-scoped issue query');
-  assert.equal(jsonObject(firstOf(arrayOf00(jsonObject(runtime.query(auditor, 'transaction', { id: falseId, fields: ['issues'], status: 'DISMISSED' }).issues, 'issues').items, 'issues items').filter(row => jsonObject(row, 'issue').id === falseIssue), 'dismissed issue'), 'issue').status, 'DISMISSED',
-  'transaction history preserves a dismissed audit issue');
+  assert.equal(jsonObject(firstOf(arrayOf00(jsonObject(runtime.query(validationOwner, 'transaction', { id: falseId, fields: ['issues'], status: 'DISMISSED' }).issues, 'issues').items, 'issues items').filter(row => jsonObject(row, 'issue').id === falseIssue), 'dismissed issue'), 'issue').status, 'DISMISSED',
+  'transaction history preserves a dismissed business issue');
   command(runtime, orchestrator, 'dispatch', { transaction_id: falseId });
-  const sameRevision = required(required(runtime.store.getTransaction(falseId), 'transaction').current_plan_ref, 'prepared plan').prepared_revision;
-  const rechecked = required(runtime.store.findAudit(clusterId, falseId, 'plan', sameRevision), 'rechecked audit');
-  assert.notEqual(rechecked.id, oldAudit.id, 'a dismissed issue may proceed, but not by reusing its withdrawn audit');
-  assert.equal(rechecked.decision, 'PENDING');
+  assert.notDeepEqual(required(runtime.store.getTransaction(falseId), 'transaction').current_plan_ref, oldPlan);
 });
 
 test('a rejected result gives its Orchestrator the actual scope and unchanged contract to repair', t => {
@@ -794,7 +759,7 @@ test('a rejected result gives its Orchestrator the actual scope and unchanged co
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const txId = textOf(command(runtime, orchestrator, 'create_transaction', {
     objective: 'deliver deep/nested/result.txt',
     inputs: { write_scope: ['deep/staging'] },
@@ -808,7 +773,7 @@ test('a rejected result gives its Orchestrator the actual scope and unchanged co
     transaction_id: txId, accepted: true,
     checks: [{ criterion: 'deep/nested/result.txt exists', passed: true, evidence: 'Worker claimed its staging file was sufficient' }],
   });
-  const issueId = textOf(command(runtime, auditor, 'request_correction', {
+  const issueId = textOf(command(runtime, validationOwner, 'reopen_transaction', {
     transaction_id: txId,
     required_change: 'the accepted result must include deep/nested/result.txt',
   }).result.issue_id, 'issue_id');
@@ -823,69 +788,19 @@ test('a rejected result gives its Orchestrator the actual scope and unchanged co
   assert.match(textOf(offeredAction.required_change, 'required_change'), /deep\/nested\/result\.txt/);
 });
 
-test('the Orchestrator dispatches, the Auditor supervises, and a stale validation is not accepted', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-
-  // The Orchestrator owns the transaction: dispatching it makes it *ready*.
-  // The Auditor's plan audit is observational supervision — if it never decides,
-  // the work still runs, which is the difference between a supervisor and a
-  // single point of failure.
-  command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  const dispatched = required(runtime.store.getTransaction(tx.id), 'dispatched transaction');
-  assert.equal(dispatched.status, 'READY', 'dispatch makes the plan dispatchable');
-  assert.equal(dispatched.plan_approved_revision, null, 'without the Auditor, nothing is claimed as approved');
-  const pending = runtime.store.pendingAudits(clusterId, { kind: 'plan', limit: 10 });
-  assert.equal(pending.length, 1, 'and the Auditor still has a decision to make');
-
-  // A Worker can claim it without any audit decision.
-  command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
-  assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 1, 'a silent Auditor does not stall the subtree');
-
-  // The Auditor's approval is recorded as evidence when it does arrive.
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').plan_approved_revision, dispatched.revision);
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'READY', 'observational: it was already ready');
-  const audit = required(runtime.store.findAudit(clusterId, tx.id, 'plan', dispatched.revision), 'plan audit');
-  assert.equal(audit.decision, 'APPROVED');
-
-  // And its rejection still has teeth: the plan goes back to DRAFT.
-  const second = textOf(command(runtime, orchestrator, 'create_transaction', { objective: 'second', acceptance_criteria: ['x'] }).result.transaction_id, 'transaction_id');
-  command(runtime, orchestrator, 'dispatch', { transaction_id: second });
-  assert.equal(required(runtime.store.getTransaction(second), 'transaction').status, 'READY');
-  const rejected = command(runtime, auditor, 'inspect_plan', { transaction_id: second, decision: 'reject', required_change: 'the criteria are not checkable' });
-  assert.equal(rejected.result.status, 'DRAFT', 'a rejected plan is pulled back before its allocation works');
-  assert.equal(required(runtime.store.getTransaction(second), 'transaction').plan_approved_revision, null);
-  assert.ok(rejected.result.issue_id);
-
-  // A result published against a moved revision is not accepted by a stale audit.
-  const worker = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
-  runtime.store.tx(() => runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { value: 5 } }));
-  command(runtime, orchestrator, 'validate', {
-    transaction_id: tx.id, accepted: true,
-    checks: [{ criterion: 'result holds 5', passed: true, evidence: 'result.value' }],
-  });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'VALIDATING');
-  assert.throws(() => command(runtime, orchestrator, 'accept_result', { transaction_id: tx.id }), error => rejectionStatus(error) === 409);
-
-  const approved = command(runtime, auditor, 'inspect_validation', { transaction_id: tx.id, decision: 'approve' });
-  assert.equal(approved.result.status, 'ACCEPTED');
-  // The rejected plan is still open work: the cluster is not done until every
-  // root transaction is decided.
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'RUNNING');
-  // A cancelled root cannot be reported as success: the cluster blocks with the
-  // reason instead of claiming a completion it did not achieve.
-  command(runtime, orchestrator, 'cancel_transaction', { transaction_id: second, reason: 'superseded by the first' });
-  runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'BLOCKED');
-  const blockedEvent = required(runtime.store.readEvents(clusterId, { limit: 500 }).filter(event => event.type === 'cluster-blocked').at(-1), 'cluster-blocked event');
-  assert.match(textOf(jsonObject(blockedEvent.data, 'event data').reason, 'reason'), /did not all reach ACCEPTED/);
-  void worker;
+test('the Orchestrator dispatches work and accepts only a validation of its current publication', t => {
+  const runtime = makeRuntime(t); const clusterId = startCluster(runtime); const root = rootNode(runtime, clusterId);
+  const lead = actorFor(runtime, clusterId, 'orchestrator', root.id), allocator = actorFor(runtime, clusterId, 'allocator', root.id);
+  const tx = firstOf(runtime.store.rootTransactions(clusterId), 'transaction');
+  command(runtime, lead, 'dispatch', { transaction_id: tx.id }); command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
+  assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 1);
+  runtime.store.updateTransaction(tx.id, { status: 'SUBMITTED', result: { value: 5 } }); publishFixtureResult(runtime, tx.id);
+  const before = required(runtime.store.getTransaction(tx.id), 'transaction');
+  assert.throws(() => command(runtime, lead, 'validate', { transaction_id: tx.id, expected_transaction_revision: before.revision - 1, accepted: true }), /revision|stale/);
+  assert.equal(runtime.store.getTransaction(tx.id)?.current_validation_ref, null);
+  command(runtime, lead, 'validate', { transaction_id: tx.id, accepted: true });
+  assert.equal(runtime.store.getTransaction(tx.id)?.status, 'ACCEPTED');
+  assert.deepEqual(runtime.store.getTransaction(tx.id)?.current_result_ref, before.current_result_ref);
 });
 
 test('a FAILED transaction cannot bypass its exhausted attempt cap by redispatching the same revision', t => {
@@ -902,12 +817,10 @@ test('a FAILED transaction cannot bypass its exhausted attempt cap by redispatch
   const after = required(runtime.store.getTransaction(tx.id), 'failed transaction');
   assert.equal(after.status, 'FAILED');
   assert.equal(after.attempts, 2);
-  assert.equal(runtime.store.pendingAudits(clusterId, { kind: 'plan' }).length, 0,
-    'a terminal failed result is not reopened by another observational audit');
 });
 
-test('an Auditor rejection during a Worker turn keeps its settled write and submission observable', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-live-plan-audit-'));
+test('a refused business revision during a Worker turn keeps its settled write and submission observable', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-flow-live-plan-revision-'));
   const host = createFakeHost();
   const path = join(dir, 'result.txt');
   host.registerTool({
@@ -934,8 +847,8 @@ test('an Auditor rejection during a Worker turn keeps its settled write and subm
     await runtime.dispose();
     rmSync(dir, { recursive: true, force: true });
   });
-  const clusterId = runtime.start({
-    objective: 'write one file while an Auditor rejects the active plan',
+  const clusterId = runtime.start({ managementCapabilities: [],
+    objective: 'write one file while an Orchestrator rejects the active plan',
     workspace: dir, capabilities: ['fs_write'],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 4, max_llm_concurrency: 2 },
     budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 16, max_active_agents: 4 },
@@ -970,20 +883,14 @@ test('an Auditor rejection during a Worker turn keeps its settled write and subm
   assert.equal(held, true, 'a real Worker turn holds the running transaction');
   const live = runtime.activeTurnFor(worker.id);
   assert.ok(live);
-  const decision = command(runtime, actorFor(runtime, clusterId, 'auditor', root.id), 'inspect_plan', {
-    transaction_id: tx.id, decision: 'reject', required_change: 'the output needs an independent review',
-  }).result;
-  assert.equal(decision.decision, 'REJECTED');
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'running transaction').status, 'RUNNING',
-    'the independent verdict must not revoke the live submission contract mid-turn');
   assert.throws(() => command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id),
     'adjust_transaction', { transaction_id: tx.id, patch: { objective: 'a revised deliverable' } }),
   error => rejectionStatus(error) === 409 && /turn|lease|running/i.test(messageOf(error)),
   'the Orchestrator cannot change the running revision before the Worker submits its result');
-  assert.throws(() => command(runtime, actorFor(runtime, clusterId, 'auditor', root.id),
-    'request_replan', { transaction_id: tx.id, required_change: 'revise the output path' }),
+  assert.throws(() => command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id),
+    'reopen_transaction', { transaction_id: tx.id, required_change: 'revise the output path' }),
   error => rejectionStatus(error) === 409 && /turn|lease|running/i.test(messageOf(error)),
-  'a second audit action cannot silently invalidate the same running Worker');
+  'a second plan revision cannot silently invalidate the same running Worker');
   release();
   await live.promise;
   const submission = capturedResults00[1];
@@ -995,31 +902,20 @@ test('an Auditor rejection during a Worker turn keeps its settled write and subm
     const eventData = jsonObject(event.data, 'event data');
     return event.type === 'result-submitted' && eventData.transaction_id === tx.id && eventData.agent_id === worker.id;
   }));
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'DRAFT',
-    'after the Worker finishes, the rejected revision waits for correction, not acceptance');
+  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'SUBMITTED',
+    'the settled Worker publication remains available for actual business validation');
 });
 
-test('a restart fences a Worker without reviving its already rejected plan', t => {
-  const runtime = makeRuntime(t);
-  const clusterId = startCluster(runtime);
-  const root = rootNode(runtime, clusterId);
-  const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
-  command(runtime, actorFor(runtime, clusterId, 'orchestrator', root.id), 'dispatch', { transaction_id: tx.id });
-  command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'allocate_agent', { transaction_id: tx.id });
-  const allocation = required(runtime.store.activeAllocationForTransaction(tx.id), 'active allocation');
-  runtime.store.tx(() => {
-    runtime.store.updateTransaction(tx.id, { status: 'RUNNING', __bump_revision: false });
-    runtime.store.createLease({
-      id: 'audit-crash-worker', cluster_id: clusterId, agent_id: allocation.agent_id,
-      node_id: allocation.node_id, purpose: 'worker-turn', epoch: 1, expires: now() + 60_000,
-    });
-  });
-  const rejected = command(runtime, actorFor(runtime, clusterId, 'auditor', root.id),
-    'inspect_plan', { transaction_id: tx.id, decision: 'reject', required_change: 'fix the plan' }).result;
-  assert.equal(rejected.decision, 'REJECTED');
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'RUNNING');
+test('a restart fences the old Worker and a subsequent business revision invalidates its old plan', t => {
+  const runtime = makeRuntime(t); const clusterId = startCluster(runtime); const root = rootNode(runtime, clusterId);
+  const tx = firstOf(runtime.store.rootTransactions(clusterId), 'transaction'); const lead = actorFor(runtime, clusterId, 'orchestrator', root.id);
+  command(runtime, lead, 'dispatch', { transaction_id: tx.id }); command(runtime, actorFor(runtime, clusterId, 'allocator', root.id), 'allocate_agent', { transaction_id: tx.id });
+  const allocation = required(runtime.store.activeAllocationForTransaction(tx.id), 'allocation');
+  runtime.store.updateTransaction(tx.id, { status: 'RUNNING', __bump_revision: false });
+  runtime.store.createLease({ id: 'crashed-worker', cluster_id: clusterId, agent_id: allocation.agent_id, node_id: allocation.node_id, purpose: 'worker-turn', epoch: 1, expires: now() + 60_000 });
+  assert.throws(() => command(runtime, lead, 'reopen_transaction', { transaction_id: tx.id, required_change: 'Fix the plan.' }), /turn|lease|running/i);
   runtime.recover({ deferScheduling: true });
-  assert.equal(required(runtime.store.getTransaction(tx.id), 'transaction').status, 'DRAFT',
-    'fencing a crashed Worker cannot redispatch a plan the Auditor already rejected');
+  command(runtime, lead, 'reopen_transaction', { transaction_id: tx.id, required_change: 'Fix the plan.' });
+  assert.equal(runtime.store.getTransaction(tx.id)?.status, 'DRAFT');
   assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 0);
 });

@@ -54,7 +54,7 @@ export function notificationHeadline(subject: string, payload: unknown): string 
 }
 
 export function notificationTone(subject: string): 'success' | 'warning' | 'neutral' {
-  if (subject === 'plan-approved' || subject === 'child-accepted') return 'success';
+  if (subject === 'child-accepted') return 'success';
   return notificationCategory(subject) === 'blocker_report' || subject === 'budget-refused' || subject === 'issue-opened'
     ? 'warning' : 'neutral';
 }
@@ -72,8 +72,7 @@ export function notificationCategory(subject: string): FlowCommunicationCategory
     case 'plan-dispatched': case 'transaction-modified': case 'goal-changed': return 'task_instruction';
     case 'load-changed': return 'progress_update';
     case 'result-submitted': case 'child-accepted': return 'result_report';
-    case 'plan-audit-requested': case 'validation-audit-requested': case 'plan-approved':
-    case 'issue-opened': case 'auditor-notified': case 'auditor-recommended': return 'review_feedback';
+    case 'issue-opened': return 'review_feedback';
     case 'blackboard': return 'collaboration_request';
     case 'escalation': case 'child-blocked': case 'transaction-stale': case 'result-withheld':
     case 'agent-anomaly': return 'blocker_report';
@@ -86,8 +85,7 @@ export function notificationCategory(subject: string): FlowCommunicationCategory
 export const NOTIFICATION_LABELS: Readonly<Record<string, string>> = {
   'plan-dispatched': '任务已派发', 'transaction-modified': '任务已调整', 'goal-changed': '任务目标已变更',
   'load-changed': '执行负载已更新', 'result-submitted': '任务结果已提交', 'child-accepted': '下级结果已接受',
-  'plan-audit-requested': '请审查任务计划', 'validation-audit-requested': '请复核验收结论', 'plan-approved': '计划审查通过',
-  'issue-opened': '发现需要纠正的问题', 'auditor-notified': '审核通知', 'auditor-recommended': '审核建议',
+  'issue-opened': '发现需要纠正的问题',
   'blackboard': '共享信息已更新', 'escalation': '请求上级处理', 'child-blocked': '下级执行受阻',
   'transaction-stale': '任务长期未推进', 'result-withheld': '任务结果暂未发布', 'agent-anomaly': '智能体执行异常',
   'budget-refused': '资源额度不足', 'context-pressure': '需要处理上下文压力', 'context-pressure-notice': '上下文压力提醒',

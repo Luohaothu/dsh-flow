@@ -168,7 +168,7 @@ test('a recovery failure never publishes a usable service', async t => {
   // persisted open cluster is what makes the proof pass run at all.
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), dataDir, autoTick: false });
-  seed.start({ id: 'seed-cluster', objective: 'persisted work', workspace: dir, capabilities: [], budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
+  seed.start({ managementCapabilities: [], id: 'seed-cluster', objective: 'persisted work', workspace: dir, capabilities: [], budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   await seed.dispose();
   t.after(() => seedHost.dispose());
 
@@ -218,7 +218,7 @@ test('unloading a required dependency aborts the live turn, stops the timer and 
   assert.equal(await waitFor(() => flowOf(fixture.ctx) !== undefined), true);
   const flow = flowOf(fixture.ctx);
   assert.ok(flow);
-  const snapshot = flow.start({
+  const snapshot = flow.start({ managementCapabilities: [],
     objective: 'a live turn that a dependency unload must fence',
     workspace: dir,
     capabilities: [],
@@ -274,7 +274,7 @@ test('disposing the plugin itself fences the live turn while a fresh instance re
   assert.equal(await waitFor(() => flowOf(fixture.ctx) !== undefined), true);
   const flow = flowOf(fixture.ctx);
   assert.ok(flow);
-  const snapshot = flow.start({
+  const snapshot = flow.start({ managementCapabilities: [],
     objective: 'a live turn that a plugin dispose must fence',
     workspace: dir,
     capabilities: [],
@@ -305,7 +305,7 @@ test('delayed durable-session proof gates consumers until recovery completes', {
   mkdirSync(dataDir, { recursive: true });
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
-  const saved = seed.start({ objective: 'persisted session proof', workspace: dir, capabilities: [],
+  const saved = seed.start({ managementCapabilities: [], objective: 'persisted session proof', workspace: dir, capabilities: [],
     budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   const identity = seed.store.listAgents(saved.cluster.id, {})[0];
   assert.ok(identity);
@@ -348,7 +348,7 @@ test('unload drains an in-flight proof and discards its late completion before s
   mkdirSync(dataDir, { recursive: true });
   const seedHost = createFakeHost();
   const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
-  const saved = seed.start({ objective: 'late durable proof', workspace: dir, capabilities: [],
+  const saved = seed.start({ managementCapabilities: [], objective: 'late durable proof', workspace: dir, capabilities: [],
     budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 } });
   const identity = seed.store.listAgents(saved.cluster.id, {})[0];
   assert.ok(identity);
@@ -419,7 +419,7 @@ for (const phase of ['stat', 'open'] as const) {
       mkdirSync(dataDir, { recursive: true });
       const seedHost = createFakeHost();
       const seed = new ClusterRuntime(seedHost.ctx, { path: join(dataDir, 'cluster.sqlite'), autoTick: false });
-      const saved = seed.start({
+      const saved = seed.start({ managementCapabilities: [],
         objective: 'interrupt startup proof', workspace: dir, capabilities: [],
         budget: { tool_calls: 100, agents: 16, max_active_agents: 4, wall_time_ms: 60_000 },
       });

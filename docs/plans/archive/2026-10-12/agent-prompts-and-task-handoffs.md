@@ -1,5 +1,7 @@
 # 智能体提示词与任务交接方案
 
+> 历史归档（2026 年 10 月 12 日）：本文保留当时的方案与验证事实，不作为后续实现的执行指令。Auditor 角色、审核门禁及相关收尾流程以[当前移除方案](../../auditor-removal-plan.md)为准；其他内容须结合当前源码核对。见[归档索引](../README.md)。
+
 状态：实现及验证完成；见[实施验证记录](agent-prompts-and-task-handoffs-validation.md)。日期：2026 年 10 月 9 日。设计源码基线：`9c97667`。
 
 团队成员应收到面向自己职责的自然语言任务，按需查询执行与审核所需的状态。总协调先理解目标、选择执行方式并写出交接说明，运行时负责保存决定、检查权限和版本、投递消息。固定角色职责和工具使用规则进入系统提示词；普通任务正文只承载本次工作需要的信息。
@@ -353,14 +355,14 @@ interface MemberBriefing {
 
 ## 源码定位
 
-- [统一任务简报](../../packages/dsh-flow/src/core/briefing.ts)：角色 system、自然语言交接、运行事实通知和绑定输入。
-- [正式计划与责任契约](../../packages/dsh-flow/src/core/contracts.ts)：计划准备、稳定标准引用、父约束覆盖及有效性。
-- [调度和查询](../../packages/dsh-flow/src/core/cluster.ts)：`#pendingFor`、原生轮次绑定、assignment/agenda、字段投影、分页与结果发布。
-- [原生 Agent 接入](../../packages/dsh-flow/src/core/runtime.ts)：system section、创建与恢复、首条和后续消息投递。
-- [任务动作与审核](../../packages/dsh-flow/src/core/actions.ts)：创建、分解、派发、修订、管理委派、验证及独立审核。
-- [角色工具](../../packages/dsh-flow/src/core/role-tools.ts)：actor 解析、查询、工具 schema 及 `concludeTurn`。
-- [领域记录](../../packages/dsh-flow/src/core/model.ts)、[持久化存储](../../packages/dsh-flow/src/core/store.ts)、[公开查询类型](../../packages/dsh-flow/src/types.ts)。
-- [主会话入口](../../packages/dsh-flow/src/command.ts)与[团队 skill](../../packages/dsh-flow/skills/agent-team/SKILL.md)。
-- [确定性模型](../../src/host/mock-model.ts)、[原生身份适配](../../src/host/mock-identity-adapter.ts)与[场景脚本](../../src/host/mock-scenarios.ts)。
-- [真实模型验收](../../tests/acceptance/handoffs-live.ts)及[完整验证证据](agent-prompts-and-task-handoffs-validation.md)。
-- [已实施的模型执行职责方案](model-context-token-limits-plan.md)及[领域语言](../../CONTEXT.md)。
+- [统一任务简报](../../../../packages/dsh-flow/src/core/briefing.ts)：角色 system、自然语言交接、运行事实通知和绑定输入。
+- [正式计划与责任契约](../../../../packages/dsh-flow/src/core/contracts.ts)：计划准备、稳定标准引用、父约束覆盖及有效性。
+- [调度和查询](../../../../packages/dsh-flow/src/core/cluster.ts)：`#pendingFor`、原生轮次绑定、assignment/agenda、字段投影、分页与结果发布。
+- [原生 Agent 接入](../../../../packages/dsh-flow/src/core/runtime.ts)：system section、创建与恢复、首条和后续消息投递。
+- [任务动作与审核](../../../../packages/dsh-flow/src/core/actions.ts)：创建、分解、派发、修订、管理委派、验证及独立审核。
+- [角色工具](../../../../packages/dsh-flow/src/core/role-tools.ts)：actor 解析、查询、工具 schema 及 `concludeTurn`。
+- [领域记录](../../../../packages/dsh-flow/src/core/model.ts)、[持久化存储](../../../../packages/dsh-flow/src/core/store.ts)、[公开查询类型](../../../../packages/dsh-flow/src/types.ts)。
+- [主会话入口](../../../../packages/dsh-flow/src/command.ts)与[团队 skill](../../../../packages/dsh-flow/skills/agent-team/SKILL.md)。
+- [确定性模型](../../../../src/host/mock-model.ts)、[原生身份适配](../../../../src/host/mock-identity-adapter.ts)与[场景脚本](../../../../src/host/mock-scenarios.ts)。
+- [真实模型验收](../../../../tests/acceptance/handoffs-live.ts)及[完整验证证据](agent-prompts-and-task-handoffs-validation.md)。
+- [已实施的模型执行职责方案](model-context-token-limits-plan.md)及[领域语言](../../../../CONTEXT.md)。

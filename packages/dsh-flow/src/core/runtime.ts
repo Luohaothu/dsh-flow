@@ -597,6 +597,10 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
     const intent: MemberTurnInput = input ?? {
       kind: 'wake', key: `turn:${agent.epoch}:${options.turnSeq}`,
     };
+    const executionEpoch = flow.store.leaseForAgent(agent.id)?.epoch ?? agent.epoch;
+    const executionBinding: FlowJsonValue = intent.binding !== null && typeof intent.binding === 'object' && !Array.isArray(intent.binding)
+      ? { ...intent.binding, agent_id: agent.id, epoch: executionEpoch, turn_seq: options.turnSeq }
+      : intent.binding ?? null;
     const saveInput = (details: MemberTurnInput, content: string): UserMessage => {
       const generated = createUserMessage({ content: [{ type: 'text', text: content }], source: { kind: 'user' } });
       const saved = flow.store.saveMemberInput({
@@ -630,8 +634,17 @@ export async function runTurn(ctx: Context, options: RunTurnOptions): Promise<Tu
       }
       // Resume an interrupted decision using a separate Flow wake; the original
       // author's business task is never replayed as a new user delegation.
-      taskPrompt = saveInput({ ...intent, kind: 'wake', key: `${intent.key}:resume:${agent.epoch}:${options.turnSeq}` },
+      taskPrompt = saveInput({ ...intent, kind: 'wake', key: `${intent.key}:resume:${executionEpoch}:${options.turnSeq}`, binding: executionBinding },
         '本次任务已投递。请继续处理尚未完成的工作。');
+    } else if (saved && executionBinding !== null && typeof executionBinding === 'object' && !Array.isArray(executionBinding)
+      && (recordOf(saved.binding).epoch !== executionEpoch || recordOf(saved.binding).turn_seq !== options.turnSeq)) {
+      // An undelivered handoff keeps its immutable message and business binding.
+      // Record this attempt's execution identity separately; only a subsequent
+      // durable user/message can turn this queued attempt into native evidence.
+      flow.store.appendEvent(agent.cluster_id, 'member-input-execution-bound', {
+        input_id: saved.id, native_message_id: saved.native_message_id, agent_id: agent.id, session_id: agent.session_id,
+        after_native_seq: priorEvents?.at(-1)?.seq ?? -1, binding: executionBinding,
+      });
     }
     // An inbox item persisted before a crash is still pending, rather than a
     // second handoff. Requeue its identified message to wake the native driver.

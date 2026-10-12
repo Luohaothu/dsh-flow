@@ -30,20 +30,16 @@ export function assertExpectedTransaction(tx: TransactionRecord, value: unknown)
   if (tx.revision !== value) fail(`transaction revision conflict: expected ${value}, current ${tx.revision}`, 409);
 }
 
-export function validPlan(store: ClusterStore, tx: TransactionRecord, execution?: PlanRecord['execution'], allowRejectedCurrent = false): PlanRecord {
+export function validPlan(store: ClusterStore, tx: TransactionRecord, execution?: PlanRecord['execution']): PlanRecord {
   const plan = store.getPlan(tx.current_plan_ref);
   if (!plan || !sameRef(plan.contract, contractFor(store, tx))) fail(`transaction ${tx.id} has no current prepared plan`, 409);
   if (execution && plan.execution !== execution) fail(`transaction ${tx.id} uses ${plan.execution} execution; this action requires ${execution}`, 409);
-  const verdict = store.findAudit(tx.cluster_id, tx.id, 'plan', plan.ref.prepared_revision);
-  if (!allowRejectedCurrent && (verdict?.decision === 'REJECTED' || verdict?.decision === 'REPLAN_REQUESTED')) fail(`plan for transaction ${tx.id} was rejected; revise it before execution`, 409);
   let ancestorId = tx.parent_transaction_id;
   const visited = new Set<string>();
   while (ancestorId && !visited.has(ancestorId)) {
     visited.add(ancestorId);
     const ancestor = store.getTransaction(ancestorId);
     if (!ancestor?.current_plan_ref) fail('the parent contract requires replanning before child execution', 409);
-    const parentAudit = store.findAudit(tx.cluster_id, ancestor.id, 'plan', ancestor.current_plan_ref.prepared_revision);
-    if (parentAudit?.decision === 'REJECTED' || parentAudit?.decision === 'REPLAN_REQUESTED') fail('the parent plan requires correction before child execution', 409);
     for (const responsibility of plan.criterion_responsibilities) {
       if (responsibility.criterion.transaction_id === ancestor.id
         && !sameRef({ transaction_id: ancestor.id, prepared_revision: responsibility.criterion.prepared_revision }, ancestor.current_plan_ref)) fail('child plan is bound to a superseded parent contract', 409);
@@ -110,7 +106,6 @@ export function preparePlan(
       }
     }
     const provider = text(responsibility.evidence_provider, 'evidence_provider');
-    if (provider === 'auditor') fail('Auditor governance cannot be assigned business delivery or validation');
     const child = options.children?.get(provider);
     if (!child && provider !== 'worker' && provider !== 'orchestrator') {
       fail(`unknown evidence provider ${provider}; use worker or orchestrator, or an exact child key declared in this atomic decompose call. A management plan uses orchestrator for its integrated delivery; the Allocator creates its child domain later, so do not guess a future child key.`);
@@ -119,7 +114,7 @@ export function preparePlan(
     if (responsibility.validated_by !== 'orchestrator') fail('business validation belongs to the Orchestrator');
     const applies = responsibility.applies_to;
     if (applies !== undefined && (!Array.isArray(applies) || applies.some(item => typeof item !== 'string'))) fail('applies_to must be a list of participant roles or child keys');
-    const validParticipants = new Set(['worker', 'orchestrator', 'allocator', 'auditor', ...Array.from(options.children?.keys() ?? [])]);
+    const validParticipants = new Set(['worker', 'orchestrator', 'allocator', ...Array.from(options.children?.keys() ?? [])]);
     if (Array.isArray(applies) && applies.some(item => !validParticipants.has(String(item)))) fail('applies_to contains an unknown participant or child key');
     return {
       criterion: criterionRef, evidence_provider: child?.id ?? provider,
@@ -147,7 +142,6 @@ export function savePlan(store: ClusterStore, tx: TransactionRecord, plan: PlanR
   store.insertPlan(plan);
   return store.updateTransaction(tx.id, {
     current_plan_ref: plan.ref, current_validation_ref: null, validation: null,
-    plan_approved_revision: null,
     current_result_ref: null, result: null, result_revision: null,
     result_staged_epoch: null, result_staged_turn: null, result_staged_agent: null,
   }) ?? fail('Transaction not found', 404);

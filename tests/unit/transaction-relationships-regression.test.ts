@@ -69,7 +69,7 @@ function fixture(t: TestContext) {
   t.after(async () => { await runtime.dispose(); rmSync(dir, { recursive: true, force: true }); });
   let commandId = 0;
   function cluster() {
-    const id = runtime.start({
+    const id = runtime.start({ managementCapabilities: [],
       objective: 'check transaction relationships', workspace: dir, capabilities: ['fs_read'],
       budget: { tool_calls: 3000, agents: 64, max_active_agents: 4, wall_time_ms: 3_600_000 },
     }).cluster.id;

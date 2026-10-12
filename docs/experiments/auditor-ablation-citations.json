@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://www.sqlite.org/foreignkeys.html",
+      "title": "",
+      "accessed": "2026-10-11",
+      "quotes": [
+        {
+          "text": "Assuming the library is compiled with foreign key constraints enabled, it must still be enabled by the application at runtime, using the PRAGMA foreign_keys command.",
+          "added": "2026-10-11"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "url": "https://www.sqlite.org/wal.html",
+      "title": "",
+      "accessed": "2026-10-11",
+      "quotes": [
+        {
+          "text": "WAL provides more concurrency as readers do not block writers and a writer does not block readers. Reading and writing can proceed concurrently.",
+          "added": "2026-10-11"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "url": "https://www.sqlite.org/isolation.html",
+      "title": "",
+      "accessed": "2026-10-11",
+      "quotes": [
+        {
+          "text": "Any write transactions that commit while the read transaction is active are still invisible to the read transaction, because the reader is seeing a snapshot of database file from a prior moment in time.",
+          "added": "2026-10-11"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "url": "https://www.sqlite.org/lang_transaction.html",
+      "title": "",
+      "accessed": "2026-10-11",
+      "quotes": [
+        {
+          "text": "IMMEDIATE causes the database connection to start a new write immediately, without waiting for a write statement.",
+          "added": "2026-10-11"
+        }
+      ]
+    }
+  ]
+}

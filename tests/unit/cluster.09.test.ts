@@ -1,7 +1,7 @@
 import { fixtureParams } from './task-fixtures.ts';
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -122,7 +122,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}, internals: FlowStartInternals = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -179,27 +179,24 @@ test('a waiting Worker is admitted even when every management slot is pending', 
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'supervision must not eat the window', workspace: dir, capabilities: [],
-    // A six-slot window with several management nodes: three roles each, so
+    // A six-slot window with several management nodes: two roles each, so
     // supervision alone is always pending.
     limits: { max_children: 8, max_depth: 4, max_active_agents: 6, max_llm_concurrency: 4, max_role_turns: 40 },
     budget: { tool_calls: 400, wall_time_ms: 600_000, agents: 32, max_active_agents: 6 },
   }).cluster.id;
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  if (required(runtime.store.getTransaction(tx.id), 'root transaction').status === 'DRAFT') {
-    command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
-  }
+
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 1, 'a Worker has work waiting');
 
   // Management work everywhere: two more management nodes, each with its own
-  // three roles — six distinct management identities. Each spawn needs its own
+  // two roles — four distinct management identities. Each spawn needs its own
   // delegated transaction: `spawn_management_node` returns the *existing* child
   // for a repeated one, so two calls with the same transaction built a single
   // node and the fixture never created the topology it claimed to.
@@ -218,7 +215,7 @@ test('a waiting Worker is admitted even when every management slot is pending', 
   const managementIdentities = numberOf(firstOf(runtime.store.all(
     "SELECT COUNT(DISTINCT a.id) AS c FROM agents a JOIN nodes n ON n.id = a.node_id WHERE a.cluster_id=? AND n.depth > 0",
     clusterId), 'management identities').c, 0, 1_000_000, 'management identities');
-  assert.ok(managementIdentities >= 6, `six distinct management identities: ${managementIdentities}`);
+  assert.ok(managementIdentities >= 4, `six distinct management identities: ${managementIdentities}`);
   // Every turn the roles take makes a real change, and none of them is a Worker.
   let published = 0;
   let workerStarted = false;
@@ -244,9 +241,6 @@ test('a waiting Worker is admitted even when every management slot is pending', 
     // rather than in an arithmetic assertion about the scheduler's rule.
     published += 1;
     touchBlackboard(runtime, clusterId, `fairshare/${published}`, null);
-    for (const audit of runtime.store.pendingAudits(clusterId, { kind: 'plan', limit: 8 })) {
-      command(runtime, auditor, 'inspect_plan', { audit_id: audit.id, decision: 'approve' });
-    }
     if (workerStarted) return;
     await managementBarrier;
   });
@@ -293,7 +287,7 @@ test('a receipt whose payer holds nothing is uncertain: nothing moves and the ow
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'a receipt that claims a hold it does not have', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -330,7 +324,7 @@ test("a side-effect tool's long body is bounded in both ledgers, and they agree"
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: ['shell'],
     objective: 'a side-effect body that stays parseable', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
@@ -357,7 +351,7 @@ test("a side-effect tool's long body is bounded in both ledgers, and they agree"
   // `job_output` is a side-effect tool that needs no write scope: the point here
   // is the *effect* ledger's body, not the scope gate.
   const exec = fromPartial<Parameters<typeof runtime.admitToolCall>[1]>({
-    name: 'job_output', arguments: { job_id: 'job-1' }, agent: instance,
+    name: 'bash', arguments: { command: 'printf done', cwd: dir }, agent: instance,
   });
   const admitted = runtime.admitToolCall(agent, exec, 'call-bash');
   assert.equal(admitted.ok, true, `the call is admitted: ${JSON.stringify(admitted)}`);
@@ -386,31 +380,31 @@ test('the inbox page shows the message a role must act on, not eight older notic
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 60_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'an inbox page that shows what matters', workspace: dir, capabilities: [],
     limits: { max_children: 4, max_depth: 3, max_active_agents: 3, max_llm_concurrency: 1, max_role_turns: 3 },
     budget: { tool_calls: 40, wall_time_ms: 600_000, agents: 16, max_active_agents: 3 },
   }).cluster.id;
   const cluster = required(runtime.store.getCluster(clusterId), 'cluster');
   const root = firstOf(runtime.store.listNodes(clusterId, { parent_id: null }), 'root node');
-  const auditor = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
+  const validationOwner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'validationOwner agent');
   // Eight older informational rows, then the message that matters. The page is
   // eight rows wide, so without a subject ordering the message is never seen —
   // the rows stay PENDING and hide it on every subsequent page too.
   runtime.store.tx(() => {
     for (let index = 0; index < 8; index += 1) {
       const row = runtime.store.insertInbox({
-        cluster_id: clusterId, recipient: auditor.id, subject: 'plan-approved',
+        cluster_id: clusterId, recipient: validationOwner.id, subject: 'transaction-modified',
         payload: { transaction_id: `tx-${index}` },
       });
       runtime.store.run('UPDATE inbox SET created=? WHERE id=?', `2026-01-01T00:00:0${index}.000Z`, required(row, 'inbox row').id);
     }
     runtime.store.insertInbox({
-      cluster_id: clusterId, recipient: auditor.id, subject: 'message',
-      payload: { from: 'human', text: 'stop auditing that' },
+      cluster_id: clusterId, recipient: validationOwner.id, subject: 'message',
+      payload: { from: 'human', text: 'stop inspecting that' },
     });
   });
-  const pending = runtime.pendingFor('auditor', root, cluster, auditor);
+  const pending = runtime.pendingFor('orchestrator', root, cluster, validationOwner);
   const subjects = pending.filter(item => item.action === 'inbox').map(item => item.subject);
   assert.ok(subjects.includes('message'),
     `the newest message is inside the page: ${JSON.stringify(subjects)}`);
@@ -452,7 +446,7 @@ test('Workers holding the window do not starve a management role that is owed a 
     tickMs: 10_000, heartbeatMs: 10_000, leaseTtlMs: 120_000,
   });
   t.after(async () => { await runtime.dispose(); });
-  const clusterId = runtime.start({
+  const clusterId = runtime.start({ managementCapabilities: [],
     objective: 'Workers must not hold every slot a manager needs', workspace: dir, capabilities: [],
     // A three-slot window must retain admission capacity for a management
     // role while Workers are eligible to fill it.
@@ -465,7 +459,7 @@ test('Workers holding the window do not starve a management role that is owed a 
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   // The transactions are inserted READY and allocated here, so management is
   // owed *nothing* while the Workers take the window: no DRAFT to dispatch, no
-  // plan audit pending, no unallocated transaction.
+  // acceptance pending, no unallocated transaction.
   // The transaction `start` created for the objective is taken out of the way:
   // this test is about the window, not about that transaction's dispatch.
   const initial = firstOf(runtime.store.listTransactions({ cluster_id: clusterId, node_id: root.id }), 'initial transaction');
@@ -478,11 +472,9 @@ test('Workers holding the window do not starve a management role that is owed a 
     }));
   }
   for (const id of ids) command(runtime, allocator, 'allocate_agent', { transaction_id: id });
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
-  for (const id of ids) command(runtime, auditor, 'inspect_plan', { transaction_id: id, decision: 'approve' });
   assert.equal(runtime.store.readyForWorker(clusterId, { limit: 5 }).length, 3, 'three Workers have work waiting');
 
-  const roles: FlowAgentRole[] = ['orchestrator', 'allocator', 'auditor'];
+  const roles: FlowAgentRole[] = ['orchestrator', 'allocator'];
   const managementPending = () => roles.filter(role => {
     const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role, limit: 1 }), `${role} agent`);
     return agent && agent.status !== 'TERMINATED' && runtime.pendingFor(role, root, cluster, agent).length;

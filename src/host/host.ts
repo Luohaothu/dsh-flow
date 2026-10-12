@@ -184,6 +184,7 @@ export class DshHost {
   exitInfo: DshExitInfo | undefined;
   child: ChildProcess | null = null;
   #logStream: WriteStream | null = null;
+  #logClosed: Promise<void> = Promise.resolve();
   #socketDir: string | null = null;
   #startError: Error | null = null;
   #sanitizeLog: ((line: string) => string) | undefined;
@@ -224,6 +225,8 @@ export class DshHost {
     stdout.setEncoding('utf8');
     stderr.setEncoding('utf8');
     this.#logStream = createWriteStream(this.logPath, { flags: 'a' });
+    this.#logClosed = new Promise(resolve => this.#logStream!.once('close', resolve));
+    this.#logStream.on('error', error => { this.#startError ??= error; this.#flush(); });
     stdout.on('data', (chunk: string) => {
       this.stdout += chunk;
       this.#writeLog(chunk);
@@ -352,7 +355,7 @@ export class DshHost {
   async stop(options: DshHostStopOptions = {}): Promise<DshExitInfo | null> {
     const { signal = 'SIGTERM', graceMs = 15_000 } = options;
     const child = this.child;
-    if (!child || this.exitInfo) return this.exitInfo ?? null;
+    if (!child || this.exitInfo) { await this.#logClosed; return this.exitInfo ?? null; }
     const exited = new Promise<void>(resolvePromise => child.once('close', () => resolvePromise()));
     try {
       child.kill(signal);
@@ -368,6 +371,7 @@ export class DshHost {
     }, graceMs);
     await exited;
     clearTimeout(timer);
+    await this.#logClosed;
     return this.exitInfo ?? null;
   }
 }

@@ -34,7 +34,7 @@ test('team model preparation stays bounded across member pages and reads current
     return { team, traversals: traversals.mock.callCount() };
   };
   const small = read();
-  assert.equal(small.team.agents.length, 3);
+  assert.equal(small.team.agents.length, 2);
   runtime.store.tx(() => {
     for (let index = 0; index < 503; index += 1) {
       runtime.store.insertAgent({
@@ -45,7 +45,7 @@ test('team model preparation stays bounded across member pages and reads current
     }
   });
   const large = read();
-  assert.equal(large.team.agents.length, 506);
+  assert.equal(large.team.agents.length, 505);
   assert.equal(large.traversals, small.traversals, 'reading more members does not repeat tree traversal');
   assert.ok(large.team.agents.every(agent => agent.configured_model === 'default'));
   runtime.teamSelectModel('main', { provider: 'owner', model: 'current' });

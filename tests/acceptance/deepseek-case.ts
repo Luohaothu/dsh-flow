@@ -14,7 +14,7 @@ import { findSessionFile, readSessionEvents } from '../../src/host/session-scan.
 import type { SessionEvent } from '../../src/host/session-scan.ts';
 import type { RunLayout } from '../../src/host/types.ts';
 
-export const BUDGET_REQUEST = '/agent-team 帮我核对活动预算：场地费 1500 元、物料费 680 元、茶歇费 420 元，总预算 3000 元。请在当前工作区安排执行智能体使用真实 flow_sum 工具计算总支出和剩余预算，使用 fs_write 写入 budget-report.md，再用 fs_read 读回核对。报告应包含费用明细、计算式、总支出、剩余预算及是否超预算。产物验收标准：总支出 2600 元，余额 400 元，不超预算；报告文件与真实工具返回一致。另按正式独立审计流程安排 Auditor：通过 flow_query 查询已 SETTLED 的 write 效果，检查真实文件路径、写入内容和成功结果，并在自己的会话中重新调用 flow_sum 复算 [1500,680,420] 与 [3000,-2600]。Auditor 审查的是已结算写入证据，禁止声称它直接使用 fs_read 读取文件。产物核验与独立审计都通过后，在主会话如实交付文件路径和各角色实际使用的证据，并完成团队收尾。';
+export const BUDGET_REQUEST = '/agent-team 帮我核对活动预算：场地费 1500 元、物料费 680 元、茶歇费 420 元，总预算 3000 元。管理授权明确设置 managementCapabilities 为 ["fs_read","fs_write","shell","web_fetch"]，Worker 授权 fs_read 和 fs_write。请在当前工作区安排执行智能体使用真实 flow_sum 工具计算总支出和剩余预算，使用原生 write 写入 budget-report.md，再用 read 读回核对。报告应包含费用明细、计算式、总支出、剩余预算及是否超预算。产物验收标准：总支出 2600 元，余额 400 元，不超预算；报告文件与真实工具返回一致。总协调 bind_validation 绑定当前 plan_ref 和 result_ref，再亲自使用原生 read 读取 budget-report.md，并在自己的会话中调用 flow_sum 复算 [1500,680,420] 与 [3000,-2600]，引用本人的真实原生工具回执保存 validate。通过后在主会话如实交付文件路径、验收结论和实际使用的证据，并完成团队收尾。';
 
 interface Options { runId: string; timeoutMs: number; prepareOnly: boolean; keepHost: boolean; debugPort?: number }
 interface Check { name: string; passed: boolean; evidence: unknown }
@@ -96,11 +96,6 @@ export function acceptedValidationPassed(rows: readonly SqlRow[]): boolean {
       && validation.checks.every(check => record(check)?.passed === true);
   });
 }
-export function deliveryMisstatesAuditorRead(text: string): boolean {
-  return text.split(/[\n。]/).some(sentence => /Auditor|审计者|审核者|审计智能体|审核智能体/i.test(sentence)
-    && /fs_read|直接读(?:取|回)?文件/i.test(sentence)
-    && !/没有|未直接|未调用|未使用|不直接|不能|并非|而非|不是|不得|不应|did not|does not|never|not directly/i.test(sentence));
-}
 /** An idempotent later finalize cannot invalidate an already delivered result. */
 export function finalizedDelivery(events: readonly SessionEvent[], runId: string): {text:string;seq:number|null;finalize_result_seq:number|null;finalized_at:number|null} {
   let finalized: {seq:number;at:number}|undefined;
@@ -126,23 +121,19 @@ export function finalizedDelivery(events: readonly SessionEvent[], runId: string
   const latest=replies.at(-1);
   return {text:latest?.text??'',seq:latest?.seq??null,finalize_result_seq:finalized?.seq??null,finalized_at:finalized?.at??null};
 }
-function settledWriteInspected(events: readonly SessionEvent[], reportFile: string, fileText: string): boolean {
-  const queries=toolCalls(events,'flow_query').filter(call=>{
-    try { return record(JSON.parse(String(record(call.data)?.arguments)))?.what==='effect'; } catch { return false; }
+export function directFileRead(events: readonly SessionEvent[], reportFile: string, fileText: string): boolean {
+  return toolCalls(events, 'read').some(call => {
+    let args: Record<string, unknown> | null;
+    try { args = record(JSON.parse(String(record(call.data)?.arguments))); } catch { return false; }
+    if (typeof args?.file_path !== 'string' || resolve(dirname(reportFile), args.file_path) !== reportFile) return false;
+    return events.some(event => {
+      const message = record(record(event.data)?.message);
+      if (event.type !== 'tool/result' || message?.toolCallId !== record(call.data)?.callId || message?.isError !== false || !Array.isArray(message.content)) return false;
+      const text = message.content.flatMap(block => { const part = record(block); return part?.type === 'text' ? [String(part.text)] : []; }).join('\n').replace(/[,，]/g, '');
+      // Native read may prefix line numbers; every nonempty report line must be present.
+      return fileText.trim().length > 0 && fileText.split('\n').filter(line => line.trim()).every(line => text.includes(line));
+    });
   });
-  return queries.some(call=>events.some(event=>{
-    const message=record(record(event.data)?.message);
-    if(event.type!=='tool/result'||!message||message.toolCallId!==record(call.data)?.callId||message.isError===true||!Array.isArray(message.content)) return false;
-    try {
-      const text=message.content.flatMap(block=>{const value=record(block);return value?.type==='text'?[String(value.text)]:[];}).join('\n');
-      const effect=record(record(JSON.parse(text))?.effect);
-      const args=record(JSON.parse(String(effect?.args)));
-      const outcome=record(JSON.parse(String(effect?.body)));
-      return effect?.status==='SETTLED'&&effect.tool==='write'&&outcome?.isError===false
-        && typeof args?.file_path==='string'&&resolve(dirname(reportFile),args.file_path)===reportFile
-        && typeof args.content==='string'&&args.content.replace(/[,，]/g,'')===fileText;
-    } catch { return false; }
-  }));
 }
 function teamBinding(dbPath: string): SqlRow | undefined {
   if (!existsSync(dbPath)) return undefined;
@@ -176,11 +167,10 @@ export function collectDeepSeekEvidence(layout: RunLayout, teamId: string, mainS
     const facts=agents.map(agent=>({agent,events:nativeEvents(layout,String(agent.session_id))}));
     const main=nativeEvents(layout,mainSessionId);
     const accepted=ledger.all("SELECT id,status,result,validation FROM transactions WHERE cluster_id=? AND status='ACCEPTED'",teamId);
-    const audits=ledger.all("SELECT * FROM audits WHERE cluster_id=? AND kind='validation' AND decision='APPROVED' AND auditor_agent_id IN (SELECT id FROM agents WHERE cluster_id=? AND role='auditor')",teamId,teamId);
     const usage=usageSummary(ledger,teamId);
     const reportFile=join(layout.workspace,'budget-report.md');
     const fileText=existsSync(reportFile)?readFileSync(reportFile,'utf8').replace(/[,，]/g,''):'';
-    const worker=facts.filter(fact=>fact.agent.role==='worker'); const auditor=facts.filter(fact=>fact.agent.role==='auditor');
+    const worker=facts.filter(fact=>fact.agent.role==='worker'); const manager=facts.filter(fact=>fact.agent.role==='orchestrator');
     const sumFact=(group:typeof facts,total:number)=>group.some(fact=>toolCalls(fact.events,'flow_sum').some(call=>toolNumber(fact.events,call)===total));
     const actualModels=[main,...facts.map(fact=>fact.events)].flatMap(events=>events.flatMap(event=>{
       if(event.type==='request/header') {const config=record(record(record(event.data)?.header)?.config);return config?[{provider:config.provider,model:config.model}]:[];}
@@ -191,12 +181,12 @@ export function collectDeepSeekEvidence(layout: RunLayout, teamId: string, mainS
     const checks:Check[]=[
       {name:'native-skill-and-create',passed:JSON.stringify(main).includes('skill-invocation')&&JSON.stringify(main).includes('agent-team')&&toolCalls(main,'agent_team_create').length===1,evidence:{create_calls:toolCalls(main,'agent_team_create').length}},
       {name:'real-worker-arithmetic',passed:sumFact(worker,2600)&&sumFact(worker,400),evidence:{worker_count:worker.length}},
-      {name:'independent-auditor-arithmetic',passed:sumFact(auditor,2600)&&sumFact(auditor,400),evidence:{auditor_count:auditor.length}},
-      {name:'independent-auditor-settled-write-evidence',passed:auditor.some(fact=>settledWriteInspected(fact.events,reportFile,fileText)),evidence:{path:'workspace/budget-report.md',evidence_method:'flow_query effect: SETTLED write arguments and success result'}},
+      {name:'orchestrator-native-arithmetic',passed:sumFact(manager,2600)&&sumFact(manager,400),evidence:{orchestrator_count:manager.length}},
+      {name:'orchestrator-direct-file-read',passed:manager.some(fact=>directFileRead(fact.events,reportFile,fileText)),evidence:{path:'workspace/budget-report.md',evidence_method:'Orchestrator native read call and matching successful result'}},
       {name:'file-delivered',passed:/1500/.test(fileText)&&/680/.test(fileText)&&/420/.test(fileText)&&/2600/.test(fileText)&&/400/.test(fileText)&&/不超|未超|没有超|未超过|未超出/.test(fileText),evidence:{path:'workspace/budget-report.md',bytes:Buffer.byteLength(fileText)}},
-      {name:'accepted-and-independent-result-audit',passed:acceptedValidationPassed(accepted)&&audits.length>0,evidence:{accepted,audits}},
+      {name:'accepted-business-validation',passed:acceptedValidationPassed(accepted),evidence:{accepted}},
       {name:'main-delivery-and-finalize',passed:delivery.finalized_at!==null,evidence:{finalize_calls:toolCalls(main,'agent_team_finalize').length,finalize_result_seq:delivery.finalize_result_seq,finalized_at:delivery.finalized_at}},
-      {name:'main-delivery-matches-auditor-evidence',passed:delivery.text.length>0&&!deliveryMisstatesAuditorRead(delivery.text),evidence:delivery},
+      {name:'main-delivery-matches-accepted-result',passed:delivery.text.length>0,evidence:delivery},
       {name:'actual-model-route',passed:actualModels.length>0&&actualModels.every(route=>route.provider==='deepseek'&&route.model==='deepseek-flash'),evidence:{observations:actualModels.length,models:[...new Set(actualModels.map(route=>`${String(route.provider)}/${String(route.model)}`))]}},
       {name:'real-host-usage',passed:usage.requests>0&&usage.total_tokens!==null,evidence:usage},
     ];
@@ -321,7 +311,7 @@ export async function runDeepSeekCase(argv = process.argv.slice(2)): Promise<voi
     }
     if(!terminal||!report.team_id||!report.main_session_id) throw new Error('Timed out waiting for completed, finalized team and main-session delivery');
     await page.getByRole('tab',{name:'对话',exact:true}).click();await page.waitForTimeout(1000); await shot('07-delivery');
-    for(const [role,name] of [['worker','05-calculation'],['auditor','06-audit']] as const) {
+    for(const [role,name] of [['worker','05-calculation'],['orchestrator','06-validation']] as const) {
       if(await memberScreenshot(page,role,join(screenshots,`${name}.png`))) report.screenshots.push(`artifacts/steps/${name}.png`);
     }
     await page.getByRole('tab',{name:'智能体',exact:true}).click();await page.keyboard.press('Escape');await shot('08-history');

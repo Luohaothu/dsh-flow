@@ -25,7 +25,16 @@
     "packages/dsh-flow/src/client/preferences.ts",
     "packages/dsh-flow/src/client/navigation.ts",
     "packages/dsh-flow/src/client/tree.ts",
-    "tests/acceptance/**/*.ts"
+    "tests/acceptance/**/*.ts",
+    "tests/integration/**/*.ts",
+    "tests/experiments/auditor-ablation/experiment.test.ts",
+    "tests/experiments/auditor-ablation/fixtures.ts",
+    "tests/experiments/auditor-ablation/score.ts",
+    "tests/experiments/auditor-ablation/settings.ts",
+    "tests/experiments/auditor-ablation/types.ts",
+    "tests/experiments/auditor-ablation/report.ts",
+    "tests/experiments/auditor-ablation/verify.ts",
+    "tests/experiments/auditor-ablation/frozen-run.ts"
   ],
   "exclude": [
     "tests/acceptance/seeds/website",

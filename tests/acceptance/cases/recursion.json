@@ -1,6 +1,6 @@
 {
-  "title": "Recursive management, asymmetric depth, and one auditor interception",
-  "objective": "Produce three small evidence files in {{workspace}}, then report.\n\nStructure the work asymmetrically on purpose:\n* Branch A (deep): create one child management node responsible for `deep/`, and let the topology fixture carry it down: each delegated management node spawns the next level until the instruction's depth budget reaches zero. The tree must reach depth three. The deepest node writes `deep/nested/result.txt`.\n* Branch B (flat): keep the second transaction as a single worker directly under the root. It writes `flat/result.txt` and must not gain any management child.\n* Branch C (verification): a worker that writes `verify/result.txt` containing a single line `verifier-ran` and the number of `result.txt` files it found under {{workspace}}.\n\nThe worker assigned to `deep/nested/result.txt` has no write capability for that path: whatever it submits cannot be accepted as-is. The Auditor must reject that result at least once, record a durable issue, and require a concrete correction; the Orchestrator then decides whether the corrected revision can pass or whether the issue must be escalated to the root.",
+  "title": "Recursive management, asymmetric depth, and one business correction",
+  "objective": "Produce three small evidence files in {{workspace}}, then report.\n\nStructure the work asymmetrically on purpose:\n* Branch A (deep): create one child management node responsible for `deep/`, and let the topology fixture carry it down: each delegated management node spawns the next level until the instruction's depth budget reaches zero. The tree must reach depth three. The deepest node writes `deep/nested/result.txt`.\n* Branch B (flat): keep the second transaction as a single worker directly under the root. It writes `flat/result.txt` and must not gain any management child.\n* Branch C (verification): a worker that writes `verify/result.txt` containing a single line `verifier-ran` and the number of `result.txt` files it found under {{workspace}}.\n\nThe worker assigned to `deep/nested/result.txt` has no write capability for that path: whatever it submits cannot be accepted as-is. The Orchestrator must reject that result at least once, record a durable issue, and require a concrete correction; the Orchestrator then decides whether the corrected revision can pass or whether the issue must be escalated to the root.",
   "capabilities": [
     "fs_read",
     "fs_write"
@@ -67,7 +67,7 @@
   ],
   "acceptance_criteria": [
     "The management tree has a depth-3 branch and a depth-1 branch under the same root",
-    "At least one auditor issue was opened and resolved through a correction round",
+    "At least one business issue was opened and resolved through a correction round",
     "Every transaction reached a terminal state"
   ],
   "delegation": [

@@ -165,7 +165,7 @@ export function apply(ctx: Context, config: Config): void {
           const ordinaryTools = ordinary.agent.ctx.tools.schemas(scopeOf(ordinary.agent.ctx)).map(tool => tool.name);
           if (operation === 'agent-session') {
             const objective = 'Sum [2,3] with flow_sum and independently verify the total 5.';
-            const started = startTeam(fromAny<ClusterRuntime, typeof ctx.flow>(ctx.flow), ordinary.agent.id, randomUUID(), objective, config.workspace, undefined, { objective, assessment: { complexity: 'simple', rationale: 'One independently checked sum' }, acceptance_criteria: ['The real sum equals 5'], capabilities: [] });
+            const started = startTeam(fromAny<ClusterRuntime, typeof ctx.flow>(ctx.flow), ordinary.agent.id, randomUUID(), objective, config.workspace, undefined, { objective, assessment: { complexity: 'simple', rationale: 'One independently checked sum' }, acceptance_criteria: ['The real sum equals 5'], capabilities: [], managementCapabilities: [] });
             ctx.flow.control(started.cluster.id,'pause');
             const target=ctx.flow.teamRead(ordinary.agent.id,started.cluster.id).agents.find(agent=>agent.role==='orchestrator')!;
             const prompt={sessionId:SessionId(target.session_id),requestId:randomUUID() as SessionRequestId,mode:'queue' as const,content:[{type:'text' as const,text:'NATIVE-AGENT-CONTINUATION: independently check 5-3=2 as well.'}],clientTimeZone:'Asia/Shanghai'};

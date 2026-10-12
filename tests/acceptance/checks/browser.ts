@@ -12,6 +12,7 @@ import type { BrowserCheckContext, CheckEntry, CheckOutcome, JsonObject } from '
 
 interface BrowserEffectBase {
   readonly tool: string;
+  readonly role: unknown;
   readonly status: unknown;
   readonly call_id: unknown;
   readonly args: JsonObject | null;
@@ -38,11 +39,11 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
     return { checks, scenario_status: 'FAILED', failure_class: 'MECHANISM' };
   }
   const ledger = openLedger(dbPath);
-  const effects = ledger.all('SELECT tool,status,call_id,args,body FROM effects WHERE cluster_id=? ORDER BY rowid', report.cluster_id);
+  const effects = ledger.all('SELECT e.tool,e.status,e.call_id,e.args,e.body,a.role FROM effects e JOIN agents a ON a.id=e.agent_id WHERE e.cluster_id=? ORDER BY e.rowid', report.cluster_id);
   const browserEffects: BrowserEffect[] = effects.filter(row => requiredString(row.tool, 'effect tool').startsWith('mcp__playwright-mcp__browser_'))
     .map((row): BrowserEffect => {
       const tool = requiredString(row.tool, 'browser effect tool');
-      const base = { tool, status: row.status, call_id: row.call_id };
+      const base = { tool, role: row.role, status: row.status, call_id: row.call_id };
       try {
         const body = asObject(parseJson(requiredString(row.body, 'browser effect body')));
         const args = asObject(parseJson(requiredString(row.args, 'browser effect args')));
@@ -76,6 +77,9 @@ export async function run({ report, layout, events }: BrowserCheckContext): Prom
       : 'no successful post-click snapshot contains the plugin manager heading');
   push('browser-effects-settled', browserEffects.length > 0 && browserEffects.every(row => row.status === 'SETTLED'),
     JSON.stringify(browserEffects.map(row => ({ tool: row.tool, status: row.status, isError: row.body?.isError ?? null }))));
+
+  const managerCalls = browserEffects.filter(row => row.role === 'orchestrator');
+  push('orchestrator-direct-browser-verification', managerCalls.some(row => row.ok && row.tool.endsWith('browser_navigate') && row.args?.url === report.web_url) && managerCalls.some(row => row.ok && row.tool.endsWith('browser_snapshot') && /heading "插件"/i.test(row.text)), JSON.stringify(managerCalls.map(row => ({ tool: row.tool, ok: row.ok }))));
 
   const workerTurns = events.filter(event => event.type === 'turn-end' && event.data.role === 'worker');
   push('worker-turn-completed', workerTurns.some(event => event.data.stop_reason === 'completed'),

@@ -1,5 +1,5 @@
 /**
- * Recursion case checks: asymmetric depth, independent interception and a
+ * Recursion case checks: asymmetric depth, business rejection and a
  * correction round that actually reached a durable issue.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -36,12 +36,8 @@ interface CorrectionReceipt extends JsonObject {
   readonly result_body?: unknown;
 }
 
-interface AuditorIssue extends JsonObject {
-  readonly id?: unknown;
-}
-
-interface AuditorContext {
-  readonly issue: AuditorIssue;
+interface ResolutionContext {
+  readonly issue: CorrectionIssue;
   readonly receipts?: readonly CorrectionReceipt[];
   readonly closedEvent?: JsonObject | null;
 }
@@ -121,18 +117,8 @@ export function answeredByReplacementWork({ events, issue, closedSeq }: Replacem
   return replacements.some(event => Number(event.seq) < Number(closedSeq));
 }
 
-/**
- * Did the *Auditor* close this issue by verifying the correction?
- *
- * The approved plan is explicit: "显式调用 verify_correction 检验修复后状态，不能
- * 只依赖 acceptTransaction 自动把 open issue 标为 CORRECTED". Acceptance closes
- * every open issue of a transaction it accepts, and records why
- * (`reason: accepted-result-after-issue`) — that route proves the result was
- * accepted, not that the correction was verified. A generic `issue-corrected`
- * event is therefore not enough: the verdict itself must exist as a successful
- * `flow_audit` call naming this issue and closing it.
- */
-export function auditorVerifiedIssue({ issue, receipts = [], closedEvent = null }: AuditorContext): {
+/** A correction needs a successful matching acceptance or explicit resolution receipt. */
+export function correctionVerifiedIssue({ issue, receipts = [], closedEvent = null }: ResolutionContext): {
   ok: boolean;
   closings: number;
   reason: string | null;
@@ -148,13 +134,17 @@ export function auditorVerifiedIssue({ issue, receipts = [], closedEvent = null 
       try { payload = JSON.parse(body.text); } catch { return false; }
     }
     const payloadObject = asObject(payload);
-    if (!payloadObject || payloadObject.action !== 'verify_correction' || payloadObject.deduped === true) return false;
+    if (!payloadObject || payloadObject.ok !== true || payloadObject.deduped === true) return false;
     const verdict = asObject(payloadObject.result ?? payloadObject);
-    return verdict?.issue_id === issue.id && String(verdict?.status ?? '').toUpperCase() === 'CORRECTED';
+    if (payloadObject.action === 'resolve_issue') return verdict?.issue_id === issue.id && verdict?.status === 'CORRECTED';
+    return payloadObject.action === 'validate' && verdict?.transaction_id === issue.transaction_id && verdict?.status === 'ACCEPTED'
+      && closedEvent?.issue_id === issue.id && closedEvent?.reason === 'accepted-result-after-issue'
+      && Number(verdict?.result_revision) === Number(closedEvent?.result_revision)
+      && Number(verdict?.result_revision) > Number(issue.target_revision ?? 0);
   });
   const reason = asString(closedEvent?.reason);
   return {
-    ok: closing.length > 0 && reason !== 'accepted-result-after-issue',
+    ok: closing.length > 0,
     closings: closing.length,
     reason,
   };
@@ -220,22 +210,21 @@ export async function run({ workspace, report, layout, events }: RecursionContex
 
   const issues = ledger.all('SELECT id,status,target_revision,corrections,transaction_id,required_change,severity FROM issues WHERE cluster_id=?', clusterId);
   // A correction round is proven by a *durable change*, not by the correction
-  // counter: `verify_correction` increments `issue.corrections` only when the
-  // verification fails, so a plan corrected and verified on the first try closes
+  // counter: a failed new delivery increments `issue.corrections`, so a plan corrected and verified on the first try closes
   // the issue at zero.
   // Both real corrections count: a plan adjustment, and a re-validation at a
-  // later result revision (`request_revalidation → validate` never emits
+  // later result revision (`reopen_transaction → validate` never emits
   // `transaction-adjusted`).
   const adjustments = ledger.all(
     "SELECT json_extract(data,'$.transaction_id') AS transaction_id, json_extract(data,'$.revision') AS revision FROM events WHERE cluster_id=? AND type='transaction-adjusted'",
     clusterId,
   );
   const revalidations = ledger.all(
-    "SELECT json_extract(data,'$.transaction_id') AS transaction_id, json_extract(data,'$.result_revision') AS result_revision FROM events WHERE cluster_id=? AND type='validation-proposed'",
+    "SELECT json_extract(data,'$.transaction_id') AS transaction_id, json_extract(data,'$.result_revision') AS result_revision FROM events WHERE cluster_id=? AND type='validation-recorded'",
     clusterId,
   );
   const answered = correctionWitness(issues, adjustments, revalidations);
-  push('auditor-opened-an-issue', issues.length >= 1, `${issues.length} issues: ${JSON.stringify(issues.map(issue => ({ status: issue.status, corrections: issue.corrections })))}`);
+  push('business-or-runtime-issue-recorded', issues.length >= 1, `${issues.length} issues: ${JSON.stringify(issues.map(issue => ({ status: issue.status, corrections: issue.corrections })))}`);
   push('issue-went-through-correction', answered.length >= 1,
     `${answered.length} of ${issues.length} issues were answered by a durable change to the transaction: ${JSON.stringify(answered.map(issue => issue.id))}`);
   const corrected = answered.filter(issue => issue.status === 'CORRECTED');
@@ -246,33 +235,24 @@ export async function run({ workspace, report, layout, events }: RecursionContex
   push('issue-reached-a-verdict', corrected.length >= 1,
     `${corrected.length}/${answered.length} durably answered issues CORRECTED; other statuses: ${JSON.stringify(answered.filter(issue => issue.status !== 'CORRECTED').map(issue => issue.status))}`);
 
-  const auditReceipts = ledger.all(
-    "SELECT result_body, error, dispatch_status, created FROM tool_call_receipts WHERE cluster_id=? AND tool='flow_audit'", clusterId,
+  const resolutionReceipts = ledger.all(
+    "SELECT result_body, error, dispatch_status, created FROM tool_call_receipts WHERE cluster_id=? AND tool IN ('flow_transaction','flow_allocation')", clusterId,
   );
-  const verifiedByAuditor = corrected.map(issue => {
+  const verified = corrected.map(issue => {
     const closedEvent = events.find(event => event.type === 'issue-corrected' && event.data.issue_id === issue.id) ?? null;
-    return { issue: issue.id, ...auditorVerifiedIssue({ issue, receipts: auditReceipts, closedEvent: closedEvent?.data ?? null }) };
+    return { issue: issue.id, ...correctionVerifiedIssue({ issue, receipts: resolutionReceipts, closedEvent: closedEvent?.data ?? null }) };
   });
-  push('correction-verified-by-the-auditor',
-    corrected.length ? verifiedByAuditor.every(entry => entry.ok) : null,
-    `every closed correction needs a successful flow_audit verdict naming it (an acceptance-driven closure, reason "accepted-result-after-issue", does not count): ${JSON.stringify(verifiedByAuditor)}`);
-
-  const audits = ledger.all('SELECT kind,decision,COUNT(*) AS c FROM audits WHERE cluster_id=? GROUP BY kind,decision', clusterId);
-  const rejected = audits.filter(row => row.decision === 'REJECTED').reduce((sum, row) => sum + Number(row.c), 0);
-  const auditorIssues = ledger.all(
-    `SELECT i.id FROM issues i JOIN agents a ON a.id=i.reporter_agent_id
-       WHERE i.cluster_id=? AND a.role='auditor'`, clusterId);
-  // An Auditor can intervene on a Worker's explicit blocked submission before
-  // an Orchestrator proposes validation. That is an independent correction
-  // even though there is no validation audit to reject. A model-authored issue
-  // from any other role does not meet this gate.
-  push('independent-gate-acted', rejected >= 1 || auditorIssues.length >= 1,
-    `${rejected} rejected audits, ${auditorIssues.length} Auditor-authored issues; audit decisions: ${JSON.stringify(audits)}`);
+  push('correction-backed-by-current-evidence', corrected.length ? verified.every(entry => entry.ok) : null,
+    `closed issues require a successful matching acceptance or resolution: ${JSON.stringify(verified)}`);
+  const negativeValidations = ledger.all("SELECT transaction_id FROM validation_records WHERE cluster_id=? AND json_extract(data,'$.accepted')=0", clusterId);
+  const deliveryIssues = ledger.all("SELECT i.id FROM issues i JOIN agents a ON a.id=i.reporter_agent_id WHERE i.cluster_id=? AND a.role='orchestrator'", clusterId);
+  push('business-correction-acted', negativeValidations.length > 0 || deliveryIssues.length > 0,
+    `${negativeValidations.length} negative validations, ${deliveryIssues.length} manager-authored issues`);
 
   // The injected fault has to be real: the deepest branch's workers are allocated a
   // write scope that does not cover `deep/nested`, and a write to it was actually
   // refused by the guard during the run. A scenario whose "defect" the cluster would
-  // happily have accepted proves nothing about the Auditor's rejection.
+  // happily have accepted proves nothing about business rejection.
   // The deepest *management* node: the deepest node of any kind is the worker node
   // the branch produced, which owns no transactions of its own.
   // The *deep branch* the case requires: the management nodes the delegation fixture

@@ -328,7 +328,7 @@ export async function live({report,layout,host,mock}:Live) {
     await page.getByRole('button',{name:/^原生记录 A，/}).click();await sleep(page,300);
     push('simple-view-controls',JSON.stringify(await content.locator('.flow-toolbar button').allTextContents())===JSON.stringify(['拓扑图','列表'])&&await content.getByRole('textbox').count()===0,'The toolbar offers topology and list views');
     const roleColours=await content.locator('.flow-node').evaluateAll(nodes=>nodes.map(node=>({role:node.getAttribute('data-role'),colour:getComputedStyle(node).backgroundColor})));
-    push('authoritative-role-colours',new Set(roleColours.map(node=>node.role)).size===4&&new Set(roleColours.map(node=>node.colour)).size===4,roleColours);
+    push('authoritative-role-colours',new Set(roleColours.map(node=>node.role)).size===3&&new Set(roleColours.map(node=>node.colour)).size===3,roleColours);
     await context.setOffline(true);await sleep(page,2500);push('stale-indication',await content.innerText().then(text=>text.includes('上次数据')),'Offline retains last coherent snapshot');
     await context.setOffline(false);await sleep(page,3500);push('reconnect-selection',await page.locator('.flow-node[aria-pressed=true]').getAttribute('aria-label')===selected,'Reconnect retains stable selection');
     await page.setViewportSize({width:1080,height:1000});await sleep(page,400);await page.screenshot({path:join(artifacts,'compact.png'),fullPage:true});
@@ -369,7 +369,7 @@ export async function live({report,layout,host,mock}:Live) {
     for(const id of newer)await host.request('control',id,{action:'pause'});
     await page.getByRole('tab',{name:'智能体',exact:true}).click();await sleep(page,300);
     const latestRun=newer.at(-1)!;
-    push('current-run-isolated',await content.locator('.flow-node').count()===3&&!await content.innerText().then(text=>text.includes('ux-reader-A')), 'The current run never reuses a previous run selection or reader');
+    push('current-run-isolated',await content.locator('.flow-node').count()===2&&!await content.innerText().then(text=>text.includes('ux-reader-A')), 'The current run never reuses a previous run selection or reader');
     await page.route('**/api/flow/teamRead',async route=>{if(JSON.stringify(route.request().postDataJSON()).includes(latestRun))await route.abort('failed');else await route.continue();});await sleep(page);
     push('unavailable-run-navigation',await page.getByRole('tab',{name:'对话',exact:true}).isVisible()&&await content.getByRole('button',{name:'重试连接',exact:true}).isVisible(),'An unavailable snapshot preserves native main navigation');
     await page.unroute('**/api/flow/teamRead');await content.getByRole('button',{name:'重试连接',exact:true}).click();await sleep(page);

@@ -2,8 +2,8 @@
 import type { FlowAgentRole } from './types.ts';
 const FIRST=Array.from('子亦若思清明云星景知沐安予书嘉语初简昭承');
 const LAST=Array.from('宁然安言远舟夏辰月禾诺墨歌岚溪桐珩宇澄昕');
-export const ROLE_LABELS:Record<FlowAgentRole,string>={orchestrator:'总协调',allocator:'资源协调',auditor:'质量审核',worker:'任务执行'};
-const AVATARS:Record<FlowAgentRole,readonly string[]>={orchestrator:['🧭','🦉','🦁','🐬'],allocator:['🌿','🌱','🐼','🦊'],auditor:['🔎','🦋','🐧','🦌'],worker:['🛠️','🐝','🐻','🐱','🐰','🐨']};
+export const ROLE_LABELS:Record<FlowAgentRole,string>={orchestrator:'总协调',allocator:'资源协调',worker:'任务执行'};
+const AVATARS:Record<FlowAgentRole,readonly string[]>={orchestrator:['🧭','🦉','🦁','🐬'],allocator:['🌿','🌱','🐼','🦊'],worker:['🛠️','🐝','🐻','🐱','🐰','🐨']};
 function seed(id:string):number {let value=2166136261;for(const char of id)value=Math.imul(value^char.charCodeAt(0),16777619);return value>>>0;}
 export function agentGivenName(id:string):string {const value=seed(id);return FIRST[value%FIRST.length]!+LAST[Math.floor(value/FIRST.length)%LAST.length]!;}
 export function agentEmoji(id:string,role:FlowAgentRole):string {const choices=AVATARS[role];return choices[seed(id)%choices.length]!;}

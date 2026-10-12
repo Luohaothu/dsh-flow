@@ -1,6 +1,6 @@
 /**
  * Mechanism tests for ClusterRuntime: the management tree, transaction
- * lifecycle, role permissions, audit gates, budgets, communication, the
+ * lifecycle, role permissions, business acceptance, budgets, communication, the
  * reparent safety point and cancellation.
  *
  * These drive the public Runtime API with an injected clock and no scheduler
@@ -104,7 +104,7 @@ interface TestCommandOutcome extends Omit<FlowCommandOutcome, 'result'> {
 }
 
 function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartRequest> = {}): string {
-  const snapshot = runtime.start({
+  const snapshot = runtime.start({ managementCapabilities: [],
     objective: 'test objective',
     acceptance_criteria: ['The requested fixture deliverable is provided.'],
     workspace: '/tmp/workspace',
@@ -119,15 +119,6 @@ function startCluster(runtime: ClusterRuntime, overrides: Partial<FlowStartReque
 function actorFor(runtime: ClusterRuntime, clusterId: string, role: FlowAgentRole, nodeId: string): FlowAgentActor {
   const agent = firstOf(runtime.store.listAgents(clusterId, { node_id: nodeId, role, limit: 5 }), `agent ${role}`);
   return { cluster_id: clusterId, agent_id: agent.id, node_id: nodeId, role, session_id: agent.session_id };
-}
-
-function scoreFinalHealth(runtime: ClusterRuntime, clusterId: string, nodeId: string): string {
-  const auditor = actorFor(runtime, clusterId, 'auditor', nodeId);
-  const dimensions = Object.fromEntries(runtime.healthMetricNames().map(metric => [metric, 0.5]));
-  const outcome = command(runtime, auditor, 'evaluate_health', {
-    dimensions, evaluation_window: 'subtree-close',
-  });
-  return textOf(outcome.result.health_id, 'health_id');
 }
 
 function rootNode(runtime: ClusterRuntime, clusterId: string): NodeRecord {
@@ -240,12 +231,10 @@ test('a failure while preparing a turn still releases its permit, lease and entr
   // The same guarantee on the Worker path: a turn that fails while preparing
   // must not strand a permit, a lease or an active-turn entry either.
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const second = textOf(command(runtime, orchestrator, 'create_transaction', {
     objective: 'worker-bound', status: 'DRAFT', acceptance_criteria: ['done'],
   }).result.transaction_id, 'transaction_id');
   command(runtime, orchestrator, 'dispatch', { transaction_id: second });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: second, decision: 'approve' });
   const allocated = jsonFirst02(command(runtime, allocator, 'allocate_agent', { transaction_id: second }).result.allocations, 'allocations');
   runtime.store.tx(() => runtime.store.updateTransaction(second, { status: 'RUNNING', attempts: 1, __bump_revision: false }));
   const workerAgent = runtime.store.getAgent(textOf(allocated.agent_id, 'agent_id'));
@@ -265,7 +254,7 @@ test('a released worker frees its child slot, so the ladder is not capped by tas
   const clusterId = startCluster(runtime, { workspace: dir, limits: { max_children: 2, max_depth: 3, max_agents: 64 } });
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
 
   const makeTx = (index: number) => {
@@ -287,7 +276,7 @@ test('a released worker frees its child slot, so the ladder is not capped by tas
   const second = allocate(2);
   assert.equal(runtime.store.childrenOf(root.id).length, 2);
   assert.throws(() => allocate(99), /max_children/, 'a held slot blocks the next wave');
-  void orchestrator; void auditor;
+  void orchestrator; void validationOwner;
 
   const firstAgentId = textOf(first.agent_id, 'first agent_id');
   const firstAllocationId = textOf(first.allocation_id, 'first allocation_id');
@@ -502,10 +491,8 @@ test('a granted write scope survives a reload and ignores a retargeted alias', t
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id, write_scope: ['alias'] });
   const allocation = firstOf(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }), 'active allocation');
   const canonicalScope = required(allocation.write_scope_canonical, 'canonical write scope');
@@ -559,9 +546,7 @@ test('root Orchestrator closes only after accepted work and its final communicat
   command(runtime, orchestrator, 'finish_cluster', {});
   runtime.recover({ deferScheduling: true });
   runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'RUNNING', 'an undecided final health marker cannot close a root');
-  assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'ACTIVE');
-  scoreFinalHealth(runtime, clusterId, root.id);
+
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'COMPLETED');
   assert.equal(required(runtime.store.getNode(root.id), 'root node').status, 'COMPLETED');
@@ -573,7 +558,7 @@ test('completion and progress observe the whole cluster, not a page of it', t =>
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
 
   // Eleven root transactions, ten accepted: the cluster must stay RUNNING.
   runtime.store.tx(() => {
@@ -601,8 +586,7 @@ test('completion and progress observe the whole cluster, not a page of it', t =>
   });
   command(runtime, orchestrator, 'finish_cluster', {});
   runtime.evaluateCompletion(clusterId);
-  assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'RUNNING', 'the unfinished health judgement still holds the root');
-  scoreFinalHealth(runtime, clusterId, root.id);
+
   runtime.evaluateCompletion(clusterId);
   assert.equal(required(runtime.store.getCluster(clusterId), 'cluster').status, 'COMPLETED');
 
@@ -612,7 +596,7 @@ test('completion and progress observe the whole cluster, not a page of it', t =>
     for (let index = 0; index < 900; index += 1) runtime.store.appendEvent(clusterId, 'filler', { index });
   });
   assert.ok(runtime.progressSeq(clusterId) > before + 800, 'progress must not saturate at a page boundary');
-  void auditor;
+  void validationOwner;
 });
 
 test('a message is never lost across the crash window, and never duplicated when admission is proven', async t => {
@@ -628,47 +612,47 @@ test('a message is never lost across the crash window, and never duplicated when
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'auditor', limit: 5 }), 'auditor agent');
+  const validationOwner = firstOf(runtime.store.listAgents(clusterId, { node_id: root.id, role: 'orchestrator', limit: 5 }), 'validationOwner agent');
 
   const sent = runtime.store.tx(() => runtime.communicateFrom(orchestrator, 'send', {
-    agent: auditor.id, content: 'status?', message_id: 'msg-crash-1',
+    agent: validationOwner.id, content: 'status?', message_id: 'msg-crash-1',
   }));
   if (!('recipients' in sent)) assert.fail('send result must include recipients');
   assert.equal(sent.recipients.length, 1);
 
   // First process: the message is taken from the queue and injected, then the
   // process dies before the ack reaches SQLite.
-  const collected = await runtime.collectDeliveries(auditor);
+  const collected = await runtime.collectDeliveries(validationOwner);
   assert.equal(collected.ids.length, 1);
-  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', auditor.id), 'delivery').status, 'DELIVERED');
+  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', validationOwner.id), 'delivery').status, 'DELIVERED');
 
   // Crash before the prompt was ever admitted: recovery preserves the attempt
   // until the session proves it absent, then requeues it without losing it.
   const recovered = runtime.recover();
   assert.equal(firstOf(recovered, 'recovery facts').injections_pending_proof, 1);
-  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', auditor.id), 'delivery').status, 'DELIVERED');
-  assert.equal(runtime.store.pendingDeliveries(auditor.id).length, 0, 'an attempted delivery waits for proof');
+  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', validationOwner.id), 'delivery').status, 'DELIVERED');
+  assert.equal(runtime.store.pendingDeliveries(validationOwner.id).length, 0, 'an attempted delivery waits for proof');
 
   const reconciled = await runtime.reconcileDeliveries(clusterId);
   assert.equal(reconciled.persistence, true);
   assert.equal(reconciled.acknowledged, 0, 'an unreadable admission is not proof');
-  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', auditor.id), 'delivery').status, 'PENDING');
+  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', validationOwner.id), 'delivery').status, 'PENDING');
 
   // Second process: the prompt really was admitted and flushed, then the crash
   // hit before the ack. The Session is the proof, so only the ack is repaired
   // and the message is never delivered twice.
-  const second = await runtime.collectDeliveries(auditor);
+  const second = await runtime.collectDeliveries(validationOwner);
   // Deliberately replay the historical text-only event envelope at the persistence boundary.
-  sessions.set(auditor.session_id, [fromAny<SessionEvent, unknown>({ type: 'user/message', data: { text: `- from x [[flow-delivery ${second.ids[0]} seq 1]]: status?` } })]);
+  sessions.set(validationOwner.session_id, [fromAny<SessionEvent, unknown>({ type: 'user/message', data: { text: `- from x [[flow-delivery ${second.ids[0]} seq 1]]: status?` } })]);
   runtime.recover();
-  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', auditor.id), 'delivery').status, 'DELIVERED', 'the safe default preserves the attempt until proof is checked');
+  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', validationOwner.id), 'delivery').status, 'DELIVERED', 'the safe default preserves the attempt until proof is checked');
   const proven = await runtime.reconcileDeliveries(clusterId);
   assert.equal(proven.acknowledged, 1, 'a Session that carries the id proves admission');
-  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', auditor.id), 'delivery').status, 'ACKED');
-  assert.equal(runtime.store.pendingDeliveries(auditor.id).length, 0, 'a proven delivery is never repeated');
+  assert.equal(required(runtime.store.deliveryFor('msg-crash-1', validationOwner.id), 'delivery').status, 'ACKED');
+  assert.equal(runtime.store.pendingDeliveries(validationOwner.id).length, 0, 'a proven delivery is never repeated');
 
   const resent = runtime.store.tx(() => runtime.communicateFrom(orchestrator, 'send', {
-    agent: auditor.id, content: 'status?', message_id: 'msg-crash-1',
+    agent: validationOwner.id, content: 'status?', message_id: 'msg-crash-1',
   }));
   if (!('deduped' in resent)) assert.fail('send result must include deduplication status');
   assert.equal(resent.deduped, true);
@@ -682,10 +666,8 @@ test('reparent runs only at a safe point and rejects unsafe requests', t => {
   const root = rootNode(runtime, clusterId);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id , fixture_execution: 'management'});
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   const child = command(runtime, allocator, 'spawn_management_node', { fixture_prepare_management: true, transaction_id: tx.id }).result;
   const childNodeId = textOf(child.node_id, 'child node_id');
   const childTransactionId = textOf(child.delegated_transaction_id, 'child transaction_id');
@@ -731,10 +713,8 @@ test('lease epochs fence a stale actor and cancel terminates the subtree', t => 
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const worker = firstOf(runtime.store.listAgents(clusterId, { role: 'worker' }), 'worker agent');
 
@@ -765,20 +745,20 @@ test('an expired lease is reclaimed without a claim from a later turn', t => {
   const runtime = makeRuntime(t);
   const clusterId = startCluster(runtime);
   const root = rootNode(runtime, clusterId);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
+  const validationOwner = actorFor(runtime, clusterId, 'orchestrator', root.id);
   runtime.store.tx(() => {
     runtime.store.createLease({
-      id: 'lease-expired', cluster_id: clusterId, agent_id: auditor.agent_id, node_id: root.id,
-      purpose: 'auditor-turn', epoch: 1, expires: now() + 1000,
+      id: 'lease-expired', cluster_id: clusterId, agent_id: validationOwner.agent_id, node_id: root.id,
+      purpose: 'validationOwner-turn', epoch: 1, expires: now() + 1000,
     });
-    runtime.store.updateAgent(auditor.agent_id, { status: 'RUNNING' });
+    runtime.store.updateAgent(validationOwner.agent_id, { status: 'RUNNING' });
   });
   clock += 5000;
-  const before = runtime.store.leaseForAgent(auditor.agent_id);
+  const before = runtime.store.leaseForAgent(validationOwner.agent_id);
   assert.ok(before);
   runtime.txExpireLeases(clusterId);
-  assert.equal(runtime.store.leaseForAgent(auditor.agent_id), null);
-  assert.equal(required(runtime.store.getAgent(auditor.agent_id), 'auditor agent').status, 'READY');
+  assert.equal(runtime.store.leaseForAgent(validationOwner.agent_id), null);
+  assert.equal(required(runtime.store.getAgent(validationOwner.agent_id), 'validationOwner agent').status, 'READY');
   clock -= 5000;
 });
 
@@ -789,11 +769,11 @@ test('recovery fences stale leases, marks in-flight effects uncertain and requeu
   const workerless = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'workerless transaction');
   runtime.store.tx(() => {
     runtime.store.createLease({
-      id: 'stale', cluster_id: clusterId, agent_id: firstOf(runtime.store.listAgents(clusterId, { role: 'auditor' }), 'auditor agent').id,
-      node_id: root.id, purpose: 'auditor-turn', epoch: 3, expires: now() + 60_000,
+      id: 'stale', cluster_id: clusterId, agent_id: firstOf(runtime.store.listAgents(clusterId, { role: 'orchestrator' }), 'validationOwner agent').id,
+      node_id: root.id, purpose: 'validationOwner-turn', epoch: 3, expires: now() + 60_000,
     });
     runtime.store.insertEffect({
-      call_id: 'call-started', cluster_id: clusterId, agent_id: firstOf(runtime.store.listAgents(clusterId, { role: 'auditor' }), 'auditor agent').id,
+      call_id: 'call-started', cluster_id: clusterId, agent_id: firstOf(runtime.store.listAgents(clusterId, { role: 'orchestrator' }), 'validationOwner agent').id,
       node_id: root.id, lease_epoch: 3, tool: 'write', args: { path: 'x' }, status: 'STARTED',
     });
     runtime.store.updateTransaction(workerless.id, { status: 'RUNNING' });
@@ -805,7 +785,7 @@ test('recovery fences stale leases, marks in-flight effects uncertain and requeu
   assert.equal(recovery.uncertain_effects, 1);
   assert.equal(recovery.requeued, 1);
   assert.equal(required(runtime.store.getEffect('call-started'), 'call effect').status, 'EFFECT_UNCERTAIN');
-  assert.equal(runtime.query(actorFor(runtime, clusterId, 'auditor', root.id), 'effects', {}).items
+  assert.equal(runtime.query(actorFor(runtime, clusterId, 'orchestrator', root.id), 'effects', {}).items
     .find(row => row.call_id === 'call-started')?.status, 'EFFECT_UNCERTAIN',
   'the role query can inspect an uncertain effect before resolving it');
   assert.equal(required(runtime.store.getTransaction(workerless.id), 'workerless transaction').status, 'READY');
@@ -818,10 +798,8 @@ test('allocation operations: model selection, evaluation, replace, reassign, che
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const tx = firstOf(runtime.store.listTransactions({ cluster_id: clusterId }), 'root transaction');
   command(runtime, orchestrator, 'dispatch', { transaction_id: tx.id });
-  command(runtime, auditor, 'inspect_plan', { transaction_id: tx.id, decision: 'approve' });
   command(runtime, allocator, 'allocate_agent', { transaction_id: tx.id });
   const allocation = firstOf(runtime.store.listAllocations({ cluster_id: clusterId, status: 'ACTIVE' }), 'active allocation');
   const worker = required(runtime.store.getAgent(allocation.agent_id), 'worker');
@@ -878,14 +856,12 @@ test('Allocator evaluation keeps every active allocation reachable after a bound
   const root = rootNode(runtime, clusterId);
   const orchestrator = actorFor(runtime, clusterId, 'orchestrator', root.id);
   const allocator = actorFor(runtime, clusterId, 'allocator', root.id);
-  const auditor = actorFor(runtime, clusterId, 'auditor', root.id);
   const ids: string[] = [];
   for (let index = 0; index < 7; index += 1) {
     const txId = textOf(command(runtime, orchestrator, 'create_transaction', {
       objective: `deliver independent item ${index}`, acceptance_criteria: ['delivered'],
     }).result.transaction_id, 'transaction_id');
     command(runtime, orchestrator, 'dispatch', { transaction_id: txId });
-    command(runtime, auditor, 'inspect_plan', { transaction_id: txId, decision: 'approve' });
     ids.push(textOf(jsonFirst02(command(runtime, allocator, 'allocate_agent', { transaction_id: txId }).result.allocations, 'allocations').allocation_id, 'allocation_id'));
   }
   const first = command(runtime, allocator, 'evaluate_allocation', {}).result;

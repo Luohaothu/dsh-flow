@@ -19,18 +19,6 @@ export function fixturePlan(tx: Pick<TransactionRecord, 'objective' | 'expected_
   };
 }
 
-export function fixtureAuditEvidence(runtime: ClusterRuntime, transactionId: string, kind: 'plan' | 'validation', approved = true): Record<string, unknown> {
-  const tx = runtime.store.getTransaction(transactionId);
-  const ref = kind === 'plan' ? tx?.current_plan_ref : tx?.current_validation_ref;
-  const rules = kind === 'plan' ? ['goal_coverage', 'responsibility', 'dependencies', 'handoff', 'acceptance_arrangement']
-    : ['standard_coverage', 'checks_performed', 'evidence_applicability', 'conclusion_support', 'authority'];
-  return { checks: rules.map((rule, index) => ({ rule,
-    method: kind === 'plan' ? 'Inspect the saved plan against its immutable formal contract.' : 'Inspect the coordinating agent validation record against its formal criteria, publication and execution evidence.',
-    observation: approved ? `The fixture record satisfies ${rule}.` : `The fixture record ${index === 0 ? 'fails' : 'satisfies'} ${rule}.`,
-    passed: approved || index !== 0, evidence_refs: [{ kind, ref }],
-  })) };
-}
-
 /** Explicitly initialise a durable test work unit through the manager's API. */
 export function prepareFixtureTask(runtime: ClusterRuntime, transactionId: string, execution: 'worker' | 'management' = 'worker'): void {
   const tx = runtime.store.getTransaction(transactionId);
@@ -80,15 +68,11 @@ export function readFixtureField(runtime: ClusterRuntime, actor: FlowActor, kind
 
 /** Add explicit plans and evidence to older lifecycle fixtures, never to contract-negative tests. */
 export function fixtureParams(runtime: ClusterRuntime, actor: FlowActor, action: string, params: Record<string, unknown>): Record<string, unknown> {
-  const targetId = typeof params.transaction_id === 'string' ? params.transaction_id : typeof params.audit_id === 'string' ? runtime.store.getAudit(params.audit_id)?.transaction_id : null;
+  const targetId = typeof params.transaction_id === 'string' ? params.transaction_id : null;
   const tx = targetId ? runtime.store.getTransaction(targetId) : null;
   if (action === 'create_transaction' && params.acceptance_criteria === undefined) return { ...params, acceptance_criteria: ['The specified fixture deliverable is provided.'] };
   if (tx && action === 'allocate_agent' && !tx.current_plan_ref && actor.role === 'allocator' && actor.cluster_id === tx.cluster_id && actor.node_id === tx.node_id) prepareFixtureTask(runtime, tx.id);
-  if (tx && ['request_correction', 'request_revalidation'].includes(action) && !tx.current_result_ref && tx.result !== null) publishFixtureResult(runtime, tx.id);
-  if (tx && ['inspect_plan', 'inspect_validation'].includes(action) && !(params.evidence && typeof params.evidence === 'object' && 'checks' in params.evidence)) {
-    const supplied = params.evidence && typeof params.evidence === 'object' ? Object.fromEntries(Object.entries(params.evidence)) : {};
-    return { ...params, evidence: { ...supplied, ...fixtureAuditEvidence(runtime, tx.id, action === 'inspect_plan' ? 'plan' : 'validation', !['reject', 'REJECTED', 'replan', 'REPLAN_REQUESTED'].includes(String(params.decision))) } };
-  }
+  if (tx && ['reject_result', 'reopen_transaction'].includes(action) && !tx.current_result_ref && tx.result !== null) publishFixtureResult(runtime, tx.id);
   if (action === 'spawn_management_node') {
     const { fixture_prepare_management: _prepare, ...body } = params;
     void _prepare;
@@ -131,6 +115,13 @@ export function fixtureParams(runtime: ClusterRuntime, actor: FlowActor, action:
     return { ...params, expected_transaction_revision: tx.revision, plan, children };
   }
   if (tx && ['adjust_transaction', 'set_dependency'].includes(action)) return { expected_transaction_revision: tx.revision, ...params };
+  if (tx && action === 'reject_result') return { expected_transaction_revision: runtime.store.getTransaction(tx.id)!.revision, ...params };
+  if (tx && action === 'reopen_transaction') return {
+    expected_transaction_revision: tx.revision,
+    reason: params.required_change ?? 'The fixture found a business defect requiring a corrected plan or delivery.',
+    evidence: { observation: params.required_change ?? 'The fixture business check found the current work insufficient.' },
+    ...params,
+  };
   if (tx && action === 'validate') {
     if (!tx.current_result_ref && tx.result !== null && tx.current_plan_ref) {
       publishFixtureResult(runtime, tx.id);
