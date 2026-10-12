@@ -21,11 +21,11 @@
       "name": "@deepseek-ai/dsh-api-session-controller",
       "version": "0.2.0-rc.2",
       "patch": "patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
-      "patch_sha256": "fac75716bb03e7d6b9165dd58e607b3db241ed6667b37ebf61b21fab490e6d46",
+      "patch_sha256": "a70308a3f2480334659e9c206d676a9ef35cfc2a19472d71fc8d96cf387380b9",
       "package_json_sha256": "77d2c45e2fe78b096cebaba2c500b65284902402f1a41638538ff827e29a689f",
       "entries": {
         "lib/client.js": "a52cb024b69fab6116e1f75510c4c923a40401b5e8722c8860e77715a3bbf400",
-        "lib/index.js": "12849d7486779237c7f4340df922328fb46acf53c95380a293cc21c40ddee28a",
+        "lib/index.js": "7d18ce6faca58313e9f90f1578cbd44cafea5a841992b0414284fdac9e49e371",
         "lib/typert.host.js": "87b2b4df16de34110a8b16f3cb33b8bf5c548c754ec7c378e49d2d456a00b7c4",
         "lib/typert.remote-client.d.ts": "e6f7d2b5a6b35d7b1a28edf3afe10dbf73289775622f326c104d1855f9342fc3",
         "lib/typert.remote-client.js": "dc10d3d023cd2b133117f6d0cc6824ee997d2b3483f1d9171474745b88cfff4b",
@@ -35,7 +35,7 @@
         "lib/types/client/sessions/manager.d.ts": "b44aed37dbba892666b380222f9b78a094f263f3df48c4cb930eb581cd6cebf8",
         "lib/types/client/sessions/session.d.ts": "2502ef5e314eec19aa7f37fcb4c3fbdcbc4921a0b96dfb7fa440e0b76963b5e6",
         "lib/types/client/transport.d.ts": "7af1fc6e073392d05b6c3ec71754c4877b15f5e3f10ac0e433c1c0db40132745",
-        "lib/types/index.d.ts": "4389082a64b90fa74335cc97e9b0dc3744cd9c39bfa814e35df892abe3eb63ec",
+        "lib/types/index.d.ts": "858705b3f201a0d9142fc893390620783dcc8a67fb92b8d23579e86f99f652a3",
         "lib/types/types.d.ts": "754197118b362d44896760c5e6a57d409419cfb64d0025dba3342cf1300f4843"
       }
     },

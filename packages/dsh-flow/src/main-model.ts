@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { Session } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-agent-default-model';
 import type {} from '@deepseek-ai/dsh-session-projection';
-import type { FlowModelSelection } from './core/model.ts';
+import type { FlowModelSelection } from './types.ts';
 
 export function mainModel(ctx: Context, session: Session): FlowModelSelection {
   const picked = ctx.sessionProjections.stateOf(session, 'modelSelection')?.pending;

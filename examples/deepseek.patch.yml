@@ -47,13 +47,4 @@
   config:
     dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
     workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
-    provider: deepseek
-    model: !!js process.env.FLOW_QWEN_MODEL ?? 'deepseek-flash'
-    reasoningEffort: !!js process.env.FLOW_MODEL_REASONING_EFFORT ?? 'off'
     defaultCapabilities: [fs_read, fs_write]
-    tickMs: 250
-    staleMs: 120000
-    maxTurnMs: 900000
-    heartbeatMs: 20000
-    leaseTtlMs: 60000
-    disposeTimeoutMs: 5000

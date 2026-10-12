@@ -19,6 +19,7 @@ export const DELIVERY_MARKER = '[[flow-delivery';
 /** One native session event, narrowed from the log's JSON line. */
 export interface SessionEvent {
   seq: number;
+  time?: number;
   type: string;
   data: unknown;
 }
@@ -104,7 +105,7 @@ export function readSessionEvents(file: string): SessionReadResult {
     }
     index += 1;
     const event = asRecord(parsed);
-    events.push({ seq: typeof event?.seq === 'number' ? event.seq : index, type: String(event?.type ?? ''), data: event?.data ?? {} });
+    events.push({ seq: typeof event?.seq === 'number' ? event.seq : index, ...(typeof event?.time === 'number' ? { time: event.time } : {}), type: String(event?.type ?? ''), data: event?.data ?? {} });
   }
   return { state: 'READ', events, reason: null };
 }

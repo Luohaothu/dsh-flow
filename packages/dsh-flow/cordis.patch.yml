@@ -1,24 +1,9 @@
-# Flow native Agents install the official default backend in their own isolated
-# scope, just as the host standard preset does. A host-plane backend would also
-# receive their Agent events and run a second automatic listener.
-- id: compaction-basic
-  disabled: true
-
-# The standard plugin owns execution, Remote reads and the main-session command.
+# Native presets own all execution tools, approval, compaction and context policy.
+# Flow configures collaboration storage and physical Agent capacity only.
 - insert:
     - id: dsh-flow
       name: dsh-flow
-      # The route comes from the host's default-model provider. A composition
-      # without that provider supplies a complete `config` instead and drops
-      # this row-level `inject`.
-      inject: [agentDefaultModel]
-      config:
-        provider: !!js ctx.agentDefaultModel.currentSelection().provider
-        model: !!js ctx.agentDefaultModel.currentSelection().model
-        reasoningEffort: !!js ctx.agentDefaultModel.currentSelection().reasoningEffort
-
     - id: dsh-flow-web
       name: dsh-flow/web
-
     - id: dsh-flow-agent-team-command
       name: dsh-flow/command

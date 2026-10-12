@@ -2,7 +2,7 @@
 #
 # Layers on top of a shipped profile template (web / headless). It pins:
 #   * every cluster model request to the local OpenAI-compatible Qwen service,
-#   * the file-effect boundary to workspace-write; Flow members alone use approval never,
+#   * the native workspace-write preset for all Agents,
 #   * the cluster composition itself: the control plane, its Remote face and the
 #     /agent-team command — main-session ownership and read-only observation.
 #
@@ -62,7 +62,7 @@
     workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
 
 # Ordinary sessions keep native permission modes and interactive approval.
-# Flow pins approval `never` only inside its managed member sessions.
+# Team members inherit the same native preset and approval policy.
 - id: permission
   config:
     presets:
@@ -83,14 +83,6 @@
       config:
         dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
         workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
-        provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
-        model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
-        reasoningEffort: !!js process.env.FLOW_REASONING_EFFORT ?? 'off'
-        tickMs: !!js Number(process.env.FLOW_TICK_MS ?? 250)
-        staleMs: !!js Number(process.env.FLOW_STALE_MS ?? 120000)
-        maxTurnMs: !!js Number(process.env.FLOW_MAX_TURN_MS ?? 900000)
-        heartbeatMs: !!js Number(process.env.FLOW_HEARTBEAT_MS ?? 20000)
-        leaseTtlMs: !!js Number(process.env.FLOW_LEASE_TTL_MS ?? 60000)
 
     - id: dsh-flow-web
       name: dsh-flow/web

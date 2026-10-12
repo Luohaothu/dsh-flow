@@ -12,7 +12,7 @@
     workspaceRoot: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
 
 # Ordinary sessions keep native permission modes and interactive approval.
-# Flow pins approval `never` only inside its managed member sessions.
+# Team members inherit the same native preset and approval policy.
 - id: permission
   config:
     presets:
@@ -31,12 +31,3 @@
   config:
     dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow'
     workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
-    provider: !!js process.env.FLOW_MODEL_PROVIDER ?? 'local-sglang'
-    model: !!js process.env.FLOW_QWEN_MODEL ?? 'Qwen3.8-27B-FP8'
-    reasoningEffort: off
-    tickMs: 250
-    staleMs: 120000
-    maxTurnMs: 900000
-    heartbeatMs: 20000
-    leaseTtlMs: 60000
-    disposeTimeoutMs: 5000

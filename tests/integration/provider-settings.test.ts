@@ -8,7 +8,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildHostEnv, createRunLayout, ensureProfile, WEB_PROFILE_BUNDLES, PROJECT_ROOT, LAUNCHER } from '../../src/host/host.ts';
 import { initializeOmlxProfile, omlxProfileOptions } from '../../src/host/profile-models.ts';
-import { asObject, asArray } from '../acceptance/context.ts';
+const asObject = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const asArray = (value: unknown): unknown[] | null => Array.isArray(value) ? value : null;
 
 // A normal web CLI is important: its completed startup owns the editable profile.
 async function startWeb(profile: string, env: Record<string, string | undefined>, cwd: string, logPath: string, patch: string) {

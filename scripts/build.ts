@@ -13,12 +13,10 @@
  *      result, so this must finish before the Client program runs.
  *   4. `tsc -b tsconfig.client.json` — Client program, including the generated
  *      `/remote` declarations.
- *   5. seed `tsc --noEmit`           — the acceptance website is an independent
- *      project that must check without this repository's tsconfigs.
- *   6. esbuild Client entry          — browser bundle inside the DSH module
+ *   5. esbuild Client entry          — browser bundle inside the DSH module
  *      loader factory, with the generated Remote contribution inlined.
  *
- * `--typecheck-only` runs 1, 2, 3, 4 and 5 and skips only the final Client
+ * `--typecheck-only` runs 1, 2, 3 and 4 and skips only the final Client
  * bundle, so a clean tree (no `lib/`) still type-checks without a prior build.
  */
 import { execFileSync } from 'node:child_process';
@@ -34,7 +32,6 @@ const require = createRequire(import.meta.url);
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN_ROOT = join(PROJECT_ROOT, 'packages', 'dsh-flow');
 const PLUGIN_LIB = join(PLUGIN_ROOT, 'lib');
-const SEED_CONFIG = join(PROJECT_ROOT, 'tests', 'acceptance', 'seeds', 'website', 'tsconfig.json');
 const HOST_ENTRIES = ['index', 'web', 'command'];
 
 const typecheckOnly = process.argv.includes('--typecheck-only');
@@ -160,9 +157,8 @@ tsc('-b', 'tsconfig.host.json');
 await buildHost();
 generateTypert();
 tsc('-b', 'tsconfig.client.json');
-tsc('-p', SEED_CONFIG, '--noEmit');
 if (!typecheckOnly) await buildClient();
 
 console.log(typecheckOnly
-  ? 'build: typecheck complete (Host, Remote generation, Client, website seed)'
+  ? 'build: typecheck complete (Host, Remote generation, Client)'
   : `build: wrote ${join(PLUGIN_LIB, 'index.js')}, ${join(PLUGIN_LIB, 'client.js')} and the Typert artifacts`);

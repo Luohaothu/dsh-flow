@@ -4,19 +4,19 @@
 
 [提供方基线清单](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/development/provider-baseline.json)列出依赖版本、补丁 SHA-256、包声明和公开入口的预期摘要。该清单用于检查实际安装字节，不推断 npm 发行包对应的上游提交。
 
-只支持该 rc2 组合，不提供 0.1.x 参数签名、能力探测或 Gateway 参数补齐。新成员使用不可变的 `agentPreset: dsh-flow/member` 标记独立执行归属，保留原生 `origin` 语义；驱动缺席时拒绝普通恢复、显式 ID 创建、模型选择、队列和命令，不妨碍冷历史读取。原生 subagent 分支功能保持官方行为。旧版本的无标记日志不承诺在卸载 Flow 后获得同样归属保护。
+使用该 rc2 组合与公开的标准 Agent/preset 接口。成员采用正常 preset，原生日志和工具权限由宿主维护。已有接口扩展支持界面观察与输入路由；Flow 不以专用 preset 标记阻止普通原生执行。
 
 ## 接入位置
 
 | 功能 | 公开接口 | dsh-flow 内容 |
 |---|---|---|
-| 插件与配置 | Bundle patch、`plugins.bundle.config`、`configForms` | 标准插件卡片中的执行默认值和显示偏好 |
+| 插件与配置 | Bundle patch、`plugins.bundle.config`、`configForms` | 数据目录、工作区、原生 preset 与并发容量 |
 | 主会话命令 | Commands `register`、`followup`、Skills registry | `/agent-team` 启动意图和主 Agent 管理工具 |
-| 顶栏 | `conversation.session.header.actions` | 团队摘要、派生树及原生会话导航 |
-| 团队视图 | `conversation.view`、`registerViewPresentation` | 按主会话启用的只读、contained 拓扑与列表 |
+| 顶栏 | `conversation.session.header.actions` | 团队任务、成员及原生会话导航 |
+| 团队视图 | `conversation.view`、`registerViewPresentation` | 按主会话启用的 contained 任务与成员列表 |
 | 停靠观察 | Resources、SidebarRightTabs、Dockkit | 原生对话和代理信息的观察容器 |
 | 会话内容 | Sessions `retain/release`、Slots `SessionProvider`、`renderFactorySlot` | 真实 SessionReference 下的官方 Conversation |
-| 成员输入 | `registerSessionDriver`、原生 prompt / cancel | Flow 身份、调度与生命周期检查 |
+| 成员输入 | `registerSessionDriver`、原生 prompt / cancel | 当前成员的原生输入与取消 |
 | 通信卡片 | `conversation.chat.node` | 可展开的结构化通信内容 |
 | 设置离开提示 | Layout 导航守卫、原生 Modal | 保存并离开、放弃或继续编辑 |
 | 主题与焦点 | Primitives、宿主 CSS tokens | 业务区域样式、键盘操作与减少动态效果 |
@@ -25,7 +25,7 @@
 
 | 提供方包 | 约定 |
 |---|---|
-| `dsh-commands`、`dsh-api-remotes`、`dsh-client-ui-plan` | `execute` 的 `submissionId: string | undefined` 是独立提交意图；Host 第五位为 signal，root Remote 第四位是意图，第五位是取消；Agent scoped 对应第三、四位。每次 native commandId 独立，Flow launchId 按意图去重 |
+| `dsh-commands`、`dsh-api-remotes`、`dsh-client-ui-plan` | `execute` 的 `submissionId: string | undefined` 是独立提交意图；Host 第五位为 signal，root Remote 第四位是意图，第五位是取消；Agent scoped 对应第三、四位。每次 native commandId 独立，Flow intent_id 按意图去重 |
 | `dsh-client-ui-commands` | 命令失败保留输入；确认未知时复用 sessionStorage 中的提交意图；不可用的 `agent-team` 引导至插件管理 |
 | `dsh-client-ui-conversation` | 顶栏视图选择、会话级视图可用性、contained/readOnly 呈现、原生 lineage 插槽和内容工厂参数 |
 | `dsh-client-ui-chat` | 命令会话的原生内容、只读节点操作限制、自动跟随、结构化通信节点 |

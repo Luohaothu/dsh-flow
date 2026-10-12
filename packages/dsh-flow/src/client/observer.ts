@@ -1,4 +1,4 @@
-/** One observable snapshot shared by the tree, graph, list and inspectors. */
+/** One observable snapshot shared by the team view and native-session header. */
 import type { FlowTeamRun, FlowTeamSnapshot } from '../types.ts';
 
 export interface TeamReadOperations {
@@ -17,6 +17,7 @@ export class TeamObserver {
   private value: ObserverSnapshot = { runs: [], team: null, loading: true, error: null, updated: null };
   private listeners = new Set<() => void>();
   private generation = 0;
+  private selectedId: string | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | null = null;
   private disposed = false;
@@ -31,6 +32,13 @@ export class TeamObserver {
   private stopTimer(): void { if (this.timer !== undefined) clearTimeout(this.timer); this.timer = undefined; }
   /** Reconnect invalidates in-flight reads before fetching the authoritative snapshot. */
   reset(): void { this.generation++; this.inFlight = null; this.stopTimer(); }
+  select(id: string): void {
+    if (this.selectedId === id) return;
+    this.selectedId = id;
+    this.reset();
+    this.publish({...this.value, team: null, loading: true, error: null});
+    void this.refresh();
+  }
   refresh = (): Promise<void> => {
     if (this.disposed) return Promise.resolve();
     if (this.inFlight) return this.inFlight;
@@ -49,14 +57,10 @@ export class TeamObserver {
       const runs = await this.operations.runs(this.sessionId);
       if (generation !== this.generation || this.disposed) return;
       this.publish({ ...this.value, runs });
-      const run = runs.find(run => !['completed', 'cancelled', 'failed'].includes(run.state)) ?? runs[0];
+      const run = runs.find(run => run.id === this.selectedId) ?? runs.find(run => !['completed', 'cancelled', 'failed'].includes(run.state)) ?? runs[0];
       const team = run ? await this.operations.read(this.sessionId, run.id) : null;
       if (generation !== this.generation || this.disposed) return;
-      if (team && (team.run.id !== run?.id || team.run.main_session_id !== this.sessionId)) throw new Error('提供方返回了其他会话的团队');
-      if (team && this.value.team?.run.id === team.run.id && team.run.version <= this.value.team.run.version) {
-        this.publish({...this.value,runs,loading:false,error:null,updated:Date.now()});
-        return;
-      }
+      if (team && (team.run.id !== run?.id || team.run.owner_session_id !== this.sessionId)) throw new Error('提供方返回了其他会话的团队');
       this.publish({ runs, team, loading: false, error: null, updated: Date.now() });
     } catch (error) {
       if (generation !== this.generation || this.disposed) return;

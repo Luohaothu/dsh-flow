@@ -1,424 +1,125 @@
-/**
- * Real DSH host process driver for the acceptance runner.
- *
- * Boots the plugin under a real, isolated DSH profile (the same base + cluster
- * patch layers a user would load), then talks to `ctx.flow` over the host's own
- * IPC channel. The runner never guesses control commands from model text and
- * never runs a second scheduler.
- */
-import { spawn } from 'node:child_process';
-import type { ChildProcess, Serializable } from 'node:child_process';
+/** Isolated normal DSH web profiles for integration tests. No Flow execution driver. */
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import type { WriteStream } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type {
-  DshHostOp,
-  DshIpcFailure,
-  DshIpcReady,
-  DshIpcReply,
-  DshIpcRequest,
-  RunLayout,
-} from './types.ts';
-
-export type {
-  DshHostOp,
-  DshIpcFailure,
-  DshIpcOutbound,
-  DshIpcReady,
-  DshIpcReply,
-  DshIpcRequest,
-  RunLayout,
-} from './types.ts';
-
-const PROJECT_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
-
-/**
- * The installable plugin package inside this workspace.
- *
- * A profile row named `dsh-flow` resolves through the profile's own
- * `node_modules`, so the link has to point at the *package* (`packages/dsh-flow`)
- * and not at the private workspace root — a link to the root resolves a package
- * that has no `main`/`exports` for that name and the row fails to import.
- */
-export const PLUGIN_ROOT = join(PROJECT_ROOT, 'packages', 'dsh-flow');
-const LAUNCHER = join(PROJECT_ROOT, 'src/host/dsh-launch.ts');
-
-/**
- * The only ambient variables an acceptance host inherits. Everything else —
- * including every provider credential, the operator's `FLOW_*` routing and any
- * proxy variable — is dropped rather than blacklisted, so a new credential name
- * cannot silently leak into an isolated run.
- */
-export const HOST_ENV_ALLOWLIST: readonly string[] = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'USER', 'PNPM_HOME', 'DSH_INSTALL_PATH', 'FLOW_CHROMIUM_PATH'];
-
-/** Runner-owned keys a case may never override. */
-export const RUNNER_ENV_KEYS: readonly string[] = [
-  'HOME', 'TMPDIR', 'DSH_HOME', 'DSH_TELEMETRY_DISABLED', 'NODE_NO_WARNINGS',
-  'FLOW_IPC', 'FLOW_DATA_DIR', 'FLOW_WORKSPACE', 'FLOW_QWEN_BASE_URL',
-  'FLOW_QWEN_MODEL', 'FLOW_MODEL_PROVIDER', 'FLOW_MODEL_API_KEY',
-  'PWTEST_SOCKETS_DIR',
-];
-
-export const CASE_ENV_KEYS: readonly string[] = [
-  'FLOW_CONTEXT_MODEL', // Native model adapter capacity, never a Flow window override.
-];
-
-/** Where an acceptance host runs and what it points at. */
-export interface DshHostOptions {
-  readonly profile: string;
-  readonly patch?: string | undefined;
-  readonly patches?: readonly string[] | undefined;
-  readonly cwd: string;
-  readonly env: Record<string, string | undefined>;
-  readonly logPath: string;
-  readonly readyTimeoutMs?: number | undefined;
-  /** Optional line filter for real-provider logs; raw launch URLs stay in memory. */
-  readonly sanitizeLog?: ((line: string) => string) | undefined;
-}
-
-/** How to boot the host process. */
-export interface DshHostStartOptions {
-  readonly fromDefaultProfile?: string | undefined;
-}
-
-/** How to stop the host process. */
-export interface DshHostStopOptions {
-  readonly signal?: NodeJS.Signals;
-  readonly graceMs?: number;
-}
-
-/** How the host process ended, when it has. */
-export interface DshExitInfo {
-  readonly code: number | null;
-  readonly signal: NodeJS.Signals | null;
-}
-
-/** One in-flight IPC request awaiting its reply. */
-interface PendingRequest {
-  resolve(value: unknown): void;
-  reject(error: unknown): void;
-}
-
-/** The explicit model route a run's environment describes. */
-export interface HostModelRoute {
-  readonly baseURL: string;
-  readonly model: string;
-  readonly provider: string;
-}
-
-/** The inputs of one isolated host environment. */
+export const PROJECT_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+export const PLUGIN_ROOT = join(PROJECT_ROOT, 'packages/dsh-flow');
+export const LAUNCHER = join(PROJECT_ROOT, 'src/host/dsh-launch.ts');
+export interface RunLayout { root: string; home: string; tmp: string; data: string; workspace: string; artifacts: string; logs: string }
+export interface HostModelRoute { baseURL: string; model: string; provider: string }
 export interface HostEnvInput {
-  readonly home: string;
-  readonly tmpdir: string;
-  readonly dataDir: string;
-  readonly workspace: string;
-  readonly modelRoute: HostModelRoute;
-  readonly modelApiKey?: string | undefined;
-  readonly extra?: Readonly<Record<string, string>>;
+  home: string; tmpdir: string; dataDir: string; workspace: string;
+  modelRoute?: HostModelRoute; modelApiKey?: string;
+  /** Explicitly selected provider credential references or proxy settings, never ambient inheritance. */
+  extra?: Readonly<Record<string, string>>;
 }
-
-/** How one isolated profile is created. */
 export interface EnsureProfileOptions {
-  readonly bundles?: readonly string[];
-  readonly packagePath?: string;
-  readonly providers?: ReadonlyArray<readonly [string, string]>;
-  readonly installPath?: string | undefined;
+  bundles?: readonly string[]; packagePath?: string;
+  providers?: ReadonlyArray<readonly [string, string]>; installPath?: string;
 }
-
-/** What one isolated profile creation produced. */
-export interface EnsureProfileResult {
-  readonly dir: string;
-  readonly manifestPath: string;
-  readonly link: string;
-  readonly linked: string[];
-}
-
-/** The allowlisted slice of the operator's environment. */
+export interface EnsureProfileResult { dir: string; manifestPath: string; link: string; linked: string[] }
+export const HOST_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'USER', 'PNPM_HOME', 'DSH_INSTALL_PATH', 'FLOW_CHROMIUM_PATH'] as const;
 export function inheritEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const key of HOST_ENV_ALLOWLIST) {
-    const value = source[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
+  return Object.fromEntries(HOST_ENV_ALLOWLIST.flatMap(key => source[key] === undefined ? [] : [[key, source[key]]]));
 }
-
-export function buildHostEnv({ home, tmpdir, dataDir, workspace, modelRoute, modelApiKey, extra = {} }: HostEnvInput): Record<string, string | undefined> {
+export function buildHostEnv(input: HostEnvInput): Record<string, string | undefined> {
+  const route = input.modelRoute;
   return {
-    ...inheritEnv(),
-    // Case values are restricted twice: validateCaseEnv checks the fixture
-    // before the run, and this host boundary ignores any unexpected key.
-    ...Object.fromEntries(Object.entries(extra).filter(([key]) => CASE_ENV_KEYS.includes(key))),
-    HOME: home,
-    TMPDIR: tmpdir,
-    DSH_HOME: home,
-    DSH_TELEMETRY_DISABLED: '1',
-    NODE_NO_WARNINGS: '1',
-    FLOW_IPC: '1',
-    FLOW_DATA_DIR: dataDir,
-    FLOW_WORKSPACE: workspace,
-    FLOW_QWEN_BASE_URL: modelRoute.baseURL,
-    FLOW_QWEN_MODEL: modelRoute.model,
-    FLOW_MODEL_PROVIDER: modelRoute.provider,
-    ...(modelApiKey ? { FLOW_MODEL_API_KEY: modelApiKey } : {}),
+    ...inheritEnv(), ...input.extra,
+    HOME: input.home, TMPDIR: input.tmpdir, DSH_HOME: input.home,
+    DSH_TELEMETRY_DISABLED: '1', NODE_NO_WARNINGS: '1',
+    FLOW_DATA_DIR: input.dataDir, FLOW_WORKSPACE: input.workspace,
+    ...(route ? { FLOW_QWEN_BASE_URL: route.baseURL, FLOW_QWEN_MODEL: route.model, FLOW_MODEL_PROVIDER: route.provider } : {}),
+    ...(input.modelApiKey ? { FLOW_MODEL_API_KEY: input.modelApiKey } : {}),
   };
 }
-
-export class DshHost {
-  readonly profile: string;
-  readonly patches: string[];
-  readonly cwd: string;
-  readonly env: Record<string, string | undefined>;
-  readonly logPath: string;
-  readonly readyTimeoutMs: number;
-  readonly pending = new Map<string, PendingRequest>();
-  readonly stdoutWaiters: Array<() => boolean> = [];
-  stdout = '';
-  stderr = '';
-  ready = false;
-  webUrl: string | null = null;
-  exitInfo: DshExitInfo | undefined;
-  child: ChildProcess | null = null;
-  #logStream: WriteStream | null = null;
-  #logClosed: Promise<void> = Promise.resolve();
-  #socketDir: string | null = null;
-  #startError: Error | null = null;
-  #sanitizeLog: ((line: string) => string) | undefined;
-  #logTail = '';
-
-  constructor(options: DshHostOptions) {
-    const patchList = options.patches ?? (options.patch ? [options.patch] : []);
-    this.profile = options.profile;
-    this.patches = [...patchList];
-    this.cwd = options.cwd;
-    this.env = options.env;
-    this.logPath = options.logPath;
-    this.readyTimeoutMs = options.readyTimeoutMs ?? 120_000;
-    this.#sanitizeLog = options.sanitizeLog;
-  }
-
-  async start(options: DshHostStartOptions = {}): Promise<this> {
-    mkdirSync(this.cwd, { recursive: true });
-    // The TypeScript launcher uses tsx for decorators and JSX. Resolve the
-    // preload to an absolute URL because the child runs in an isolated cwd
-    // with a whitelisted environment.
-    const args = ['--import', import.meta.resolve('tsx'), LAUNCHER, '--profile', this.profile];
-    if (options.fromDefaultProfile) args.push('--from-default-profile', options.fromDefaultProfile);
-    for (const patch of this.patches) args.push('--patch', patch);
-    args.push('--host', '127.0.0.1', '--port', '0', '--no-open');
-    // Playwright MCP uses Unix sockets. A full evidence-directory path can
-    // exceed macOS's socket limit; keep TMPDIR isolated and give this host a
-    // separate short, exclusive socket directory that is removed on exit.
-    if (process.platform !== 'win32') this.#socketDir = mkdtempSync('/tmp/flow-pw-');
-    const child = spawn(process.execPath, args, {
-      cwd: this.cwd,
-      env: { ...this.env, ...(this.#socketDir ? { PWTEST_SOCKETS_DIR: this.#socketDir } : {}) },
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    });
-    this.child = child;
-    const { stdout, stderr } = child;
-    if (!stdout || !stderr) throw new Error('dsh host child was spawned without stdio pipes');
-    stdout.setEncoding('utf8');
-    stderr.setEncoding('utf8');
-    this.#logStream = createWriteStream(this.logPath, { flags: 'a' });
-    this.#logClosed = new Promise(resolve => this.#logStream!.once('close', resolve));
-    this.#logStream.on('error', error => { this.#startError ??= error; this.#flush(); });
-    stdout.on('data', (chunk: string) => {
-      this.stdout += chunk;
-      this.#writeLog(chunk);
-      const match = /dsh web: (http:\/\/\S+)/u.exec(this.stdout);
-      const url = match?.[1];
-      if (url) this.webUrl = url;
-      this.#flush();
-    });
-    stderr.on('data', (chunk: string) => { this.stderr += chunk; this.#writeLog(chunk); });
-    child.on('message', (raw: unknown) => {
-      const message = asInbound(raw);
-      if (!message) return;
-      if ('ready' in message) {
-        this.ready = true;
-        this.#flush();
-        return;
-      }
-      const entry = this.pending.get(message.requestId);
-      if (!entry) return;
-      this.pending.delete(message.requestId);
-      if (message.ok) entry.resolve(message.result);
-      else entry.reject(Object.assign(new Error(message.error.message ?? 'flow op failed'), { status: message.error.status, code: message.error.code }));
-    });
-    // Failed spawn emits error/close without exit. Use close as the shared
-    // terminal event so both normal shutdown and failed startup can settle.
-    child.on('close', (code, signal) => {
-      this.exitInfo = { code, signal };
-      this.#removeSocketDir();
-      if (this.#logTail) this.#logStream?.write(this.#sanitizeLog?.(this.#logTail) ?? this.#logTail);
-      this.#logTail = '';
-      this.#logStream?.end();
-      for (const [, entry] of this.pending) entry.reject(new Error(`host exited (code=${code} signal=${signal}) before answering`));
-      this.pending.clear();
-      this.#flush();
-    });
-    child.on('error', error => {
-      this.#startError = error;
-      for (const [, entry] of this.pending) entry.reject(error);
-      this.pending.clear();
-      this.#flush();
-    });
-    await this.waitFor(() => this.ready || this.#startError !== null || this.exitInfo !== undefined, this.readyTimeoutMs, 'dsh-flow plugin readiness');
-    if (this.#startError !== null) throw this.#startError;
-    if (!this.ready) throw new Error(`host closed before plugin readiness (code=${this.exitInfo?.code} signal=${this.exitInfo?.signal})`);
-    return this;
-  }
-
-  async waitForWebUrl(timeoutMs = 120_000): Promise<string> {
-    await this.waitFor(() => this.webUrl !== null, timeoutMs, 'web URL');
-    const webUrl = this.webUrl;
-    if (webUrl === null) throw new Error('web URL became unavailable while waiting');
-    return webUrl;
-  }
-
-  waitFor(predicate: () => unknown, timeoutMs: number, label: string): Promise<void> {
-    if (predicate()) return Promise.resolve();
-    return new Promise<void>((resolvePromise, rejectPromise) => {
-      const timer = setTimeout(() => {
-        const index = this.stdoutWaiters.indexOf(waiter);
-        if (index >= 0) this.stdoutWaiters.splice(index, 1);
-        rejectPromise(new Error(`timeout waiting for ${label} after ${timeoutMs}ms`));
-      }, timeoutMs);
-      const waiter = (): boolean => {
-        if (!predicate()) return false;
-        clearTimeout(timer);
-        const index = this.stdoutWaiters.indexOf(waiter);
-        if (index >= 0) this.stdoutWaiters.splice(index, 1);
-        resolvePromise();
-        return true;
-      };
-      this.stdoutWaiters.push(waiter);
-      this.#flush();
-    });
-  }
-
-  #flush(): void {
-    for (const waiter of [...this.stdoutWaiters]) waiter();
-  }
-
-  #writeLog(chunk: string): void {
-    if (!this.#sanitizeLog) { this.#logStream?.write(chunk); return; }
-    // Filter complete lines so a credential or URL split between pipe chunks
-    // cannot bypass the real-provider runner's redaction.
-    this.#logTail += chunk;
-    const end = this.#logTail.lastIndexOf('\n');
-    if (end < 0) return;
-    this.#logStream?.write(this.#sanitizeLog(this.#logTail.slice(0, end + 1)));
-    this.#logTail = this.#logTail.slice(end + 1);
-  }
-
-  #removeSocketDir(): void {
-    if (this.#socketDir === null) return;
-    rmSync(this.#socketDir, { recursive: true, force: true });
-    this.#socketDir = null;
-  }
-
-  request(op: DshHostOp, id: string | undefined, payload?: unknown, timeoutMs = 3_600_000): Promise<unknown> {
-    const child = this.child;
-    if (!child?.connected) return Promise.reject(new Error('host is not running'));
-    const deadlineMs = Number(timeoutMs);
-    if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new TypeError(`invalid timeoutMs: ${String(timeoutMs)}`);
-    const requestId = randomUUID();
-    return new Promise<unknown>((resolvePromise, rejectPromise) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        rejectPromise(new Error(`flow op ${op} timed out after ${deadlineMs}ms`));
-      }, deadlineMs);
-      this.pending.set(requestId, {
-        resolve: value => { clearTimeout(timer); resolvePromise(value); },
-        reject: error => { clearTimeout(timer); rejectPromise(error); },
-      });
-      // The payload is built by this runner out of JSON request shapes; the
-      // child-process channel performs the actual structured-clone serialization,
-      // which is the runtime check on it.
-      const envelope: DshIpcRequest = {
-        flow: true,
-        requestId,
-        op,
-        ...(id === undefined ? {} : { cluster: id }),
-        ...(payload === undefined ? {} : { payload: payload as Serializable }),
-      };
-      child.send(envelope);
-    });
-  }
-
-  async stop(options: DshHostStopOptions = {}): Promise<DshExitInfo | null> {
-    const { signal = 'SIGTERM', graceMs = 15_000 } = options;
-    const child = this.child;
-    if (!child || this.exitInfo) { await this.#logClosed; return this.exitInfo ?? null; }
-    const exited = new Promise<void>(resolvePromise => child.once('close', () => resolvePromise()));
-    try {
-      child.kill(signal);
-    } catch {
-      /* already gone */
-    }
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }, graceMs);
-    await exited;
-    clearTimeout(timer);
-    await this.#logClosed;
-    return this.exitInfo ?? null;
-  }
-}
-
-const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/**
- * Create one run's directories, exclusively. A run id is either brand new or
- * the call fails: reusing a run directory would let a previous run's SQLite
- * database and reports masquerade as this run's evidence.
- */
 export function createRunLayout(artifactsRoot: string, runId: unknown): RunLayout {
-  if (typeof runId !== 'string' || !RUN_ID_PATTERN.test(runId) || runId.includes('..')) {
-    throw new Error(`invalid run id: ${JSON.stringify(runId)}`);
-  }
+  if (typeof runId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(runId) || runId.includes('..')) throw new Error('Invalid run id');
   const root = join(artifactsRoot, runId);
-  const layout: RunLayout = {
-    root,
-    home: join(root, 'home'),
-    tmp: join(root, 'tmp'),
-    data: join(root, 'data'),
-    workspace: join(root, 'workspace'),
-    artifacts: join(root, 'artifacts'),
-    logs: join(root, 'logs'),
-  };
   mkdirSync(dirname(root), { recursive: true });
-  try {
-    mkdirSync(root, { recursive: false });
-  } catch (error) {
-    if (errorCodeOf(error) === 'EEXIST') throw new Error(`run directory already exists: ${root}`);
-    throw error;
-  }
+  mkdirSync(root); // An existing run is evidence, never a reusable scratch directory.
+  const layout = { root, home: join(root, 'home'), tmp: join(root, 'tmp'), data: join(root, 'data'), workspace: join(root, 'workspace'), artifacts: join(root, 'artifacts'), logs: join(root, 'logs') };
   for (const dir of Object.values(layout)) mkdirSync(dir, { recursive: true });
   return layout;
 }
 
-/**
- * Create one isolated custom profile deterministically: the shipped template's
- * bundle list plus a link to this project, so the plugin resolves exactly like
- * a profile-installed bundle without touching the user's own profiles.
- */
-/**
- * Provider packages a case's patch names by bare specifier. DSH resolves a
- * profile row through the installation and then the profile's own
- * `node_modules`, so a provider the installation does not depend on has to be
- * linked where the profile row can see it.
- */
+export function object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Expected an object');
+  return value as Record<string, unknown>;
+}
+export function sanitizeLog(text: string): string {
+  return text.replace(/([?&]token=)[^\s&]+/g, '$1[redacted]').replace(/(Bearer\s+)\S+/gi, '$1[redacted]');
+}
+export interface DshWebOptions { profile: string; patches: readonly string[]; cwd: string; env: NodeJS.ProcessEnv; logPath: string; readyTimeoutMs?: number }
+/** Uses the public HTTP RPC envelope, the same native app and profile as a browser. */
+export class DshWebHost {
+  child: ChildProcess | null = null;
+  origin: string | null = null;
+  #cookie = '';
+  #closed: Promise<void> = Promise.resolve();
+  constructor(readonly options: DshWebOptions) {}
+  async start(): Promise<this> {
+    if (this.child) throw new Error('Host is already started');
+    const args = ['--import', import.meta.resolve('tsx'), LAUNCHER, '--profile', this.options.profile];
+    for (const patch of this.options.patches) args.push('--patch', patch);
+    args.push('--host', '127.0.0.1', '--port', '0', '--no-open');
+    const child = spawn(process.execPath, args, { cwd: this.options.cwd, env: this.options.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    this.child = child;
+    this.#closed = new Promise(resolve => child.once('close', () => resolve()));
+    let output = '';
+    try {
+      const url = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Native web startup timed out; inspect redacted log')), this.options.readyTimeoutMs ?? 60_000);
+        const collect = (chunk: string) => {
+          output += chunk; writeFileSync(this.options.logPath, sanitizeLog(output));
+          const match = /dsh web: (http:\/\/\S+)/u.exec(output);
+          if (match?.[1]) { clearTimeout(timer); resolve(match[1]); }
+        };
+        child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
+        child.stdout!.on('data', collect); child.stderr!.on('data', collect);
+        child.once('error', error => { clearTimeout(timer); reject(error); });
+        child.once('close', () => { clearTimeout(timer); reject(new Error('Native web exited before readiness')); });
+      });
+      const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+      this.#cookie = response.headers.getSetCookie().map(header => header.split(';')[0]).join('; ');
+      if (!this.#cookie) throw new Error('Native web authentication did not issue a cookie');
+      this.origin = new URL(url).origin;
+      return this;
+    } catch (error) { await this.stop(); throw error; }
+  }
+  async rpc(method: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
+    if (!this.origin) throw new Error('Host is not started');
+    const response = await fetch(`${this.origin}/api/${method}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: this.#cookie },
+      body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args } }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+    });
+    const envelope = object(await response.json());
+    const result = object(envelope.result);
+    if (!result.ok) throw new Error(`Native RPC ${method} failed: ${sanitizeLog(JSON.stringify(result))}`);
+    return result.value;
+  }
+  /** Give an isolated test browser the already authenticated Host cookie without exposing it. */
+  async authenticateBrowser(context: { addCookies(cookies: {name:string;value:string;url:string}[]): Promise<void> }): Promise<void> {
+    if (!this.origin) throw new Error('Host is not started');
+    await context.addCookies(this.#cookie.split('; ').map(pair => {
+      const split = pair.indexOf('=');
+      return {name:pair.slice(0,split),value:pair.slice(split+1),url:this.origin!};
+    }));
+  }
+  async stop(): Promise<void> {
+    const child = this.child;
+    if (!child) return;
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    const kill = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 10_000);
+    await this.#closed;
+    clearTimeout(kill); this.child = null; this.origin = null; this.#cookie = '';
+  }
+}
 export const PROFILE_PROVIDER_PACKAGES: ReadonlyArray<readonly [name: string, path: string]> = [
   ['@deepseek-ai/dsh-browser-use', 'packages/browser-use/browser-use'],
   ['@deepseek-ai/dsh-experimental-browser-use-runtime', 'packages/experimental/browser-use-runtime'],
@@ -480,34 +181,6 @@ export function ensureProfile(home: string, profile: string, {
 /** Bundle list of the shipped `web` profile template. */
 export const WEB_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
 
-/** Narrow one inbound channel message to the envelopes this driver understands. */
-function asInbound(value: unknown): DshIpcReady | DshIpcReply | DshIpcFailure | null {
-  if (typeof value !== 'object' || value === null) return null;
-  if (!('flow' in value) || value.flow !== true) return null;
-  if ('ready' in value && value.ready === true) return { flow: true, ready: true };
-  if (!('requestId' in value) || typeof value.requestId !== 'string') return null;
-  if (!('ok' in value) || typeof value.ok !== 'boolean') return null;
-  if (value.ok) {
-    return { flow: true, requestId: value.requestId, ok: true, result: 'result' in value ? value.result : undefined };
-  }
-  return { flow: true, requestId: value.requestId, ok: false, error: errorFields('error' in value ? value.error : undefined) };
-}
-
-/** The `{message,status,code}` fields of a failure envelope, as far as they are present. */
-function errorFields(value: unknown): { message?: string; status?: number; code?: string } {
-  const fields: { message?: string; status?: number; code?: string } = {};
-  if (typeof value === 'object' && value !== null) {
-    if ('message' in value && typeof value.message === 'string') fields.message = value.message;
-    if ('status' in value && typeof value.status === 'number') fields.status = value.status;
-    if ('code' in value && typeof value.code === 'string') fields.code = value.code;
-  }
-  return fields;
-}
-
-/** The `code` of a thrown unknown, when it carries a string one. */
 function errorCodeOf(error: unknown): string | null {
-  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') return error.code;
-  return null;
+  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : null;
 }
-
-export { PROJECT_ROOT, LAUNCHER };

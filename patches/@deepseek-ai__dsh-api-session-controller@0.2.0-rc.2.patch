@@ -160,14 +160,14 @@ index 1ae21e3..6e07b48 100644
  				} catch (error) {
  					reference.release();
 diff --git a/lib/index.js b/lib/index.js
-index 3b8507e..57c3ca9 100644
+index 3b8507e..02418db 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -124,6 +124,7 @@ var ApiSessionPresetConflict = class extends Error {
  * @returns whether subagent routing owns the Session identity.
  */
  function hasApiSessionSubagentOwner(ctx, session, agent) {
-+	if (session.header.agentPreset === "dsh-flow/member" || ctx.sessionController?.sessionDriver(session.header.id)) return true;
++	if (ctx.sessionController?.sessionDriver(session.header.id)) return true;
  	if (session.header.origin === "subagent") return true;
  	const parentId = session.header.parentSession;
  	if (parentId === void 0 || agent === void 0) return false;
@@ -240,27 +240,59 @@ index 3b8507e..57c3ca9 100644
  	async create(request) {
  		if (request.workspaceId !== void 0 && request.cwd !== void 0) throw new RemoteError("gateway/bad-request", "session.create accepts workspaceId or cwd, not both", {});
  		const sessionId = request.sessionId ?? brandString(`session-${randomUUID()}`);
-+		if (request.agentPreset === "dsh-flow/member" || this.ctx.sessionController?.sessionDriver(sessionId)) throw apiSessionSubagentOwnershipError(sessionId);
++		if (this.ctx.sessionController?.sessionDriver(sessionId)) throw apiSessionSubagentOwnershipError(sessionId);
  		let workspace;
  		if (request.workspaceId !== void 0) {
  			workspace = this.ctx.workspaceRegistry.get(request.workspaceId);
-@@ -774,6 +783,7 @@ var SessionCommandController = class {
- 	* @returns the new Session identity.
- 	*/
- 	async fork(request) {
-+		if (this.ctx.sessionController?.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
- 		const env_1 = {
- 			stack: [],
- 			error: void 0,
-@@ -794,6 +804,7 @@ var SessionCommandController = class {
- 				throw new RemoteError("gateway/internal", `fork source unavailable for session "${request.sessionId}": ${String(error)}`, {});
+@@ -939,7 +948,9 @@ var SessionCommandController = class {
+ 			if (request.action.content.some((block) => block.type !== "text")) throw new RemoteError("session/attachment-invalid", "queue edits accept text content only", { reason: "QUEUE_EDIT_NON_TEXT" });
+ 			if (!hasPromptContent(request.action.content)) throw new RemoteError("gateway/bad-request", "queue edit content must include non-whitespace text", {});
+ 		}
++		const driver = this.ctx.sessionController?.sessionDriver(request.sessionId);
+ 		let agent = this.ctx.agents.get(request.sessionId);
++		if (agent === void 0 && driver) agent = await driver.resolveAgent(request.sessionId);
+ 		if (agent === void 0) {
+ 			const found = await this.agents.resolveAgent(request.sessionId);
+ 			if ("error" in found) {
+@@ -948,7 +959,7 @@ var SessionCommandController = class {
  			}
- 			const source = __addDisposableResource$3(env_1, observed, false);
-+			if (source.header.agentPreset === "dsh-flow/member" || this.ctx.sessionController?.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
- 			const boundary = atSeq ?? latestCompletedPrefixBoundary(source.events);
- 			if (boundary === void 0 || source.events[boundary]?.seq !== boundary) throw new RemoteError("session/fork-unavailable", request.atSeq === void 0 ? `session "${request.sessionId}" has no completed turn to fork from` : `event ${String(request.atSeq)} does not exist in session "${request.sessionId}" (last seq: ${String(source.events.at(-1)?.seq ?? "none")})`, { sessionId: request.sessionId });
- 			const seed = buildForkSeed(source.events, boundary);
-@@ -1518,7 +1529,7 @@ var SessionHistoryController = class {
+ 			agent = found.agent;
+ 		}
+-		if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
++		if (!driver && hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
+ 			const identity = this.ctx.sessionProjections.snapshot(agent.session, ["subagent"]).values.subagent;
+ 			if (identity?.mode !== "continuable" || !agent.session.isOwnSeq(identity.seq)) throw apiSessionSubagentOwnershipError(request.sessionId);
+ 		}
+@@ -994,11 +1005,13 @@ var SessionCommandController = class {
+ 	cancel(request) {
+ 		const agent = this.ctx.agents.get(request.sessionId);
+ 		if (agent === void 0) throw new RemoteError("session/not-found", `session "${request.sessionId}" not found (not attached)`, { sessionId: request.sessionId });
+-		if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) throw apiSessionSubagentOwnershipError(request.sessionId);
++		if (!this.ctx.sessionController?.sessionDriver(request.sessionId) && hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) throw apiSessionSubagentOwnershipError(request.sessionId);
+ 		agent.cancel({ kind: "user" }, { keepInbox: true });
+ 		return { accepted: true };
+ 	}
+ 	async resolveAgent(sessionId) {
++		const driver = this.ctx.sessionController?.sessionDriver(sessionId);
++		if (driver) return driver.resolveAgent(sessionId);
+ 		const found = await this.agents.resolveAgent(sessionId);
+ 		if ("error" in found) throw found.error;
+ 		return found.agent;
+@@ -1067,9 +1080,10 @@ function hasPromptRequest(agent, requestId) {
+ 	};
+ 	if (agent.inbox.nextTurn.some(matches) || agent.inbox.nextStep.some(matches)) return true;
+ 	return agent.session.snapshotEvents().some((event) => {
+-		if (event.type !== "user/message") return false;
+-		const source = event.data.source;
+-		return source.kind === "user" && "rpcId" in source && source.rpcId === requestId;
++		// Native claim removes the pending item before user/message is appended.
++		// The durable insertion remains the acknowledgement of this RPC request.
++		if (event.type === "agent/inbox/spliced") return event.data.inserted.some(matches);
++		return event.type === "user/message" && matches(event.data);
+ 	});
+ }
+ function imageBlockIn(content, match) {
+@@ -1518,7 +1532,7 @@ var SessionHistoryController = class {
  					} : projectionBlock(source.projections),
  					...assistantStream === void 0 ? {} : { assistantStream }
  				};
@@ -269,7 +301,7 @@ index 3b8507e..57c3ca9 100644
  					const promotion = source.retain();
  					try {
  						this.promote(promotion);
-@@ -1805,7 +1816,8 @@ const imageLimitsSchema = z$1.object({
+@@ -1805,7 +1819,8 @@ const imageLimitsSchema = z$1.object({
  * @returns the original or advanced metadata value.
  */
  function applySessionListMetadata(state, event) {
@@ -279,7 +311,7 @@ index 3b8507e..57c3ca9 100644
  	const lastPromptAt = event.type === "user/message" && event.data.source.kind === "user" ? event.time : state.lastPromptAt;
  	return blank === state.blank && lastPromptAt === state.lastPromptAt ? state : {
  		blank,
-@@ -1831,9 +1843,11 @@ function truncateUnicodeCodePoints(value, maximum) {
+@@ -1831,9 +1846,11 @@ function truncateUnicodeCodePoints(value, maximum) {
  /** Owns list projection registration, bounded cold summaries, and authorized search. */
  var ApiSessionList = class {
  	ctx;
@@ -292,7 +324,7 @@ index 3b8507e..57c3ca9 100644
  		ctx.sessionProjections.register({
  			key: "sessionListMetadata",
  			stateSchema: sessionListMetadataSchema,
-@@ -1846,7 +1860,7 @@ var ApiSessionList = class {
+@@ -1846,7 +1863,7 @@ var ApiSessionList = class {
  				viewSchema: sessionListMetadataSchema,
  				view: (state) => state
  			},
@@ -301,7 +333,7 @@ index 3b8507e..57c3ca9 100644
  		});
  		ctx.inject(["attachments"], (attachmentCtx) => {
  			ctx.sessionProjections.register({
-@@ -1877,6 +1891,7 @@ var ApiSessionList = class {
+@@ -1877,6 +1894,7 @@ var ApiSessionList = class {
  			running: this.ctx.agents.get(session.id)?.status === "running",
  			blank: metadata?.blank ?? session.seq === 0,
  			...listFields(session.header),
@@ -309,7 +341,7 @@ index 3b8507e..57c3ca9 100644
  			...projections === void 0 ? {} : { projections }
  		};
  	}
-@@ -1904,6 +1919,10 @@ var ApiSessionList = class {
+@@ -1904,6 +1922,10 @@ var ApiSessionList = class {
  		items.sort((left, right) => right.updatedAt - left.updatedAt);
  		return items;
  	}
@@ -320,7 +352,7 @@ index 3b8507e..57c3ca9 100644
  	summarizeCold(header) {
  		const projections = this.projectionsFor(header, void 0);
  		const metadata = projections?.values.sessionListMetadata;
-@@ -1914,6 +1933,7 @@ var ApiSessionList = class {
+@@ -1914,6 +1936,7 @@ var ApiSessionList = class {
  			running: false,
  			blank: metadata?.blank ?? false,
  			...listFields(header),
@@ -328,7 +360,7 @@ index 3b8507e..57c3ca9 100644
  			...projections === void 0 ? {} : { projections }
  		};
  	}
-@@ -1931,7 +1951,7 @@ var ApiSessionList = class {
+@@ -1931,7 +1954,7 @@ var ApiSessionList = class {
  		try {
  			const visible = await provider.listSessions(signal);
  			signal.throwIfAborted();
@@ -337,7 +369,7 @@ index 3b8507e..57c3ca9 100644
  			if (visibleIds.size === 0) return {
  				items: [],
  				hasMore: false
-@@ -2832,6 +2852,8 @@ let SessionController = (() => {
+@@ -2832,6 +2855,8 @@ let SessionController = (() => {
  		controlState;
  		history;
  		listState;
@@ -346,7 +378,7 @@ index 3b8507e..57c3ca9 100644
  		openPath;
  		fileApplications;
  		openFileApplication;
-@@ -2860,7 +2882,12 @@ let SessionController = (() => {
+@@ -2860,7 +2885,12 @@ let SessionController = (() => {
  			this.history = new SessionHistoryController(ctx, (observation) => {
  				this.promote(observation);
  			});
@@ -360,7 +392,7 @@ index 3b8507e..57c3ca9 100644
  			this.fileApplications = internals.fileApplications ?? nativeFileApplications;
  			this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication;
  			this.openPath = internals.openPath ?? openNativeAssociatedPath;
-@@ -2898,6 +2925,7 @@ let SessionController = (() => {
+@@ -2898,6 +2928,7 @@ let SessionController = (() => {
  		}
  		promote(observation) {
  			const sessionId = observation.header.id;
@@ -368,7 +400,7 @@ index 3b8507e..57c3ca9 100644
  			const task = (async () => {
  				const env_1 = {
  					stack: [],
-@@ -2927,7 +2955,24 @@ let SessionController = (() => {
+@@ -2927,8 +2958,25 @@ let SessionController = (() => {
  		* @param sessionId - Session identity whose Agent owns the operation.
  		* @returns the live Agent or the stable Session-domain failure.
  		*/
@@ -389,38 +421,12 @@ index 3b8507e..57c3ca9 100644
 +			return owners[0];
 +		}
  		resolveAgent(sessionId) {
-+			if (this.sessionDriver(sessionId)) return Promise.resolve({error: apiSessionSubagentOwnershipError(sessionId)});
- 			return this.agents.resolveAgent(sessionId);
+-			return this.agents.resolveAgent(sessionId);
++			const driver = this.sessionDriver(sessionId);
++			return driver ? driver.resolveAgent(sessionId).then(agent => ({agent})) : this.agents.resolveAgent(sessionId);
  		}
  		/**
-@@ -3095,7 +3140,8 @@ let SessionController = (() => {
- 		*/
- 		prompt(request, signal) {
- 			signal.throwIfAborted();
--			return this.commands.prompt(request);
-+			const driver = this.sessionDriver(request.sessionId);
-+			return driver ? driver.prompt(request, signal) : this.commands.prompt(request);
- 		}
- 		/**
- 		* Read one image proven reachable from the addressed Session log.
-@@ -3111,6 +3157,7 @@ let SessionController = (() => {
- 		* @returns acknowledgement that the queue mutation was applied.
- 		*/
- 		updateQueue(request) {
-+			if (this.sessionDriver(request.sessionId)) throw apiSessionSubagentOwnershipError(request.sessionId);
- 			return this.commands.updateQueue(request);
- 		}
- 		/**
-@@ -3119,7 +3166,8 @@ let SessionController = (() => {
- 		* @returns acknowledgement that cancellation was requested.
- 		*/
- 		cancel(request) {
--			return this.commands.cancel(request);
-+			const driver = this.sessionDriver(request.sessionId);
-+			return driver ? driver.cancel(request) : this.commands.cancel(request);
- 		}
- 		/**
- 		* Read one cold-safe, message-aligned Session history page.
+ 		* Inspect one attached or persisted Session without activating its Agent.
 diff --git a/lib/typert.host.js b/lib/typert.host.js
 index 57b5a2b..25bbaa0 100644
 --- a/lib/typert.host.js
@@ -532,7 +538,7 @@ index d322ee7..f452cae 100644
      readonly publish: (change: SessionJournalChange) => void;
      /** Observe a retryable carrier loss before reconnection. */
 diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
-index 58e6dd4..51ab999 100644
+index 58e6dd4..a559d3b 100644
 --- a/lib/types/index.d.ts
 +++ b/lib/types/index.d.ts
 @@ -24,6 +24,12 @@ export interface Config {
@@ -542,8 +548,8 @@ index 58e6dd4..51ab999 100644
 +/** A plugin owns execution; native Session history, Chat, trajectory and input remain reusable. */
 +export interface SessionDriver {
 +    owns(sessionId: SessionId): boolean;
-+    prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>;
-+    cancel(request: SessionCancelRequest): SessionCancelValue;
++    /** Resolve the unique owner; input, uploads and queue operations remain native. */
++    resolveAgent(sessionId: SessionId): Promise<import("@deepseek-ai/dsh-agent").Agent>;
 +}
  export interface SessionControllerInternals {
      /** Native default-application handoff. */

@@ -1,6 +1,5 @@
 packages:
   - packages/*
-  - tests/acceptance/seeds/website
 
 # The vendored Typert face is for generation; runtime dependencies use the
 # published protocol. Only explicit workspace: dependencies link locally.

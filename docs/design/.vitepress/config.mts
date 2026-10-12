@@ -33,7 +33,7 @@ export default defineConfig({
         text: '智能体系统',
         items: [
           { text: '智能体分类', link: '/agents' },
-          { text: '层次化智能体结构', link: '/hierarchy' },
+          { text: '任务关系', link: '/hierarchy' },
           { text: '任务派发', link: '/dispatch' },
           { text: '智能体通信', link: '/communication' },
         ],
@@ -41,8 +41,8 @@ export default defineConfig({
       {
         text: '配置参数',
         items: [
-          { text: '智能体配置参数', link: '/configuration/agents' },
-          { text: '集群配置参数', link: '/configuration/cluster' },
+          { text: 'Agent 配置', link: '/configuration/agents' },
+          { text: 'Flow 配置', link: '/configuration/cluster' },
         ],
       },
       {
@@ -60,12 +60,10 @@ export default defineConfig({
             collapsed: false,
             items: [
               { text: '控制平面与调度', link: '/development/components/control-plane' },
-              { text: '任务单元与业务验收', link: '/development/components/transactions' },
-              { text: '执行分配与组织调整', link: '/development/components/allocation' },
+              { text: '任务、结果与接受', link: '/development/components/transactions' },
               { text: '智能体运行时', link: '/development/components/runtime' },
               { text: '持久化与恢复', link: '/development/components/persistence' },
-              { text: '预算账本', link: '/development/components/budget' },
-              { text: '通信与共享黑板', link: '/development/components/communication' },
+              { text: '消息路由', link: '/development/components/communication' },
               { text: '查询与可观测性', link: '/development/components/observability' },
             ],
           },

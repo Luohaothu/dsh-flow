@@ -12,6 +12,7 @@
   },
   "include": [
     "tests/types/*.client.ts",
+    "tests/helpers/*.tsx",
     "tests/unit/reader-source.test.ts"
   ],
   "references": [

@@ -22,14 +22,10 @@
     "tests/unit/**/*.ts",
     "packages/dsh-flow/src/client/observer.ts",
     "packages/dsh-flow/src/client/agent-session.ts",
-    "packages/dsh-flow/src/client/preferences.ts",
-    "packages/dsh-flow/src/client/navigation.ts",
-    "packages/dsh-flow/src/client/tree.ts",
     "tests/acceptance/**/*.ts",
     "tests/integration/**/*.ts"
   ],
   "exclude": [
-    "tests/acceptance/seeds/website",
     "tests/unit/reader-source.test.ts"
   ],
   "references": [

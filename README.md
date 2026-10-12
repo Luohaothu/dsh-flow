@@ -1,107 +1,28 @@
 # dsh-flow
 
-A hierarchical agent team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), with durable transactions, evidence-bound business acceptance, layered budgets and native agent conversations.
+Flow 为 DeepSeek Harness 的标准 Agent 提供轻量任务协作。成员使用宿主的完整 preset、工具、模型、上下文、审批和原生会话；Flow 保存任务、结果、接受记录、消息与团队归属。
 
-The main Agent manages a team's lifecycle through a skill and tools. Each management node has its own Orchestrator and Allocator; Workers execute allocated transactions. Every turn uses the host's agent loop, tool pipeline and Session persistence.
+简单工作由当前 Agent 直接完成。需要并行或独立上下文时，委派一个标准成员；同一成员可继续工作或再委派。团队不会自动创建固定管理角色。
 
-## Documentation
+## 使用
 
-The Chinese [documentation](docs/design/index.md) covers usage, architecture and development:
+在 DSH `0.2.0-rc.2` profile 中安装 `packages/dsh-flow`，加载 [基础配置](docs/design/public/downloads/cluster.patch.yml)。从主会话使用 `/agent-team` 或 Agent Team 工具创建团队。团队界面展示任务与原生会话，执行与审批继续使用 DSH 的正常功能。
 
-- [Quick start](docs/design/quick-start.md): step-by-step task submission, team progress and file delivery using your configured model
-- [Advanced usage](docs/design/advanced.md)
-- [Agent roles](docs/design/agents.md), [hierarchy](docs/design/hierarchy.md), [dispatch](docs/design/dispatch.md) and [communication](docs/design/communication.md)
-- [Development setup](docs/design/development/setup.md) and [code structure](docs/design/development/code-structure.md)
-- [Interface behavior](docs/design/development/interface.md), [API](docs/design/development/api.md) and [provider interfaces](docs/design/development/provider-interfaces.md)
-- [Validation](docs/design/development/validation.md) and [acceptance coverage](tests/acceptance/COVERAGE.md)
+Provider 与默认模型保存在可编辑的 profile 中；启动 patch 不覆盖模型命名空间。已有部署可参考 [运行配置](examples/instance-runtime.patch.yml)。旧数据库不会自动迁移或删除；新实现使用新的数据目录。
 
-```bash
-pnpm run docs:dev
-pnpm run docs:build
-pnpm run docs:preview
-```
+## 开发
 
-## Using a team
-
-Enter `/agent-team <objective>` in the main conversation. The command submits a user prompt and loads the `agent-team` skill. The main Agent assesses the work, carries relevant context into a self-contained objective and calls `agent_team_create`. It confirms startup and polls with `agent_team_read`, sends further instructions through `agent_team_message`, and handles explicit pause, resume or cancel requests through `agent_team_control`. After a terminal result, `agent_team_finalize` releases resources while retaining results, validation and conversations.
-
-The main Agent and the team's root Orchestrator have independent Sessions. The main conversation remains the user's ordinary dialogue; the team header and **智能体** tab show the bound team's topology, hierarchy and read-only details.
-
-Selecting a member opens its complete native conversation, including dialogue, trajectory and navigation back to the main Session. Available members accept text through the native composer. Reclaimed members retain their records with input disabled. The right-side button opens a read-only conversation in the sidebar. Conversation retention alone does not start an Agent.
-
-The first task is a user prompt. Subsequent team messages use classified communication cards, collapsed to a summary by default and expandable in place. Flow routes these messages through the recipient's native inbox while retaining delivery evidence.
-
-The plugin settings expose deployment defaults for model selection, reasoning, dispatch, hierarchy limits, concurrency, duration and budgets. Display preferences control the team view and reading behavior independently of execution settings.
-
-## Installation
-
-Requirements: Node `^22.19.0 || >=24.0.0` and pnpm `12.9.1`. The supported Harness baseline is `0.2.0-rc.2` with the public interface patches declared in `pnpm-workspace.yaml`. A standalone unpatched host of that version does not provide all required interfaces.
-
-```bash
+```sh
 pnpm install --frozen-lockfile
-pnpm run build
-pnpm --dir packages/dsh-flow pack --pack-destination /tmp
-```
-
-Follow the [isolated-profile installation guide](docs/design/development/setup.md) to install the archive and configure the model route. The workspace launcher resolves the installed Harness package and calls its exported CLI entry:
-
-```bash
-# Use the isolated DSH_HOME configured in the installation guide.
-node --import tsx src/host/dsh-launch.ts plugin --profile web add /tmp/dsh-flow-0.1.0.tgz
-node --import tsx scripts/initialize-omlx-profile.ts --profile-dir "$DSH_HOME/profiles/web"
-node --import tsx src/host/dsh-launch.ts --profile web --patch examples/instance-runtime.patch.yml --dump-config
-```
-
-Initialize editable model settings once while the profile is stopped; the helper preserves existing Providers and default model choices and stores only a credential environment reference. `examples/instance-runtime.patch.yml` then supplies runtime policy without overriding native model settings. Installed deployments disable development source watching; native GUI settings still validate, persist and apply immediately. The fixed model overlays (`instance.patch.yml` and `omlx.patch.yml`) are for isolated acceptance runs; using them as launch overrides prevents native Provider edits from persisting. `examples/cluster.patch.yml` inserts services into an acceptance profile. Both map deployment variables into ordinary Cordis configuration; the plugin core reads its configuration from the schema in `packages/dsh-flow/src/config.ts`.
-
-The standard bundle provides the service, observing Remote API and `/agent-team` command. Its capability tools are mounted inside each agent's scope. The host owns authentication, sandbox policy, model transport, conversation rendering and navigation. See [patches](patches/README.md) for the required provider contracts and their maintenance workflow.
-
-## Execution model
-
-Transactions progress through `DRAFT`, `READY`, `RUNNING`, `SUBMITTED` and `ACCEPTED`, with explicit rejection, blocking, pause, failure and cancellation paths. Workers submit deliverables and evidence. The Orchestrator performs the business checks, then `validate` atomically stores its immutable validation, commits acceptance and writes the summary. Current plan/result references, complete criteria, child results, permissions and execution safety remain enforced.
-
-A parent aggregates only accepted children. Accepted root transactions still require the root Orchestrator's `finish_cluster` action before the cluster completes. Resource reclamation and task success are distinct states.
-
-Budgets account for tool calls, wall time, agent identities and active execution capacity. DSH owns model context, output and default compaction. Token statistics passively project durable native Session events as host-recorded usage; missing fields remain unknown and incomplete observations are marked. Agent scheduling permits do not prove the concurrency of all host auxiliary model requests. Shared grants are not summed once per agent. Declared write scopes support allocation checks and managed-tool authorization; filesystem access also depends on the host's sandbox and permission policy.
-
-SQLite stores state changes, command receipts and events atomically. Recovery fences expired leases, checks durable Session evidence and reconciles in-flight effects before execution is admitted. Native Session drivers keep continued member input under Flow's role, tool budget and permission controls. Schema 5 accepts only empty databases or the current contract; older data directories are rejected without migration or deletion.
-
-## Workspace
-
-| Path | Responsibility |
-|---|---|
-| `packages/dsh-flow` | Published Cordis plugin, Host and Client TypeScript programs, team skill and bundle configuration |
-| `packages/dsh-flow/src/core` | Scheduling, transactions, allocations, validation, communication, budgets and persistence |
-| `packages/dsh-flow/src/client` | Team observation, native session navigation, inspectors and settings |
-| `packages/typert-protocol` | Private declaration face used by Typert generation; runtime resolves the published protocol |
-| `src/host` | Development launcher, isolated acceptance host, deterministic model and evidence readers |
-| `tests/unit` | In-process service and component contracts |
-| `tests/acceptance` | Native host contracts, scenarios, checks and standalone website seed |
-| `patches` | Pinned Harness public interface extensions |
-| `docs/design` | VitePress documentation |
-
-The build emits package entry points, declarations and generated Typert host/client descriptors under `packages/dsh-flow/lib`. Host and Client have separate TypeScript programs; the browser bundle includes its generated Remote codecs.
-
-## Validation
-
-```bash
-pnpm run typecheck
-pnpm run build
+pnpm typecheck
+pnpm build
 pnpm test
-pnpm run test:mock
-pnpm run docs:build
+pnpm docs:build
 ```
 
-The deterministic suite replaces only model generation. It starts real isolated Harness profiles, executes native tools and records Sessions and SQLite state. A case passes only when its process exits successfully, its scenario reports `PASSED` and any mechanism verdict is `PASS`. Fixture failures are reported separately from product failures. Browser checks need Playwright Chromium; `FLOW_CHROMIUM_PATH` selects an installed executable.
+原生与真实模型检查分别运行，具体命令和证据要求见[验证方法](docs/design/development/validation.md)。模型端点失败、审批等待或模型未正确交付必须如实报告，不能以 HTTP 成功或文件存在代替任务完成。
 
-```bash
-# Individual deterministic scenarios
-pnpm run accept:mock --case recovery --run-id recovery-check
-pnpm run accept:mock --case scale --run-id scale-check --dataset-limit 16
-
-# Live model verification using the configured provider
-pnpm run accept --case smoke --run-id smoke-live
-pnpm run accept --case website --run-id website-live --mode all
-```
-
-Reports, checks, events, usage, Session evidence and scenario outputs are written to `.artifacts/<run-id>/` and are excluded from Git. A deterministic result verifies its scripted contract; a live-model result applies to the recorded provider, configuration and workload. Commands, verdict rules and evidence boundaries are documented in the [validation guide](docs/design/development/validation.md).
+- [使用文档](docs/design/index.md)
+- [职责和术语](CONTEXT.md)
+- [当前实施方案](docs/plans/native-agent-simplification-plan.md)
+- [历史归档](docs/plans/archive/README.md)
