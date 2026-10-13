@@ -49,6 +49,14 @@ pnpm build、196/196 单元测试、5/5 真实原生测试及 pnpm docs:build �
 
 本地 127.0.0.1:18791 使用 profile flow-native、安装快照 .artifacts/local-native/package-v4、新数据 .artifacts/local-native/data-s8，schema 8 / 8 张表。切换前确认零运行会话；认证入口 401→200，原生 17 个会话仍可见，默认 qwen-token-plan-cn / deepseek-v4.1-flash / max 与模型配置、凭据文件字节保持一致。安装 lib/skills/manifest 与最终已测试构建逐字匹配。
 
-最终包指纹为 1a8957c4f866c44ed8e84714f3f55c78964e42ef949eb2faa8cb32397a548ef1，源码树指纹为 b75fb42eedcbd6367e123628c1a2d54ad88b0cccae9bd138607be8d30bc7bdaa。完整文件清单及最终 Git/远端身份记录在 .artifacts/local-native/runtime-identity.json 与 package-v4-manifest.json，不能用旧模型实验包指纹替代。
+调度精简阶段（界面恢复前）的包指纹为 1a8957c4f866c44ed8e84714f3f55c78964e42ef949eb2faa8cb32397a548ef1，源码树指纹为 b75fb42eedcbd6367e123628c1a2d54ad88b0cccae9bd138607be8d30bc7bdaa。该阶段文件清单及 Git/远端身份副本保存在 .artifacts/local-native/ui-restore-20261013/pre/ 下的 runtime-identity.json 与 package-v4-manifest.json，不能用旧模型实验包指纹替代。
 
 已清理零团队的旧 schema 6 Flow 数据及退役 package-v3。原生历史与配置、原模型协议、中止阶段和基线冻结包继续保存；当前方案已替代归档中的严格比较草稿。原生日志历史摘要接口既有的 changes.summary 404 不在本轮修复范围；正文读取可用，不宣称全部界面错误已消失。
+
+## 智能体界面恢复（2026-10-13）
+
+恢复顶栏派生树、占满宿主内容区的拓扑、平移/缩放/适应视口/定位、子树折叠和节点对话/信息详情。主节点直接表示已有主会话，连线取自真实成员父会话；使用当前 schema 8 快照，不恢复旧角色、预算、权限限制或兼容分支。信息区保留当前/历史结果与各自接受记录的对应关系。
+
+本轮 200/200 单元测试、5/5 原生集成测试和构建通过。新增四个关系投影测试验证主会话不变成成员、折叠与异常关系、已结束过滤中的活跃祖先，以及子树布局；实际 Chrome 交互覆盖顶栏键盘/焦点、画布平移/缩放/折叠、导航回调、结果记录、历史切换、断线恢复与 390px 窄屏。UI 示例数据与原生 Agent 执行验证分开记录；未新增真实模型请求。
+
+已通过宿主原生 client-HMR 发布到 127.0.0.1:18791，后端执行入口字节相同，PID 84995、schema 8、data-s8 目录和原配置保持不变，没有重启或取消用户任务。对已有“生成今日午盘报告”会话只读观察，确认 4 个节点/3 条派生边、嵌入原生对话、接受记录、活成员完整会话输入和轨迹，以及成员/顶栏树返回主对话；没有发送测试输入。实际截图和记录在 .artifacts/local-native/ui-restore-20261013/，当前安装身份见 runtime-identity.json。首轮独立 Chrome 因默认英文与中文原生控件定位不符而超时，修正浏览器语言后通过，失败说明保留。

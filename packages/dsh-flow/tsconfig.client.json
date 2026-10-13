@@ -8,6 +8,8 @@
   "files": [
     "src/client.ts",
     "src/client/team-view.tsx",
+    "src/client/tree.ts",
+    "src/client/surfaces.tsx",
     "src/client/observer.ts",
     "src/client/agent-session.ts",
     "src/client/reader.tsx",

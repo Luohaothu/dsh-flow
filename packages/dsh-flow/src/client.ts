@@ -6,13 +6,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type {} from '@deepseek-ai/dsh-client-ui-attachment/client';
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
+import type { PropsRuntime, PropsRenderFactories } from '@deepseek-ai/dsh-client-ui-slots';
 import { SessionId } from '@deepseek-ai/dsh-session/types';
 import TYPERT_REMOTE from 'dsh-flow/remote';
 import { TeamObserver } from './client/observer.ts';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
 import { AgentSessionSource } from './client/agent-session.ts';
+import { createReader } from './client/reader-source.ts';
+import type { LocalView } from './client/tree.ts';
 import { createElement } from 'react';
 import { ReadOnlyConversation, NativeReadOnlyTranscript } from './client/reader.tsx';
 import { TeamHeader, TeamView } from './client/team-view.tsx';
@@ -31,6 +33,7 @@ const teamUiPlugin = {
   inject: ['slots','remote.flow','resources','sidebarRight','sidebarRightTabs','sessions','uiConversation','conversation','uiWorkspace'],
   apply(ctx: Context): void {
     const observers = new Map<string,TeamObserver>();
+    const localViews = new Map<string,LocalView>();
     const pendingViews=new Map<string,string>();
     const observer = (id:string):TeamObserver => {
       const key=id;
@@ -83,12 +86,14 @@ const teamUiPlugin = {
     };
     const ui=(id:SessionId):TeamUi=>{
       return {
-        observer:observer(id),sidebar:member=>openAgentSidebar(ctx,member.session_id,member.name),
+        observer:observer(id),local:localViews,reader:sessionId=>createReader(ctx,sessionId),
+        sidebar:member=>openAgentSidebar(ctx,member.session_id,member.name),
         openMember:member=>{
           void agentSource(member.session_id).refresh();
+          pendingViews.set(member.session_id,'chat');
           ctx.uiWorkspace.openSession(SessionId(member.session_id),{allowUnlisted:true,observationOnly:true});
         },
-        main:()=>{ctx.uiWorkspace.openSession(id);const binding=ctx.sessions.binding(id);if(binding)requestAnimationFrame(()=>ctx.conversation.input.for(binding.ctx).focus());},
+        main:()=>{pendingViews.set(id,'chat');ctx.uiWorkspace.openSession(id);const binding=ctx.sessions.binding(id);if(binding)requestAnimationFrame(()=>ctx.conversation.input.for(binding.ctx).focus());},
         openTeam:()=>{pendingViews.set(id,'dsh-flow-agents');ctx.uiWorkspace.openSession(id);},tab:available=>tab(id,available),
       };
     };
@@ -97,7 +102,7 @@ const teamUiPlugin = {
     ctx.effect(()=>{
       const style=document.createElement('style');style.textContent=TEAM_CSS;document.head.append(style);return()=>style.remove();
     },'dsh-flow: scoped business styles');
-    ctx.effect(()=>()=>{availabilityListeners.clear();pendingViews.clear();for(const source of observers.values())source.dispose();for(const source of agentSources.values())source.dispose();for(const [id,reason] of ownBlocks)if(ctx.conversation.blocks.storeFor(SessionId(id)).getSnapshot()?.reason===reason)ctx.conversation.blocks.set(SessionId(id),undefined);},'dsh-flow: observing lifecycle');
+    ctx.effect(()=>()=>{availabilityListeners.clear();pendingViews.clear();localViews.clear();for(const source of observers.values())source.dispose();for(const source of agentSources.values())source.dispose();for(const [id,reason] of ownBlocks)if(ctx.conversation.blocks.storeFor(SessionId(id)).getSnapshot()?.reason===reason)ctx.conversation.blocks.set(SessionId(id),undefined);},'dsh-flow: observing lifecycle');
   },
 };
 function AgentLineageEntry(props:PropsRuntime<'conversation.session.header.lineage'> & {matched:{source:AgentSessionSource}}) {
@@ -112,8 +117,14 @@ function TeamHeaderEntry(props:PropsRuntime<'conversation.session.header.actions
   return createElement('span',{className:'flow-agent-session-header'},
     value?createElement(Button,{size:'sm',onClick:()=>ui.main()},'主会话'):null,
     value?.state==='closed'?createElement(Tag,null,'已结束'):null,
-    createElement(TeamHeader,{ui:{...ui,openTeam:()=>value?ui.openTeam():props.selectView('dsh-flow-agents')}}));
+    createElement(TeamHeader,{ui:{...ui,
+      main:()=>{if(!value)props.selectView('chat');ui.main();},
+      openTeam:()=>value?ui.openTeam():props.selectView('dsh-flow-agents'),
+    }}));
 }
-function TeamViewEntry(props:PropsRuntime<'conversation.view'> & {ui:TeamUi}) {
-  return createElement(TeamView,{ui:{...props.ui,main:()=>{props.openView('chat','');props.ui.main();}}});
+function TeamViewEntry(props:PropsRuntime<'conversation.view'> & PropsRenderFactories & {ui:TeamUi}) {
+  return createElement(TeamView,{ui:{...props.ui,
+    renderReader:readerProps=>props.renderFactorySlot('dsh-flow.reader',readerProps),
+    main:()=>{props.openView('chat','');props.ui.main();},
+  }});
 }

@@ -13,7 +13,7 @@
 | 插件与配置 | Bundle patch、`plugins.bundle.config`、`configForms` | 数据目录、工作区、原生 preset 与并发容量 |
 | 主会话命令 | Commands `register`、`followup`、Skills registry | `/agent-team` 启动意图和主 Agent 管理工具 |
 | 顶栏 | `conversation.session.header.actions` | 团队任务、成员及原生会话导航 |
-| 团队视图 | `conversation.view`、`registerViewPresentation` | 按主会话启用的 contained 任务与成员列表 |
+| 团队视图 | `conversation.view`、`registerViewPresentation` | 按主会话启用的 contained 派生树、拓扑与节点详情 |
 | 停靠观察 | Resources、SidebarRightTabs、Dockkit | 原生对话和代理信息的观察容器 |
 | 会话内容 | Sessions `retain/release`、Slots `SessionProvider`、`renderFactorySlot` | 真实 SessionReference 下的官方 Conversation |
 | 成员输入 | `registerSessionDriver`、原生 prompt / cancel | 当前成员的原生输入与取消 |

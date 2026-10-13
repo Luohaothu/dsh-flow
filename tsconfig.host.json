@@ -22,6 +22,7 @@
     "tests/unit/**/*.ts",
     "packages/dsh-flow/src/client/observer.ts",
     "packages/dsh-flow/src/client/agent-session.ts",
+    "packages/dsh-flow/src/client/tree.ts",
     "tests/acceptance/**/*.ts",
     "tests/integration/**/*.ts"
   ],
