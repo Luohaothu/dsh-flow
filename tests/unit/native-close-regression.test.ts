@@ -47,8 +47,7 @@ for (const closure of ['team-cancel', 'member-cancel', 'root-task-cancel', 'root
   assert.equal(f.handles.has(task.assignee_session_id), false);
   if (closure === 'root-completed') {
     await f.flow.control('owner', { team_id: root.team, target: 'task', id: task.id, action: 'cancel' });
-    const result = await f.flow.result('owner', { task_id: root.rootTask.id, summary: 'The optional child was cancelled; the actual root work is complete' });
-    await f.flow.review('owner', { result_id: result.id, accepted: true, notes: 'Verified the completed root deliverable' });
+    await f.flow.result('owner', { task_id: root.rootTask.id, summary: 'The optional child was cancelled; the actual root work is complete and checked' });
   } else if (closure === 'root-task-cancel') {
     await f.flow.control('owner', { team_id: root.team, target: 'task', id: root.rootTask.id, action: 'cancel' });
   } else {

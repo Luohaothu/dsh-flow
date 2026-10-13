@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { FlowTeamRun, FlowMember, FlowTask, FlowResult, FlowReview, FlowMessage, FlowEvent, FlowJsonValue } from '../types.ts';
 import { fail } from '../errors.ts';
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 8;
 type Records = { teams: FlowTeamRun; members: FlowMember; tasks: FlowTask; results: FlowResult; reviews: FlowReview; messages: FlowMessage };
 type Table = keyof Records;
 const tables: Table[] = ['teams', 'members', 'tasks', 'results', 'reviews', 'messages'];

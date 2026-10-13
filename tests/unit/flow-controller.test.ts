@@ -45,13 +45,13 @@ test('the existing native owner holds the root task without an automatic Agent o
   assert.deepEqual(f.created, [], 'recovery does not create a replacement owner');
   assert.equal(f.flow.teamRead('owner', root.team).tasks[0]?.id, root.rootTask.id);
   const partial = await f.flow.result('owner', { task_id: root.rootTask.id, summary: 'Still checking', outcome: 'partial' });
-  await assert.rejects(f.flow.review('owner', { result_id: partial.id, accepted: true, notes: 'Incomplete' }), /partial or blocked/);
+  await assert.rejects(f.flow.review('owner', { result_id: partial.id, accepted: true, notes: 'Incomplete' }), /own root/);
   const result = await f.flow.result('owner', { task_id: root.rootTask.id, summary: 'Main session completed and checked its own deliverable', artifacts: ['report.md'] });
   assert.equal(result.author_session_id, 'owner');
   assert.equal(result.task_version, root.rootTask.version);
   assert.equal(result.ready, true, 'an existing owner can complete its business result within its native turn');
-  await assert.rejects(f.flow.review('owner', { result_id: partial.id, accepted: true, notes: 'Stale' }), /current/);
-  await f.flow.review('owner', { result_id: result.id, accepted: true, notes: 'Checked final report', evidence: ['report.md'] });
+  await assert.rejects(f.flow.review('owner', { result_id: partial.id, accepted: true, notes: 'Stale' }), /closed/);
+  assert.equal(f.flow.teamRead('owner', root.team).reviews.length, 0, 'direct completion does not fabricate a self-review');
   await tick(); await tick();
   assert.equal(f.flow.teamRead('owner', root.team).run.state, 'completed');
   assert.equal(f.flow.store.getTask(root.rootTask.id)?.status, 'ACCEPTED');
@@ -79,8 +79,7 @@ test('only the current complete result can be accepted by its requester, after n
   await f.flow.review('owner', { result_id: current.id, accepted: true, notes: 'Opened report and verified its sources', evidence: ['report.md'] });
   assert.equal(f.flow.teamRead('owner', a.team).run.state, 'running', 'a delegated result does not complete the owner root task');
   assert.equal(f.flow.store.getTask(a.task.id)?.status, 'ACCEPTED');
-  const rootResult = await f.flow.result('owner', { task_id: a.rootTask.id, summary: 'Integrated the checked child deliverable' });
-  await f.flow.review('owner', { result_id: rootResult.id, accepted: true, notes: 'Verified the complete report and its accepted child' });
+  await f.flow.result('owner', { task_id: a.rootTask.id, summary: 'Integrated and checked the accepted child deliverable' });
   assert.equal(f.flow.teamRead('owner', a.team).run.state, 'completed');
 });
 
@@ -88,11 +87,14 @@ test('ordinary members can delegate recursively and the requester checks each ch
   const f = fixture(t), a = await f.startMember();
   assert.equal(a.task.parent_id, a.rootTask.id);
   const child = await f.flow.task(a.member.id, { action: 'delegate', objective: 'Collect source data' }, 'child');
+  assert.equal(child.parent_id, a.task.id, 'the native actor determines the active parent task');
+  assert.equal(child.owner_session_id, a.member.id);
   const retried = await f.flow.task(a.member.id, { objective: 'Collect source data', action: 'delegate' }, 'child');
   assert.equal(retried.id, child.id);
   await until(() => f.handles.get(child.assignee_session_id)?.running() === true);
   const grandchild = await f.flow.task(child.assignee_session_id, { action: 'delegate', objective: 'Check source date' }, 'grandchild');
   assert.equal(grandchild.parent_id, child.id);
+  assert.equal(grandchild.owner_session_id, child.assignee_session_id);
   await until(() => f.handles.get(grandchild.assignee_session_id)?.running() === true);
   const c = f.handles.get(child.assignee_session_id)!, g = f.handles.get(grandchild.assignee_session_id)!;
   c.finish(); g.finish(); await tick(); await tick();
@@ -171,10 +173,10 @@ test('cold recovery preserves current results and command identity without fabri
   await f.flow.review('owner', { result_id: result.id, accepted: true, notes: 'Inspected saved report after restart' });
 });
 
-test('old schema is refused while its bytes and tables remain intact', t => {
+for (const schema of [5, 6, 7]) test(`retired schema ${schema} is refused while its bytes and tables remain intact`, t => {
   const dir = mkdtempSync(join(tmpdir(), 'flow-schema-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'old.sqlite'), db = new DatabaseSync(path);
-  db.exec('CREATE TABLE historical(id TEXT); INSERT INTO historical VALUES (\'preserve\'); PRAGMA user_version=5;'); db.close();
+  db.exec('CREATE TABLE historical(id TEXT); INSERT INTO historical VALUES (\'preserve\'); PRAGMA user_version=' + schema + ';'); db.close();
   const before = readFileSync(path);
   assert.throws(() => new FlowStore(path), /new dataDir/);
   assert.deepEqual(readFileSync(path), before);

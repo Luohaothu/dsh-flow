@@ -93,7 +93,7 @@ const prompt = [
   '写 report.md 和 market-data.json。JSON 格式为 {"date":"2026-10-12","indices":[{"name":"...","close":数值,"change_percent":数值}],"sources":[{"url":"https://...","raw_path":"raw/...","http_status":200,"retrieved_at":"ISO时间","data_date":"2026-10-12"}]}。',
   'report.md 引用真实来源、说明日期和材料覆盖限制。实际打开产物重算/核对JSON，确实完成才说明完成；外部不可访问或日期不符应诚实报告受阻。',
 ].join('\n');
-const teamInstruction = '请创建团队，按需把能够独立推进的业务部分委派给成员，并明确不同产物的负责人。自己继续互补工作，避免重复抓取或重做已经委派的同一目标；不要为核验另设固定评审成员。你本人使用原生工具检查成员产物、处理差异并接受当前交付，最后完成根任务交付。需要等待成员时自然结束当前回合，收到结果通知后继续。';
+const teamInstruction = '命令已创建团队与当前主会话持有的根任务。至少委派一项输入已就绪的互补业务，并明确产物负责人；自己继续独立工作。收到成果后亲自用原生工具检查，flow_review 接受当前成员交付；最终检查后用 flow_result complete 完成根任务并正常交付。等待时自然返回，由真实结果消息继续。';
 writeFileSync(join(layout.root, 'task.txt'), prompt);
 if (mode === 'team') writeFileSync(join(layout.root, 'team-instructions.txt'), teamInstruction);
 try {
@@ -233,7 +233,7 @@ function checkOutput(workspace: string): Record<string, unknown> {
         valid: inside && existsSync(path) && statSync(path).size > 0 && source.http_status === 200 && source.data_date === '2026-10-12' && /^https?:\/\//.test(String(source.url)),
         sha256: inside && existsSync(path) ? hash(readFileSync(path)) : null };
     });
-    return { structure_passed: data.date === '2026-10-12' && text.includes('2026-10-12') && text.length > 800 && indices.length >= 3 &&
+    return { structure_passed: data.date === '2026-10-12' && text.includes('2026-10-12') && text.trim().length > 0 && indices.length >= 3 &&
       ['上证','深证','创业板'].every(name => indices.some(index => String(index.name).includes(name) && Number.isFinite(index.close) && Number.isFinite(index.change_percent))) && checked.length > 0 && checked.every(source => source.valid),
       report: reportPath, report_sha256: hash(text), data: dataPath, data_sha256: hash(readFileSync(dataPath)), sources: checked,
       limitation: 'This mechanical check verifies only structured output and locally preserved files. HTTP status/date are model claims until checked against native receipts and raw prices. AWAITING_SOURCE_REVIEW is not task success.' };

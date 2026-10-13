@@ -53,6 +53,7 @@ test('strict member inputs reject unknown fields, nulls and invalid enums before
   for (const [name, args] of [
     ['flow_task', { action: 'delegate', objective: 'x', actor_session_id: 'forged' }],
     ['flow_task', { action: 'allocate', objective: 'x' }],
+    ['flow_task', { action: 'delegate', objective: 'x', criteria: ['Invented extra acceptance gate'] }],
     ['flow_message', { to: 'someone', content: 'x', task_id: null }],
     ['flow_review', { result_id: 'r', accepted: 'true', notes: 'x' }],
     ['flow_read', { what: 'transactions' }],
@@ -60,6 +61,17 @@ test('strict member inputs reject unknown fields, nulls and invalid enums before
   ] as const) await assert.rejects(async () => execute(name, args));
   assert.equal(calls.length, 0);
 });
+
+for (const [field, value] of [
+  ['depends_on', ['task-prior']],
+  ['parent_task_id', 'task-forged-parent'],
+] as const) {
+  test(`flow_task rejects retired ${field} before controller mutation`, async () => {
+    const { execute, calls } = fixture('session-member');
+    await assert.rejects(async () => execute('flow_task', { action: 'delegate', objective: 'x', [field]: value }));
+    assert.equal(calls.length, 0);
+  });
+}
 
 test('scoped tools reject a different native actor, while the owner surface delegates authorization to the controller', async () => {
   const scoped = fixture('session-member');

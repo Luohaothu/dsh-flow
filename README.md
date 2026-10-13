@@ -6,7 +6,7 @@ Flow 为 DeepSeek Harness 的标准 Agent 提供轻量任务协作。成员使�
 
 ## 使用
 
-在 DSH `0.2.0-rc.2` profile 中安装 `packages/dsh-flow`，加载 [基础配置](docs/design/public/downloads/cluster.patch.yml)。从主会话使用 `/agent-team` 或 Agent Team 工具创建团队。团队界面展示任务与原生会话，执行与审批继续使用 DSH 的正常功能。
+在 DSH `0.2.0-rc.2` profile 中安装 `packages/dsh-flow`，加载 [基础配置](docs/design/public/downloads/cluster.patch.yml)。从主会话使用 `/agent-team` 确定性创建团队；主会话与成员统一使用六类 Flow 协作工具。团队界面展示任务与原生会话，执行与审批继续使用 DSH 的正常功能。
 
 Provider 与默认模型保存在可编辑的 profile 中；启动 patch 不覆盖模型命名空间。已有部署可参考 [运行配置](examples/instance-runtime.patch.yml)。旧数据库不会自动迁移或删除；新实现使用新的数据目录。
 

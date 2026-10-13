@@ -59,7 +59,7 @@ export class FlowController implements FlowService {
   private assertOpen(run: T.FlowTeamRun, actor?: string) {
     if (this.closed || terminal(run.state)) fail('Team is closed', 409);
     const member = actor ? this.store.getMember(actor) : undefined;
-    if (member && ['closed', 'failed', 'paused'].includes(member.state)) fail('Member execution is closed or paused', 409);
+    if (member?.team_id === run.id && ['closed', 'failed', 'paused'].includes(member.state)) fail('Member execution is closed or paused', 409);
   }
   private access(actor: string, teamId?: string): T.FlowTeamRun {
     if (this.closed) fail('Flow is closed', 409);
@@ -71,11 +71,7 @@ export class FlowController implements FlowService {
   private changed(run: T.FlowTeamRun) { this.store.put('teams', { ...run, version: run.version + 1, updated: Date.now() }); }
   private mutate<R>(actor: string, operationId: string | undefined, kind: string, input: unknown, fn: () => R): R {
     if (this.closed) fail('Flow is closed', 409);
-    return this.store.command(actor, operationId ?? id('operation'), kind, input, () => {
-      const member = this.store.getMember(actor);
-      if (member && ['closed', 'failed', 'paused'].includes(member.state)) fail('Member is closed, failed or paused; its owner must resume or revise its work', 409);
-      return fn();
-    });
+    return this.store.command(actor, operationId ?? id('operation'), kind, input, fn);
   }
   async createTeam(ownerSessionId: string, intentId: string, request: T.FlowTeamCreateRequest, model?: T.FlowModelSelection): Promise<T.FlowTeamSnapshot> {
     const team = this.mutate(ownerSessionId, `intent:${text(intentId, 'intent_id')}`, 'create', { request, model }, () => {
@@ -84,7 +80,7 @@ export class FlowController implements FlowService {
       const objective = text(request.objective, 'objective');
       const run: T.FlowTeamRun = { id: teamId, owner_session_id: ownerSessionId, intent_id: intentId, title: request.title?.trim() || objective.slice(0, 80), objective, workspace: resolve(request.workspace ?? this.config.workspace), preset: request.preset ?? this.config.preset, model: request.model ?? model ?? null, state: 'running', version: 1, root_task_id: taskId, deadline: request.deadline_ms === undefined ? null : now + request.deadline_ms, created: now, updated: now };
       this.store.put('teams', run);
-      this.store.put('tasks', { id: taskId, team_id: teamId, parent_id: null, owner_session_id: ownerSessionId, assignee_session_id: ownerSessionId, title: run.title, objective, criteria: request.criteria ?? [], depends_on: [], paused: false, status: 'OPEN', version: 1, result_id: null, created: now, updated: now });
+      this.store.put('tasks', { id: taskId, team_id: teamId, parent_id: null, owner_session_id: ownerSessionId, assignee_session_id: ownerSessionId, title: run.title, objective, paused: false, status: 'OPEN', version: 1, result_id: null, created: now, updated: now });
       this.store.event(teamId, 'team-created', { task_id: taskId, assignee: ownerSessionId });
       return run;
     });
@@ -128,12 +124,12 @@ export class FlowController implements FlowService {
     const task = this.mutate(actor, operationId, 'task', request, () => {
       const run = this.access(actor, request.team_id); this.assertOpen(run, actor);
       if (request.action === 'update') {
-        if (request.member_id !== undefined || request.parent_task_id !== undefined || request.depends_on !== undefined) fail('Task updates change title, objective and criteria. Assignment and dependencies belong to delegation.');
+        if (request.member_id !== undefined) fail('Task updates change title and objective. Assignment belongs to delegation.');
         const old = this.taskOf(text(request.task_id, 'task_id'));
         if (old.team_id !== run.id || old.owner_session_id !== actor) fail('Only the task owner may update it', 403);
         if (request.version !== old.version || old.status === 'ACCEPTED' || old.status === 'CANCELLED') fail('Task version or state changed', 409);
-        if (this.activities.has(old.assignee_session_id)) fail('Pause the member before changing an active task', 409);
-        const updated: T.FlowTask = { ...old, title: request.title ?? old.title, objective: request.objective === undefined ? old.objective : text(request.objective, 'objective'), criteria: request.criteria ?? old.criteria, status: 'OPEN', version: old.version + 1, result_id: null, updated: Date.now() };
+        if (this.activities.has(old.assignee_session_id) && this.store.getMember(old.assignee_session_id)?.active_task_id === old.id) fail('Pause the task before changing its active work', 409);
+        const updated: T.FlowTask = { ...old, title: request.title ?? old.title, objective: request.objective === undefined ? old.objective : text(request.objective, 'objective'), status: 'OPEN', version: old.version + 1, result_id: null, updated: Date.now() };
         this.store.put('tasks', updated);
         const assignee = this.store.getMember(old.assignee_session_id);
         if (assignee?.state === 'failed') this.store.put('members', { ...assignee, state: 'idle', error: null, updated: Date.now() });
@@ -141,12 +137,10 @@ export class FlowController implements FlowService {
       }
       if (request.action !== 'delegate') fail('Unknown task action');
       const objective = text(request.objective, 'objective'), now = Date.now();
-      const parentId = request.parent_task_id ?? this.store.getMember(actor)?.active_task_id ?? run.root_task_id;
+      const parentId = actor === run.owner_session_id ? run.root_task_id : this.store.getMember(actor)?.active_task_id ?? run.root_task_id;
       const parent = this.taskOf(parentId);
-      if (parent.team_id !== run.id || (actor !== run.owner_session_id && parent.assignee_session_id !== actor)) fail('The parent task does not belong to this actor', 403);
+      if (parent.team_id !== run.id || parent.assignee_session_id !== actor) fail('The parent task does not belong to this actor', 403);
       if (parent.paused || ['ACCEPTED', 'CANCELLED', 'FAILED'].includes(parent.status)) fail('Cannot delegate from a closed parent task', 409);
-      const dependencies = [...new Set(request.depends_on ?? [])];
-      for (const dependency of dependencies) if (this.taskOf(dependency).team_id !== run.id) fail('Dependency belongs to another team', 403);
       let memberId = request.member_id;
       if (memberId) {
         const member = this.member(memberId);
@@ -160,25 +154,34 @@ export class FlowController implements FlowService {
         memberId = id('session');
         this.store.put('members', { id: memberId, team_id: run.id, session_id: memberId, parent_id: actor, name: request.title?.trim() || objective.slice(0, 60), preset: run.preset, state: 'queued', active_task_id: null, error: null, created: now, updated: now });
       }
-      const task: T.FlowTask = { id: id('task'), team_id: run.id, parent_id: parentId, owner_session_id: actor, assignee_session_id: memberId, title: request.title?.trim() || objective.slice(0, 80), objective, criteria: request.criteria ?? [], depends_on: dependencies, paused: false, status: 'OPEN', version: 1, result_id: null, created: now, updated: now };
+      const task: T.FlowTask = { id: id('task'), team_id: run.id, parent_id: parentId, owner_session_id: actor, assignee_session_id: memberId, title: request.title?.trim() || objective.slice(0, 80), objective, paused: false, status: 'OPEN', version: 1, result_id: null, created: now, updated: now };
       this.store.put('tasks', task); this.store.event(run.id, 'task-delegated', { task_id: task.id, owner: actor, assignee: memberId }); this.changed(run); return task;
     });
     this.wake(); return task;
   }
   async result(actor: string, request: T.FlowResultRequest, operationId?: string): Promise<T.FlowResult> {
+    let completesTeam = false;
     const result = this.mutate(actor, operationId, 'result', request, () => {
       const task = this.taskOf(request.task_id), run = this.access(actor, task.team_id); this.assertOpen(run, actor);
       if (task.assignee_session_id !== actor) fail('Only the assignee may submit a result', 403);
       if (task.paused || task.status === 'CANCELLED' || task.status === 'ACCEPTED' || task.status === 'FAILED') fail('Task is closed', 409);
-      const result: T.FlowResult = { id: id('result'), team_id: run.id, task_id: task.id, task_version: task.version, author_session_id: actor, summary: text(request.summary, 'summary'), artifacts: request.artifacts ?? [], outcome: request.outcome ?? 'complete', ready: !this.handles.get(actor)?.running(), created: Date.now() };
-      this.store.put('results', result); this.store.put('tasks', { ...task, status: 'SUBMITTED', result_id: result.id, updated: Date.now() }); this.store.event(run.id, 'result-submitted', { task_id: task.id, result_id: result.id }); this.changed(run); return result;
+      const outcome = request.outcome ?? 'complete';
+      const completesRoot = task.id === run.root_task_id && task.owner_session_id === actor && outcome === 'complete';
+      if (completesRoot && this.store.tasks(run.id).some(child => child.parent_id === task.id && !['ACCEPTED', 'CANCELLED'].includes(child.status))) fail('Review unfinished child tasks before completing the root', 409);
+      const result: T.FlowResult = { id: id('result'), team_id: run.id, task_id: task.id, task_version: task.version, author_session_id: actor, summary: text(request.summary, 'summary'), artifacts: request.artifacts ?? [], outcome, ready: !this.handles.get(actor)?.running(), created: Date.now() };
+      this.store.put('results', result); this.store.put('tasks', { ...task, status: completesRoot ? 'ACCEPTED' : 'SUBMITTED', result_id: result.id, updated: Date.now() });
+      this.store.event(run.id, completesRoot ? 'root-completed' : 'result-submitted', { task_id: task.id, result_id: result.id });
+      this.changed(completesRoot ? { ...run, state: 'completed' } : run); completesTeam = completesRoot; return result;
     });
-    if (result.ready) this.notifyResult(result); return result;
+    if (completesTeam) this.drainTeam(result.team_id);
+    else if (result.ready) this.notifyResult(result);
+    return result;
   }
   async review(actor: string, request: T.FlowReviewRequest, operationId?: string): Promise<T.FlowReview> {
     const review = this.mutate(actor, operationId, 'review', request, () => {
       const result = this.store.getResult(request.result_id) ?? fail('Unknown result', 404), task = this.taskOf(result.task_id), run = this.access(actor, task.team_id); this.assertOpen(run, actor);
       if (task.owner_session_id !== actor) fail('Only the task owner may review its result', 403);
+      if (task.owner_session_id === task.assignee_session_id) fail('Complete your own root with flow_result; review is for delegated results', 409);
       if (task.paused || !result.ready || task.result_id !== result.id || result.task_version !== task.version || task.status !== 'SUBMITTED') fail('Result is not current and ready for review', 409);
       if (request.accepted && result.outcome !== 'complete') fail('A partial or blocked result requires follow-up', 409);
       if (request.accepted && this.store.tasks(run.id).some(child => child.parent_id === task.id && !['ACCEPTED', 'CANCELLED'].includes(child.status))) fail('Review unfinished child tasks before accepting this result', 409);
@@ -186,11 +189,10 @@ export class FlowController implements FlowService {
       this.store.put('reviews', review);
       this.store.put('tasks', { ...task, status: request.accepted ? 'ACCEPTED' : 'OPEN', version: request.accepted ? task.version : task.version + 1, result_id: request.accepted ? result.id : null, objective: request.accepted ? task.objective : `${task.objective}\n\nOwner follow-up: ${review.notes}`, updated: Date.now() });
       this.store.event(run.id, request.accepted ? 'result-accepted' : 'result-rejected', { task_id: task.id, result_id: result.id, review_id: review.id });
-      this.changed(request.accepted && task.id === run.root_task_id ? { ...run, state: 'completed' } : run);
+      this.changed(run);
       return review;
     });
-    if (terminal(this.run(review.team_id).state)) this.drainTeam(review.team_id);
-    else this.wake();
+    this.wake();
     return review;
   }
   async message(actor: string, request: T.FlowMessageRequest, operationId?: string): Promise<T.FlowMessage> {
@@ -379,7 +381,7 @@ export class FlowController implements FlowService {
     const task = this.taskOf(result.task_id), run = this.run(task.team_id);
     if (task.owner_session_id === result.author_session_id) return;
     if (terminal(run.state) || task.result_id !== result.id || task.version !== result.task_version) return;
-    void this.message(result.author_session_id, { team_id: run.id, to: task.owner_session_id, task_id: task.id, mode: 'request', content: `Result ready for review: ${result.id}\nTask: ${task.title} (${task.id})\n${result.summary}\nArtifacts: ${JSON.stringify(result.artifacts)}\nVerify using your normal native tools, then call flow_review. Do not poll for this result.` }, `result-ready:${result.id}`).catch(error => { if (!this.closed) this.ctx.logger.warn(error); });
+    void this.message(result.author_session_id, { team_id: run.id, to: task.owner_session_id, task_id: task.id, mode: 'request', content: `Result ready: ${result.id}\nTask: ${task.title} (${task.id})\n${result.summary}\nArtifacts: ${JSON.stringify(result.artifacts)}\nCheck the existing deliverables against this task, then flow_review this result_id. The result is ready; read additional facts only as needed.` }, `result-ready:${result.id}`).catch(error => { if (!this.closed) this.ctx.logger.warn(error); });
   }
   private async deliver(offered: T.FlowMessage): Promise<void> {
     if (this.closed) return;
@@ -426,18 +428,18 @@ export class FlowController implements FlowService {
         if (this.closed) return;
         if (run.state !== 'running') continue;
         const orderedTasks = this.store.tasks(run.id);
-        for (const [taskIndex, task] of orderedTasks.entries()) {
+        for (const task of orderedTasks) {
+          // A standard Agent may also be another team's member. Every root is
+          // still driven by its existing native conversation, never this pump.
+          if (task.id === run.root_task_id) continue;
           if (this.closed || this.activities.size + this.creating.size >= this.config.maxConcurrentAgents) break;
           if (task.status !== 'OPEN' || task.paused || this.suspensions.has(task.assignee_session_id) || this.activities.has(task.assignee_session_id)) continue;
-          if (task.depends_on.some(dependency => this.taskOf(dependency).status !== 'ACCEPTED')) continue;
           const member = this.store.getMember(task.assignee_session_id);
           // The root belongs to the existing native main Agent. Flow neither
           // creates nor schedules a second Agent for it.
           if (!member) continue;
           if (member.state === 'closed' || member.state === 'failed') continue;
           if (this.taskInputs.get(task.id) === `${task.version}`) continue;
-          const prior = orderedTasks.slice(0, taskIndex).find(other => other.assignee_session_id === member.id && ['OPEN', 'SUBMITTED'].includes(this.taskOf(other.id).status));
-          if (prior) continue;
           try {
             const handle = await this.ensureMember(member.id);
             if (this.closed || this.run(run.id).state !== 'running' || this.suspensions.has(member.id) || this.taskOf(task.id).paused || this.taskOf(task.id).version !== task.version || this.taskOf(task.id).status !== 'OPEN') continue;
@@ -448,7 +450,7 @@ export class FlowController implements FlowService {
             // Resume restores the native Inbox and may already have started it.
             // Observe that input instead of issuing a second task/continue prompt.
             if (alreadyQueued || (priorInput && handle.running())) { this.watch(member.id, handle); continue; }
-            const input = createUserMessage({ source: { kind: 'flow-task', team_id: run.id, task_id: task.id, task_version: task.version }, content: [{ type: 'text', text: `${priorInput ? 'Continue the existing task from your native Session history. Do not replay completed actions.\n' : ''}Task ${task.id} (version ${task.version})\n${task.objective}\nAcceptance criteria: ${JSON.stringify(task.criteria)}\nWorkspace: ${run.workspace}\nYou are a standard Agent with your normal preset/tools. Work directly, or delegate independent subtasks with flow_task when useful. Delegation returns immediately; finish your current work and naturally return while waiting. A meaningful result message will wake you; do not repeatedly poll. Use normal tools to verify child results, then flow_review. Submit the final actual deliverable with flow_result for task ${task.id}; submission does not end the native turn. Finish naturally. Owner: ${task.owner_session_id}.` }] });
+            const input = createUserMessage({ source: { kind: 'flow-task', team_id: run.id, task_id: task.id, task_version: task.version }, content: [{ type: 'text', text: `${priorInput ? 'Continue from your native Session history and completed actions.\n' : ''}Task ${task.id} (version ${task.version}), owner ${task.owner_session_id}\n${task.objective}\nWorkspace: ${run.workspace}\nUse your standard native tools. Business scripts and temporary files follow the task's output-directory restrictions. Delegate independent business work with flow_task when useful; check existing child deliverables and flow_review their results. If waiting is all that remains, return naturally; result messages resume the work. Finish with one concise final reply giving artifact paths, checks and limitations: the completed native return is published for owner review. For incomplete work, explicitly flow_result with partial or blocked. An explicit result needs only a brief final acknowledgement.` }] });
             handle.send(input, handle.running() ? 'steer' : 'followup'); this.watch(member.id, handle);
           } catch (error) { this.failed(member.id, error); }
         }

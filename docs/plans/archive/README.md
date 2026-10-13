@@ -30,3 +30,19 @@
 | [A 股会话诊断与旧修复方案](2026-10-12/ashare-session-efficiency-2026-10-12.md) | 运行证据保留，继续加强守卫/故障状态机的方案由删除重复执行控制替代 |
 
 本轮仅调整文档和入口，未变更代码、测试、宿主配置、Provider 或会话数据。另一任务的 `team-organization-patterns-discussion.md` 不属于本次归档范围。
+
+## 协作交互精简前的归档
+
+2026-10-13 将上一轮[标准 Agent 方案](2026-10-13/native-agent-simplification-plan.md)及[验证](2026-10-13/native-agent-simplification-validation.md)原样保存。确定性启动、统一六类工具和一次根完成声明见[当前方案](../native-agent-simplification-plan.md)，不再执行历史 read/create 或根自验收。
+
+## 验证范围转向确定性机制时的归档
+
+用户随后明确要求排除模型生成随机性，从第一性原理和协议不变量验证机制。严格对照安全中止，以下草稿按原字节归档，里面的进行中计划和内容评判仅表达当时状态，不是继续执行的授权或当前设计标准。
+
+| 材料 | 保留用途 |
+| --- | --- |
+| [严格对照执行方案](2026-10-13/strict-comparison-execution-plan.md) | 当时公共输入、执行顺序与证据保留规则 |
+| [严格对照验证草稿](2026-10-13/strict-comparison-validation-draft.md) | 范围调整前的实施和验证记录 |
+| [严格对照观察草稿](2026-10-13/strict-comparison-observation-draft.md) | 已完成阶段与原始观察，不作为优化优劣排名 |
+
+基线四段与优化普通 Agent 首段自然结束，优化团队首段因范围调整而中止，后两段未启动。原始失败、在途用量未知项与中止记录保留；不存在完整优化配对。当前验证入口为[标准 Agent 机制验证](../native-agent-simplification-validation.md)，归档清单见[日期索引](2026-10-13/README.md)。

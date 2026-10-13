@@ -18,8 +18,8 @@ export interface FlowMember {
 }
 export interface FlowTask {
   id: string; team_id: string; parent_id: string | null; owner_session_id: string;
-  assignee_session_id: string; title: string; objective: string; criteria: string[];
-  depends_on: string[]; paused: boolean; status: FlowTaskState; version: number; result_id: string | null;
+  assignee_session_id: string; title: string; objective: string;
+  paused: boolean; status: FlowTaskState; version: number; result_id: string | null;
   created: number; updated: number;
 }
 export interface FlowResult {
@@ -47,12 +47,12 @@ export interface FlowTeamSnapshot {
 }
 export interface FlowTeamCreateRequest {
   objective: string; title?: string; workspace?: string; preset?: string;
-  model?: FlowModelSelection; criteria?: string[]; deadline_ms?: number;
+  model?: FlowModelSelection; deadline_ms?: number;
 }
 export interface FlowTaskRequest {
   action: 'delegate' | 'update'; team_id?: string; task_id?: string; version?: number;
-  title?: string; objective?: string; criteria?: string[]; depends_on?: string[];
-  member_id?: string; parent_task_id?: string;
+  title?: string; objective?: string;
+  member_id?: string;
 }
 export interface FlowResultRequest {
   task_id: string; summary: string; artifacts?: string[]; outcome?: 'complete' | 'partial' | 'blocked';

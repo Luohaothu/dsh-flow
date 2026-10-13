@@ -8,7 +8,7 @@ Flow 的最小执行单元是标准 DSH Agent。DSH 负责 preset、工具与插
 - Member：一个标准 Agent 和原生 Session 的映射。成员身份就是 Session 身份；任务分工不裁剪工具权限。
 - Task：工作说明、委派者、执行者、依赖和版本。任务修改使先前版本的交付不能完成新任务。
 - Result：执行者提交的具体结果，包含摘要、产物引用、任务版本和 complete/partial/blocked。
-- Review：委派者对当前具体 Result 的接受或退回决定。检查通过原生工具完成；直接工作沿用原生交付。
+- Review：委派者对当前具体子 Result 的接受或退回决定。检查通过原生工具完成；主会话本人完整根交付以一次 Result 声明完成，不另建自验收。
 - Message：有稳定身份的成员消息。request 请求继续工作，notice 仅通知；实际进入模型必须有原生收据。
 
 ## 六类协作接口

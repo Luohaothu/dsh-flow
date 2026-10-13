@@ -48,8 +48,6 @@ function TaskDetails({team, task}: {team: FlowTeamSnapshot; task: FlowTask}) {
     <p className="flow-prose">{task.objective}</p>
     <dl className="flow-facts"><div><dt>负责</dt><dd>{person(team, task.owner_session_id)}</dd></div><div><dt>执行</dt><dd>{person(team, task.assignee_session_id)}</dd></div><div><dt>版本</dt><dd>{task.version}</dd></div></dl>
     {task.parent_id && <p>上级任务 · {team.tasks.find(parent => parent.id === task.parent_id)?.title ?? task.parent_id}</p>}
-    {task.depends_on.length > 0 && <p>依赖 · {task.depends_on.map(id => team.tasks.find(dependency => dependency.id === id)?.title ?? id).join('、')}</p>}
-    {task.criteria.length > 0 && <><h4>完成条件</h4><ul>{task.criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul></>}
     <h4>结果与接受记录</h4>
     {!results.length && <p className="flow-muted">尚未提交结果。</p>}
     {results.map(result => <article className="flow-result" key={result.id} data-result-id={result.id}>

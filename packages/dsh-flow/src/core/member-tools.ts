@@ -21,7 +21,7 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
   }
   ctx.tools.register(strictTool(defineTool({
     name: 'flow_task',
-    description: 'Delegate a self-contained task to a new or existing member, or update a task you own. Delegation creates work and returns its task and assignee identity; it does not wait for completion. Updates require task_id and its current version. Native tools remain available throughout.',
+    description: 'Delegate independent work with available inputs to a new or existing Flow member, or update a task you own. The current Agent task determines the parent. Returns immediately with task and assignee_session_id; communicate through flow_message. Updates require task_id and its current version; revising queued work does not pause unrelated active work. Native tools remain available throughout.',
     parameters: {
       action: { type: 'string', enum: ['delegate', 'update'], required: true },
       team_id: { type: 'string', description: 'Omit to use this member’s team.' },
@@ -29,17 +29,17 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
       version: { type: 'integer', description: 'Current task version required for update.' },
       title: { type: 'string', description: 'Short task name.' },
       objective: { type: 'string', description: 'Self-contained instructions with necessary context, constraints and desired output; required for delegation.' },
-      criteria: { ...strings, description: 'Concrete criteria used by the task owner to review the result.' },
-      depends_on: { ...strings, description: 'Task IDs that must be accepted before this task is dispatched.' },
       member_id: { type: 'string', description: 'Existing member session ID; omit to create a standard native Agent.' },
-      parent_task_id: { type: 'string', description: 'Parent task; omit to use the member’s active task.' },
     },
     output,
-    async execute(args, exec) { return JSON.stringify(await controller.task(actor(exec), args, exec.callId)); },
+    async execute(args, exec) {
+      const task = await controller.task(actor(exec), args, exec.callId);
+      return JSON.stringify({ task_id: task.id, team_id: task.team_id, assignee_session_id: task.assignee_session_id, version: task.version, status: task.status });
+    },
   })));
   ctx.tools.register(strictTool(defineTool({
     name: 'flow_result',
-    description: 'Submit your result for the specified assigned task. Describe what was achieved and provide artifact locations. Submission does not end this native turn; finish verification before submitting. The task owner reviews the immutable result.',
+    description: 'Record a structured result for your assigned task, with concise verification, artifact references and limitations. A member’s normal completed final reply is already published for its owner to review; use this tool for an explicit result, especially partial or blocked work. The main owner’s complete root result finishes the team after its child tasks are accepted or cancelled. Submission does not end the native turn.',
     parameters: {
       task_id: { type: 'string', required: true },
       summary: { type: 'string', required: true, description: 'What was achieved, verification performed, and material limitations.' },
@@ -47,11 +47,14 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
       outcome: { type: 'string', enum: ['complete', 'partial', 'blocked'], description: 'Defaults to complete. Partial or blocked requires the owner’s follow-up.' },
     },
     output,
-    async execute(args, exec) { return JSON.stringify(await controller.result(actor(exec), args, exec.callId)); },
+    async execute(args, exec) {
+      const result = await controller.result(actor(exec), args, exec.callId);
+      return JSON.stringify({ result_id: result.id, task_id: result.task_id, task_version: result.task_version, outcome: result.outcome, ready: result.ready });
+    },
   })));
   ctx.tools.register(strictTool(defineTool({
     name: 'flow_review',
-    description: 'Review a result for a task you own. Use ordinary native tools to verify it, then accept or reject with a reason and evidence references. Acceptance is a business decision, never inferred from an idle Agent or tool count.',
+    description: 'Accept or reject a current result delegated by you. Check the existing artifacts and receipts against the task requirements with native tools; collect additional evidence when something is missing or contradictory. This is for delegated results, not reviewing your own root completion.',
     parameters: {
       result_id: { type: 'string', required: true },
       accepted: { type: 'boolean', required: true },
@@ -59,11 +62,14 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
       evidence: { ...strings, description: 'Verification details or source/artifact references supporting the decision.' },
     },
     output,
-    async execute(args, exec) { return JSON.stringify(await controller.review(actor(exec), args, exec.callId)); },
+    async execute(args, exec) {
+      const review = await controller.review(actor(exec), args, exec.callId);
+      return JSON.stringify({ review_id: review.id, result_id: review.result_id, task_id: review.task_id, accepted: review.accepted });
+    },
   })));
   ctx.tools.register(strictTool(defineTool({
     name: 'flow_message',
-    description: 'Send another participant context or a request. Request wakes an idle Agent or steers an active one; notice adds context without waking it. Messages do not replace task delegation, result submission or review.',
+    description: 'Send context or a request to a Flow member’s assignee_session_id, or the team owner session ID. Request wakes an idle Agent or steers an active one; notice adds context without waking it. Native continuable subagent IDs belong to the native messaging tools instead.',
     parameters: {
       team_id: { type: 'string', description: 'Omit to use this member’s team.' },
       to: { type: 'string', required: true, description: 'Recipient member session ID or the team owner session ID.' },
@@ -72,7 +78,10 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
       mode: { type: 'string', enum: ['request', 'notice'], description: 'Defaults to request.' },
     },
     output,
-    async execute(args, exec) { return JSON.stringify(await controller.message(actor(exec), args, exec.callId)); },
+    async execute(args, exec) {
+      const message = await controller.message(actor(exec), args, exec.callId);
+      return JSON.stringify({ message_id: message.id, to_session_id: message.to_session_id, state: message.state, mode: message.mode });
+    },
   })));
   ctx.tools.register(strictTool(defineTool({
     name: 'flow_read',
