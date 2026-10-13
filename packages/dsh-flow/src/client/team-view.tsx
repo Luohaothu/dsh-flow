@@ -7,7 +7,7 @@ import type { TeamObserver } from './observer.ts';
 import type { ReaderSource } from './reader-source.ts';
 import type { ReaderProps } from './reader.tsx';
 import { ProviderPanels } from './surfaces.tsx';
-import { agentEmoji, agentNodes, createLocalView, ENDED, NODE_HEIGHT, NODE_WIDTH, STATE_LABELS, topologyLayout, treeRows, visibleRows } from './tree.ts';
+import { agentEmoji, ROLE_LABELS, agentNodes, createLocalView, ENDED, NODE_HEIGHT, NODE_WIDTH, STATE_LABELS, topologyLayout, treeRows, visibleRows } from './tree.ts';
 import type { AgentNode, LocalView, TreeRow } from './tree.ts';
 
 export interface TeamUi {
@@ -59,7 +59,7 @@ function AgentTree({rows,local,ui,change,select,close}: {rows:readonly TreeRow[]
       if(event.key==='Enter'||event.key===' '){event.preventDefault();activate(row.agent);}
     }}>
       <TreeToggle row={row} local={local} change={change}/>
-      <Button size="sm" className="flow-tree-open" aria-label={`${select?'查看':'打开'} ${row.agent.name} ${select?'详情':'对话'}`} onClick={()=>activate(row.agent)}><span className="flow-tree-copy"><span className="flow-tree-name">{row.agent.name}<span className="flow-tree-role">{row.agent.member?'成员':'主会话'}</span></span><Status agent={row.agent}/><span className="flow-tree-task">{row.agent.task}</span>{row.incomplete&&<small>关系待补全</small>}</span></Button>
+      <Button size="sm" className="flow-tree-open" aria-label={`${select?'查看':'打开'} ${row.agent.name} ${select?'详情':'对话'}`} onClick={()=>activate(row.agent)}><span className="flow-tree-copy"><span className="flow-tree-name">{row.agent.name}<span className="flow-tree-role" title={ROLE_LABELS[row.agent.role]}>{ROLE_LABELS[row.agent.role]}</span></span><Status agent={row.agent}/><span className="flow-tree-task">{row.agent.task}</span>{row.incomplete&&<small>关系待补全</small>}</span></Button>
       <Tooltip label="在侧边栏打开" side="bottom" align="end"><Button size="sm" className="flow-tree-aside" aria-label={`在侧边栏打开 ${row.agent.name}`} onClick={()=>{openAside(ui,row.agent);close?.();}}><IconChevronRightOutlineRegular size={14}/></Button></Tooltip>
     </div>)}
   </div>;
@@ -123,7 +123,16 @@ function Information({agent,team,select}: {agent:AgentNode;team:FlowTeamSnapshot
     <h3>{agent.name}</h3><Status agent={agent}/>{agent.member?.error&&<p className="flow-error">{agent.member.error}</p>}
     <p className="flow-id">{agent.id}</p><Button size="sm" onClick={()=>void writeClipboard(agent.id).then(ok=>setCopied(ok?'ID 已复制':'未能复制 ID'))}>复制 ID</Button>{copied&&<span role="status">{copied}</span>}
     <h4>关系</h4><p>父会话：{parent?<Button size="sm" onClick={()=>select(parent.id)}>{parent.name}</Button>:agent.parent_id?'关系待补全':'无（主会话）'}</p>{children.map(child=><Button size="sm" key={child.id} onClick={()=>select(child.id)}>{child.name}</Button>)}
-    <p>创建：{when(agent.created)}</p><p>原生 preset：{agent.member?.preset??team.run.preset??'跟随宿主'}</p>
+    <p>创建：{when(agent.created)}</p>
+    <h4>角色与配置</h4><p>角色：{ROLE_LABELS[agent.role]}</p>
+    <p className="flow-prose">{agent.member?.instructions??(agent.member?'执行受派任务，交付结果；按需要协调子任务。':'负责分工、验收、汇总和最终交付。')}</p>
+    <details className="flow-profile"><summary>Agent 配置</summary>
+      <p>执行基础：标准 DSH Agent</p>
+      <p>创建 preset：{agent.member?(agent.member.preset??'继承原生配置'):'沿用主会话配置'}</p>
+      <p>角色 skills：{agent.member?(agent.member.skills?.join('、')||'未额外指定'):'沿用主会话技能'}</p>
+      <p>创建模型配置：{agent.member?JSON.stringify(agent.member.model??team.run.model??'跟随宿主'):'沿用主会话配置'}</p>
+      <p className="flow-muted">这里记录创建配置；实际模型、工具及后续设置以原生会话为准。</p>
+    </details>
     {agent.state==='closed'&&<p>运行资源已释放，历史记录仍可查看。</p>}
     {!agent.member&&<><h4>团队目标</h4><p className="flow-prose">{team.run.objective}</p><p>工作目录：{team.run.workspace}</p>{team.run.deadline&&<p>截止：{when(team.run.deadline)}</p>}<p>成员模型响应 {count(team.usage.responses)} 次 · 成员 Token {count(team.usage.total_tokens)}</p></>}
     <h4>任务与结果</h4><nav className="flow-task-list" aria-label="任务列表">{tasks.map(item=><Button size="sm" key={item.id} aria-pressed={task?.id===item.id} onClick={()=>setTaskId(item.id)}>{item.title} · {TASK_STATES[item.status]}</Button>)}</nav>
@@ -158,7 +167,7 @@ function Graph({rows,local,select,change}: {rows:readonly TreeRow[];local:LocalV
       <div className="flow-graph-world" style={{width,height,transform:`translate(${local.x}px,${local.y}px) scale(${local.zoom})`}}>
         <svg width={width} height={height} className="flow-lines" aria-label="智能体派生关系">{rows.map(row=>{const parentId=parents.get(row.agent.id),parent=parentId?positions.get(parentId):undefined,here=positions.get(row.agent.id)!;return parent?<path key={row.agent.id} d={`M${parent.x+NODE_WIDTH/2} ${parent.y+NODE_HEIGHT} V${(parent.y+NODE_HEIGHT+here.y)/2} H${here.x+NODE_WIDTH/2} V${here.y}`} fill="none" stroke="currentColor"/>:null;})}</svg>
         {rows.map(row=>{const position=positions.get(row.agent.id)!;return <div key={row.agent.id} className="flow-node-group" style={{left:position.x,top:position.y}}>
-          <button type="button" className="flow-node" data-agent-id={row.agent.id} data-kind={row.agent.member?'member':'main'} aria-pressed={local.selected===row.agent.id} aria-label={`${row.agent.name}，${STATE_LABELS[row.agent.state]}`} title={`${row.agent.name}\n${row.agent.task}`} onClick={()=>select(row.agent.id)}><span className="flow-node-meta"><span>{row.agent.member?'标准 Agent':'主会话'}</span><Status agent={row.agent}/></span><span className="flow-node-person"><span className="flow-avatar" aria-hidden="true">{agentEmoji(row.agent)}</span><strong>{row.agent.name}</strong></span><small className="flow-node-task">{row.agent.task}</small><small>{row.incomplete?'关系待补全':`创建 ${when(row.agent.created)}`}</small></button>
+          <button type="button" className="flow-node" data-agent-id={row.agent.id} data-kind={row.agent.member?'member':'main'} data-role={row.agent.role} aria-pressed={local.selected===row.agent.id} aria-label={`${row.agent.name}，${ROLE_LABELS[row.agent.role]}，${STATE_LABELS[row.agent.state]}`} title={`${row.agent.name}\n${ROLE_LABELS[row.agent.role]}\n${row.agent.task}`} onClick={()=>select(row.agent.id)}><span className="flow-node-meta"><span className="flow-node-role" title={ROLE_LABELS[row.agent.role]}>{ROLE_LABELS[row.agent.role]}</span><Status agent={row.agent}/></span><span className="flow-node-person"><span className="flow-avatar" aria-hidden="true">{agentEmoji(row.agent)}</span><strong>{row.agent.name}</strong></span><small className="flow-node-task">{row.agent.task}</small><small>{row.incomplete?'关系待补全':`创建 ${when(row.agent.created)}`}</small></button>
           {row.children>0&&<div className="flow-node-toggle"><TreeToggle row={row} local={local} change={change}/></div>}
         </div>;})}
       </div>

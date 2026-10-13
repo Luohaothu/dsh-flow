@@ -1,25 +1,27 @@
 /** Presentation of recorded native Session relationships; no scheduling state. */
-import type { FlowMember, FlowMemberState, FlowTeamSnapshot, FlowTeamState } from '../types.ts';
+import type { FlowAgentRole, FlowMember, FlowMemberState, FlowTeamSnapshot, FlowTeamState } from '../types.ts';
 
 export interface AgentNode {
   id: string;
   parent_id: string | null;
   name: string;
+  role: FlowAgentRole;
   state: FlowMemberState | FlowTeamState;
   member: FlowMember | null;
   task: string;
   created: number;
 }
 export interface TreeRow { agent: AgentNode; depth: number; children: number; incomplete: boolean }
+export const ROLE_LABELS: Record<FlowAgentRole, string> = {orchestrator:'协调者',worker:'执行者'};
 export const NODE_WIDTH = 220, NODE_HEIGHT = 124;
 export const STATE_LABELS: Record<AgentNode['state'], string> = {
   queued:'等待执行', idle:'空闲', running:'执行中', paused:'已暂停', closed:'已结束',
   completed:'已完成', failed:'失败', cancelled:'已取消',
 };
 export const ENDED = new Set<AgentNode['state']>(['closed', 'completed', 'failed', 'cancelled']);
-/** Stable decoration of a Session; it does not assign an execution role. */
+/** Role presentation only; workers retain stable individual decoration. */
 export function agentEmoji(agent: AgentNode): string {
-  if (!agent.member) return '🧭';
+  if (agent.role === 'orchestrator') return '🧭';
   const choices=['🛠️','🐝','🐻','🐱','🐰','🐨'];
   let seed=2166136261;
   for (const char of agent.id) seed=Math.imul(seed^char.charCodeAt(0),16777619);
@@ -29,13 +31,13 @@ export function agentEmoji(agent: AgentNode): string {
 /** The main node is the existing owner Session, never an extra member. */
 export function agentNodes(team: FlowTeamSnapshot): AgentNode[] {
   const root = team.tasks.find(task => task.id === team.run.root_task_id);
-  const nodes: AgentNode[] = [{id:team.run.owner_session_id, parent_id:null, name:'主会话', state:team.run.state,
+  const nodes: AgentNode[] = [{id:team.run.owner_session_id, parent_id:null, name:'主会话', role:'orchestrator', state:team.run.state,
     member:null, task:root?.title ?? team.run.title, created:team.run.created}];
   const seen = new Set(nodes.map(node => node.id));
   for (const member of team.members) {
     if (seen.has(member.session_id)) continue;
     seen.add(member.session_id);
-    nodes.push({id:member.session_id, parent_id:member.parent_id, name:member.name, state:member.state, member,
+    nodes.push({id:member.session_id, parent_id:member.parent_id, name:member.name, role:member.role ?? 'worker', state:member.state, member,
       task:team.tasks.find(task => task.id === member.active_task_id)?.title ?? '暂无当前任务', created:member.created});
   }
   return nodes;

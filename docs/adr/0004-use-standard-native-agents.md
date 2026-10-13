@@ -6,7 +6,9 @@ status: accepted
 
 Flow 组合完整的 DSH 标准 preset，通过公开 create/resume、Inbox 和取消接口驱动持有的 AgentHandle。原生工具、模型、压缩、权限、审批、后台作业与会话持久化由宿主处理。
 
-Flow 保存团队归属、成员映射、版本化任务、具体结果、接受记录和消息，提供 task/result/review/message/read/control。任务角色不裁剪工具；目录分工不构成 Flow 文件锁；业务工具不经过 Flow 准入、预算、租约或效果账本。
+Flow 保存团队归属、成员角色配置、版本化任务、具体结果、接受记录和消息，提供 task/result/review/message/read/control。任务角色不裁剪工具；目录分工不构成 Flow 文件锁；业务工具不经过 Flow 准入、预算、租约或效果账本。
+
+2026-10-13 澄清：统一执行实现不意味着取消角色。协调者和执行者由标准 Agent 的派发参数、原生 preset、系统提示与 skills 实现；角色范围遵循 [ADR 0005](0005-use-orchestrator-and-worker-roles.md)，分配等专业职责通过配置表达。角色按需配置，界面必须呈现职责；角色名称不参与权限或状态机分支。固定管理环节的移除不排斥按任务需要配置职责。
 
 根任务由已有主 Agent 执行，创建团队不自动复制一个承担完整目标的后台成员。只有实际委派才创建新成员；子交付由委派者验收，主 Agent 用一次明确的 complete Result 完成已经检查的根交付，必要子任务须先接受，不另记录本人自验收。终态只清理 Flow 创建的成员，不关闭主 Agent。
 

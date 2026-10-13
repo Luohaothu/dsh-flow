@@ -9,7 +9,7 @@ export { Config } from './config.ts';
 export type { Config as ConfigInput, ResolvedConfig } from './config.ts';
 export type { FlowService } from './service.ts';
 export const name = 'dsh-flow';
-export const inject = ['tools', 'agents', 'agentPresets', 'agentDefaultModel', 'sessionProjections', 'sessions', 'sessionPersistence'] as const;
+export const inject = ['tools', 'agents', 'agentPresets', 'agentDefaultModel', 'sessionProjections', 'sessions', 'sessionPersistence', 'systemPrompt', 'skills'] as const;
 export async function apply(ctx: Context, input: ConfigInput): Promise<void> {
   const runtime = new FlowController(ctx, resolveConfig(input));
   ctx.effect(() => () => runtime.dispose(), 'dsh-flow: collaboration owner');

@@ -37,7 +37,7 @@ export function apply(ctx: Context): void {
     text:({agent})=>{
       const runs=agent?ctx.flow.teamRuns(agent.session.id).filter(run=>run.state==='running'||run.state==='paused'):[];
       if(!runs.length)return '';
-      return `当前团队与根任务：${JSON.stringify(runs.map(run=>({team_id:run.id,root_task_id:run.root_task_id,state:run.state})))}。根任务由你执行。\nflow_task 委派互补工作；用已有产物核验并 flow_review 接受成员交付。你完成最终检查后，用 flow_result 的 complete 声明完成根任务，随后正常向用户交付。`;
+      return `你在当前团队承担协调者（Orchestrator）角色，负责分工、验收、汇总和最终交付；使用完整的标准 DSH Agent 能力。当前团队与根任务：${JSON.stringify(runs.map(run=>({team_id:run.id,root_task_id:run.root_task_id,state:run.state})))}。根任务由你执行。\nflow_task 委派互补工作，并用 profile 声明所需角色、职责及可选原生 preset、模型和 skills；按需创建角色，简单任务可直接完成。用已有产物核验并 flow_review 接受成员交付。你完成最终检查后，用 flow_result 的 complete 声明完成根任务，随后正常向用户交付。`;
     },
   });
   const skillBody=readFileSync(new URL('../skills/agent-team/SKILL.md',import.meta.url),'utf8').replace(/^---\n[\s\S]*?\n---\n/,'');

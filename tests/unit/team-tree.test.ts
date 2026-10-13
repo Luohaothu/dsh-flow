@@ -5,12 +5,16 @@ import {agentNodes,treeRows,visibleRows,topologyLayout,NODE_WIDTH} from '../../p
 import type {AgentNode} from '../../packages/dsh-flow/src/client/tree.ts';
 import type {FlowTeamSnapshot} from '../../packages/dsh-flow/src/types.ts';
 function node(id:string,parent_id:string|null,state:AgentNode['state']='idle'):AgentNode {
-  return {id,parent_id,name:id,state,task:'task',created:0,member:id==='root'?null:{id,session_id:id,parent_id,state:'idle',team_id:'team',name:id,preset:null,active_task_id:null,error:null,created:0,updated:0}};
+  return {id,parent_id,name:id,role:id==='root'?'orchestrator':'worker',state,task:'task',created:0,member:id==='root'?null:{id,session_id:id,parent_id,state:'idle',team_id:'team',name:id,preset:null,active_task_id:null,error:null,created:0,updated:0}};
 }
 test('owner projection adds only the existing Session and uses real member parent Session ids',()=>{
   const team:FlowTeamSnapshot={run:{id:'team',owner_session_id:'root',root_task_id:'task-root',title:'Team',objective:'Goal',intent_id:'intent',workspace:'/tmp',preset:null,model:null,state:'running',version:1,deadline:null,created:0,updated:0},members:[node('child','root').member!,node('grandchild','child').member!],tasks:[],results:[],reviews:[],messages:[],events:[],usage:{responses:null,input_tokens:null,output_tokens:null,cache_read_tokens:null,total_tokens:null}};
   const before=JSON.stringify(team),nodes=agentNodes(team);
   assert.equal(nodes[0]?.id,'root');assert.equal(nodes[0]?.member,null);
+  assert.equal(nodes[0]?.role,'orchestrator');assert.equal(nodes[1]?.role,'worker');
+  team.members[0]!.role='orchestrator';
+  assert.equal(agentNodes(team)[1]?.role,'orchestrator');
+  delete team.members[0]!.role;
   assert.deepEqual(treeRows(nodes).map(row=>[row.agent.id,row.depth]),[['root',0],['child',1],['grandchild',2]]);
   assert.equal(JSON.stringify(team),before);
 });

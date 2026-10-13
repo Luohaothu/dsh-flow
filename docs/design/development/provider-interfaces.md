@@ -4,7 +4,7 @@
 
 [提供方基线清单](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/development/provider-baseline.json)列出依赖版本、补丁 SHA-256、包声明和公开入口的预期摘要。该清单用于检查实际安装字节，不推断 npm 发行包对应的上游提交。
 
-使用该 rc2 组合与公开的标准 Agent/preset 接口。成员采用正常 preset，原生日志和工具权限由宿主维护。已有接口扩展支持界面观察与输入路由；Flow 不以专用 preset 标记阻止普通原生执行。
+使用该 rc2 组合与公开的标准 Agent/preset 接口。各角色采用正常 preset，职责通过公开 systemPrompt.section 组合，技能通过 skills.get/renderSkillContent 加载；原生日志和工具权限由宿主维护。已有接口扩展支持界面观察与输入路由；Flow 不以专用 preset 标记阻止普通原生执行。
 
 ## 接入位置
 

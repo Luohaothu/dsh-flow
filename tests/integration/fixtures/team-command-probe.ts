@@ -8,9 +8,10 @@ import type { Context } from '@deepseek-ai/cordis';
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk, type ContentBlock } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-api-session-controller';
+import type {} from '@deepseek-ai/dsh-skill';
 import type {} from '../../../packages/dsh-flow/src/service.ts';
 
-export const inject = ['flow', 'llm', 'agents', 'sessionController', 'attachments'];
+export const inject = ['flow', 'llm', 'agents', 'sessionController', 'attachments', 'skills'];
 interface Config { root: string; phase: string }
 interface Control { owner?: string; ordinary?: string; release?: boolean }
 function readControl(config: Config): Control {
@@ -22,6 +23,7 @@ function save(path: string, value: unknown) {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  ctx.skills.register({name:'role-probe',description:'Role composition verification',source:'runtime',content:'ROLE-SKILL-LOADED: preserve the task artifact exactly.'});
   const requests: unknown[] = [];
   class Scripted extends LlmAdapter {
     override async listModels(provider: string) { return [{ provider, id: 'scripted', name: 'Isolated scripted command probe' }]; }
@@ -54,7 +56,9 @@ export function apply(ctx: Context, config: Config): void {
             const deadline = Date.now() + 15_000;
             while (!readControl(config).release && Date.now() < deadline) { options.signal?.throwIfAborted(); await delay(20); }
             assert.equal(readControl(config).release, true, 'the test observed automatic root creation before delegation');
+            assert.match(system, /协调者（Orchestrator）/u);
             call = { name: 'flow_task', args: { action: 'delegate', team_id: teamId,
+              profile: {name:'产物执行',role:'worker',instructions:'ROLE-PROFILE-APPLIED: deliver the requested artifact.',skills:['role-probe'],model:{provider:'team-command-probe',model:'scripted'}},
               objective: 'PROBE-MEMBER: Write command-member.txt containing exactly NATIVE-COMMAND-ARTIFACT and a newline. Return naturally with the path; do not call flow_result.' } };
           } else {
             const resultId = /Result ready: (\S+)/u.exec(input)?.[1];
@@ -69,6 +73,11 @@ export function apply(ctx: Context, config: Config): void {
           }
         } else {
           assert.match(input, /PROBE-MEMBER/u);
+          const system=options.messages.filter(message=>message.role==='system').map(textOf).join('\n');
+          assert.match(system,/团队角色：执行者/u);
+          assert.match(system,/ROLE-PROFILE-APPLIED/u);
+          assert.match(system,/ROLE-SKILL-LOADED/u);
+          for(const name of ['read','write','bash','flow_task','flow_review']) assert.ok(options.tools?.some(tool=>tool.name===name),`${name} remains available to the execution role`);
           if (!called('write')) call = { name: 'write', args: { file_path: 'command-member.txt', content: 'NATIVE-COMMAND-ARTIFACT\n' } };
           text = 'MEMBER-DONE: command-member.txt contains NATIVE-COMMAND-ARTIFACT; the native write succeeded.';
         }

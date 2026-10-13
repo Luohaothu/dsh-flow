@@ -6,15 +6,14 @@ import type {} from '@deepseek-ai/dsh-agent-default-model';
 import { ReasoningEffortId, type UserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-session-persistence';
-import type { FlowModelSelection } from '../types.ts';
+import type { FlowAgentProfile } from '../types.ts';
 import { mainModel } from '../main-model.ts';
+import { composeMemberProfile } from './profile.ts';
 
-export interface NativeMemberOptions {
+export interface NativeMemberOptions extends FlowAgentProfile {
   readonly sessionId: string;
   readonly parentSessionId?: string;
   readonly workspace: string;
-  readonly preset?: string;
-  readonly model?: FlowModelSelection;
   /** Creation/resume cancellation only; the returned member owns its lifetime. */
   readonly signal?: AbortSignal;
   readonly setup: (agentCtx: Context, agent: Agent) => void | Promise<void>;
@@ -89,6 +88,9 @@ export async function createNativeMember(ctx: Context, options: NativeMemberOpti
       } else {
         await presets.mount(agentCtx, freshPreset);
       }
+      // The factory's setup Context exposes its own declared services. Borrow
+      // our injected registry and resolve explicitly in the new Agent's scope.
+      await composeMemberProfile(agentCtx, agent, options, ctx.skills, options.signal);
       await options.setup(agentCtx, agent);
     };
     handle = stored

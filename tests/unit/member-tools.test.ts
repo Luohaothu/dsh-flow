@@ -54,12 +54,22 @@ test('strict member inputs reject unknown fields, nulls and invalid enums before
     ['flow_task', { action: 'delegate', objective: 'x', actor_session_id: 'forged' }],
     ['flow_task', { action: 'allocate', objective: 'x' }],
     ['flow_task', { action: 'delegate', objective: 'x', criteria: ['Invented extra acceptance gate'] }],
+    ['flow_task', { action: 'delegate', objective: 'x', profile: { capabilities: ['read'] } }],
+    ['flow_task', { action: 'delegate', objective: 'x', profile: { role: 7 } }],
+    ['flow_task', { action: 'delegate', objective: 'x', profile: { role: 'allocator' } }],
     ['flow_message', { to: 'someone', content: 'x', task_id: null }],
     ['flow_review', { result_id: 'r', accepted: 'true', notes: 'x' }],
     ['flow_read', { what: 'transactions' }],
     ['flow_control', { target: 'agent', id: 'x', action: 'resume' }],
   ] as const) await assert.rejects(async () => execute(name, args));
   assert.equal(calls.length, 0);
+});
+
+test('one delegation carries a role profile through the public tool interface', async () => {
+  const {execute,calls}=fixture();
+  const profile={name:'资源统筹',role:'orchestrator',instructions:'统筹工作',preset:'standard',skills:['analysis'],model:{provider:'configured',model:'local'}};
+  await execute('flow_task',{action:'delegate',objective:'安排独立工作',profile});
+  assert.deepEqual(calls[0]?.[2],{action:'delegate',objective:'安排独立工作',profile});
 });
 
 for (const [field, value] of [

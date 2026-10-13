@@ -116,6 +116,7 @@ function TeamHeaderEntry(props:PropsRuntime<'conversation.session.header.actions
   const ui=value?props.ownerUi(SessionId(value.owner_session_id)):props.ui;
   return createElement('span',{className:'flow-agent-session-header'},
     value?createElement(Button,{size:'sm',onClick:()=>ui.main()},'主会话'):null,
+    value?createElement(Tag,null,value.role==='orchestrator'?'协调者':'执行者'):null,
     value?.state==='closed'?createElement(Tag,null,'已结束'):null,
     createElement(TeamHeader,{ui:{...ui,
       main:()=>{if(!value)props.selectView('chat');ui.main();},

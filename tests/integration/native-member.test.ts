@@ -11,7 +11,7 @@ test('native members inherit the standard preset and native tools, retain their 
   const layout = createRunLayout(join(PROJECT_ROOT, '.artifacts/native-member'), `preset-${Date.now()}`);
   const plugin = join(layout.root, 'probe.mjs');
   await build({ entryPoints: [join(PROJECT_ROOT, 'tests/integration/fixtures/native-member-probe.ts')], outfile: plugin,
-    bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
+    bundle: true, platform: 'node', format: 'esm', external: ['@deepseek-ai/*', 'node:*'], logLevel: 'silent' });
   const profile = 'native-member';
   ensureProfile(layout.home, profile, { bundles: [...WEB_PROFILE_BUNDLES] });
   const env = buildHostEnv({ home: layout.home, tmpdir: layout.tmp, dataDir: layout.data, workspace: layout.workspace });

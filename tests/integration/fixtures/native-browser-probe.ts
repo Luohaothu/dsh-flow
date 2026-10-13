@@ -11,7 +11,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createNativeMember } from '../../../packages/dsh-flow/src/core/runtime.ts';
 
-export const inject = ['agents', 'agentPresets', 'agentDefaultModel', 'llm', 'tools', 'sessions', 'sessionPersistence', 'sessionProjections'];
+export const inject = ['agents', 'agentPresets', 'agentDefaultModel', 'llm', 'tools', 'sessions', 'sessionPersistence', 'sessionProjections', 'systemPrompt', 'skills'];
 interface Config { workspace: string; report: string; evidence: string; origin: string }
 class BrowserProbeAdapter extends LlmAdapter {
   calls = 0;

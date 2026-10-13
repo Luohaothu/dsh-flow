@@ -30,6 +30,14 @@ export function registerMemberTools(ctx: Context, controller: FlowService, membe
       title: { type: 'string', description: 'Short task name.' },
       objective: { type: 'string', description: 'Self-contained instructions with necessary context, constraints and desired output; required for delegation.' },
       member_id: { type: 'string', description: 'Existing member session ID; omit to create a standard native Agent.' },
+      profile: { type: 'object', description: 'Optional role configuration for a NEW member only. All roles use the same standard DSH Agent. Omitted settings inherit normal native/team defaults; reuse retains the member profile.', additionalProperties: false, properties: {
+        name: { type: 'string', description: 'Stable member name, independent of the task title.' },
+        role: { type: 'string', enum: ['orchestrator', 'worker'], description: 'orchestrator coordinates planning, resource selection, delegation and acceptance; worker executes tasks. Defaults to worker. Both use complete standard Agents. Specialization belongs in name, instructions and skills.' },
+        instructions: { type: 'string', description: 'Standing role responsibilities composed into the native system prompt.' },
+        preset: { type: 'string', description: 'An installed native DSH preset; omit to inherit.' },
+        skills: { ...strings, description: 'Installed model-invocable native skill names to load as role instructions.' },
+        model: { type: 'object', additionalProperties: false, properties: { provider: { type: 'string' }, model: { type: 'string' }, reasoningEffort: { type: 'string' } } },
+      } },
     },
     output,
     async execute(args, exec) {

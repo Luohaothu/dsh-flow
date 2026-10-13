@@ -12,6 +12,7 @@ import { fail, messageOf } from '../errors.ts';
 import { FlowStore } from './store.ts';
 import { createNativeMember, type NativeMember, type NativeMemberOptions } from './runtime.ts';
 import { registerMemberTools } from './member-tools.ts';
+import { agentProfile } from './profile.ts';
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'flow-task': { kind: 'flow-task'; team_id: string; task_id: string; task_version: number };
@@ -111,7 +112,7 @@ export class FlowController implements FlowService {
     const member = this.store.getMember(sessionId);
     if (!member) return null;
     const run = this.run(member.team_id), can = !this.closed && !terminal(run.state) && member.state !== 'closed';
-    return { session_id: sessionId, team_id: run.id, owner_session_id: run.owner_session_id, member_id: member.id, parent_session_id: member.parent_id, name: member.name, state: member.state, can_message: can, message_block_reason: can ? null : '团队已结束，成员历史保留只读' };
+    return { session_id: sessionId, team_id: run.id, owner_session_id: run.owner_session_id, member_id: member.id, parent_session_id: member.parent_id, name: member.name, role: member.role ?? 'worker', state: member.state, can_message: can, message_block_reason: can ? null : '团队已结束，成员历史保留只读' };
   }
   isTeamAgentSession(sessionId: string) { return !this.closed && !!this.store.getMember(sessionId); }
   /** Used only by the generic SessionDriver to reuse this member's one live owner. */
@@ -124,7 +125,7 @@ export class FlowController implements FlowService {
     const task = this.mutate(actor, operationId, 'task', request, () => {
       const run = this.access(actor, request.team_id); this.assertOpen(run, actor);
       if (request.action === 'update') {
-        if (request.member_id !== undefined) fail('Task updates change title and objective. Assignment belongs to delegation.');
+        if (request.member_id !== undefined || request.profile !== undefined) fail('Task updates change title and objective. Assignment and profile belong to new-member delegation.');
         const old = this.taskOf(text(request.task_id, 'task_id'));
         if (old.team_id !== run.id || old.owner_session_id !== actor) fail('Only the task owner may update it', 403);
         if (request.version !== old.version || old.status === 'ACCEPTED' || old.status === 'CANCELLED') fail('Task version or state changed', 409);
@@ -143,6 +144,7 @@ export class FlowController implements FlowService {
       if (parent.paused || ['ACCEPTED', 'CANCELLED', 'FAILED'].includes(parent.status)) fail('Cannot delegate from a closed parent task', 409);
       let memberId = request.member_id;
       if (memberId) {
+        if (request.profile !== undefined) fail('Reusing a member retains its profile. Omit profile or delegate to a new member.');
         const member = this.member(memberId);
         if (member.team_id !== run.id || member.state === 'closed' || memberId === actor) fail('Invalid task assignee', 403);
         let ancestor: T.FlowTask | undefined = parent;
@@ -151,8 +153,9 @@ export class FlowController implements FlowService {
           ancestor = ancestor.parent_id ? this.store.getTask(ancestor.parent_id) : undefined;
         }
       } else {
+        const profile = agentProfile(request.profile);
         memberId = id('session');
-        this.store.put('members', { id: memberId, team_id: run.id, session_id: memberId, parent_id: actor, name: request.title?.trim() || objective.slice(0, 60), preset: run.preset, state: 'queued', active_task_id: null, error: null, created: now, updated: now });
+        this.store.put('members', { ...profile, id: memberId, team_id: run.id, session_id: memberId, parent_id: actor, name: profile.name ?? (request.title?.trim() || objective.slice(0, 60)), role: profile.role ?? 'worker', preset: profile.preset ?? run.preset, ...(profile.model ? { model: { ...run.model, ...profile.model } } : {}), state: 'queued', active_task_id: null, error: null, created: now, updated: now });
       }
       const task: T.FlowTask = { id: id('task'), team_id: run.id, parent_id: parentId, owner_session_id: actor, assignee_session_id: memberId, title: request.title?.trim() || objective.slice(0, 80), objective, paused: false, status: 'OPEN', version: 1, result_id: null, created: now, updated: now };
       this.store.put('tasks', task); this.store.event(run.id, 'task-delegated', { task_id: task.id, owner: actor, assignee: memberId }); this.changed(run); return task;
@@ -288,8 +291,8 @@ export class FlowController implements FlowService {
     if (this.closed) fail('Flow is closed', 409);
     const live = this.handles.get(memberId); if (live) return live;
     const waiting = this.creating.get(memberId); if (waiting) return waiting;
-    const member = this.member(memberId), run = this.run(member.team_id);
-    const creation = this.factory(this.ctx, { sessionId: memberId, ...(member.parent_id ? { parentSessionId: member.parent_id } : {}), workspace: run.workspace, ...(member.preset ? { preset: member.preset } : {}), ...(run.model ? { model: run.model } : {}), signal: this.abort.signal, setup: agentCtx => registerMemberTools(agentCtx, this, memberId), onEvent: event => this.observe(memberId, event) }).then(async handle => {
+    const member = this.member(memberId), run = this.run(member.team_id), model = member.model ?? run.model;
+    const creation = this.factory(this.ctx, { sessionId: memberId, name: member.name, role: member.role ?? 'worker', ...(member.instructions ? { instructions: member.instructions } : {}), ...(member.skills ? { skills: member.skills } : {}), ...(member.parent_id ? { parentSessionId: member.parent_id } : {}), workspace: run.workspace, ...(member.preset ? { preset: member.preset } : {}), ...(model ? { model } : {}), signal: this.abort.signal, setup: agentCtx => registerMemberTools(agentCtx, this, memberId), onEvent: event => this.observe(memberId, event) }).then(async handle => {
       if (this.closed) { await handle.dispose(); throw new Error('Flow disposed during Agent creation'); }
       this.handles.set(memberId, handle); return handle;
     }).finally(() => this.creating.delete(memberId));

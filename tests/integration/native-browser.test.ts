@@ -26,7 +26,7 @@ test('ordinary and Flow native Agents actually navigate and read with the same M
   const origin = `http://127.0.0.1:${address.port}`;
   const plugin = join(layout.root, 'probe.mjs'), reportPath = join(layout.root, 'report.json');
   await build({ entryPoints: [join(PROJECT_ROOT, 'tests/integration/fixtures/native-browser-probe.ts')], outfile: plugin,
-    bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
+    bundle: true, platform: 'node', format: 'esm', external: ['@deepseek-ai/*', 'node:*'], logLevel: 'silent' });
   ensureProfile(layout.home, 'native-browser', { bundles: [...WEB_PROFILE_BUNDLES] });
   const env = buildHostEnv({ home: layout.home, tmpdir: layout.tmp, dataDir: layout.data, workspace: layout.workspace, extra: { PWTEST_SOCKETS_DIR: socketDir } });
   const patch = join(layout.root, 'probe.patch.yml');

@@ -12,9 +12,10 @@ import { LlmAdapter, ToolCallId, createUserMessage, type GenerateOptions, type S
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-agent-preset-registry';
+import type {} from '@deepseek-ai/dsh-skill';
 import { createNativeMember } from '../../../packages/dsh-flow/src/core/runtime.ts';
 
-export const inject = ['agents', 'agentPresets', 'agentDefaultModel', 'llm', 'tools', 'sessions', 'sessionPersistence', 'sessionProjections', 'sessionController'];
+export const inject = ['agents', 'agentPresets', 'agentDefaultModel', 'llm', 'tools', 'sessions', 'sessionPersistence', 'sessionProjections', 'sessionController', 'systemPrompt', 'skills'];
 interface Config { workspace: string; report: string; phase: 'fresh' | 'cold' }
 // A public IP endpoint avoids the developer machine's DNS fake-IP routing;
 // this still exercises the unchanged native public-address and HTTPS checks.
@@ -32,6 +33,12 @@ class ProbeAdapter extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.calls++;
     options.signal?.throwIfAborted();
+    if(options.sessionId==='session-flow-native-probe'&&!options.purpose){
+      const system=options.messages.filter(message=>message.role==='system').flatMap(message=>message.content.flatMap(part=>part.type==='text'?[part.text]:[])).join('\n');
+      assert.match(system,/团队角色：协调者（Orchestrator）/u);
+      assert.match(system,/NATIVE-ROLE-INSTRUCTIONS/u);
+      assert.match(system,/NATIVE-ROLE-SKILL/u);
+    }
     const inputIndex = options.messages.findLastIndex(message => message.role === 'user' && message.content.some(part => part.type === 'text' && /^(CASE|TEXT|SLOW|LONG) /u.test(part.text)));
     const input = options.messages[inputIndex]?.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n') ?? '';
     const toolMessages = options.messages.slice(inputIndex + 1).filter(message => message.role === 'tool');
@@ -70,6 +77,8 @@ class ProbeAdapter extends LlmAdapter {
 }
 export function apply(ctx: Context, config: Config): void {
   const adapter = new ProbeAdapter();
+  ctx.skills.register({name:'native-role-probe',description:'Native role probe',source:'runtime',content:'NATIVE-ROLE-SKILL: preserve native tool receipts.'});
+  const roleProfile={role:'orchestrator' as const,instructions:'NATIVE-ROLE-INSTRUCTIONS: coordinate resources with the same native tools.',skills:['native-role-probe']};
   ctx.llm.registerAdapter(['native-member-probe'], adapter);
   // This tool exists only in this unrelated test plugin. Flow neither names it
   // nor maps it to a capability: the native registry exposes and executes it.
@@ -98,7 +107,7 @@ export function apply(ctx: Context, config: Config): void {
   async function run() {
     const model = { provider: 'native-member-probe', model: 'scripted' };
     if (config.phase === 'cold') {
-      const member = await createNativeMember(ctx, { sessionId: 'session-flow-native-probe', workspace: config.workspace, model, setup: () => {} });
+      const member = await createNativeMember(ctx, { ...roleProfile, sessionId: 'session-flow-native-probe', workspace: config.workspace, model, setup: () => {} });
       const before = member.events().length;
       assert.ok(member.events().some(event => event.type === 'tool/result'), 'native tool receipts survive a real host restart');
       assert.equal(member.lastText(), 'PERSISTED');
@@ -114,7 +123,7 @@ export function apply(ctx: Context, config: Config): void {
     const baseline = await ctx.agents.create({ sessionId: SessionId('session-ordinary-native-probe'), meta: { cwd: config.workspace, agentPreset: preset.id }, agentOptions: model,
       setup: async agentCtx => { await ctx.agentPresets.mount(agentCtx, preset.id); } });
     const observed: number[] = [];
-    const member = await createNativeMember(ctx, { sessionId: 'session-flow-native-probe', parentSessionId: baseline.agent.session.id,
+    const member = await createNativeMember(ctx, { ...roleProfile, sessionId: 'session-flow-native-probe', parentSessionId: baseline.agent.session.id,
       workspace: config.workspace, setup: () => {}, onEvent: event => { observed.push(event.seq); } });
     assert.equal(member.agent.options.provider, model.provider, 'omitted Flow model inherits the configured native default');
     assert.equal(member.agent.options.model, model.model);

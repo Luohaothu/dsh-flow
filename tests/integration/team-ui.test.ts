@@ -13,7 +13,7 @@ function snapshot(id: string, state: 'running' | 'completed' = 'running'): FlowT
   const at = Date.UTC(2026, 9, 13, 2);
   return {
     run: {id, owner_session_id:'owner', intent_id:`intent-${id}`, title:state === 'running' ? '公开数据研究与报告' : '已完成的历史任务', objective:'核对公开来源，整理结论并交付可复查的报告。', workspace:'/workspace/research', preset:null, model:null, state, version:2, root_task_id:'task-root', deadline:null, created:at, updated:at},
-    members:[{id:'member-analysis',session_id:'member-analysis',team_id:id,parent_id:'owner',name:'资料分析',preset:null,state:state === 'running' ? 'running' : 'closed',active_task_id:'task-data',error:null,created:at,updated:at},{id:'member-verify',session_id:'member-verify',team_id:id,parent_id:'member-analysis',name:'来源核对',preset:null,state:'idle',active_task_id:'task-verify',error:null,created:at,updated:at}],
+    members:[{id:'member-analysis',session_id:'member-analysis',team_id:id,parent_id:'owner',name:'资料分析',role:'orchestrator',instructions:'协调来源核对并汇总统计。',skills:['research'],preset:'standard',state:state === 'running' ? 'running' : 'closed',active_task_id:'task-data',error:null,created:at,updated:at},{id:'member-verify',session_id:'member-verify',team_id:id,parent_id:'member-analysis',name:'来源核对',role:'worker',preset:null,state:'idle',active_task_id:'task-verify',error:null,created:at,updated:at}],
     tasks:[{id:'task-root',team_id:id,parent_id:null,owner_session_id:'owner',assignee_session_id:'owner',title:'完成研究报告',objective:'合并已核对的数据并说明统计限制。',paused:false,status:'OPEN',version:1,result_id:null,created:at,updated:at},{id:'task-data',team_id:id,parent_id:'task-root',owner_session_id:'owner',assignee_session_id:'member-analysis',title:'汇总数据',objective:'依据已核对的来源形成当前统计表。',paused:false,status:'ACCEPTED',version:2,result_id:'result-current',created:at,updated:at},{id:'task-verify',team_id:id,parent_id:'task-data',owner_session_id:'member-analysis',assignee_session_id:'member-verify',title:'核对来源',objective:'检查资料发布日期与口径。',paused:false,status:'ACCEPTED',version:1,result_id:'result-verify',created:at,updated:at}],
     results:[{id:'result-old',team_id:id,task_id:'task-data',task_version:1,author_session_id:'member-analysis',summary:'初稿：统计口径尚未统一。',artifacts:['output/draft.csv'],outcome:'partial',ready:true,created:at},{id:'result-current',team_id:id,task_id:'task-data',task_version:2,author_session_id:'member-analysis',summary:'已统一统计口径，并逐项保留原始来源。',artifacts:['output/data.csv'],outcome:'complete',ready:true,created:at+1000},{id:'result-verify',team_id:id,task_id:'task-verify',task_version:1,author_session_id:'member-verify',summary:'三个来源的日期与口径已核对。',artifacts:['output/sources.md'],outcome:'complete',ready:true,created:at+500}],
     reviews:[{id:'review-old',team_id:id,task_id:'task-data',result_id:'result-old',reviewer_session_id:'owner',accepted:false,notes:'请统一统计口径。',evidence:['初稿第 2 列的单位不一致'],created:at+100},{id:'review-current',team_id:id,task_id:'task-data',result_id:'result-current',reviewer_session_id:'owner',accepted:true,notes:'抽样核对通过，接受本次结果。',evidence:['重新读取 data.csv 并核对三个来源'],created:at+1100}],
@@ -57,11 +57,13 @@ test('team topology, native navigation callbacks, result details, history and na
     assert.equal(await graph.locator('.flow-lines path').count(),2);
     const bounds=await page.locator('.flow-content').boundingBox();
     assert.ok(bounds && bounds.y<80 && bounds.height>900,'topology fills the available native content area');
-    checks.push('existing-main-plus-recorded-parent-session-topology');
+    assert.deepEqual(await graph.locator('.flow-node-role').allTextContents(),['协调者','协调者','执行者']);
+    checks.push('recorded-roles-independent-of-native-session-topology');
     await page.screenshot({path:resolve(dir,'desktop.png'),fullPage:true});
     await page.getByRole('button',{name:'智能体团队 3',exact:false}).click();
     const popup=page.getByRole('dialog',{name:'智能体团队',exact:true});
     assert.equal(await popup.getByRole('treeitem').count(),3);
+    assert.deepEqual(await popup.locator('.flow-tree-role').allTextContents(),['协调者','协调者','执行者']);
     await popup.getByRole('button',{name:'折叠 资料分析 的子代理',exact:true}).click();
     assert.equal(await popup.getByRole('treeitem').count(),2);
     assert.equal(await page.evaluate(()=>Reflect.get(window,'teamUiFixture').action),'');
@@ -98,6 +100,11 @@ test('team topology, native navigation callbacks, result details, history and na
     checks.push('canvas-zoom-pan-fit-and-collapse');
     await graph.locator('[data-agent-id="member-analysis"]').click();
     await page.getByText('抽样核对通过，接受本次结果。',{exact:true}).waitFor();
+    await page.getByText('角色：协调者',{exact:true}).waitFor();
+    await page.getByText('协调来源核对并汇总统计。',{exact:true}).waitFor();
+    await page.locator('.flow-profile summary').click();
+    await page.getByText('角色 skills：research',{exact:true}).waitFor();
+    await page.getByText('创建 preset：standard',{exact:true}).waitFor();
     assert.equal(await page.locator('[data-result-id="result-current"] [data-review-id="review-current"]').count(),1);
     assert.equal(await page.locator('[data-result-id="result-old"] [data-review-id="review-old"]').count(),1);
     assert.equal(await page.locator('[data-result-id="result-current"] [data-review-id="review-old"]').count(),0);

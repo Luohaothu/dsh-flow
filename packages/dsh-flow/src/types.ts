@@ -1,6 +1,13 @@
 /** Collaboration facts. Native execution, permissions and tools belong to DSH. */
 export type FlowJsonValue = string | number | boolean | null | FlowJsonValue[] | { [key: string]: FlowJsonValue };
 export interface FlowModelSelection { provider?: string; model?: string; reasoningEffort?: string }
+/** Responsibility labels, never execution engines or permission tiers. */
+export type FlowAgentRole = 'orchestrator' | 'worker';
+/** A task role configures an ordinary DSH Agent; it never selects a different execution engine or permission tier. */
+export interface FlowAgentProfile {
+  name?: string; role?: FlowAgentRole; instructions?: string; skills?: string[];
+  preset?: string; model?: FlowModelSelection;
+}
 export type FlowTeamState = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 export type FlowTaskState = 'OPEN' | 'SUBMITTED' | 'ACCEPTED' | 'FAILED' | 'CANCELLED';
 export type FlowMemberState = 'queued' | 'idle' | 'running' | 'paused' | 'closed' | 'failed';
@@ -11,7 +18,7 @@ export interface FlowTeamRun {
   state: FlowTeamState; version: number; root_task_id: string; deadline: number | null;
   created: number; updated: number;
 }
-export interface FlowMember {
+export interface FlowMember extends Omit<FlowAgentProfile, 'name' | 'preset'> {
   id: string; team_id: string; session_id: string; parent_id: string | null; name: string;
   preset: string | null; state: FlowMemberState; active_task_id: string | null;
   error: string | null; created: number; updated: number;
@@ -53,6 +60,8 @@ export interface FlowTaskRequest {
   action: 'delegate' | 'update'; team_id?: string; task_id?: string; version?: number;
   title?: string; objective?: string;
   member_id?: string;
+  /** Creation-time configuration. Reusing a member retains its existing profile. */
+  profile?: FlowAgentProfile;
 }
 export interface FlowResultRequest {
   task_id: string; summary: string; artifacts?: string[]; outcome?: 'complete' | 'partial' | 'blocked';
@@ -74,5 +83,6 @@ export interface FlowControlRequest {
 export interface FlowAgentSession {
   session_id: string; team_id: string; owner_session_id: string; member_id: string;
   parent_session_id: string | null; name: string; state: FlowMemberState;
+  role?: FlowAgentRole;
   can_message: boolean; message_block_reason: string | null;
 }

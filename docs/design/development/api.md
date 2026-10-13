@@ -6,7 +6,7 @@
 
 | 接口 | 必要输入 | 含义 |
 | --- | --- | --- |
-| task | delegate/update 及 objective 或 task_id/version；可选 member_id | 委派标准成员或修改工作；父任务由实际调用者归属决定 |
+| task | delegate/update 及 objective 或 task_id/version；可选 member_id 或 profile | 委派具有角色配置的标准成员或修改工作；父任务由实际调用者归属决定 |
 | result | task_id、summary，可选 artifacts/outcome | 记录执行者当前版本交付 |
 | review | result_id、accepted、notes，可选 evidence | 委派者接受或退回具体交付 |
 | message | to、content，可选 task_id/mode | request 或 notice |
@@ -14,6 +14,8 @@
 | control | target、id、action | 对团队、成员或任务 pause/resume/cancel |
 
 task/result/review/message 返回身份、版本或状态收据，供后续操作引用，不再次回显刚提交的工作说明、结果或消息正文。完整事实仍持久化，并可由 read 和界面读取。
+
+新成员可传 `profile`（name/role/instructions/preset/model/skills），字段与默认值见[Agent 配置](/configuration/agents)。它由普通委派一次传入；成员记录、运行上下文和界面使用同一配置。复用成员或 update 不接受 profile，不允许静默更换持续职责。角色名称不授予验收权，实际调用者和任务归属仍是依据。
 
 交付要求统一放在 `objective`，不另传 `criteria`。预声明 `depends_on` 与 `parent_task_id` 输入已经删除，无兼容入口。所有者在本团队委派时使用本团队根任务，成员使用其当前任务；同一 Agent 在另一团队拥有根任务时按另一团队归属处理。后续工作需要前置结果时，在实际收到结果后再委派。
 
