@@ -86,3 +86,10 @@ export interface FlowAgentSession {
   role?: FlowAgentRole;
   can_message: boolean; message_block_reason: string | null;
 }
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'flow-task': { kind: 'flow-task'; team_id: string; task_id: string; task_version: number };
+    'flow-message': { kind: 'flow-message'; team_id: string; message_id: string; task_id?: string };
+  }
+}

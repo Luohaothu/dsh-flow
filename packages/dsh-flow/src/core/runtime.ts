@@ -35,6 +35,8 @@ export interface NativeMember {
   flush(): Promise<void>;
 }
 
+export type NativeFactory = (ctx: Context, options: NativeMemberOptions) => Promise<NativeMember>;
+
 /** Create once, resume only when cold, and keep the same handle across turns. */
 export async function createNativeMember(ctx: Context, options: NativeMemberOptions): Promise<NativeMember> {
   const id = SessionId(options.sessionId);
