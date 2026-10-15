@@ -77,7 +77,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
 
 #### Agent 智能体
 
-- **定义**：Agent 是团队的基本组成单位，其在上层对应于一个用户可见的智能体对象，在底层对应于一个 DSH 原生 Agent。
+- **定义**：Agent 是团队的基本组成单位，其在上层对应于一个用户可见的智能体对象，在底层对应于一个由 Flow 创建或恢复的 DSH 原生 Agent。宿主主 Agent 作为编排接口的外部调用方，其创建的顶层 Flow Agent 的父级为 `null`。
 - **接口**：Agent 支持以下公开接口：
   - 基础信息查询类：
     - `getProfile() -> Readonly<AgentProfile>`: 获取 Agent 的只读身份信息引用，身份信息在该实例生命周期内保持不变
@@ -91,15 +91,19 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `joinGroup(g: Group)`: 加入一个群聊，由 Group 对象在创建时调用
     - `quitGroup(g: Group)`: 退出一个群聊，由 Group 对象在销毁时调用
   - 生命周期类：
-    - 构造函数`construct(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string)`: 通过身份信息、父 Agent 对象和初始消息构造 Agent，可选传递序列化的历史上下文；根 Agent 的父级为 `null`
-    - 构造函数`construct(ctx: Context, parent: Agent | null, session: SessionID)`: 通过持久化会话 ID 恢复为新的 Agent 实例，父级直接使用对象引用；旧实例的引用不会自动指向恢复后的新实例
+    - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文；根 Agent 的父级为 `null`
+    - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 恢复为新的 Agent 实例，父级直接使用对象引用；旧实例的引用不会自动指向恢复后的新实例
     - 析构函数。Agent 总是遵循持久化语义，析构函数会调用宿主的持久化接口完成 session 导出
-    - `fork() -> Agent`：以自身为母版创建一个子 Agent，继承当前对话上下文及配置，但不包含通信关系。对话通过显式快照导入新会话，子 Agent 使用新的 `sessionID`、独立的运行状态和 Mailbox；不可变配置可复用引用
-    - `herb(agent: Agent) -> Agent`: 以自身为母版创建一个子 Agent，其上下文由自己的上下文与传入 Agent 的上下文快照共同组成；输入和返回均为 Agent 对象，子 Agent 的会话、运行状态与 Mailbox 独立
+    - `fork() -> Promise<Agent>`：以自身为母版创建一个子 Agent，继承当前对话上下文及配置，但不包含通信关系。对话通过显式快照导入新会话，子 Agent 使用新的 `sessionID`、独立的运行状态和 Mailbox；不可变配置可复用引用
+    - `herb(agent: Agent) -> Promise<Agent>`: 以自身为母版创建一个子 Agent，其上下文由自己的上下文与传入 Agent 的上下文快照共同组成；参数和异步结果均为 Agent 对象，子 Agent 的会话、运行状态与 Mailbox 独立
     - `kill(agent: Agent)`: 销毁一个子 Agent
     - `transfer(child: Agent, adopt: Agent)`: 将一个子 Agent 转移给另一个 Agent 
 
 Agent 内部持有宿主适配器返回的 `HostAgent` 对象，并将该对象传给宿主执行接口；`getProfile()` 复用其 `profile` 引用，编排层仍使用上层 Agent 对象。Agent 的注册、父子关系和 Group 成员关系均使用对象引用，序列化这些关系时才转换为业务 ID。
+
+Agent 的构造函数为内部实现，不提供公开的同步构造入口。上述异步工厂及 `fork/herb` 成功返回时，宿主实例、Mailbox、工具绑定和事件监听均已就绪，父子关系及 Context 登记已完成，调用方可直接使用返回的 Agent，无需再次等待 `ready()` 或手动登记。初始化完成前，不将该 Agent 发布到 Context 注册表或父 Agent 的子列表。
+
+`Agent.create` 在初始化及登记完成后提交 `initmsg`，等待宿主接管该输入后返回，不等待模型完成首轮执行；不得在宿主初始化回调内提前启动首轮。工厂失败时，撤销本次新增的登记、父子关联、Mailbox、工具绑定和监听，并释放本次创建或恢复的宿主实例，清理后再拒绝 Promise。
 
 #### `AgentProfile`: Agent 身份信息
 
@@ -211,7 +215,7 @@ Context 提供以下接口：
   - `getHostAdaptor() -> HostAdaptor`: 返回注册时传入的同一适配器对象；尚未注册或 Context 已关闭时调用失败
   - `getHostContext() -> HostContext`: 获取适配器对应的宿主上下文，供后端集成代码使用；上层 Agent 的执行操作通过 `getHostAdaptor()` 完成
 - 对象注册与查询类：
-  - `register(obj: Agent | Group | Mailbox) -> void`: 登记一个已完成初始化的对象引用，并显式由 Context 接管其生命周期；重复登记同一实例不执行额外操作，拒绝已由其他 Context 管理的对象。Agent 的 `sessionID` 和 Group 的 `GroupID` 均不得被当前 Context 中另一已登记的同类对象占用
+  - `register(obj: Agent | Group | Mailbox) -> void`: 同步登记一个已完成初始化的对象引用，并显式由 Context 接管其生命周期；Agent 及其 Mailbox 由异步工厂负责登记。重复登记同一实例不执行额外操作，拒绝已由其他 Context 管理的对象。Agent 的 `sessionID` 和 Group 的 `GroupID` 均不得被当前 Context 中另一已登记的同类对象占用
   - `has(obj: ContextObject) -> bool`: 按对象身份检查该实例是否仍已登记且未进入释放流程，不通过字段内容判断两个对象相等
   - `getAgent(session: SessionID) -> Agent | null`: 根据会话 ID 查找当前已登记且未进入释放流程的 Agent；未找到时返回 `null`，不隐式创建或恢复实例
   - `getGroup(id: GroupID) -> Group | null`: 根据归档标识查找当前活跃的 Group；未找到或群聊已解散时返回 `null`，历史归档查询由持久化层处理
@@ -238,27 +242,26 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - Agent 生命周期类：
   - `createAgent(p: AgentProfile, parent?: HostAgent, history?: string) -> Promise<HostAgent>`: 按身份信息创建原生 Agent，使用 `p.sessionID` 作为新会话的持久化身份，父级直接传入已有 HostAgent 对象，可选导入已有上下文。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪，可接收输入；此时尚未提交初始消息。若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
   - `resumeAgent(session: SessionID, parent?: HostAgent) -> Promise<HostAgent>`: 从持久化会话 ID 恢复原生 Agent，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施；完成后可接收输入。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
-  - `attachAgent(p: AgentProfile) -> Promise<HostAgent>`: 首次接入时按 `p.sessionID` 查找宿主中已有的原生 Agent，返回对应的 HostAgent 对象，供主 Agent 等由宿主管理的实例使用。适配器仅借用该实例，不取得其销毁权；会话必须已存在且可访问。同一活跃实例重复接入返回原 HostAgent，不改变原有的所有权，后续操作均传入该对象
-  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 释放指定 HostAgent 对应的实例。对于本适配器创建或恢复的实例，先停止接纳新输入；`immediate` 取消当前执行，`after-turn` 等当前轮次结束且不再启动后续轮次，已经空闲时无需等待；之后完成会话持久化并释放原生句柄。默认采用 `immediate`。对于借用的实例，持久化当前已记录的内容，再撤销本适配器的接入与监听，不停止或销毁宿主 Agent。完成表示释放流程已结束，重复调用不重复释放
-  - `dispose() -> Promise<void>`: 释放适配器创建或恢复的全部 Agent，撤销借用实例的接入及事件监听，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
+  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 释放本适配器创建或恢复的指定 HostAgent 对应实例。先停止接纳新输入；`immediate` 取消当前执行，`after-turn` 等当前轮次结束且不再启动后续轮次，已经空闲时无需等待；之后完成会话持久化并释放原生句柄。默认采用 `immediate`。完成表示释放流程已结束，重复调用不重复释放
+  - `dispose() -> Promise<void>`: 释放适配器创建或恢复的全部 Agent 及相关事件监听，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
   - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
-  - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；未接入或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护
+  - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；不属于当前适配器或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护
   - `whenIdle(agent: HostAgent) -> Promise<void>`: 等待指定 HostAgent 当前的原生执行及相关维护操作结束。期间若有新输入继续触发执行，则继续等待，因此该接口不能单独用于实现“当前轮次结束后终止”
 - 会话持久化与上下文导出类：
   - `persist(agent: HostAgent) -> Promise<void>`: 将该对象对应会话中调用时已记录的事件及恢复所需的身份、配置元信息写入持久化存储；实现内部使用 `agent.profile.sessionID` 定位存储。完成表示这些内容已写入完成，不隐含停止 Agent
   - `exportHistory(agent: HostAgent) -> Promise<string>`: 导出该对象对应会话的上下文快照，可传给 `createAgent`。返回值采用由适配器定义、带格式版本的序列化表示，包含对话历史及必要元信息；导出不改变原 Agent。正在进行的轮次按后端规则整理为可导入的快照，不直接复制执行栈或未完成的工具调用
 - 事件观察类：
-  - `subscribe(agent: HostAgent, listener: (event: Readonly<HostEvent>) -> void) -> (() -> void)`: 订阅指定 HostAgent 的后续事件，返回取消订阅函数，不重放历史。适配器按原生事件顺序通知；监听回调仅用于观察，回调异常不改变原生执行结果。释放接入时自动取消相应订阅
+  - `subscribe(agent: HostAgent, listener: (event: Readonly<HostEvent>) -> void) -> (() -> void)`: 订阅指定 HostAgent 的后续事件，返回取消订阅函数，不重放历史。适配器按原生事件顺序通知；监听回调仅用于观察，回调异常不改变原生执行结果。释放 HostAgent 时自动取消相应订阅
 
 上述接口使用以下类型与约定：
 
-- `HostAgent`: 宿主无关的运行时对象接口，由具体适配器创建并返回，公开只读字段 `readonly profile: Readonly<AgentProfile>`，供调用方读取身份信息。它与一个原生 Agent 实例对应，具体原生对象、句柄及所有权记录封装在适配器实现内部，不由调用方拼装，也不重复登记到 Context
+- `HostAgent`: 宿主无关的运行时对象接口，由具体适配器通过 `createAgent/resumeAgent` 创建并返回，公开只读字段 `readonly profile: Readonly<AgentProfile>`，供调用方读取身份信息。它与一个原生 Agent 实例对应，具体原生对象、句柄及所有权记录封装在适配器实现内部，不由调用方拼装，也不重复登记到 Context
 - `SessionID`: 当前宿主持久化存储内的稳定会话标识；适配器内部负责转换为后端的原生 ID 类型
 - `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
-适配器按 HostAgent 的对象身份验证其归属与生命周期，拒绝其他适配器的对象以及已释放对象的新执行请求。即使新旧对象具有相同的 `sessionID`，也不能通过旧引用操作恢复后的新实例。持有 HostAgent 引用不改变原生实例的所有权，释放时仍区分适配器拥有的实例与借用的实例。
+适配器按 HostAgent 的对象身份验证其归属与生命周期，拒绝其他适配器的对象以及已释放对象的新执行请求。即使新旧对象具有相同的 `sessionID`，也不能通过旧引用操作恢复后的新实例。持有 HostAgent 引用不改变原生实例的所有权，原生实例由创建或恢复它的适配器负责释放。
 
 HostAdaptor 只操作单个原生 Agent，不负责父子树的递归信号传播、Group 通信或 Mailbox 过滤。上层 Agent 将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。释放完成必须包含持久化完成，不能将“已发出取消请求”视为释放完成。宿主不具备所需的持久化或权限能力时，实现应明确报错，不得静默降低接口语义。原生会话恢复不自动恢复 Flow 的群聊关系、Mailbox 已读状态等协作数据。
 
@@ -270,9 +273,8 @@ const adaptor: HostAdaptor = new DshHostAdaptor(dshContext);
 ctx.registerHostAdaptor(adaptor);
 
 // Agent 仅依赖 Context 和 HostAdaptor 接口。
-const host = ctx.getHostAdaptor();
-const hostAgent = await host.createAgent(profile);
-await host.send(hostAgent, initialMessage);
+const agent = await Agent.create(ctx, profile, null, initialMessage);
+// 返回时初始化及登记已完成，初始输入已由宿主接管。
 ```
 
 DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，将三种输入模式映射为原生 `followup/steer/inject`，通过会话持久化接口完成写入，并由持有的 `AgentHandle` 释放实例。具体后端类型、句柄和事件格式均封装在实现类内部。
