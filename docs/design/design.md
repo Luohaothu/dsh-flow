@@ -86,6 +86,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
   - 状态信息查询类：
     - `getStatus() -> AgentStatus`: 获取 Agent 运行状态
   - 通信类：
+    - `getMailbox() -> Mailbox`: 获取自身 Mailbox 的同一对象引用，供宿主适配器绑定消息读取、过滤和来源评级工具；不复制 Mailbox，也不转移其生命周期管理权
     - `recvSignal(s: Signal)`: 接收一个信号
     - `recvMessage(m: Message)`: 将消息交给自身 Mailbox，成功入箱后按消息优先级安排通知；被过滤的消息不通知模型。通知只提供消息提示，正文由模型通过读取工具按需获取
     - `joinGroup(g: Group)`: 加入一个群聊，由 Group 对象在创建时调用
@@ -103,7 +104,9 @@ Agent 内部持有宿主适配器返回的 `HostAgent` 对象，并将该对象�
 
 Agent 的构造函数为内部实现，不提供公开的同步构造入口。上述异步工厂及 `fork/herb` 成功返回时，宿主实例、Mailbox、工具绑定和事件监听均已就绪，父子关系及 Context 登记已完成，调用方可直接使用返回的 Agent，无需再次等待 `ready()` 或手动登记。初始化完成前，不将该 Agent 发布到 Context 注册表或父 Agent 的子列表。
 
-`Agent.create` 在初始化及登记完成后提交 `initmsg`，等待宿主接管该输入后返回，不等待模型完成首轮执行；不得在宿主初始化回调内提前启动首轮。工厂失败时，撤销本次新增的登记、父子关联、Mailbox、工具绑定和监听，并释放本次创建或恢复的宿主实例，清理后再拒绝 Promise。
+工厂先在内部创建上层 Agent 和空 Mailbox，再将该 Agent 引用传给适配器的 `createAgent/resumeAgent`。此时 `getMailbox()` 已可用；适配器只取得对象引用并注册工具回调，不调用依赖 HostAgent 的 `getProfile()` 等接口，也不执行工具业务。适配器返回后，上层工厂保存 HostAgent、完成事件订阅、父子关系及 Context 登记。整个过程中使用同一个上层 Agent 和 Mailbox 对象。
+
+`Agent.create` 在初始化及登记完成后提交 `initmsg`，等待宿主接管该输入后返回，不等待模型完成首轮执行；不得在宿主初始化回调内提前启动首轮。工厂失败时，撤销本次新增的登记、父子关联、Mailbox 和监听，并通过适配器释放本次创建或恢复的宿主实例及其工具绑定，清理后再拒绝 Promise。适配器初始化失败时，由适配器自行撤销尚未返回的原生资源与工具注册。
 
 #### `AgentProfile`: Agent 身份信息
 
@@ -148,10 +151,9 @@ Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身�
 - `source: Agent | AgentInGroup | System | User`: 信息的来源，可以是用户、单个 Agent、一个群聊中的 Agent 或者系统运行时。其中 `AgentInGroup = { agent : Agent, g: Group }`, `System, User`为描述符
 - `timestamp`: 消息发出的时间戳
 - `priority?: MessagePriority`: 接收方在入箱时根据自身的来源评级填写的本地优先级；尚未评级的来源按 `normal` 处理。发送方不决定该值，入站消息携带的 `priority` 不作为定级依据
-- `title`: 消息标题，用于优先消息的即时通知
 - `read`: 是否被接收方已读，该状态由接收方修改
 - `read_timestamp`: 消息被首次读取的时间戳
-- `summary`: 消息摘要，不超过 50 个字符
+- `summary`: 消息摘要，不超过 50 个字符，统一用于优先消息与默认消息的通知
 - `payload`: 具体的消息内容
 
 `MessagePriority = 'normal' | 'high' | 'low'`，分别表示默认、优先、不重要。
@@ -199,7 +201,7 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 上述接口使用以下参数与返回类型：
 
 - `MessageID`: Mailbox 为每条已接收消息分配的稳定检索键，在当前 Mailbox 内唯一，用于从元信息或外部请求定位并读取完整消息。跨 Mailbox 寻址时还需指定所属 Mailbox；不为 Mailbox 对象本身另建通用 ID
-- `MessageMeta`: 包含 `id`、`source`、`timestamp`、`priority`、`title`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`，`priority` 为入箱时确定的优先级
+- `MessageMeta`: 包含 `id`、`source`、`timestamp`、`priority`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`，`priority` 为入箱时确定的优先级
 - `MailboxQuery = (m: Readonly<Message>) -> bool`: 只读消息匹配回调，返回 `true` 表示将该消息纳入结果，返回 `false` 表示排除。调用方可在回调中组合来源、时间范围、已读状态等条件；执行回调本身不改变消息的已读状态
 - `MessageFilter = (m: Readonly<Message>) -> bool`: 只读过滤函数，返回 `true` 表示匹配并丢弃该消息；多条规则之间采用“或”关系
 
@@ -215,11 +217,11 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 
 | 优先级 | 通知时机与方式 | 通知内容 |
 | --- | --- | --- |
-| `high`：优先 | 收到后立即以 `steer` 提交通知，不等待当前 turn 完成；空闲时唤醒 Agent | 逐条提供消息来源和标题 |
+| `high`：优先 | 收到后立即以 `steer` 提交通知，不等待当前 turn 完成；空闲时唤醒 Agent | 逐条提供消息来源和摘要 |
 | `normal`：默认 | 有正在执行的 turn 时，等该 turn 完成后汇总；原生 Agent 已空闲时立即汇总当前待通知消息。批次以 `followup` 启动下一轮 | 逐条提供消息来源和摘要 |
-| `low`：不重要 | 与默认消息在同一批次、同一条通知中发送；只有不重要消息时也可形成批次 | 只报告不重要消息的数量，不列出其来源、标题、摘要或正文 |
+| `low`：不重要 | 与默认消息在同一批次、同一条通知中发送；只有不重要消息时也可形成批次 | 只报告不重要消息的数量，不列出其来源、摘要或正文 |
 
-优先消息和默认消息采用相同的条目格式：`[消息ID] 来源：标题或摘要`，其中优先消息填入 `title`，默认消息填入 `summary`；消息 ID 供后续工具读取正文使用。不重要消息在批量通知中统一表示为 `不重要消息：N 条`。Agent 以 `System` 来源构造单独的通知 Message，其 `payload` 仅包含整理后的通知文本，直接提交给宿主，不重新进入 Mailbox。
+优先消息和默认消息采用相同的条目格式：`[消息ID] 来源：摘要`，摘要均取自 `summary`；消息 ID 供后续工具读取正文使用。不重要消息在批量通知中统一表示为 `不重要消息：N 条`。Agent 以 `System` 来源构造单独的通知 Message，其 `payload` 仅包含整理后的通知文本，直接提交给宿主，不重新进入 Mailbox。
 
 通知进度由接收方 Agent 单独维护，不与 Mailbox 的 `read` 混用。每次汇总固定本次覆盖的消息范围，提交中的消息不重复纳入其他通知；通知被宿主接管后，只推进这些消息的通知进度，提交失败则保留其待通知状态。已经通知过的消息不因仍未读而在后续 turn 结束时反复提醒，新收到的消息进入后续批次。没有待通知消息时不发送空通知，也不启动额外轮次。发送通知及查看元信息均不修改已读状态；模型通过读取工具调用 `get`、`getLastUnread`、`getUnread` 或 `query(..., 'get')` 获取正文时，按原有约定更新已读状态。
 
@@ -257,24 +259,26 @@ Context 提供以下接口：
 - `ContextObject = Agent | Group | Mailbox | HostContext | HostAdaptor`: Context 可登记的对象类型
 - `HostContext`: 宿主后端提供的原生上下文对象，其具体类型由后端实现确定；Flow 将其作为不透明引用保存
 
-Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放实例的引用仍指向旧对象。对象登记及业务 ID 索引更新是原子操作；异步释放期间，对象拒绝新的执行及变更请求。Context 借用宿主上下文，不负责关闭宿主进程或主会话；Agent 析构涉及的持久化由宿主适配器完成。
+Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放实例的引用仍指向旧对象。对象登记及业务 ID 索引更新是原子操作；异步释放期间，对象拒绝新的执行及变更请求。采用 `after-turn` 释放 Agent 时，保留关闭前已开始轮次所需的 Mailbox 和工具绑定，允许该轮次继续调用业务接口，结束后再清理；这一例外不允许提交新输入或启动后续轮次。Context 借用宿主上下文，不负责关闭宿主进程或主会话；Agent 析构涉及的持久化由宿主适配器完成。
 
 #### HostAdaptor 宿主适配器
 
 宿主适配器提供了对宿主后端的一种统一抽象，使得中端 agent team 语义与实际的宿主接口相隔离，以便当前插件可适配多种后端实现，如 DSH、Pi Agent、Codex Agent SDK等。
 
-`HostAdaptor` 定义为接口，不提供构造函数或具体的宿主实现。各后端 harness 分别提供实现类，例如 `DshHostAdaptor implements HostAdaptor`、`PiHostAdaptor implements HostAdaptor`、`CodexHostAdaptor implements HostAdaptor`。实现类接收各自的原生宿主上下文，在后端启动时实例化并注册到 Context。以下为统一接口设计，不代表各后端目前均已实现这些能力。
+`HostAdaptor` 定义为接口，不提供构造函数或具体的宿主实现。各后端 harness 分别提供实现类，例如 `DshHostAdaptor implements HostAdaptor`、`PiHostAdaptor implements HostAdaptor`、`CodexHostAdaptor implements HostAdaptor`。实现类接收各自的原生宿主上下文及所属 Flow Context，在后端启动时实例化并注册到该 Context；具体构造方式由后端决定。以下为统一接口设计，不代表各后端目前均已实现这些能力。
+
+模型工具的定义、参数说明、执行函数、注册与清理由具体适配器实现。工具执行函数将模型提供的可序列化参数转换为运行时调用，直接调用绑定的 Agent、Mailbox 等对象的公开接口，并将结果转换为宿主要求的返回格式。消息存取、来源评级、过滤和协作规则仍由这些业务对象实现；统一 HostAdaptor 接口不传递工具定义或工具执行函数。
 
 - 宿主信息类：
   - `readonly backend: string`: 后端类型标识，例如 `dsh`、`pi`、`codex`
   - `readonly host: HostContext`: 当前实现绑定的原生宿主上下文，供 Context 登记；不向上层暴露可操作的原生 Agent 句柄
 - Agent 生命周期类：
-  - `createAgent(p: AgentProfile, parent?: HostAgent, history?: string) -> Promise<HostAgent>`: 按身份信息创建原生 Agent，使用 `p.sessionID` 作为新会话的持久化身份，父级直接传入已有 HostAgent 对象，可选导入已有上下文。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪，可接收输入；此时尚未提交初始消息。若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
-  - `resumeAgent(session: SessionID, parent?: HostAgent) -> Promise<HostAgent>`: 从持久化会话 ID 恢复原生 Agent，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施；完成后可接收输入。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
-  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 释放本适配器创建或恢复的指定 HostAgent 对应实例。先停止接纳新输入；`immediate` 取消当前执行，`after-turn` 等当前轮次结束且不再启动后续轮次，已经空闲时无需等待；之后完成会话持久化并释放原生句柄。默认采用 `immediate`。完成表示释放流程已结束，重复调用不重复释放
+  - `createAgent(flowAgent: Agent, p: AgentProfile, parent?: HostAgent, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 创建原生实例，使用 `p.sessionID` 作为新会话的持久化身份，父级直接传入已有 HostAgent 对象，可选导入已有上下文。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
+  - `resumeAgent(flowAgent: Agent, session: SessionID, parent?: HostAgent) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其 Mailbox，不复用旧实例的闭包或工具绑定。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
+  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 释放本适配器创建或恢复的指定 HostAgent 对应实例。先停止接纳新输入；`immediate` 取消当前执行，`after-turn` 等当前轮次结束且不再启动后续轮次，已经空闲时无需等待；之后完成会话持久化、撤销该实例的工具注册及对象绑定，并释放原生句柄。适配器不负责释放所引用的 Flow Agent 或 Mailbox，其生命周期仍由 Context 管理。默认采用 `immediate`。完成表示释放流程已结束，重复调用不重复释放
   - `dispose() -> Promise<void>`: 释放适配器创建或恢复的全部 Agent 及相关事件监听，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
-  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息，不自行读取 Mailbox 或按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
+  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息；该发送路径不为通知主动读取 Mailbox，也不按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
   - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；不属于当前适配器或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护
   - `whenIdle(agent: HostAgent) -> Promise<void>`: 等待指定 HostAgent 当前的原生执行及相关维护操作结束。期间若有新输入继续触发执行，则继续等待，因此该接口不能单独用于实现“当前轮次结束后终止”
 - 会话持久化与上下文导出类：
@@ -292,13 +296,15 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 
 适配器按 HostAgent 的对象身份验证其归属与生命周期，拒绝其他适配器的对象以及已释放对象的新执行请求。即使新旧对象具有相同的 `sessionID`，也不能通过旧引用操作恢复后的新实例。持有 HostAgent 引用不改变原生实例的所有权，原生实例由创建或恢复它的适配器负责释放。
 
-HostAdaptor 只操作单个原生 Agent，不负责父子树的递归信号传播、Group 通信或 Mailbox 过滤。上层 Agent 将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。释放完成必须包含持久化完成，不能将“已发出取消请求”视为释放完成。宿主不具备所需的持久化或权限能力时，实现应明确报错，不得静默降低接口语义。原生会话恢复不自动恢复 Flow 的群聊关系、Mailbox 已读状态等协作数据。
+工具调用者由宿主执行上下文确认，并与适配器绑定的原生实例及上层 Agent 对应，不由模型参数指定。工具执行函数在进入业务逻辑前，通过所属 Context 确认该上层 Agent 已完成登记且可用；初始化尚未完成、立即关闭或已释放时拒绝执行。`after-turn` 关闭期间，仅允许关闭前已开始的当前轮次继续使用保留的对象与工具绑定，不再要求 `Context.has` 返回 `true`，但仍禁止新输入和后续轮次。消息 ID 在该 Agent 自身的 Mailbox 中解析，涉及其他 Agent、Group 的标识时通过所属 Context 的查询接口解析为对象引用。查询与过滤工具接收结构化参数，再由适配器构造 `MailboxQuery`、`MessageFilter` 等程序回调。
+
+HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。释放完成必须包含持久化完成，不能将“已发出取消请求”视为释放完成。宿主不具备所需的持久化或权限能力时，实现应明确报错，不得静默降低接口语义。原生会话恢复不自动恢复 Flow 的群聊关系、Mailbox 已读状态等协作数据。
 
 后端启动时的装配过程如下，其中具体实现类的构造方式由各后端自行决定：
 
 ```typescript
 const ctx = new Context();
-const adaptor: HostAdaptor = new DshHostAdaptor(dshContext);
+const adaptor: HostAdaptor = new DshHostAdaptor(dshContext, ctx);
 ctx.registerHostAdaptor(adaptor);
 
 // Agent 仅依赖 Context 和 HostAdaptor 接口。
@@ -306,7 +312,7 @@ const agent = await Agent.create(ctx, profile, null, initialMessage);
 // 返回时初始化及登记已完成，初始输入已由宿主接管。
 ```
 
-DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，将三种输入模式映射为原生 `followup/steer/inject`，通过会话持久化接口完成写入，并由持有的 `AgentHandle` 释放实例。具体后端类型、句柄和事件格式均封装在实现类内部。
+DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，在其 `setup(agentCtx, nativeAgent)` 回调中使用 `agentCtx.tools.register(...)` 安装适配器内部定义的工具。工具的 `execute` 通过真实执行上下文核对调用方，再转调已绑定的上层对象。三种输入模式映射为原生 `followup/steer/inject`，会话写入通过宿主持久化接口完成，实例由持有的 `AgentHandle` 释放。具体后端类型、工具定义、句柄和事件格式均封装在实现类内部。
 
 ### Agent 界面看板
 
