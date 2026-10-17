@@ -87,7 +87,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `getStatus() -> AgentStatus`: 获取 Agent 运行状态
   - 通信类：
     - `recvSignal(s: Signal)`: 接收一个信号
-    - `recvMessage(m: Message)`: 接收一个消息
+    - `recvMessage(m: Message)`: 将消息交给自身 Mailbox，成功入箱后按消息优先级安排通知；被过滤的消息不通知模型。通知只提供消息提示，正文由模型通过读取工具按需获取
     - `joinGroup(g: Group)`: 加入一个群聊，由 Group 对象在创建时调用
     - `quitGroup(g: Group)`: 退出一个群聊，由 Group 对象在销毁时调用
   - 生命周期类：
@@ -147,14 +147,20 @@ Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身�
 
 - `source: Agent | AgentInGroup | System | User`: 信息的来源，可以是用户、单个 Agent、一个群聊中的 Agent 或者系统运行时。其中 `AgentInGroup = { agent : Agent, g: Group }`, `System, User`为描述符
 - `timestamp`: 消息发出的时间戳
+- `priority?: MessagePriority`: 接收方在入箱时根据自身的来源评级填写的本地优先级；尚未评级的来源按 `normal` 处理。发送方不决定该值，入站消息携带的 `priority` 不作为定级依据
+- `title`: 消息标题，用于优先消息的即时通知
 - `read`: 是否被接收方已读，该状态由接收方修改
 - `read_timestamp`: 消息被首次读取的时间戳
 - `summary`: 消息摘要，不超过 50 个字符
 - `payload`: 具体的消息内容
 
-`source` 中的 Agent、Group 均为运行时对象引用。序列化消息时，将这些引用转换为 `SessionID`、`GroupID` 及展示来源所需的信息快照，不递归序列化对象本体。归档数据是独立的数据表示，历史展示不要求原 Agent、Group 仍然存活。`read` 和 `read_timestamp` 属于接收方的消息记录，同一消息被多个 Mailbox 接收时，各自创建记录，不共享这两个字段的可变状态。
+`MessagePriority = 'normal' | 'high' | 'low'`，分别表示默认、优先、不重要。
+
+`source` 中的 Agent、Group 均为运行时对象引用。序列化消息时，将这些引用转换为 `SessionID`、`GroupID` 及展示来源所需的信息快照，不递归序列化对象本体。归档数据是独立的数据表示，历史展示不要求原 Agent、Group 仍然存活。`priority`、`read` 和 `read_timestamp` 属于接收方的消息记录，同一消息被多个 Mailbox 接收时，各自创建记录；不同接收方可对同一来源给出不同评级，且不共享已读状态。
 
 创建消息数据快照时，显式复制消息字段及 `AgentInGroup` 等来源描述容器，容器中的 Agent、Group 仍引用原对象；不可变内容可共享，可变的 `payload` 应显式隔离。这一规则同时适用于 Mailbox 和 Group 黑板的存入与读取。
+
+消息优先级决定通知的时机与内容，不改变 Mailbox 内的时间排序。消息设计以尽量少干扰模型上下文为原则：通知不自动携带原消息的 `payload`，模型可按需读取正文。
 
 #### `Signal`: 信号量
 
@@ -172,10 +178,10 @@ Agent 运行时负责将上层的编排语义转译为 dsh 原生 agent 模型�
 Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依次排列所有接受到的消息，并支持按来源、按时间范围、按已读状态等多种方式检索消息；批量检索时默认采用 peak 语义，即可以读到元信息，不返回完整信息，且不改变已读状态，在采用 get 语义时，返回完整信息并将状态改为已读。此外，Agent 可为自己的 Mailbox 设置过滤规则，默认 drop 掉匹配规则的信息。其包括的接口如下：
 
 - 生命周期类：
-  - 构造函数 `construct()`: 创建 Mailbox，初始消息列表与过滤规则均为空
+  - 构造函数 `construct()`: 创建 Mailbox，初始消息列表、过滤规则与来源评级记录均为空
   - 析构函数：停止接收消息，释放 Mailbox 占用的运行时资源
 - 消息接收类：
-  - `put(m: Message) -> MessageID | null`: 接收一条消息，先检查过滤规则；命中任一规则时丢弃并返回 `null`，否则保存消息并返回其在当前 Mailbox 内的唯一标识。该接口由所属 Agent 的 `recvMessage` 调用，返回仅表示收件完成
+  - `put(m: Message) -> MessageID | null`: 接收一条消息，在不修改调用方对象的前提下，根据当前 Mailbox 对该来源的评级确定本地 `priority`，尚未评级时使用 `normal`，再检查过滤规则；命中任一规则时丢弃并返回 `null`，否则保存消息并返回其在当前 Mailbox 内的唯一标识。该接口由所属 Agent 的 `recvMessage` 调用，返回仅表示收件完成
 - 消息检索类：
   - `peak(id: MessageID) -> MessageMeta | null`: 获取指定消息的元信息，不返回 `payload`，不改变已读状态；消息不存在时返回 `null`
   - `get(id: MessageID) -> Message | null`: 获取指定消息的完整内容，并将其标记为已读；首次读取时记录 `read_timestamp`，再次读取时保持该时间戳不变；消息不存在时返回 `null`
@@ -186,17 +192,40 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 - 过滤规则配置类：
   - `setFilters(rules: MessageFilter[])`: 整体替换当前过滤规则，仅作用于此后接收的消息；传入空列表时取消全部过滤规则
   - `getFilters() -> MessageFilter[]`: 获取当前过滤规则列表的副本
+- 来源评级配置类：
+  - `getSourcePriority(source: Message['source']) -> MessagePriority | null`: 查询当前 Mailbox 对指定来源的评级；尚未评级时返回 `null`，与接收方主动选定的 `normal` 区分
+  - `setSourcePriority(source: Message['source'], priority: MessagePriority) -> void`: 设置或调整当前 Mailbox 对该来源的评级，由接收方模型通过对应工具调用。新评级作用于此后接收的消息；已入箱消息保留接收时的评级，不因调整而重发通知
 
 上述接口使用以下参数与返回类型：
 
 - `MessageID`: Mailbox 为每条已接收消息分配的稳定检索键，在当前 Mailbox 内唯一，用于从元信息或外部请求定位并读取完整消息。跨 Mailbox 寻址时还需指定所属 Mailbox；不为 Mailbox 对象本身另建通用 ID
-- `MessageMeta`: 包含 `id`、`source`、`timestamp`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`
+- `MessageMeta`: 包含 `id`、`source`、`timestamp`、`priority`、`title`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`，`priority` 为入箱时确定的优先级
 - `MailboxQuery = (m: Readonly<Message>) -> bool`: 只读消息匹配回调，返回 `true` 表示将该消息纳入结果，返回 `false` 表示排除。调用方可在回调中组合来源、时间范围、已读状态等条件；执行回调本身不改变消息的已读状态
 - `MessageFilter = (m: Readonly<Message>) -> bool`: 只读过滤函数，返回 `true` 表示匹配并丢弃该消息；多条规则之间采用“或”关系
 
-消息按 `timestamp` 从早到晚排序，时间戳相同时按接收顺序排列。每个 Mailbox 独立保存消息及其已读状态，入箱时 `read` 为 `false`、`read_timestamp` 为空，因此同一条群聊消息在不同 Agent 的 Mailbox 中可具有不同的已读状态。检索返回消息快照；`get`、`getLastUnread` 和 `query(..., 'get')` 的消息选择、已读更新及返回快照的生成作为一次原子操作完成。`getUnread` 对每次迭代产出的单条消息执行同样的原子操作，只更新实际返回的消息。
+消息按 `timestamp` 从早到晚排序，时间戳相同时按接收顺序排列。每个 Mailbox 独立保存来源评级、消息及其已读状态，入箱时 `read` 为 `false`、`read_timestamp` 为空，因此同一条群聊消息在不同 Agent 的 Mailbox 中可具有不同的优先级和已读状态。检索返回消息快照；`get`、`getLastUnread` 和 `query(..., 'get')` 的消息选择、已读更新及返回快照的生成作为一次原子操作完成。`getUnread` 对每次迭代产出的单条消息执行同样的原子操作，只更新实际返回的消息。
 
 上述记录及快照由 Mailbox 按 Message 的快照约定显式创建。查询与过滤回调不得修改消息及其嵌套数据；`Readonly<Message>` 表达只读约束，不会自动冻结或复制数据。过滤规则列表复制数组容器，列表中的回调函数仍为原函数引用。
+
+来源评级按现有 `source` 识别来源：单个 Agent 按对象身份匹配；`AgentInGroup` 按 Agent 与 Group 的对象组合匹配；`User` 与 `System` 分别按其来源类别匹配，不依赖消息快照中来源描述容器的地址。
+
+**消息通知规则**：Mailbox 负责保存、过滤与检索；所属 Agent 负责通知调度，并通过 HostAdaptor 向模型提交通知。`recvMessage` 成功入箱后，按以下规则处理：
+
+首次收到并接受某个尚未评级来源的消息时，先按 `normal` 的时机通知。该来源首次实际发出的通知同时要求接收方根据当前任务判断其重要性，并通过工具调用 `setSourcePriority`，明确提示“该来源的优先级后续可随时调整”。评级提示随原有通知一并发送，不单独启动评级轮次；同一批次内同一来源只提示一次。接收方尚未完成评级时，该来源继续按 `normal` 处理；首次提示被宿主接管后，后续通知不重复加入评级提示。已被过滤的消息不触发首次评级提示。
+
+| 优先级 | 通知时机与方式 | 通知内容 |
+| --- | --- | --- |
+| `high`：优先 | 收到后立即以 `steer` 提交通知，不等待当前 turn 完成；空闲时唤醒 Agent | 逐条提供消息来源和标题 |
+| `normal`：默认 | 有正在执行的 turn 时，等该 turn 完成后汇总；原生 Agent 已空闲时立即汇总当前待通知消息。批次以 `followup` 启动下一轮 | 逐条提供消息来源和摘要 |
+| `low`：不重要 | 与默认消息在同一批次、同一条通知中发送；只有不重要消息时也可形成批次 | 只报告不重要消息的数量，不列出其来源、标题、摘要或正文 |
+
+优先消息和默认消息采用相同的条目格式：`[消息ID] 来源：标题或摘要`，其中优先消息填入 `title`，默认消息填入 `summary`；消息 ID 供后续工具读取正文使用。不重要消息在批量通知中统一表示为 `不重要消息：N 条`。Agent 以 `System` 来源构造单独的通知 Message，其 `payload` 仅包含整理后的通知文本，直接提交给宿主，不重新进入 Mailbox。
+
+通知进度由接收方 Agent 单独维护，不与 Mailbox 的 `read` 混用。每次汇总固定本次覆盖的消息范围，提交中的消息不重复纳入其他通知；通知被宿主接管后，只推进这些消息的通知进度，提交失败则保留其待通知状态。已经通知过的消息不因仍未读而在后续 turn 结束时反复提醒，新收到的消息进入后续批次。没有待通知消息时不发送空通知，也不启动额外轮次。发送通知及查看元信息均不修改已读状态；模型通过读取工具调用 `get`、`getLastUnread`、`getUnread` 或 `query(..., 'get')` 获取正文时，按原有约定更新已读状态。
+
+这里的“立即”表示立即提交 `steer`，模型仍在宿主允许的下一执行步骤边界接收通知。“turn 完成”以 HostAdaptor 的 `turn-end` 事件为准。DSH 适配器将已记录的原生 `turn/end` 映射为该事件；所属 Agent 据此安排批量通知，在原生事件发布与轮次收尾完成后异步提交。不能用结束前的 `agent/turn-stopping` 钩子代替，否则其中的 `steer` 会延长当前轮次。批量通知提交后不等待下一轮执行完成。
+
+原生 Agent 已空闲时，默认消息与不重要消息采用同一批次规则：立即合并当前待通知消息，通过 `followup` 启动一轮；只有不重要消息时，通知仅包含数量。同一批次最多提交一次，不为批次中的每条消息分别启动轮次。开始终止或释放的 Agent 停止生成新通知，通知不会重新唤醒正在关闭的实例。
 
 `Signal` 由 Agent 的 `recvSignal` 接口直接处理，不经过普通消息的入箱与过滤流程。
 
@@ -245,7 +274,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
   - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 释放本适配器创建或恢复的指定 HostAgent 对应实例。先停止接纳新输入；`immediate` 取消当前执行，`after-turn` 等当前轮次结束且不再启动后续轮次，已经空闲时无需等待；之后完成会话持久化并释放原生句柄。默认采用 `immediate`。完成表示释放流程已结束，重复调用不重复释放
   - `dispose() -> Promise<void>`: 释放适配器创建或恢复的全部 Agent 及相关事件监听，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
-  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
+  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息，不自行读取 Mailbox 或按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
   - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；不属于当前适配器或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护
   - `whenIdle(agent: HostAgent) -> Promise<void>`: 等待指定 HostAgent 当前的原生执行及相关维护操作结束。期间若有新输入继续触发执行，则继续等待，因此该接口不能单独用于实现“当前轮次结束后终止”
 - 会话持久化与上下文导出类：
