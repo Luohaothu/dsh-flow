@@ -87,7 +87,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `getStatus() -> AgentStatus`: 获取 Agent 运行状态
   - 通信类：
     - `getMailbox() -> Mailbox`: 获取自身 Mailbox 的同一对象引用，供宿主适配器绑定消息读取、过滤和来源评级工具；不复制 Mailbox，也不转移其生命周期管理权
-    - `recvSignal(s: Signal)`: 接收一个信号
+    - `recvSignal(s: Signal)`: 接收并处理一个控制信号；终止信号的接收与收尾方式合并不等待已有异步收尾完成，也不因 Agent 已逻辑终止而直接拒绝
     - `recvMessage(m: Message)`: 将消息交给自身 Mailbox，成功入箱后按消息优先级安排通知；被过滤的消息不通知模型。通知只提供消息提示，正文由模型通过读取工具按需获取
     - `joinGroup(g: Group)`: 加入一个群聊，由 Group 对象在创建时调用
     - `quitGroup(g: Group)`: 退出一个群聊，由 Group 对象在销毁时调用
@@ -126,7 +126,7 @@ AgentStatus 表示 Flow 编排层的逻辑状态，不反映后端实例是否�
 - 空闲代表 Agent 实例存活，但没有进一步的工作请求
 - 已终止代表 Agent 在编排层已结束生命周期，不再接受新的业务请求或被消息唤醒；后端实例可以已经销毁，也可以继续保留在线
 
-Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身是否是原子的、瞬时的。对于状态转移操作，首先需要原子地将 Agent 状态置为目标状态，之后再执行实际的状态转移操作；对于单个 Agent 而言，状态转移操作是串行的，即在上个状态转移操作完成之前，下一个操作处于阻塞状态。
+Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身是否是原子的、瞬时的。对于状态转移操作，首先需要原子地将 Agent 状态置为目标状态，之后再执行实际的状态转移操作。对于单个 Agent，普通状态转移操作串行执行；终止信号的接收、逻辑状态更新与收尾方式合并不等待已有异步操作完成。后续资源清理仍由同一次关闭操作执行，不并行启动重复清理。
 
 接收终止请求时，Agent 从运行中、等待中或空闲立即转为已终止，不增加“终止中”状态。后续的后端执行、清理进度或错误均不改变这一逻辑状态；原生状态事件不得将其重新置为运行中或空闲。生命周期接口的 Promise 表示约定的处理操作完成，不统一承诺后端实例已经物理销毁。
 
@@ -172,6 +172,10 @@ Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身�
 
 - `SIGKILL`: 立即将 Agent 置为已终止，并采用 `immediate` 方式处理后端；该信号立即递归传递给所有子 Agent
 - `SIGTERM`: 立即将 Agent 置为已终止，并采用 `after-turn` 方式保留当前轮次的收尾；该信号立即递归传递给所有子 Agent。等待轮次结束不延迟对外逻辑状态的变化
+
+`SIGTERM` 后尚在完成当前轮次时，后续 `SIGKILL` 立即将同一次关闭操作升级为 `immediate`，撤销该轮次继续调用 Flow 业务的资格，不等待轮次自然结束。相同信号合并处理，`SIGKILL` 后的 `SIGTERM` 不降低处理强度。已经进入资源清理时，继续完成原有清理，不重新执行或跳过必要步骤；本实例清理完成后，重复信号不再产生操作。上述过程始终保持已终止的逻辑状态。
+
+信号向子 Agent 的传播不等待当前 Agent 自身的收尾。释放期间保留尚需收尾的子 Agent 引用，后续 `SIGKILL` 仍须传播给它们，不能因父 Agent 已逻辑终止或自身已进入资源清理而遗漏。
 
 ### Agent 运行时
 
@@ -254,14 +258,14 @@ Context 提供以下接口：
   - `getGroup(id: GroupID) -> Group | null`: 根据归档标识查找当前活跃的 Group；未找到或群聊已解散时返回 `null`，历史归档查询由持久化层处理
   - `list(q?: (obj: ContextObject) -> bool) -> ContextObject[]`: 返回当前已登记且未进入释放流程的对象列表；数组容器为副本，元素保留原引用。可用只读回调筛选，未提供回调时返回全部对象
 - 对象释放类：
-  - `release(obj: Agent | Group | Mailbox) -> Promise<void>`: 按对象引用释放当前 Context 管理的实例，完成后移除登记；释放不属于当前 Context 的对象时失败，重复释放同一实例不重复析构。释放 Agent 时同步处理其持有的 Mailbox 及子 Agent，群聊关系按 Agent、Group 的接口约定解除。宿主适配器仅在 Context 整体关闭时释放
+  - `release(obj: Agent | Group | Mailbox) -> Promise<void>`: 按对象引用释放当前 Context 管理的实例，完成后移除登记；释放不属于当前 Context 的对象时失败，重复释放同一实例等待同一次释放操作，不重复析构。释放 Agent 时同步处理其持有的 Mailbox 及子 Agent，群聊关系按 Agent、Group 的接口约定解除；等待释放完成不阻塞 `recvSignal` 合并新的终止控制请求。宿主适配器仅在 Context 整体关闭时释放
 
 上述接口使用以下类型：
 
 - `ContextObject = Agent | Group | Mailbox | HostContext | HostAdaptor`: Context 可登记的对象类型
 - `HostContext`: 宿主后端提供的原生上下文对象，其具体类型由后端实现确定；Flow 将其作为不透明引用保存
 
-Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放实例的引用仍指向旧对象。对象登记及业务 ID 索引更新是原子操作；异步释放期间，对象拒绝新的执行及变更请求。采用 `after-turn` 释放 Agent 时，保留关闭前已开始轮次所需的 Mailbox 和工具绑定，允许该轮次继续调用业务接口，结束后再清理；这一例外不改变其已终止的逻辑状态，也不允许 Flow 提交新输入或启动后续轮次。Context 借用宿主上下文，不负责关闭宿主进程或主会话；Agent 析构涉及的后端处理由宿主适配器决定。
+Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放实例的引用仍指向旧对象。对象登记及业务 ID 索引更新是原子操作；异步释放期间，对象拒绝新的业务执行及变更请求，终止控制请求仍按 Signal 规则接收与合并。采用 `after-turn` 释放 Agent 时，保留关闭前已开始轮次所需的 Mailbox 和工具绑定，允许该轮次继续调用业务接口，直到轮次结束或收到 `SIGKILL`；随后撤销业务资格并进入资源清理。这一例外不改变其已终止的逻辑状态，也不允许 Flow 提交新输入或启动后续轮次。Context 借用宿主上下文，不负责关闭宿主进程或主会话；Agent 析构涉及的后端处理由宿主适配器决定。
 
 #### HostAdaptor 宿主适配器
 
@@ -277,7 +281,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - Agent 生命周期类：
   - `createAgent(flowAgent: Agent, p: AgentProfile, parent?: HostAgent, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 创建原生实例，使用 `p.sessionID` 作为新会话身份，支持持久化时亦以该身份定位存储；父级直接传入已有 HostAgent 对象，可选导入已有上下文。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
   - `resumeAgent(flowAgent: Agent, session: SessionID, parent?: HostAgent) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其 Mailbox，不复用旧实例的闭包或工具绑定。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
-  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 结束指定 HostAgent 与 Flow 的执行关联，先停止接纳 Flow 的新输入。`immediate` 立即撤销当前轮次继续调用 Flow 业务的资格；`after-turn` 保留当前轮次的业务绑定，轮次结束后撤销，已经空闲时无需等待。原生执行的取消、会话持久化及实例销毁按具体后端策略处理；后端也可保留原生实例，使原生终止动作为空操作。适配器仍需撤销或禁用该实例与 Flow 的工具及事件绑定，并使旧 HostAgent 不再可用于执行。适配器不负责释放所引用的 Flow Agent 或 Mailbox，其生命周期仍由 Context 管理。默认采用 `immediate`。完成表示上述关联清理及所选后端处理已完成，不统一承诺原生实例已销毁或会话已持久化；重复调用不重复处理
+  - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 结束指定 HostAgent 与 Flow 的执行关联，先停止接纳 Flow 的新输入。`immediate` 立即撤销当前轮次继续调用 Flow 业务的资格；`after-turn` 保留当前轮次的业务绑定，轮次结束或升级为 `immediate` 后撤销，已经空闲时无需等待。原生执行的取消、会话持久化及实例销毁按具体后端策略处理；后端也可保留原生实例，使原生终止动作为空操作。适配器仍需撤销或禁用该实例与 Flow 的工具及事件绑定，并使旧 HostAgent 不再可用于执行。适配器不负责释放所引用的 Flow Agent 或 Mailbox，其生命周期仍由 Context 管理。默认采用 `immediate`。完成表示上述关联清理及所选后端处理已完成，不统一承诺原生实例已销毁或会话已持久化；重复调用按下述规则合并并共享同一个完成 Promise
   - `dispose() -> Promise<void>`: 清理适配器创建或恢复的全部 Agent 与 Flow 的执行关联及相关事件监听，按后端策略处理原生实例，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
   - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息；该发送路径不为通知主动读取 Mailbox，也不按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
@@ -296,9 +300,19 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
+**终止请求的合并与清理**：适配器按 HostAgent 对象身份保存一次关闭操作的内部记录与完成 Promise；这些记录不属于公开的 AgentStatus。第一次调用 `releaseAgent` 时即建立记录，后续调用先合并处理方式，再返回同一个 Promise，不排在已有关闭操作之后等待执行。
+
+| 内部处理阶段 | 后续请求的处理 |
+| --- | --- |
+| `after-turn` 正在等待当前轮次收尾 | 重复 `after-turn` 继续等待；`immediate` 立即撤销业务资格、结束对自然轮次结束的等待，转入资源清理 |
+| 已经进入资源清理 | 两种模式均复用原有清理及完成 Promise，不重启、不跳过清理步骤，也不恢复业务资格 |
+| 关闭操作已经完成或失败 | 返回原有 Promise 的完成或失败结果，不因重复请求重新执行清理 |
+
+当前轮次自然结束与 `immediate` 请求可能同时到达。适配器须原子地完成“撤销业务资格并进入资源清理”，确保只有一个执行路径启动清理；工具执行检查读取同一关闭记录。等待当前轮次收尾时不得持有阻止模式升级的锁，也不得仅等待一个无法被升级请求唤醒的轮次结束 Promise。终止后的 `turn-end` 只用于推进收尾，不再触发消息通知或新轮次。转入资源清理后，必要的取消确认、持久化和解绑按该后端策略完成；`immediate` 不保证物理执行瞬间结束。
+
 适配器按 HostAgent 的对象身份验证其归属与生命周期，拒绝其他适配器的对象以及已释放对象的新执行请求。即使新旧对象具有相同的 `sessionID`，也不能通过旧引用操作恢复后的新实例。持有 HostAgent 引用不改变原生实例的所有权，其后端生命周期策略由创建或恢复它的适配器负责；保留在线的原生实例不得继续通过旧绑定参与 Flow 编排。
 
-工具调用者由宿主执行上下文确认，并与适配器绑定的原生实例及上层 Agent 对应，不由模型参数指定。工具执行函数在进入业务逻辑前，通过所属 Context 确认该上层 Agent 已完成登记且可用；初始化尚未完成、立即关闭或已释放时拒绝执行。`after-turn` 关闭期间，仅允许关闭前已开始的当前轮次继续使用保留的对象与工具绑定，不再要求 `Context.has` 返回 `true`，但仍禁止新输入和后续轮次。消息 ID 在该 Agent 自身的 Mailbox 中解析，涉及其他 Agent、Group 的标识时通过所属 Context 的查询接口解析为对象引用。查询与过滤工具接收结构化参数，再由适配器构造 `MailboxQuery`、`MessageFilter` 等程序回调。
+工具调用者由宿主执行上下文确认，并与适配器绑定的原生实例及上层 Agent 对应，不由模型参数指定。工具执行函数在进入业务逻辑前，通过所属 Context 确认该上层 Agent 已完成登记且可用；初始化尚未完成、立即关闭或已释放时拒绝执行。`after-turn` 的当前轮次收尾阶段，仅允许关闭前已开始的轮次继续使用保留的对象与工具绑定，不再要求 `Context.has` 返回 `true`，但仍禁止新输入和后续轮次；一旦升级为 `immediate` 或进入资源清理，不再接受该轮次的新业务调用。消息 ID 在该 Agent 自身的 Mailbox 中解析，涉及其他 Agent、Group 的标识时通过所属 Context 的查询接口解析为对象引用。查询与过滤工具接收结构化参数，再由适配器构造 `MailboxQuery`、`MessageFilter` 等程序回调。
 
 HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 先完成逻辑终止，再将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。缺少持久化能力不妨碍逻辑终止，后端可保留在线实例；显式调用 `persist` 等要求持久化能力的接口时，若不支持则应报错，不得以空操作声称已保存。权限要求仍须由后端保证，不具备所需能力时应明确报错。原生会话恢复不自动恢复 Flow 的群聊关系、Mailbox 已读状态等协作数据。
 
@@ -314,7 +328,7 @@ const agent = await Agent.create(ctx, profile, null, initialMessage);
 // 返回时初始化及登记已完成，初始输入已由宿主接管。
 ```
 
-DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，在其 `setup(agentCtx, nativeAgent)` 回调中使用 `agentCtx.tools.register(...)` 安装适配器内部定义的工具。工具的 `execute` 通过真实执行上下文核对调用方，再转调已绑定的上层对象。三种输入模式映射为原生 `followup/steer/inject`。DSH 后端的释放策略可以使用持有的 `AgentHandle.dispose()`，等待原生执行退出、会话写入和资源清理；这一具体实现不要求其他后端采用相同的物理销毁策略，也不决定 Flow 逻辑状态变化的时机。具体后端类型、工具定义、句柄和事件格式均封装在实现类内部。
+DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，在其 `setup(agentCtx, nativeAgent)` 回调中使用 `agentCtx.tools.register(...)` 安装适配器内部定义的工具。工具的 `execute` 通过真实执行上下文核对调用方，再转调已绑定的上层对象。三种输入模式映射为原生 `followup/steer/inject`。DSH 后端的释放策略可以使用持有的 `AgentHandle.dispose()`，等待原生执行退出、会话写入和资源清理；这一具体实现不要求其他后端采用相同的物理销毁策略，也不决定 Flow 逻辑状态变化的时机。DSH 将同步发出取消请求的 `cancel()` 与异步等待执行结束的 `whenIdle()` 分开，原生 `dispose()` 复用同一次释放 Promise；Flow 适配器负责在调用原生释放前处理当前轮次收尾及模式升级，进入原生释放后复用该操作。具体后端类型、工具定义、句柄和事件格式均封装在实现类内部。
 
 ### Agent 界面看板
 
