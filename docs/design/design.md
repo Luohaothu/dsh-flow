@@ -93,7 +93,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `quitGroup(g: Group)`: 退出一个群聊，由 Group 对象在销毁时调用
   - 生命周期类：
     - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、逻辑父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文；根 Agent 的父级为 `null`，父级参数仅用于 Flow 编排关系
-    - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 恢复为新的 Agent 实例，逻辑父级直接使用对象引用；恢复的资源归属于新实例，不依赖父 Agent 的资源；旧实例的引用不会自动指向恢复后的新实例
+    - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 冷恢复对话与配置，创建新的 Agent 实例，重新初始化空 Mailbox 及通信关系。逻辑父级仅由本次传入的 `parent` 建立，不从历史恢复；恢复的资源归属于新实例，不依赖父 Agent 的资源；旧实例的引用不会自动指向恢复后的新实例
     - 析构函数：结束 Agent 在 Flow 中的生命周期，清理其编排关系及运行时绑定。原生 Agent 的停止、持久化或保留由宿主适配器按后端能力实现，不作为逻辑终止的前提
     - `fork() -> Promise<Agent>`：以自身为母版创建一个逻辑子 Agent，继承创建时的对话上下文及配置快照，但不包含通信关系。对话通过显式快照导入新会话，子 Agent 使用新的 `sessionID`，其运行状态、Mailbox、工具及其他运行时资源均独立初始化，不复用父 Agent 的资源
     - `herb(agent: Agent) -> Promise<Agent>`: 双方 Agent 分别按统一文字格式总结自身上下文，再通过一次独立 LLM 调用合并归纳两份总结，以合并结果作为新会话的初始上下文。子 Agent 以母版 Agent（即 `this`）为逻辑父级，继承母版的配置快照并分配新的 `sessionID`，独立初始化资源，不与任一来源 Agent 建立资源依赖；参数和异步结果均为 Agent 对象
@@ -131,6 +131,12 @@ Agent 的构造函数为内部实现，不提供公开的同步构造入口。�
 工厂先在内部创建上层 Agent 和空 Mailbox，再将该 Agent 引用传给适配器的 `createAgent/resumeAgent`。此时 `getMailbox()` 已可用；适配器只取得对象引用并注册工具回调，不调用依赖 HostAgent 的 `getProfile()` 等接口，也不执行工具业务。适配器返回后，上层工厂保存 HostAgent、完成事件订阅、父子关系及 Context 登记。整个过程中使用同一个上层 Agent 和 Mailbox 对象。
 
 `Agent.create` 在初始化及登记完成后提交 `initmsg`，等待宿主接管该输入后返回，不等待模型完成首轮执行；不得在宿主初始化回调内提前启动首轮。工厂失败时，撤销本次新增的登记、父子关联、Mailbox 和监听，并通过适配器清理本次创建或恢复实例的 Flow 绑定，按后端策略处理原生资源，清理后再拒绝 Promise。适配器初始化失败时，由适配器自行清理尚未返回实例的工具注册及关联资源。
+
+`Agent.resume` 专指冷恢复：旧实例已释放或进程重启后，从持久化会话创建新实例。同一实例从空闲到运行属于唤醒，通过 `followup/steer` 提交新输入完成，保留其 Mailbox 和通信关系，不调用此工厂。
+
+冷恢复采用重新初始化语义：新 Mailbox 的消息、已读状态、过滤规则和来源评级均为空；Agent 的待通知消息、通知进度、首次评级提示记录及旧的通信等待状态同时清空。不恢复历史通信对象、Group 成员资格或旧子 Agent；即使 SessionID 相同，新实例也不会自动成为原 Group 的成员。新的逻辑父级由本次 `parent` 参数显式指定，后续通信及入群按当前活跃对象重新建立。已有对话与只读归档保留历史信息，但不回填 Mailbox、不重新绑定历史来源引用，也不据此自动重发旧通信请求。
+
+适配器须在冷恢复的首次模型执行前处理原生 Inbox 中遗留的 Flow 通知，并准备一次不主动唤醒的恢复说明：会话历史已恢复，Mailbox 和通信关系已重新初始化，历史消息编号在当前 Mailbox 中无效，历史协作者不保证仍然可用。通信工具根据当前 Context 确认目标，目标不存在时明确失败，不因历史记录隐式恢复对方。上述处理属于 `resumeAgent` 的初始化职责。
 
 #### `AgentProfile`: Agent 身份信息
 
@@ -210,7 +216,7 @@ Agent 运行时负责将上层的编排语义转译为 dsh 原生 agent 模型�
 Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依次排列所有接受到的消息，并支持按来源、按时间范围、按已读状态等多种方式检索消息；批量检索时默认采用 peak 语义，即可以读到元信息，不返回完整信息，且不改变已读状态，在采用 get 语义时，返回完整信息并将状态改为已读。此外，Agent 可为自己的 Mailbox 设置过滤规则，默认 drop 掉匹配规则的信息。其包括的接口如下：
 
 - 生命周期类：
-  - 构造函数 `construct()`: 创建 Mailbox，初始消息列表、过滤规则与来源评级记录均为空
+  - 构造函数 `construct()`: 创建 Mailbox，初始消息列表、过滤规则与来源评级记录均为空；Agent 冷恢复时同样创建全新的空 Mailbox，不加载旧实例记录
   - 析构函数：停止接收消息，释放 Mailbox 占用的运行时资源
 - 消息接收类：
   - `put(m: Message) -> MessageID | null`: 接收一条消息，在不修改调用方对象的前提下，根据当前 Mailbox 对该来源的评级确定本地 `priority`，尚未评级时使用 `normal`，再检查过滤规则；命中任一规则时丢弃并返回 `null`，否则保存消息并返回其在当前 Mailbox 内的唯一标识。该接口由所属 Agent 的 `recvMessage` 调用，返回仅表示收件完成
@@ -230,7 +236,7 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 
 上述接口使用以下参数与返回类型：
 
-- `MessageID`: Mailbox 为每条已接收消息分配的稳定检索键，在当前 Mailbox 内唯一，用于从元信息或外部请求定位并读取完整消息。跨 Mailbox 寻址时还需指定所属 Mailbox；不为 Mailbox 对象本身另建通用 ID
+- `MessageID`: Mailbox 为每条已接收消息分配的稳定检索键，在当前 Mailbox 内唯一，用于从元信息或外部请求定位并读取完整消息。同一 SessionID 冷恢复后的新 Mailbox 不得将旧 MessageID 分配给新消息；用历史编号查询当前 Mailbox 返回 `null`，避免误读新消息。跨 Mailbox 寻址时还需指定所属 Mailbox；不为 Mailbox 对象本身另建通用 ID
 - `MessageMeta`: 包含 `id`、`source`、`timestamp`、`priority`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`，`priority` 为入箱时确定的优先级
 - `MailboxQuery = (m: Readonly<Message>) -> bool`: 只读消息匹配回调，返回 `true` 表示将该消息纳入结果，返回 `false` 表示排除。调用方可在回调中组合来源、时间范围、已读状态等条件；执行回调本身不改变消息的已读状态
 - `MessageFilter = (m: Readonly<Message>) -> bool`: 只读过滤函数，返回 `true` 表示匹配并丢弃该消息；多条规则之间采用“或”关系
@@ -251,7 +257,7 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 | `normal`：默认 | 有正在执行的 turn 时，等该 turn 完成后汇总；原生 Agent 已空闲时立即汇总当前待通知消息。批次以 `followup` 启动下一轮 | 逐条提供消息来源和摘要 |
 | `low`：不重要 | 与默认消息在同一批次、同一条通知中发送；只有不重要消息时也可形成批次 | 只报告不重要消息的数量，不列出其来源、摘要或正文 |
 
-优先消息和默认消息采用相同的条目格式：`[消息ID] 来源：摘要`，摘要均取自 `summary`；消息 ID 供后续工具读取正文使用。不重要消息在批量通知中统一表示为 `不重要消息：N 条`。Agent 以 `System` 来源构造单独的通知 Message，其 `payload` 仅包含整理后的通知文本，直接提交给宿主，不重新进入 Mailbox。
+优先消息和默认消息采用相同的条目格式：`[消息ID] 来源：摘要`，摘要均取自 `summary`；消息 ID 供后续工具读取正文使用。不重要消息在批量通知中统一表示为 `不重要消息：N 条`。Agent 以 `System` 来源构造单独的通知 Message，其 `payload` 仅包含整理后的通知文本，调用宿主 `send` 时显式传入 `purpose = 'notification'`，不重新进入 Mailbox。该用途标记供适配器在冷恢复时识别旧通知，不改变模型看到的通知文本。
 
 通知进度由接收方 Agent 单独维护，不与 Mailbox 的 `read` 混用。每次汇总固定本次覆盖的消息范围，提交中的消息不重复纳入其他通知；通知被宿主接管后，只推进这些消息的通知进度，提交失败则保留其待通知状态。已经通知过的消息不因仍未读而在后续 turn 结束时反复提醒，新收到的消息进入后续批次。没有待通知消息时不发送空通知，也不启动额外轮次。发送通知及查看元信息均不修改已读状态；模型通过读取工具调用 `get`、`getLastUnread`、`getUnread` 或 `query(..., 'get')` 获取正文时，按原有约定更新已读状态。
 
@@ -304,11 +310,11 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
   - `readonly host: HostContext`: 当前实现绑定的原生宿主上下文，供 Context 登记；不向上层暴露可操作的原生 Agent 句柄
 - Agent 生命周期类：
   - `createAgent(flowAgent: Agent, p: AgentProfile, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 独立创建原生实例，使用 `p.sessionID` 作为新会话身份，支持持久化时亦以该身份定位存储；可选导入已有上下文，不接收父 HostAgent。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
-  - `resumeAgent(flowAgent: Agent, session: SessionID) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话独立恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其 Mailbox，不复用旧实例的闭包或工具绑定，也不依赖父 Agent 的资源。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
+  - `resumeAgent(flowAgent: Agent, session: SessionID) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话独立冷恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，重新安装工具、权限与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其新建的空 Mailbox，不恢复旧通信关系或复用旧实例的闭包、工具绑定。首次模型执行前完成旧 Flow 待处理通知的剔除和恢复说明的准备，具体规则见下文。会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
   - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 结束指定 HostAgent 与 Flow 的执行关联，先停止接纳 Flow 的新输入。`immediate` 立即撤销当前轮次继续调用 Flow 业务的资格；`after-turn` 保留当前轮次的业务绑定，轮次结束或升级为 `immediate` 后撤销，已经空闲时无需等待。原生执行的取消、会话持久化及实例销毁按具体后端策略处理；后端也可保留原生实例，使原生终止动作为空操作。适配器仍需撤销或禁用该实例与 Flow 的工具及事件绑定，并使旧 HostAgent 不再可用于执行。适配器不负责释放所引用的 Flow Agent 或 Mailbox，其生命周期仍由 Context 管理。默认采用 `immediate`。完成表示上述关联清理及所选后端处理已完成，不统一承诺原生实例已销毁或会话已持久化；重复调用按下述规则合并并共享同一个完成 Promise
   - `dispose() -> Promise<void>`: 清理适配器创建或恢复的全部 Agent 与 Flow 的执行关联及相关事件监听，按后端策略处理原生实例，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
-  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息；该发送路径不为通知主动读取 Mailbox，也不按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
+  - `send(agent: HostAgent, m: Message, mode?: 'followup' | 'steer' | 'notice', purpose?: 'input' | 'notification') -> Promise<void>`: 将消息转换为指定 HostAgent 的宿主输入，接收上层构造的初始输入或通知消息；该发送路径不为通知主动读取 Mailbox，也不按优先级调度通知。`followup` 在下一轮次处理并唤醒空闲 Agent，`steer` 在下一可接收输入的执行步骤处理并唤醒空闲 Agent，`notice` 插入后续执行步骤但不主动唤醒；默认采用 `followup`。`purpose` 默认为 `input`，初始任务输入使用该值；Mailbox 通知显式使用 `notification`，适配器将这一用途写入可持久化的原生来源元信息，供冷恢复识别。完成仅表示宿主已接管输入，不表示模型已读取或任务已完成，也不修改 Mailbox 的已读状态
   - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；不属于当前适配器或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护
   - `whenIdle(agent: HostAgent) -> Promise<void>`: 等待指定 HostAgent 当前的原生执行及相关维护操作结束。期间若有新输入继续触发执行，则继续等待，因此该接口不能单独用于实现“当前轮次结束后终止”
 - 会话持久化与上下文导出类：
@@ -327,6 +333,8 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
+**冷恢复的输入处理**：清空 Flow Mailbox 不代表原生 Inbox 已清空。`resumeAgent` 必须在实例能够执行模型请求前，按持久化用途标记剔除旧实例尚未消费的 Flow 通知；保留用户指令及任务输入，不通过清空整个原生 Inbox 实现，也不根据消息正文或 `System` 来源猜测用途。已进入对话历史的旧消息仍作为历史保留。随后准备一次恢复说明，在下一次模型请求中提供，不为说明单独启动轮次；说明也使用可识别的 Flow 通知标记，使再次冷恢复时尚未消费的旧说明可由新说明替换。标记格式、定向剔除及说明注入由具体适配器实现，不增加独立的公开初始化接口。
+
 上下文总结和合并都是适配器管理的独立模型请求，完成表示已取得符合标准格式的完整文本，不是仅提交了输入。总结请求以对应 Agent 的上下文快照为输入，并要求模型总结自身状态；适配器负责将快照整理为可独立推理的输入，未完成的工具调用只作为进行中事项的文字背景，不作为等待执行的调用重放。两类请求都只接收文字结果，不执行工具调用。请求与输出不通过 `send` 写回来源会话，避免来源 Agent 在工具内等待 `herb` 时形成“等待自身轮次结束”的依赖。空输出、截断输出或不符合标准格式的输出应使本次调用失败，不能以额外 LLM 修订调用扩展一次性合并过程。独立请求由适配器管理其执行资源，终止时按既有生命周期规则处理，不增加公开 Agent 状态。
 
 **终止请求的合并与清理**：适配器按 HostAgent 对象身份保存一次关闭操作的内部记录与完成 Promise；这些记录不属于公开的 AgentStatus。第一次调用 `releaseAgent` 时即建立记录，后续调用先合并处理方式，再返回同一个 Promise，不排在已有关闭操作之后等待执行。
@@ -343,7 +351,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 
 工具调用者由宿主执行上下文确认，并与适配器绑定的原生实例及上层 Agent 对应，不由模型参数指定。工具执行函数在进入业务逻辑前，通过所属 Context 确认该上层 Agent 已完成登记且可用；初始化尚未完成、立即关闭或已释放时拒绝执行。`after-turn` 的当前轮次收尾阶段，仅允许关闭前已开始的轮次继续使用保留的对象与工具绑定，不再要求 `Context.has` 返回 `true`，但仍禁止新输入和后续轮次；一旦升级为 `immediate` 或进入资源清理，不再接受该轮次的新业务调用。消息 ID 在该 Agent 自身的 Mailbox 中解析，涉及其他 Agent、Group 的标识时通过所属 Context 的查询接口解析为对象引用。查询与过滤工具接收结构化参数，再由适配器构造 `MailboxQuery`、`MessageFilter` 等程序回调。
 
-HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 先完成逻辑终止，再将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。缺少持久化能力不妨碍逻辑终止，后端可保留在线实例；显式调用 `persist` 等要求持久化能力的接口时，若不支持则应报错，不得以空操作声称已保存。权限要求仍须由后端保证，不具备所需能力时应明确报错。原生会话恢复不自动恢复 Flow 的群聊关系、Mailbox 已读状态等协作数据。
+HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 先完成逻辑终止，再将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。缺少持久化能力不妨碍逻辑终止，后端可保留在线实例；显式调用 `persist` 等要求持久化能力的接口时，若不支持则应报错，不得以空操作声称已保存。权限要求仍须由后端保证，不具备所需能力时应明确报错。Flow 的冷恢复统一重新初始化 Mailbox 和通信关系，原生会话中的历史协作记录不改变这一规则。
 
 后端启动时的装配过程如下，其中具体实现类的构造方式由各后端自行决定：
 
@@ -360,6 +368,8 @@ const agent = await Agent.create(ctx, profile, null, initialMessage);
 DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，在其 `setup(agentCtx, nativeAgent)` 回调中使用 `agentCtx.tools.register(...)` 安装适配器内部定义的工具。工具的 `execute` 通过真实执行上下文核对调用方，再转调已绑定的上层对象。三种输入模式映射为原生 `followup/steer/inject`。DSH 后端的释放策略可以使用持有的 `AgentHandle.dispose()`，等待原生执行退出、会话写入和资源清理；这一具体实现不要求其他后端采用相同的物理销毁策略，也不决定 Flow 逻辑状态变化的时机。DSH 将同步发出取消请求的 `cancel()` 与异步等待执行结束的 `whenIdle()` 分开，原生 `dispose()` 复用同一次释放 Promise；Flow 适配器负责在调用原生释放前处理当前轮次收尾及模式升级，进入原生释放后复用该操作。具体后端类型、工具定义、句柄和事件格式均封装在实现类内部。
 
 DSH 的原生实例生命周期归属于调用 `create/resume` 的 Context；适配器应始终使用自身持有的稳定宿主 Context，不通过逻辑父 Agent 的 `agent.ctx` 创建实例。Flow 的父子树也不登记为 DSH 的 `parentAgent` 关系，`transfer` 无需调用原生 reparent 接口。配置及工具在新实例的作用域中独立安装；历史快照中的 `parentSession` 等来源信息仅用于记录创建来源，不决定当前逻辑父级或资源归属。
+
+DSH 冷恢复先加载持久化会话，再执行尚未发布实例的 `setup`。适配器可在该回调中检查 `nativeAgent.inbox.nextTurn/nextStep`，按消息 `source` 中的 Flow 通知标记调用 `inbox.remove(message.id)`；该操作记录取消结果，保留历史日志。随后通过不主动唤醒的 `inject` 准备恢复说明。用户及任务输入仍保留；不能使用 `inbox.clear()` 代替定向剔除。DSH 原生 Team 的成员恢复和持久消息重投递机制不用于恢复 Flow 的通信关系。
 
 DSH 的 `compaction-basic` 提供了可参考的总结方式：读取会话当前有效上下文，附加总结要求，再通过 `ctx.llm.stream(...)` 执行辅助模型调用，由 `BlockAssembler` 收集结果。适配器可分别使用双方的 `session.deriveMessages()` 快照及对应模型配置生成总结，再以两份总结构造一次合并请求。这里仅参考输入构造和模型调用方式，不调用会修改原会话的 `compactNow()`；适配器仍需处理未完成工具调用的输入格式。标准总结模板、两份总结的合并规则以及子 Agent 的创建流程由 Flow 的上述契约规定，DSH 不直接提供 `herb` 操作。
 
