@@ -78,7 +78,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
 #### Agent 智能体
 
 - **定义**：Agent 是团队的基本组成单位，其在上层对应于一个用户可见的智能体对象，在底层对应于一个由 Flow 创建或恢复的 DSH 原生 Agent。宿主主 Agent 作为编排接口的外部调用方，其创建的顶层 Flow Agent 的父级为 `null`。
-- **接口**：Agent 支持以下公开接口：
+- **接口**：Agent 支持以下接口，其中 `joinGroup/quitGroup` 仅用于内部生命周期协作，其余为公开接口：
   - 基础信息查询类：
     - `getProfile() -> Readonly<AgentProfile>`: 获取 Agent 的只读身份信息引用，身份信息在该实例生命周期内保持不变
     - `getParent() -> Agent | null`: 获取逻辑父 Agent 的对象引用，根 Agent 返回 `null`
@@ -89,8 +89,8 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `getMailbox() -> Mailbox`: 获取自身 Mailbox 的同一对象引用，供宿主适配器绑定消息读取、过滤和来源评级工具；不复制 Mailbox，也不转移其生命周期管理权
     - `recvSignal(s: Signal)`: 接收并处理一个控制信号；终止信号的接收与收尾方式合并不等待已有异步收尾完成，也不因 Agent 已逻辑终止而直接拒绝
     - `recvMessage(m: Message)`: 将消息交给自身 Mailbox，成功入箱后按消息优先级安排通知；被过滤的消息不通知模型。通知只提供消息提示，正文由模型通过读取工具按需获取
-    - `joinGroup(g: Group)`: 加入一个群聊，由 Group 对象在创建时调用
-    - `quitGroup(g: Group)`: 退出一个群聊，由 Group 对象在销毁时调用
+    - `joinGroup(g: Group)`: 由 Group 对象在创建时调用，建立初始成员关联；不作为运行期间主动入群的入口
+    - `quitGroup(g: Group)`: 由 Agent 逻辑终止、释放或 Group 解散的生命周期流程调用，解除双方成员关联；重复解除不产生额外操作，不作为主动退群的入口
   - 生命周期类：
     - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、逻辑父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文。父级在创建前根据任务明确指定 `p.permission`，创建后固定；根 Agent 由外部调用方指定权限，其父级为 `null`。父级参数仅用于 Flow 编排关系
     - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 冷恢复对话与配置，创建新的 Agent 实例，重新初始化空 Mailbox 及通信关系。逻辑父级仅由本次传入的 `parent` 建立，不从历史恢复；恢复的资源归属于新实例，不依赖父 Agent 的资源；旧实例的引用不会自动指向恢复后的新实例
@@ -134,7 +134,7 @@ Agent 的构造函数为内部实现，不提供公开的同步构造入口。�
 
 `Agent.resume` 专指冷恢复：旧实例已释放或进程重启后，从持久化会话创建新实例。同一实例从空闲到运行属于唤醒，通过 `followup/steer` 提交新输入完成，保留其 Mailbox 和通信关系，不调用此工厂。
 
-冷恢复采用重新初始化语义：新 Mailbox 的消息、已读状态、过滤规则和来源评级均为空；Agent 的待通知消息、通知进度、首次评级提示记录及旧的通信等待状态同时清空。不恢复历史通信对象、Group 成员资格或旧子 Agent；即使 SessionID 相同，新实例也不会自动成为原 Group 的成员。新的逻辑父级由本次 `parent` 参数显式指定，后续通信及入群按当前活跃对象重新建立。已有对话与只读归档保留历史信息，但不回填 Mailbox、不重新绑定历史来源引用，也不据此自动重发旧通信请求。
+冷恢复采用重新初始化语义：新 Mailbox 的消息、已读状态、过滤规则和来源评级均为空；Agent 的待通知消息、通知进度、首次评级提示记录及旧的通信等待状态同时清空。不恢复历史通信对象、Group 成员资格或旧子 Agent；即使 SessionID 相同，新实例也不会成为原 Group 的成员。新的逻辑父级由本次 `parent` 参数显式指定，后续通信按当前活跃对象重新建立；需要群聊时，在新 Group 构造时显式将新实例列为成员。已有对话与只读归档保留历史信息，但不回填 Mailbox、不重新绑定历史来源引用，也不据此自动重发旧通信请求。
 
 适配器须在冷恢复的首次模型执行前处理原生 Inbox 中遗留的 Flow 通知，并准备一次不主动唤醒的恢复说明：会话历史已恢复，Mailbox 和通信关系已重新初始化，历史消息编号在当前 Mailbox 中无效，历史协作者不保证仍然可用。通信工具根据当前 Context 确认目标，目标不存在时明确失败，不因历史记录隐式恢复对方。上述处理属于 `resumeAgent` 的初始化职责。
 
@@ -168,15 +168,17 @@ Agent 的状态转移是原子的、瞬时的，无论状态转移操作本身�
 
 #### `Group`: 群聊
 
-群聊是区别于点对点通信的另一种区域通信形式，加入群聊的各个 Agent 均可见其他 Agent 在群聊中发送的所有消息，每个 Agent 只能看见自己加入后的新增消息。此外，群聊还有一块共享式的信息区域**黑板（blackboard）**，Agent 可抢占式在现有内容上追加。Group 提供以下接口：
+群聊是区别于点对点通信的另一种区域通信形式，成员在 Group 创建时确定，存续期间不新增或替换成员，仅在 Agent 逻辑终止或释放时自动退群。群聊消息发送给当时仍在群内的成员，已退出的 Agent 不再接收后续消息。此外，群聊还有一块共享式的信息区域**黑板（blackboard）**，Agent 可抢占式在现有内容上追加。Group 提供以下接口：
 
-- 构造函数`construct(ctx: Context, members: Agent[])`：传入一组 Agent 对象，保存成员数组的副本，成员仍引用原对象，调用各自的 `joinGroup` 完成构造
-- `getID() -> GroupID`: 获取当前群聊的稳定归档标识；创建时分配，用于持久化、历史查询和外部寻址，运行时加入群聊或发消息直接使用 Group 对象
-- 析构函数：解散当前 Group，调用所有成员 Agent 的 `quitGroup` 函数。Group 也遵循持久化语义，在群聊解散后，原有消息仍可查看，但无法向其中发送新的消息，也无法恢复群聊。
+- 构造函数`construct(ctx: Context, members: Agent[])`：传入同一 Context 中已完成初始化且未终止或进入释放流程的一组 Agent 对象，保存成员数组的副本，成员仍引用原对象，调用各自的 `joinGroup` 完成构造；创建完成后不再接受新成员
+- `getID() -> GroupID`: 获取当前群聊的稳定归档标识；创建时分配，用于持久化、历史查询和外部寻址，运行时操作直接使用 Group 对象
+- 析构函数：解散当前 Group，调用所有剩余成员 Agent 的 `quitGroup` 函数，解除关联而不终止这些 Agent。Group 也遵循持久化语义，在群聊解散后，原有消息仍可查看，但无法向其中发送新的消息，也无法恢复群聊。
 - `postMessage(source: Agent, m: Message)`: 向群聊中发送一条消息。`source` 为发送者对象，未在群聊中的成员会发送失败
 - `postToBlackboard(source: Agent, m: Message)`: 向黑板上追加一条独立的消息数据记录，来源 Agent、Group 保留对象引用。`source` 为发送者对象，未在群聊中的成员会发送失败
 - `readBlackboard(t?: Timestamp) -> Message[]`: 获取黑板上的消息数据快照，避免调用方修改黑板内的记录；来源 Agent、Group 仍保留原对象引用。`t` 为可选参数，提供时返回该时间戳之后的信息，否则返回所有信息
 - `hasNewMsgOnboard(t: Timestamp) -> bool`: 查询时间戳之后黑板内容是否有更新
+
+Agent 逻辑终止时立即退出其所属的全部 Group，同时解除双方成员关联，不等待后端执行停止或资源清理完成。退出后，该 Agent 的群消息发送及黑板写入按成员资格检查失败；`SIGTERM` 保留当前轮次的业务绑定不保留已解除的群成员资格。退群不删除已经接收的消息或群聊历史，也不终止其他成员或自动解散 Group。普通轮次结束、空闲、等待和父级转移不触发退群；冷恢复后的新实例遵循上述固定成员规则。
 
 注意，黑板信息读写接口采用 Message 对象是为了简化实现，其中保存的对象的读取状态相关信息无意义，信息的使用者需要注意这一点。
 
@@ -294,7 +296,7 @@ Context 提供以下接口：
   - `getGroup(id: GroupID) -> Group | null`: 根据归档标识查找当前活跃的 Group；未找到或群聊已解散时返回 `null`，历史归档查询由持久化层处理
   - `list(q?: (obj: ContextObject) -> bool) -> ContextObject[]`: 返回当前已登记且未进入释放流程的对象列表；数组容器为副本，元素保留原引用。可用只读回调筛选，未提供回调时返回全部对象
 - 对象释放类：
-  - `release(obj: Agent | Group | Mailbox) -> Promise<void>`: 按对象引用释放当前 Context 管理的实例，完成后移除登记；释放不属于当前 Context 的对象时失败，重复释放同一实例等待同一次释放操作，不重复析构。释放 Agent 时处理其持有的 Mailbox，并按当前逻辑父子树分别释放子 Agent 各自的资源；已转出其当前子树的 Agent 不在释放范围内。群聊关系按 Agent、Group 的接口约定解除；等待释放完成不阻塞 `recvSignal` 合并新的终止控制请求。宿主适配器仅在 Context 整体关闭时释放
+  - `release(obj: Agent | Group | Mailbox) -> Promise<void>`: 按对象引用释放当前 Context 管理的实例，完成后移除登记；释放不属于当前 Context 的对象时失败，重复释放同一实例等待同一次释放操作，不重复析构。释放 Agent 时先逻辑终止并自动退出全部 Group，再处理其持有的 Mailbox，并按当前逻辑父子树分别释放子 Agent 各自的资源；已转出其当前子树的 Agent 不在释放范围内。群聊关系按 Agent、Group 的接口约定解除；等待释放完成不阻塞 `recvSignal` 合并新的终止控制请求。宿主适配器仅在 Context 整体关闭时释放
 
 上述接口使用以下类型：
 
