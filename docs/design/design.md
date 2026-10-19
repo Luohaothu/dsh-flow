@@ -33,6 +33,8 @@ dsh-flow 旨在扩展 dsh 中标准智能体团队的能力，提供预置的 ag
 
 dsh-flow 包括三个方面：面向用户的界面看板，后端 agent 运行时，以及 agent 编排系统。其中，看板系统负责与 dsh 前端界面交互，在前端上显示当前智能体团队运行状态，并响应用户交互请求；agent 编排系统负责决策团队架构方案，与用户主 agent 交互完成任务分解和团队构建；最后是后端 agent 运行时，该层次将 agent 团队编排转译为 dsh 原生 agent 的业务请求，并维护团队特有的运行状态。
 
+本文讨论的概念模型、接口闭合与一致性，以 Flow 层明确声明的数据及行为为范围。具体模型选择、provider、推理参数、运行预设等宿主内部配置由各适配器管理，不要求派生实例与母版在这些配置上逐项相同；宿主仍须落实本文明确约定的执行行为、固定权限及资源生命周期。
+
 本文中的接口统一遵循以下对象传递约定：
 
 - 同一运行环境内的接口调用直接传递对象引用，不因传参或返回而复制对象，也不因此转移对象的生命周期管理权。
@@ -97,20 +99,20 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、逻辑父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文。父级在创建前根据任务明确指定 `p.permission`，创建后固定；根 Agent 由外部调用方指定权限，其父级为 `null`。父级参数仅用于 Flow 编排关系
     - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 冷恢复对话与配置，创建新的 Agent 实例，重新初始化空 Mailbox 及通信关系。逻辑父级仅由本次传入的 `parent` 建立，不从历史恢复；恢复的资源归属于新实例，不依赖父 Agent 的资源；旧实例的引用不会自动指向恢复后的新实例
     - 析构函数：结束 Agent 在 Flow 中的生命周期，清理其编排关系及运行时绑定。原生 Agent 的停止、持久化或保留由宿主适配器按后端能力实现，不作为逻辑终止的前提
-    - `fork() -> Promise<Agent>`：以自身为母版创建一个逻辑子 Agent，继承创建时的对话上下文及配置快照，包括母版的固定权限，但不包含通信关系。对话通过显式快照导入新会话，子 Agent 使用新的 `sessionID`，其运行状态、Mailbox、工具及其他运行时资源均独立初始化，不复用父 Agent 的资源
-    - `herb(agent: Agent) -> Promise<Agent>`: 双方 Agent 分别按统一文字格式总结自身上下文，再通过一次独立 LLM 调用合并归纳两份总结，以合并结果作为新会话的初始上下文。子 Agent 以母版 Agent（即 `this`）为逻辑父级，继承母版的配置快照及固定权限，不合并双方权限；分配新的 `sessionID`，独立初始化资源，不与任一来源 Agent 建立资源依赖；参数和异步结果均为 Agent 对象
+    - `fork() -> Promise<Agent>`：以自身为母版创建一个逻辑子 Agent，复制母版 `AgentProfile` 的字段并将 `sessionID` 替换为新分配的会话身份，建立独立的只读 Profile 记录。对话通过显式快照导入新会话，不继承通信关系；子 Agent 的运行状态、Mailbox、工具及其他运行时资源均独立初始化，不复用父 Agent 的资源
+    - `herb(agent: Agent) -> Promise<Agent>`: 双方 Agent 分别按统一文字格式总结自身上下文，再通过一次独立 LLM 调用合并归纳两份总结，以合并结果作为新会话的初始上下文。子 Agent 以母版 Agent（即 `this`）为逻辑父级，复制母版 `AgentProfile` 的字段并将 `sessionID` 替换为新分配的会话身份，建立独立的只读 Profile 记录，不合并双方 Profile 或权限；独立初始化资源，不与任一来源 Agent 建立资源依赖；参数和异步结果均为 Agent 对象
     - `kill(agent: Agent)`: 终止一个子 Agent，并执行对应的生命周期清理
     - `transfer(child: Agent, adopt: Agent) -> void`: 将自身的一个直接逻辑子 Agent 转交给 `adopt`，原子更新子 Agent 的父引用及新旧父 Agent 的子列表。调用方、`child` 和 `adopt` 须属于同一 Context 且均未终止或进入释放流程；`adopt` 不得为 `child` 或其后代，以免形成环。不满足条件时失败；转交给当前父 Agent 时不作变更
 
 Agent 内部持有宿主适配器返回的 `HostAgent` 对象，并将该对象传给宿主执行接口；`getProfile()` 复用其 `profile` 引用，编排层仍使用上层 Agent 对象。Agent 的注册、父子关系和 Group 成员关系均使用对象引用，序列化这些关系时才转换为业务 ID。
 
-父子关系仅表示 Flow 的逻辑编排关系，用于组织及递归控制。每个 Agent 创建后，其会话、Mailbox、工具注册、事件监听和其他实例资源均与自身关联，独立于逻辑父 Agent；配置和历史的继承通过创建时的数据快照完成，不借用父 Agent 的运行时资源。各 Agent 可使用宿主统一提供的公共服务，实例资源和绑定分别归属自身。原生实例由适配器在稳定的宿主作用域中独立创建和管理，不挂接到逻辑父 Agent 的资源作用域。
+父子关系仅表示 Flow 的逻辑编排关系，用于组织及递归控制。每个 Agent 创建后，其会话、Mailbox、工具注册、事件监听和其他实例资源均与自身关联，独立于逻辑父 Agent。Flow 层的配置继承通过复制 `AgentProfile` 完成，保留母版的 `role`、`name` 和 `permission`，重新分配 `sessionID`；对话上下文按 `fork/herb` 的约定分别处理，不借用父 Agent 的运行时资源。各 Agent 可使用宿主统一提供的公共服务，实例资源和绑定分别归属自身。原生实例由适配器在稳定的宿主作用域中独立创建和管理，不挂接到逻辑父 Agent 的资源作用域。
 
 `herb` 的上下文生成过程分为三步，其中 `a.herb(b)` 的母版为 `a`，另一来源为 `b`：
 
 1. 对双方分别调用 `summarizeContext`，由各自的模型基于自身上下文生成总结；两份总结可并行生成，各自基于本次调用捕获的上下文，不自动读取尚未进入模型上下文的 Mailbox 消息。
 2. 两份总结均完成后，调用一次 `mergeContextSummaries`，使用母版 Agent 的模型配置，对两份文字进行合并、去重和归纳。合并时保留来源、关键约束、未完成事项及相互矛盾的信息，无法消解的分歧列入待确认事项，不自行编造结论。
-3. 将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。
+3. 复制母版的 `AgentProfile`，将其中的 `sessionID` 替换为新分配的会话身份，再将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 传入该 Profile 和初始消息创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。
 
 双方总结与合并结果均使用以下标准文字格式；没有内容的章节填写“无”，信息不足时明确标注“未知”。来源信息由适配器根据实际 Agent 身份填写，合并结果保留双方来源。这里的上下文总结不受 Message 的短字段 `summary` 的 50 字符限制。
 
