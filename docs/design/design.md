@@ -115,7 +115,7 @@ Agent 内部持有宿主适配器返回的 `HostAgent` 对象，并将该对象�
 
 1. 对双方分别调用 `summarizeContext`，由各自的模型基于自身上下文生成总结；两份总结可并行生成，各自基于本次调用捕获的上下文，不自动读取尚未进入模型上下文的 Mailbox 消息。
 2. 两份总结均完成后，调用一次 `mergeContextSummaries`，使用母版 Agent 的模型配置，对两份文字进行合并、去重和归纳。合并时保留来源、关键约束、未完成事项及相互矛盾的信息，无法消解的分歧列入待确认事项，不自行编造结论。
-3. 复制母版的 `AgentProfile`，将其中的 `sessionID` 替换为新分配的会话身份，再将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 传入该 Profile 和初始消息创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。两次总结分别使用来源 Agent 自己的模型，合并使用母版的模型；这些调用发生在子 Agent 存在之前。`summarizeContext` 与 `mergeContextSummaries` 返回 `{ summary, usage[] }`，每项 usage 含实际执行的 `provider` 与 `model`。适配器缓冲这些 usage，仅在子 Agent 的 `agent.created` 之后立即发成 `usage` 事件，记在该子节点上，以保持子节点先出现；事件中的模型是实际执行者，不是子 Agent Profile 的模型。只有宿主声明 `capabilities.usage` 时才发出这些事件，否则不发事件，花费显示为不可用。子 Agent 未创建成功时丢弃缓冲，不向来源 Agent 补发。
+3. 复制母版的 `AgentProfile`，将其中的 `sessionID` 替换为新分配的会话身份，再将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 传入该 Profile 和初始消息创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。两次总结分别使用来源 Agent 自己的模型，合并使用母版的模型；这些调用发生在子 Agent 存在之前。`summarizeContext` 与 `mergeContextSummaries` 返回 `{ summary, usage[] }`，每项 usage 含实际执行的 `provider` 与 `model`。适配器缓冲这些 usage，仅在子 Agent 的 `agent.created` 之后立即发成 `usage` 事件，记在该子节点上，以保持子节点先出现；事件中的模型是实际执行者，不是子 Agent Profile 的模型。只有宿主声明 `capabilities.usage` 时才发出这些事件，否则不发事件，花费显示为不可用。`Agent.create` 失败时不丢弃缓冲的辅助用量，改为在调用 `herb` 的来源 Agent（`a`，即接收方）上发出这些 `usage` 事件，使运行合计仍然完整。
 
 双方总结与合并结果均使用以下标准文字格式；没有内容的章节填写“无”，信息不足时明确标注“未知”。来源信息由适配器根据实际 Agent 身份填写，合并结果保留双方来源。这里的上下文总结不受 Message 的短字段 `summary` 的 50 字符限制。
 
