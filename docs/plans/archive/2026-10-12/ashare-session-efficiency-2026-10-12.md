@@ -120,7 +120,7 @@ Auditor 已移除；当前团队只有总协调、资源协调和两名 Worker�
 
 **解决：**区分身份数、活动回合数、调度许可、排队时间和宿主实际请求观测。为已有业务工作提供公平排队，避免没有可行动事件的管理回合抢占资源。长回合采用宿主支持的让出/中断边界；若需请求级公平，由 DSH 提供。遵守 ADR 0003，Flow 不重新挂载模型请求中间件或引入 Token 硬预算。
 
-**位置：**`cluster.ts:2712,2830`、[runtime.ts](../../../../packages/dsh-flow/src/core/runtime.ts) 的原生 Agent 完成等待；[ADR 0003](../../../adr/0003-use-host-model-capacity-and-compaction.md)。
+**位置：**`cluster.ts:2712,2830`、[runtime.ts](../../../../packages/dsh-flow/src/core/runtime.ts) 的原生 Agent 完成等待；ADR 0003。
 
 ### P1-10：模型看到的工具、权限上下文与实际执行条件不一致
 

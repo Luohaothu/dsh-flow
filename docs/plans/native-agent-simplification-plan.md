@@ -34,4 +34,4 @@ task/result/review/message 返回后续操作所需身份、版本与状态，�
 
 当前数据格式 schema 8，旧 schema 5/6/7 明确拒绝。部署使用新的 Flow dataDir，原生历史、模型配置与凭据独立保留。
 
-角色澄清前的方案快照已移入[归档](archive/2026-10-13/standard-agent-before-role-clarification.md)。角色语义以当前[术语表](../../GLOSSARY.md)、[ADR 0004](../adr/0004-use-standard-native-agents.md)和 Agent 配置文档为准。
+角色澄清前的方案快照已移入[归档](archive/2026-10-13/standard-agent-before-role-clarification.md)。角色语义以当前[术语表](../../GLOSSARY.md)和 Agent 配置文档为准。

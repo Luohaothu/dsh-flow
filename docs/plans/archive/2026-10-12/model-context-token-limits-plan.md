@@ -22,7 +22,7 @@ Flow 以 DSH Agent 为最小操作单元，配置任务输入、结果交付和�
 
 “使用最大上下文”表示 Flow 不再施加额外窗口限制，由 DSH 使用实际模型配置。DSH 可以按官方默认策略提前压缩；这不属于 Flow 需要覆盖的行为。模型容量缺失及服务错误同样由 DSH 处理。
 
-架构决策：[移除模型执行额度](../../../adr/0001-remove-flow-token-limits.md)、[采用新契约](../../../adr/0002-use-clean-resource-contract.md)、[Agent 职责归属](../../../adr/0003-use-host-model-capacity-and-compaction.md)。
+架构决策：移除模型执行额度、采用新契约、Agent 职责归属。
 
 ## 职责与执行关系
 

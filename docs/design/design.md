@@ -1,6 +1,6 @@
 # dsh-flow 设计文档
 
-本文档记录了对 dsh-flow 的整体架构设计，作为本仓库最高可信设计决策来源。除用户明确要求外，agent 不得修改本文档。在与其他文档、代码等冲突时，以本文档定义为准。
+本文档记录了对 dsh-flow 的整体架构设计，作为本仓库设计的唯一依据。除用户明确要求外，agent 不得修改本文档。在与其他文档、代码等冲突时，以本文档定义为准。
 
 - [dsh-flow 设计文档](#dsh-flow-设计文档)
   - [总体定位](#总体定位)
@@ -34,7 +34,7 @@ dsh-flow 旨在扩展 dsh 中标准智能体团队的能力，提供预置的 ag
 
 dsh-flow 包括三个方面：面向用户的界面看板，后端 agent 运行时，以及 agent 编排系统。其中，看板系统负责与 dsh 前端界面交互，在前端上显示当前智能体团队运行状态，并响应用户交互请求；agent 编排系统负责决策团队架构方案，与用户主 agent 交互完成任务分解和团队构建；最后是后端 agent 运行时，该层次将 agent 团队编排转译为 dsh 原生 agent 的业务请求，并维护团队特有的运行状态。
 
-本文讨论的概念模型、接口闭合与一致性，以 Flow 层明确声明的数据及行为为范围。Agent 的模型与推理参数在 `AgentProfile` 中以宿主无关的形式声明，由适配器落实；其中 `params`、`hostExtras` 不纳入一致性判定。provider 路由、运行预设等其他宿主内部配置仍由各适配器管理，不要求派生实例与母版在这些配置上逐项相同；宿主仍须落实本文明确约定的执行行为、固定权限及资源生命周期。
+本文讨论的概念模型、接口闭合与一致性，以 Flow 层明确声明的数据及行为为范围。Agent 的模型与推理参数在 `AgentProfile` 中以宿主无关的形式声明，由适配器落实；其中 `params`、`hostExtras` 不纳入一致性判定。provider 路由、运行预设等其他宿主内部配置仍由各适配器管理，不要求派生实例与母版在这些配置上逐项相同；宿主仍须落实本文明确约定的执行行为、初始权限的安装及资源生命周期。
 
 本文中的接口统一遵循以下对象传递约定：
 
@@ -95,7 +95,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `getMailbox() -> Mailbox`: 获取自身 Mailbox 的同一对象引用，供宿主适配器绑定消息读取、过滤和来源评级工具；不复制 Mailbox，也不转移其生命周期管理权
     - `recvSignal(s: Signal)`: 接收并处理一个控制信号；终止信号的接收与收尾方式合并不等待已有异步收尾完成，也不因 Agent 已逻辑终止而直接拒绝
     - `recvMessage(m: Message)`: 将消息交给自身 Mailbox，成功入箱后按消息优先级安排通知；被过滤的消息不通知模型。通知只提供消息提示，正文由模型通过读取工具按需获取
-    - `wait(condition: MailboxQuery, timeout: number) -> void`: 主动等待其他 Agent 发来的、符合 `condition` 的消息；`timeout` 必填，由发起等待的 Agent 自行指定，为以毫秒计的有限正数。检查时已有匹配消息的，直接完成本次等待并返回该消息的 ID、来源和摘要，适配器不结束当前轮次；否则返回表示已完成等待登记，不表示目标消息已返回，适配器随后结束当前轮次，不在工具调用内持续等待。具体匹配、超时和临时唤醒规则见 AgentStatus
+    - `wait(condition: MailboxQuery, timeout: number) -> WaitResult`: 主动等待其他 Agent 发来的、符合 `condition` 的消息；`timeout` 必填，由发起等待的 Agent 自行指定，为以毫秒计的有限正数。检查时已有匹配消息的，直接完成本次等待并返回 `{ kind: 'matched', message }`，`message` 为该消息的 `MessageMeta`，适配器不结束当前轮次；否则返回 `{ kind: 'registered' }`，表示已完成等待登记，不表示目标消息已返回，适配器随后结束当前轮次，不在工具调用内持续等待。具体匹配、超时和临时唤醒规则见 AgentStatus
     - `joinGroup(g: Group)`: 由 Group 对象在创建时调用，建立初始成员关联；不作为运行期间主动入群的入口
     - `quitGroup(g: Group)`: 由 Agent 逻辑终止、释放或 Group 解散的生命周期流程调用，解除双方成员关联；重复解除不产生额外操作，不作为主动退群的入口
   - 生命周期类：
@@ -131,7 +131,7 @@ Flow 上下文总结 v1
 ## 分歧、风险与待确认信息
 ```
 
-`transfer` 只修改上述逻辑关系，保留子 Agent 及其 HostAgent 的对象身份、会话、Mailbox、固定权限、工具绑定和当前执行，不触发后端迁移或资源重建。后续信号传播与递归释放以转移后的父子树为准，原父不再通过旧父子关系影响该实例；子 Agent 若已转出原父的当前子树，则不再受原父终止影响，若仍为其后代则继续沿新关系接收递归控制。转移与终止请求对逻辑关系的检查及修改须原子完成，避免将已接受终止请求的子 Agent 转出收尾范围。
+`transfer` 只修改上述逻辑关系，保留子 Agent 及其 HostAgent 的对象身份、会话、Mailbox、权限、工具绑定和当前执行，不触发后端迁移或资源重建。后续信号传播与递归释放以转移后的父子树为准，原父不再通过旧父子关系影响该实例；子 Agent 若已转出原父的当前子树，则不再受原父终止影响，若仍为其后代则继续沿新关系接收递归控制。转移与终止请求对逻辑关系的检查及修改须原子完成，避免将已接受终止请求的子 Agent 转出收尾范围。
 
 Agent 的构造函数为内部实现，不提供公开的同步构造入口。上述异步工厂及 `fork/herb` 成功返回时，宿主实例、Mailbox、工具绑定和事件监听均已就绪，父子关系及 Context 登记已完成，调用方可直接使用返回的 Agent，无需再次等待 `ready()` 或手动登记。初始化完成前，不将该 Agent 发布到 Context 注册表或父 Agent 的子列表。工厂在登记到 Context 和父 Agent 子列表的同一原子操作中检查：父级（`herb` 还包括母版和另一来源）未终止，也未进入释放流程；不满足时创建失败，并按下述失败规则清理，避免在父级 `after-turn` 收尾期间产生挂在已终止父级下的子 Agent。
 
@@ -151,7 +151,7 @@ Agent 的构造函数为内部实现，不提供公开的同步构造入口。�
 - **成员**：AgentProfile 包含以下成员：
   - `role`: Agent 身份描述，一段提示词
   - `sessionID: SessionID`: Agent 会话的稳定身份，用于持久化、恢复及外部寻址；运行时调用已有 Agent 时直接使用对象
-  - `permission: AgentPermission`: 创建时确定的固定执行权限，实例存续期间不可更改；目前以文件访问范围区分只读、工作区内读写、完全访问 3 类基础权限，不代表运行中可申请调整的默认模式
+  - `permission: AgentPermission`: 创建时确定的初始执行权限，Flow 不提供修改接口，但不保证实例存续期间不被改变；目前以文件访问范围区分只读、工作区内读写、完全访问 3 类基础权限，网络访问不在权限范围内，不代表运行中可申请调整的默认模式
   - `name`: Agent 名字，一个用于呈现在前端界面上的用户友好的名字
   - `model: { provider: string; id: string }`: Agent 使用的模型，宿主无关的声明；实例存续期间不更换
   - `params`: 带版本的类型化推理参数，目前包括 `temperature`、`reasoningEffort`、`maxTokens`，拒绝未知字段
@@ -159,11 +159,11 @@ Agent 的构造函数为内部实现，不提供公开的同步构造入口。�
 
 `model`、`params` 与 `permission` 相互独立。适配器无法落实的参数值或参数组合在创建前失败，不静默忽略；冷恢复按持久化的 Profile 重新传入完整的模型配置，不按当前默认值重新解析。
 
-`AgentPermission = 'read-only' | 'workspace-write' | 'full-access'`。父级在创建子 Agent 前根据任务所需的操作选择权限，并由适配器在宿主允许的范围内落实。工作区范围由适配器创建时绑定的宿主工作区确定，与该实例的权限一同固定；完全访问仍受宿主及执行环境本身的约束。
+`AgentPermission = 'read-only' | 'workspace-write' | 'full-access'`。父级在创建子 Agent 前根据任务所需的操作选择权限，并由适配器在创建时安装。工作区范围由适配器创建时绑定的宿主工作区确定，与该实例的初始权限一同安装；完全访问仍受宿主及执行环境本身的约束。
 
-Agent 创建后不提供权限调整接口，也不允许子 Agent 在执行过程中申请权限变更或通过一次性审批突破固定权限。权限不足时，相关操作明确失败，子 Agent 报告受限事项，由父级重新分配任务或按适当权限创建新 Agent。`getProfile().permission` 表示该实例持续遵守的权限约束，不只是创建时的初始值。
+Agent 创建后不提供权限调整接口；适配器尽力关闭宿主的权限修改和升权申请入口，但不作保证，也不检测或否决权限变更。权限不足时，相关操作明确失败，子 Agent 报告受限事项，由父级重新分配任务或按适当权限创建新 Agent。`getProfile().permission` 表示创建时安装的初始权限，不反映运行中宿主侧的改动。
 
-`Agent.create` 以本次 `p.permission` 为准，导入的历史上下文不能覆盖它；`fork`、`herb` 按现有签名继承母版的权限值，由新实例独立安装。`create`、`fork`、`herb` 及 `resume` 均检查新实例的权限不高于其逻辑父级（`read-only` < `workspace-write` < `full-access`，根 Agent 除外），不满足时失败。冷恢复从持久化身份信息恢复原权限及其工作区边界，不受本次新父级或宿主默认模式变化影响；权限信息缺失或当前后端无法落实原约束时恢复失败，不静默替换为其他权限。需要使用其他权限时，创建新的会话实例。
+`Agent.create` 以本次 `p.permission` 为准，导入的历史上下文不能覆盖它；`fork`、`herb` 按现有签名继承母版的权限值，由新实例独立安装。`create`、`fork`、`herb` 及 `resume` 均检查新实例的权限不高于其逻辑父级（`read-only` < `workspace-write` < `full-access`，根 Agent 除外），不满足时失败。冷恢复从持久化身份信息恢复原权限及其工作区边界，不受本次新父级或宿主默认模式变化影响；权限信息缺失或无法重新安装原初始权限时恢复失败，不静默替换为其他权限。需要使用其他权限时，创建新的会话实例。
 
 #### `AgentStatus`: Agent 运行状态
 
@@ -247,7 +247,7 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
   - 构造函数 `construct()`: 创建 Mailbox，初始消息列表、过滤规则与来源评级记录均为空；Agent 冷恢复时同样创建全新的空 Mailbox，不加载旧实例记录
   - 析构函数：停止接收消息，释放 Mailbox 占用的运行时资源
 - 消息接收类：
-  - `put(m: Message) -> MessageID | null`: 接收一条消息，在不修改调用方对象的前提下，根据当前 Mailbox 对该来源的评级确定本地 `priority`，尚未评级时使用 `normal`，再检查过滤规则；命中任一规则时丢弃并返回 `null`，否则保存消息并返回其在当前 Mailbox 内的唯一标识。由 Flow 构造的 `System` 编排指令（如作业消息、团队开场说明、恢复说明）不受过滤规则和来源评级影响，固定按 `normal` 保存和通知。该接口由所属 Agent 的 `recvMessage` 调用，返回仅表示收件完成
+  - `put(m: Message) -> MessageID | null`: 接收一条消息，在不修改调用方对象的前提下，根据当前 Mailbox 对该来源的评级确定本地 `priority`，尚未评级时使用 `normal`，再检查过滤规则；命中任一规则时丢弃并返回 `null`，否则保存消息并返回其在当前 Mailbox 内的唯一标识。由 Flow 构造的 `System` 编排指令（如作业消息、团队开场说明）不受过滤规则和来源评级影响，固定按 `normal` 保存和通知。冷恢复的恢复说明不经过 `Mailbox`，由 `resumeAgent` 按冷恢复的输入处理直接准备。该接口由所属 Agent 的 `recvMessage` 调用，返回仅表示收件完成
 - 消息检索类：
   - `peak(id: MessageID) -> MessageMeta | null`: 获取指定消息的元信息，不返回 `payload`，不改变已读状态；消息不存在时返回 `null`
   - `get(id: MessageID) -> Message | null`: 获取指定消息的完整内容，并将其标记为已读；首次读取时记录 `read_timestamp`，再次读取时保持该时间戳不变；消息不存在时返回 `null`
@@ -266,6 +266,7 @@ Mailbox 是 Agent 用于接受并存储消息的容器，其按时间顺序依�
 
 - `MessageID`: Mailbox 为每条已接收消息分配的稳定检索键，在当前 Mailbox 内唯一，用于从元信息或外部请求定位并读取完整消息。同一 SessionID 冷恢复后的新 Mailbox 不得将旧 MessageID 分配给新消息；用历史编号查询当前 Mailbox 返回 `null`，避免误读新消息。跨 Mailbox 寻址时还需指定所属 Mailbox；不为 Mailbox 对象本身另建通用 ID
 - `MessageMeta`: 包含 `id`、`source`、`timestamp`、`priority`、`read`、`read_timestamp` 和 `summary`，其中 `id` 为对应的 `MessageID`，`priority` 为入箱时确定的优先级
+- `WaitResult = { kind: 'matched'; message: MessageMeta } | { kind: 'registered' }`: `wait` 的返回值。`matched` 表示调用时已有匹配的未读消息，本次等待已完成；返回元信息不改变该消息的已读状态，正文仍通过 `get(id)` 读取。`registered` 表示已登记等待，之后由匹配、超时或取消完成
 - `MailboxQuery = (m: Readonly<Message>) -> bool`: 只读消息匹配回调，返回 `true` 表示将该消息纳入结果，返回 `false` 表示排除。调用方可在回调中组合来源、时间范围、已读状态等条件；执行回调本身不改变消息的已读状态
 - `MessageFilter = (m: Readonly<Message>) -> bool`: 只读过滤函数，返回 `true` 表示匹配并丢弃该消息；多条规则之间采用“或”关系
 
@@ -342,8 +343,8 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
   - `readonly host: HostContext`: 当前实现绑定的原生宿主上下文，供 Context 登记；不向上层暴露可操作的原生 Agent 句柄
   - `readonly capabilities: Readonly<HostCapabilities>`: 适配器对可选能力的声明，未声明的项视为不支持。目前包括：`usage`，是否发送下述 `usage` 事件；`uiPanel`，是否提供宿主 UI 扩展点，即能否在宿主前端挂载 Flow 的看板面板。声明只描述能力，不改变本文其他接口的约定
 - Agent 生命周期类：
-  - `createAgent(flowAgent: Agent, p: AgentProfile, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 独立创建原生实例，使用 `p.sessionID` 作为新会话身份，支持持久化时亦以该身份定位存储；可选导入已有上下文，不接收父 HostAgent。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象；同时安装 `p.permission` 对应的固定权限，关闭该实例的权限修改和升权申请入口。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。后端无法保证固定权限时创建失败；若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
-  - `resumeAgent(flowAgent: Agent, session: SessionID) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话独立冷恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，按持久化身份信息重新安装原固定权限及其工作区边界、工具与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其新建的空 Mailbox，不恢复旧通信关系或复用旧实例的闭包、工具绑定。首次模型执行前完成旧 Flow 待处理通知的剔除和恢复说明的准备，具体规则见下文。原权限无法恢复、会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
+  - `createAgent(flowAgent: Agent, p: AgentProfile, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 独立创建原生实例，使用 `p.sessionID` 作为新会话身份，支持持久化时亦以该身份定位存储；可选导入已有上下文，不接收父 HostAgent。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象；同时安装 `p.permission` 对应的初始权限，并尽力关闭该实例的权限修改和升权申请入口，不作保证。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。后端无法安装所要求的初始权限时创建失败；若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
+  - `resumeAgent(flowAgent: Agent, session: SessionID) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话独立冷恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，按持久化身份信息重新安装原初始权限及其工作区边界、工具与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其新建的空 Mailbox，不恢复旧通信关系或复用旧实例的闭包、工具绑定。首次模型执行前完成旧 Flow 待处理通知的剔除和恢复说明的准备，具体规则见下文。原权限信息缺失或无法重新安装、会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
   - `releaseAgent(agent: HostAgent, mode?: 'immediate' | 'after-turn') -> Promise<void>`: 结束指定 HostAgent 与 Flow 的执行关联，先停止接纳 Flow 的新输入。`immediate` 立即撤销当前轮次继续调用 Flow 业务的资格；`after-turn` 保留当前轮次的业务绑定，轮次结束或升级为 `immediate` 后撤销，已经空闲时无需等待。原生执行的取消、会话持久化及实例销毁按具体后端策略处理；后端也可保留原生实例，使原生终止动作为空操作。适配器仍需撤销或禁用该实例与 Flow 的工具及事件绑定，并使旧 HostAgent 不再可用于执行。适配器不负责释放所引用的 Flow Agent 或 Mailbox，其生命周期仍由 Context 管理。默认采用 `after-turn`，并按下述时限自动升级为 `immediate`。完成表示上述关联清理及所选后端处理已完成，不统一承诺原生实例已销毁或会话已持久化；重复调用按下述规则合并并共享同一个完成 Promise
   - `dispose() -> Promise<void>`: 清理适配器创建或恢复的全部 Agent 与 Flow 的执行关联及相关事件监听，按后端策略处理原生实例，释放适配器自身资源；不销毁 `host`。由 Context 关闭流程最后调用
 - 输入与执行查询类：
@@ -351,7 +352,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
   - `getStatus(agent: HostAgent) -> 'idle' | 'running'`: 查询指定 HostAgent 的原生执行状态；不属于当前适配器或已释放的对象查询失败。Flow 的“等待中”“已终止”等状态由上层 Agent 自行维护，原生 `idle` 不得覆盖尚未解除的主动等待
   - `whenIdle(agent: HostAgent) -> Promise<void>`: 等待指定 HostAgent 当前的原生执行及相关维护操作结束。期间若有新输入继续触发执行，则继续等待，因此该接口不能单独用于实现“当前轮次结束后终止”
 - 会话持久化与上下文导出类：
-  - `persist(agent: HostAgent) -> Promise<void>`: 将该对象对应会话中调用时已记录的事件及恢复所需的身份、配置元信息写入持久化存储，包括固定权限及其工作区边界；实现内部使用 `agent.profile.sessionID` 定位存储。完成表示这些内容已写入完成，不隐含停止 Agent
+  - `persist(agent: HostAgent) -> Promise<void>`: 将该对象对应会话中调用时已记录的事件及恢复所需的身份、配置元信息写入持久化存储，包括初始权限及其工作区边界；实现内部使用 `agent.profile.sessionID` 定位存储。完成表示这些内容已写入完成，不隐含停止 Agent
   - `exportHistory(agent: HostAgent) -> Promise<string>`: 导出该对象对应会话的上下文快照，可传给 `createAgent`。返回值采用由适配器定义、带格式版本的序列化表示，包含对话历史及必要元信息；导出不改变原 Agent。正在进行的轮次按后端规则整理为可导入的快照，不直接复制执行栈或未完成的工具调用
 - 上下文总结与合并类：
   - `summarizeContext(agent: HostAgent) -> Promise<string>`: 要求该 Agent 按上述标准文字格式总结自身上下文，返回完整总结文本。适配器捕获调用时该 Agent 已记录且可供模型使用的上下文，并使用其模型配置执行总结；不等待正在执行的工具完成，不纳入捕获后新增的内容。该调用不修改或压缩原会话历史，也不等待原会话当前轮次结束
@@ -366,11 +367,11 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`；可选的 `type = 'usage'` 时携带 `usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }`，表示该实例自上一条 `usage` 以来新增的模型调用用量，各项互不重叠，仅在 `capabilities.usage` 声明支持时发送。`fork` 产生的实例只统计导入快照之后的调用，不计母版前缀（DSH 为 `inheritedEventCount` 之后的事件）；`herb` 的总结与合并调用计入新建的子 Agent。DSH 适配器从 `assistant/message.usage`、`assistant/attempt` 中的 usage 记录及 `compaction/summary.usage` 取值，`herb` 的辅助调用取自 `BlockAssembler` 的用量。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
-**等待工具与执行准入**：适配器的等待工具仅绑定调用方自身的 `wait(condition, timeout)`，根据模型填写的目标及消息条件构造回调，不执行模型提供的任意程序。登记等待后结束当前轮次，工具结果说明已登记等待；本次检查已发现匹配时不结束当前轮次，工具结果直接带回匹配消息的 ID、来源和摘要，并将该消息本次尚未提交的通知视为已完成。不将工具调用保持为等待整个超时时长的未返回状态。工具结果中的分支说明可由 `hasPendingWait()` 判断；等待条件、计时、匹配及超时通知均归 Flow 管理。
+**等待工具与执行准入**：适配器的等待工具仅绑定调用方自身的 `wait(condition, timeout)`，根据模型填写的目标及消息条件构造回调，不执行模型提供的任意程序。登记等待后结束当前轮次，工具结果说明已登记等待；本次检查已发现匹配时不结束当前轮次，工具结果直接带回匹配消息的 ID、来源和摘要，并将该消息本次尚未提交的通知视为已完成。不将工具调用保持为等待整个超时时长的未返回状态。工具结果按 `wait` 返回值的 `kind` 选择分支；等待条件、计时、匹配及超时通知均归 Flow 管理。
 
 适配器在输入即将进入模型时查询 `hasPendingWait()`。存在等待时，只放行 Flow 提交的 `high` 通知及等待完成提示；其触发的临时执行可继续到该轮结束，但不混入无关的普通输入或通知。已由宿主接管但尚未消费的普通输入和通知须保留并暂缓，不能因阻止执行而丢弃。适配器根据可信的发送元信息区分通知，不能只检查 `getStatus() === 'waiting'`，因为临时执行期间逻辑状态可以为运行中。匹配或超时解除等待后，先接管对应的完成提示，再恢复暂缓输入，完成提示在原生输入队列中排在恢复的暂缓输入之前；释放时其中的 Flow 通知随之清理，其他输入随会话保留供冷恢复使用，冷恢复时其中的旧 Flow 通知遵循既有剔除规则。暂缓只落实 Flow 的准入约束，不在适配器中另行维护等待条件或截止时间。
 
-**固定权限的执行约束**（DSH 只能做到 degraded，见下文 DSH 说明）：适配器通过宿主实际的文件访问、命令执行及相关工具执行机制落实 `AgentProfile.permission`，不能仅向模型提供权限提示词。该实例不接受运行时权限切换或一次性升权；权限修改工具、命令和其他会修改该实例权限的宿主入口应被拒绝。宿主配置变更或已批准的单次授权也不能使该实例突破固定边界；无法继续保证约束时拒绝相关执行；适配器检测到该实例的权限被改变时，拒绝该实例此后的全部工具执行并报告。此规则约束权限变更，不把与权限变更无关的其他宿主审批一并定义为禁止。
+**初始权限的安装**：适配器通过宿主实际的文件访问、命令执行及相关工具执行机制落实 `AgentProfile.permission` 的初始值，不能仅向模型提供权限提示词。创建、冷恢复及 `fork/herb` 产生的实例均按 Profile 显式写入初始权限，不依赖宿主默认值或母版会话带来的设置；无法安装所要求的初始权限时，创建或冷恢复失败。适配器尽力关闭该实例的运行时权限切换和一次性升权入口，不作保证；能执行命令的 Agent 仍可能改变自身权限。Flow 不检测权限变更，也不因此拒绝工具执行或否决宿主操作。关闭升权入口不把与权限无关的其他宿主审批一并定义为禁止。
 
 **冷恢复的输入处理**：清空 Flow Mailbox 不代表原生 Inbox 已清空。`resumeAgent` 必须在实例能够执行模型请求前，按持久化用途标记剔除旧实例尚未消费的 Flow 通知；保留用户指令及任务输入，不通过清空整个原生 Inbox 实现，也不根据消息正文或 `System` 来源猜测用途。已进入对话历史的旧消息仍作为历史保留。随后准备一次恢复说明，在下一次模型请求中提供，不为说明单独启动轮次；说明也使用可识别的 Flow 通知标记，使再次冷恢复时尚未消费的旧说明可由新说明替换。标记格式、定向剔除及说明注入由具体适配器实现，不增加独立的公开初始化接口。
 
@@ -392,7 +393,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 
 工具调用者由宿主执行上下文确认，并与适配器绑定的原生实例及上层 Agent 对应，不由模型参数指定。工具执行函数在进入业务逻辑前，通过所属 Context 确认该上层 Agent 已完成登记且可用；初始化尚未完成、立即关闭或已释放时拒绝执行。`after-turn` 的当前轮次收尾阶段，仅允许关闭前已开始的轮次继续使用保留的对象与工具绑定，不再要求 `Context.has` 返回 `true`，但仍禁止新输入和后续轮次；一旦升级为 `immediate` 或进入资源清理，不再接受该轮次的新业务调用。消息 ID 在该 Agent 自身的 Mailbox 中解析，涉及其他 Agent、Group 的标识时通过所属 Context 的查询接口解析为对象引用。查询与过滤工具接收结构化参数，再由适配器构造 `MailboxQuery`、`MessageFilter` 等程序回调。
 
-HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 先完成逻辑终止，再将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。缺少持久化能力不妨碍逻辑终止，后端可保留在线实例；显式调用 `persist` 等要求持久化能力的接口时，若不支持则应报错，不得以空操作声称已保存。权限要求仍须由后端保证，不具备所需能力时应明确报错。Flow 的冷恢复统一重新初始化 Mailbox 和通信关系，原生会话中的历史协作记录不改变这一规则。
+HostAdaptor 的原生执行接口管理对应的单个原生 Agent；工具执行函数将协作操作委托给 Flow 对象的公开接口。父子树的递归信号传播、Group 通信、Mailbox 过滤及通知调度规则由 Flow 实现。上层 Agent 先完成逻辑终止，再将 `SIGKILL`、`SIGTERM` 分别转译为 `releaseAgent(hostAgent, 'immediate')`、`releaseAgent(hostAgent, 'after-turn')`，并负责向子 Agent 传播。缺少持久化能力不妨碍逻辑终止，后端可保留在线实例；显式调用 `persist` 等要求持久化能力的接口时，若不支持则应报错，不得以空操作声称已保存。初始权限由后端在创建及冷恢复时安装，运行中是否保持不作保证。Flow 的冷恢复统一重新初始化 Mailbox 和通信关系，原生会话中的历史协作记录不改变这一规则。
 
 后端启动时的装配过程如下，其中具体实现类的构造方式由各后端自行决定：
 
@@ -408,13 +409,13 @@ const agent = await Agent.create(ctx, profile, null, initialMessage);
 
 DSH 实现可通过 `dshContext.agents.create/resume` 创建或恢复 Agent，在其 `setup(agentCtx, nativeAgent)` 回调中使用 `agentCtx.tools.register(...)` 安装适配器内部定义的工具。工具的 `execute` 通过真实执行上下文核对调用方，再转调已绑定的上层对象。三种输入模式映射为原生 `followup/steer/inject`。DSH 后端的释放策略可以使用持有的 `AgentHandle.dispose()`，等待原生执行退出、会话写入和资源清理；会话持久化须在 `dispose()` 之前完成，原生 `dispose()` 会清空原生 Inbox，适配器须在调用前保存其中非 Flow 来源的待处理输入，冷恢复时放回，以符合冷恢复保留用户及任务输入的规则；DSH 为进程内宿主，没有终止进程的兜底手段，清理超时按上述放弃规则处理；这一具体实现不要求其他后端采用相同的物理销毁策略，也不决定 Flow 逻辑状态变化的时机。DSH 将同步发出取消请求的 `cancel()` 与异步等待执行结束的 `whenIdle()` 分开，原生 `dispose()` 复用同一次释放 Promise；Flow 适配器负责在调用原生释放前处理当前轮次收尾及模式升级，进入原生释放后复用该操作。DSH 适配器在创建、恢复和 `fork` 时按 Profile 显式传入完整的模型配置，每次显式写入推理强度；DSH 不支持的参数（如 `seed`、`top_p`）在创建前失败。具体后端类型、工具定义、句柄和事件格式均封装在实现类内部。
 
-DSH 原生状态只有 `idle/running`，原生 `wait_agent` 通过 `agentTeams.waitForChange` 等待团队变化、超时或取消，没有上述 Flow 等待约束。Flow 的等待工具调用 `flowAgent.wait(condition, timeout)` 登记等待后，通过工具执行上下文的 `concludeTurn()` 结束当前轮次并立即返回成功结果；已有匹配时直接返回结果，不调用 `concludeTurn()`；不在原生工具中等待回复，否则 `steer` 只能排队，不能进入下一执行步骤。计时和超时唤醒由 Flow 完成，不依赖宿主异步工具能力。
+DSH 原生状态只有 `idle/running`，原生 `wait_agent` 通过 `agentTeams.waitForChange` 等待团队变化、超时或取消，没有上述 Flow 等待约束。Flow 的等待工具调用 `flowAgent.wait(condition, timeout)`，返回 `registered` 时，通过工具执行上下文的 `concludeTurn()` 结束当前轮次并立即返回成功结果；返回 `matched` 时直接把匹配消息的元信息作为工具结果返回，不调用 `concludeTurn()`；不在原生工具中等待回复，否则 `steer` 只能排队，不能进入下一执行步骤。计时和超时唤醒由 Flow 完成，不依赖宿主异步工具能力。
 
 DSH 的 `concludeTurn()` 不会清除已排队的下一步骤输入。适配器须结合 `hasPendingWait()` 与 `agent/pre-step` 落实上述准入，保留被暂缓的普通通知。`pre-step` 收到的消息已经从 Inbox 取出，不能只拒绝步骤而假定消息会自动放回；适配器须确保这些消息在等待解除后继续交付。优先消息启动的临时执行结束后，仍以 Flow 的等待记录决定是否继续等待，不以原生 `idle` 代替该判断。
 
 DSH 的原生实例生命周期归属于调用 `create/resume` 的 Context；适配器应始终使用自身持有的稳定宿主 Context，不通过逻辑父 Agent 的 `agent.ctx` 创建实例。Flow 的父子树也不登记为 DSH 的 `parentAgent` 关系，`transfer` 无需调用原生 reparent 接口。配置及工具在新实例的作用域中独立安装；历史快照中的 `parentSession` 等来源信息仅用于记录创建来源，不决定当前逻辑父级或资源归属。
 
-DSH 的三档文件沙箱模式分别为 `read-only`、`workspace-write`、`danger-full-access`，适配器将 Flow 的 `full-access` 映射到第三档。原生委派会将子会话的审批策略设为 `never`，其含义是拒绝需要原生审批的请求，可作为禁止子 Agent 申请升权的参考；但 DSH 的 `setSandboxMode`、权限预设切换等入口仍可改变会话模式，`never` 本身不构成权限冻结。DSH 适配器还须约束 Flow 实例的权限修改入口，例如在 Agent 作用域拒绝 `/permission` 修改、通过 `tools.guard` 拒绝可修改权限配置的管理工具，并由宿主集成保证直接设置接口遵守固定权限规则。`session/event` 是事件提交后的通知，不能依靠监听后回滚来阻止权限变更。DSH 当前无法阻止直接设置接口和权限预设切换，固定权限在 DSH 上只能做到降级（degraded）保证：适配器将审批策略设为 `never`，创建及冷恢复时按 Profile 重新写入沙箱模式和审批策略，在 Agent 作用域拒绝升权请求和 `/permission` 修改，检测到模式变更时按上述规则拒绝该实例的全部工具执行并报告。DSH 文件沙箱只约束文件访问，不约束网络访问。
+DSH 的三档文件沙箱模式分别为 `read-only`、`workspace-write`、`danger-full-access`，适配器将 Flow 的 `full-access` 映射到第三档。适配器在创建及冷恢复的 `setup` 中同时写入沙箱模式和审批策略：只写沙箱模式时，审批策略会被补成配置默认值；`fork` 的 seed 会带上母版日志中的 `sandbox/mode` 等权限事件，必须显式覆盖。原生委派会将子会话的审批策略设为 `never`，其含义是拒绝需要原生审批的请求；适配器同样将审批策略设为 `never`，并尽力在 Agent 作用域拒绝 `/permission` 修改、通过 `tools.guard` 拒绝可修改权限配置的管理工具，均不作保证：DSH 的 `setSandboxMode`、权限预设切换等入口仍可改变会话模式，`never` 本身不构成权限冻结，`danger-full-access` 下的命令也可修改配置。DSH 文件沙箱只约束文件访问，不约束网络访问；网络不在 Flow 的权限契约内。
 
 DSH 冷恢复先加载持久化会话，再执行尚未发布实例的 `setup`。适配器可在该回调中检查 `nativeAgent.inbox.nextTurn/nextStep`，按消息 `source` 中的 Flow 通知标记调用 `inbox.remove(message.id)`；该操作记录取消结果，保留历史日志。随后通过不主动唤醒的 `inject` 准备恢复说明。用户及任务输入仍保留；不能使用 `inbox.clear()` 代替定向剔除。DSH 原生 Team 的成员恢复和持久消息重投递机制不用于恢复 Flow 的通信关系。
 
@@ -443,10 +444,10 @@ Agent 界面看板提供了一个智能体标签页，用户可以在此标签�
   - 打包：官方 `clientBundle` 预设未发布（§5、§7 缺口 3），面板按源码推出的等价配置自行构建（补充 C）。包在 `package.json` 声明 `dsh.client{ platform: 'web' }` 并导出 `./client`（§1）；产物为单文件 CJS（`platform: 'browser'`，不做代码分割）`lib/client.js`，以 banner/footer 包成 `window.__ModuleLoader__.load({ id: <包名>, factory: (require) => { … } })`，`id` 等于包名，导出 `apply`。external 恰好等于 rc.2 的 9 个 `PLATFORM_MODULES`：`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-dockkit`（§6、补充 C），React 使用宿主内嵌的 18.3.1；其余依赖全部打包，包括 rc.2 中不是共享模块的 `zod` 与 `@tanstack/react-virtual`。构建时 `NODE_ENV=production`，JSX 使用 production 运行时，不导入清单以外的子路径（如 `react/jsx-dev-runtime`）；CSS 内联进 JS。面板试构建及按补充 C 第 7 条校验产物（待原型验证）。
   - 前端组件：独立页面自行打包 React 18.3.1，与面板共用同一份组件源码；共享组件不依赖 `dsh-client-ui-primitives`，也不使用 React 19 才有的 API。
   - 端口：Flow 默认使用一个固定的本机端口，可在插件配置中修改。客户端读不到插件配置，由 Flow 包的 Host 侧经公开事件 `webserver/index-inject` 注入 `{ kind: 'global', name: '__DSH_FLOW__', value: { port } }`，面板从 `globalThis.__DSH_FLOW__` 读取；这是官方公开 API，不属于补丁（补充 A1）。Desktop 只在启动时收集一次注入内容，端口变更后需重启 Desktop。令牌不写入注入内容，仍经 `GET /bootstrap` 换取。
-- **树结构**：一张卡片对应一个 Agent 实例，树的边只表示逻辑父子关系（`getParent()`）；顶层 Agent 挂在运行（run）根下。Group 成员、作业和 `herb` 的另一来源以叠加层表示，不参与布局。实例在工厂完成登记发布后才出现在树上，初始化失败的实例不出现。冷恢复产生的新实例画为新卡片，以“恢复自”连到原实例；`transfer` 使卡片连同子树移到新父级下。
+- **树结构**：一张卡片对应一个 Agent 实例，树的边只表示逻辑父子关系（`getParent()`）；顶层 Agent 挂在运行（run）根下。Group 成员、作业和 `herb` 的另一来源以叠加层表示，不参与布局。实例在工厂完成登记发布后才出现在树上，初始化失败的实例不出现。冷恢复产生的新实例画为新卡片，以“恢复自”连到原实例；`transfer` 使卡片连同子树移到新父级下。卡片上的权限为创建时安装的初始权限（`getProfile().permission`），不跟踪运行中的变化。
 - **重试**：看板不提供单个 Agent 的用户重试。团队模式或父 Agent 发起的重试显示为新节点，挂在失败实例的逻辑父级下，标注“重试自”并连到失败实例，失败实例保留；该关系只由 Flow、团队模式或父 Agent 填写。用户可通过入口工具整体重跑一次运行。
 - **状态显示**：未终止的实例只显示运行中、等待中或空闲，空闲不表示完成。等待中显示为“等 <对方>”及剩余时间，不表示需要用户处理。已终止后，按终止前最后一个轮次推导完成、失败或已停止：被用户或父级取消的为已停止；最后轮次失败、出现错误或作业失败的为失败；作业已提交或最后轮次完成的为完成；其余为已停止，推导不出时只显示“已终止”及信号。资源清理以独立标记显示（收尾中、强制清理、清理完成、清理失败、已放弃），不改变上述结论；放弃不计为失败，持久化失败另加标记。
-- **不打断用户**：看板没有“需要你”状态，不弹出打断式提醒，也不提供审批。权限被改动、清理放弃以持久标记 `permission-violation`、`cleanup-abandoned` 挂在节点上，设置后一直保留；作业失败显示为作业或节点的结果；运行失败记在运行的结束结果中。Flow 发现实例权限被改动时，按固定权限的执行约束由适配器拒绝该实例此后的全部工具执行并报告，Flow 不自动终止该实例，也不改变其逻辑状态，只挂 `permission-violation` 标记；DSH 的 `tools.guard` 变更不产生事件，属于观察盲区。宿主按审批策略自动拒绝的调用按 `callId` 逐次记为卡片上的“自动拒绝”小标记，不表示节点状态；该类事件的出现频率（待原型验证），DSH 沙箱拦截 bash、文件工具时的结果形状（待原型验证）。
+- **不打断用户**：看板没有“需要你”状态，不弹出打断式提醒，也不提供审批。清理放弃以持久标记 `cleanup-abandoned` 挂在节点上，设置后一直保留；作业失败显示为作业或节点的结果；运行失败记在运行的结束结果中。宿主按审批策略自动拒绝的调用按 `callId` 逐次记为卡片上的“自动拒绝”小标记，不表示节点状态；该类事件的出现频率（待原型验证），DSH 沙箱拦截 bash、文件工具时的结果形状（待原型验证）。
 - **花费**：卡片默认显示该实例自身的 token 数（四项之和），分支合计由前端汇总；用户配置了按模型区分的单价表时，再折算为金额。宿主不支持 `usage` 时显示为不可用，不显示为 0。
 - **团队模式与作业**：节点的 `pattern` 为团队模式注册时的名字，是不透明字符串，不设枚举；`patternInstanceId` 区分同一模式的多次运行；模式内的层级路径留待以后补充。卡片显示当前作业的类型与提交次数，`flow_submit` 的重新提交不新增节点。
 - **操作**：M1 只提供停止。停止非顶层 Agent 时由其父级调用 `kill(agent)`，停止顶层 Agent 时调用 `Context.release`，均先优雅收尾、超时后强制清理，重复的终止请求按信号规则合并；看板不直接调用 `recvSignal`。每个操作带客户端生成的 `actionId`，服务端按其去重，结果以 `action.result` 事件回报，前端以事件为准。
@@ -455,7 +456,7 @@ Agent 界面看板提供了一个智能体标签页，用户可以在此标签�
 
 - 快照：`GET /runs/:id/snapshot` 返回当前 `seq` 及折叠后的完整状态；随后以 SSE 订阅 `GET /runs/:id/events`，`seq` 作为事件 `id`，断线后按 `Last-Event-ID` 续传；缓冲已覆盖时发送 `reset`，客户端重新拉取快照。进程重启后运行失效，接口返回 `410`，前端显示“该运行已随重启失效”。
 - 信封：`{ v, runId, seq, ts, type, agentId, data }`。`seq` 在同一运行内严格递增；`ts` 为 Flow 处理事件的毫秒时间。`agentId` 为实例键 `<sessionID>#<n>`，`n` 为同一运行内同一 `sessionID` 的实例序号，冷恢复时加 1 并在 `data.resumedFrom` 中给出原实例键。`v` 为唯一的主版本号：新增字段或事件类型不改变 `v`，客户端忽略不认识的类型和字段；删除字段或改变语义时 `v` 加 1，版本不一致时客户端拒绝连接。
-- 事件类型：`agent.created`（逻辑父级、来源 `create|fork|herb|resume|retry`、`resumedFrom`、`retryOf`、`herbOther`、名称、模型、权限、任务、`pattern`、`patternInstanceId`）、`agent.status`（运行中、等待中、空闲，等待目标及截止时间）、`agent.turn`、`agent.error`、`agent.usage`、`agent.permissions`、`agent.approval`（按 `callId` 记录的只读小标记）、`agent.reparented`、`agent.terminated`（信号、发起方、处理方式、传播来源）、`agent.cleanup`（阶段、原因、截止时间、持久化失败、原因说明）、`group.*`、`assignment.*`、`agent.flag`（`permission-violation | cleanup-abandoned`，持久保留）、`action.result`、`run.ended`（结束结果 `completed | failed | stopped`）、`run.invalidated`。同一实例的 `agent.created` 最先出现，`agent.terminated` 最多一次，之后不再有 `agent.status`。超时升级为 `immediate` 时，由 Flow 发出 `agent.cleanup{ phase: 'immediate', cause: 'timeout' }`。`pattern.planned` 只保留类型名，`stage`、`round`、`patternPath` 不进入当前版本，以后作为新增可选字段补充。
+- 事件类型：`agent.created`（逻辑父级、来源 `create|fork|herb|resume|retry`、`resumedFrom`、`retryOf`、`herbOther`、名称、模型、初始权限、任务、`pattern`、`patternInstanceId`）、`agent.status`（运行中、等待中、空闲，等待目标及截止时间）、`agent.turn`、`agent.error`、`agent.usage`、`agent.approval`（按 `callId` 记录的只读小标记）、`agent.reparented`、`agent.terminated`（信号、发起方、处理方式、传播来源）、`agent.cleanup`（阶段、原因、截止时间、持久化失败、原因说明）、`group.*`、`assignment.*`、`agent.flag`（`cleanup-abandoned`，持久保留）、`action.result`、`run.ended`（结束结果 `completed | failed | stopped`）、`run.invalidated`。同一实例的 `agent.created` 最先出现，`agent.terminated` 最多一次，之后不再有 `agent.status`。超时升级为 `immediate` 时，由 Flow 发出 `agent.cleanup{ phase: 'immediate', cause: 'timeout' }`。`pattern.planned` 只保留类型名，`stage`、`round`、`patternPath` 不进入当前版本，以后作为新增可选字段补充。
 - 事件落盘：每个运行的事件按 `seq` 顺序追加写入本地文件，与研究 trace 分开，供后续回放使用。
 - 本地鉴权：接口只绑定回环地址；进程启动时生成随机令牌，面板与页面通过 `GET /bootstrap` 换取，不写入页面注入内容。服务端只对白名单中的 `Origin` 返回 CORS 头，白名单包括独立页面自身的 origin、DSH Web 客户端的 origin（默认 `http://127.0.0.1:3080` 及其 localhost 写法，可配置）及 Desktop 的 `dsh-app://app`，其他网页读不到返回内容；写操作须同时携带令牌并通过 `Origin` 校验。
 - 操作：`POST /runs/:id/actions`，请求体包含 `actionId`、目标 `agentId` 及操作类型，M1 仅有 `stop`。

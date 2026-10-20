@@ -219,4 +219,4 @@ Provider 配置、认证凭据、原生用户会话、工作区及业务产物�
 - `simplification-docs-tests-audit.md`、`simplification-test-dispositions.json`：测试删改位置、文档归档及入链。
 - 既有冻结会话证据：保留调用/通知/时序事实；其 conservative guard 修补建议已被本方案替代。
 
-该方案延续 [ADR 0003](../adr/0003-use-host-model-capacity-and-compaction.md) 中 DSH 负责模型和上下文的原则，并将职责分工扩展到原生工具、权限和生命周期。实施验证记录保存各阶段原生证据、剩余宿主限制、关闭路径补验和部署身份；未完成项不得提前标为通过。
+该方案延续 ADR 0003 中 DSH 负责模型和上下文的原则，并将职责分工扩展到原生工具、权限和生命周期。实施验证记录保存各阶段原生证据、剩余宿主限制、关闭路径补验和部署身份；未完成项不得提前标为通过。
