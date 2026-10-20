@@ -10,8 +10,8 @@ Use the five default triage labels; before classifying issues, read `docs/agents
 
 ### Domain docs
 
-Use a single-context layout; before exploring the codebase, read `docs/agents/domain.md`.
+探索代码、调整概念或核验接口前，阅读 [领域文档导航](docs/agents/domain.md)，确认当前设计、共享术语与现存实现的边界。
 
 ### 模块设计方案
 
-为已选定的模块编写设计或重构方案时，使用 [module-design](.agents/skills/module-design/SKILL.md)，按用户指定的语言、章节和范围交付；默认采用专业中文和五部分结构。
+编写、修订或核验已选定模块的设计与接口闭合时，使用 [module-design](.agents/skills/module-design/SKILL.md)。

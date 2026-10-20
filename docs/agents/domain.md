@@ -1,28 +1,20 @@
-# Domain Docs
+# 领域文档导航
 
-## Layout
+仓库采用单一领域上下文：根目录的 `GLOSSARY.md` 统一术语，[design.md](../design/design.md) 是架构与设计决策的唯一依据。
 
-Single-context: one root `GLOSSARY.md` for shared vocabulary; `docs/design/design.md` is the sole source for architecture and design decisions across the workspace.
+## 阅读顺序与证据
 
-```text
-/
-├── GLOSSARY.md
-├── docs/design/design.md
-└── packages/
-    ├── dsh-flow/
-    └── typert-protocol/
-```
+1. **当前设计**：调整编排、运行时或宿主适配边界前，先读 `design.md` 对应章节；团队模式和作业读其中的“团队模式与作业”。
+2. **共享术语**：[GLOSSARY.md](../../GLOSSARY.md) 定义当前概念，并标识仍出现在代码中的旧实现术语。问题、提案和测试名称采用统一术语。
+3. **实现事实**：定位当前代码、直接调用方和测试。宿主能力以本仓库实际依赖版本的公开类型及对应源码为证据；其他版本或本地宿主源码中的行为应注明版本差异。
 
-## Before exploring the codebase
+设计规定目标行为，代码和运行验证说明已经实现到哪里。发现差异时，指出具体对象、调用路径及证据；以当前设计指导改动，同时如实保留实现尚未迁移的事实。
 
-Read the root `GLOSSARY.md` and the sections of `docs/design/design.md` relevant to the area being changed.
+若建议与 `design.md` 冲突，指出对应章节并说明重新考虑的理由；仅在用户明确要求时修改该设计文档。
 
-If a referenced file or directory is absent, proceed silently. The `/domain-modeling` skill creates glossaries lazily when terminology is resolved.
+用户说明 PR 已合并后，先核对远程主干及工作区改动，再基于最新主干整理文档；保留无关本地改动。后续已合并的决策优先于旧会话摘要。
 
-## Use the glossary's vocabulary
+## 更新位置
 
-Use defined terms in issue titles, proposals, hypotheses, and test names. If a needed concept is missing, reconsider whether it belongs to the project; record genuine terminology gaps for `/domain-modeling`.
-
-## Surface design conflicts
-
-If a proposal conflicts with `docs/design/design.md`, identify the section and explain why it should be reconsidered; do not edit `design.md` unless the user explicitly asks.
+- 概念定名与简短定义写入 `GLOSSARY.md`；字段、状态转移、接口契约与设计取舍集中在 `design.md`。
+- 设计流程与接口核验方法放在 [module-design](../../.agents/skills/module-design/SKILL.md)，`AGENTS.md` 只保留进入这些资料的条件。
