@@ -35,4 +35,4 @@ Flow pause 停止向原生执行提交新增输入，并通过原生 cancel 停�
 
 ## 证据
 
-任务结果、原生执行和资源状态分别表达。运行验证必须核对实际 provider/model、native journal、工具结果和交付内容；未发生的检查保持未知。历史方案只提供历史背景，当前决策见 [实施方案](docs/plans/native-agent-simplification-plan.md)。
+任务结果、原生执行和资源状态分别表达。运行验证必须核对实际 provider/model、native journal、工具结果和交付内容；未发生的检查保持未知。历史方案只提供历史背景，当前决策见 [设计文档](docs/design/design.md)。

@@ -63,7 +63,7 @@ pnpm build、196/196 单元测试、5/5 真实原生测试及 pnpm docs:build �
 
 ## 2026-10-13：角色与标准 Agent 分层校正
 
-按 ADR 0005 统一为 Orchestrator、Worker 两类职责角色。Allocator 的资源选择与分配职责归入 Orchestrator；研究、核验等用名称、instructions、skills 表达。标准 DSH Agent 仍是共同执行实现，角色不参与权限、验收权或生命周期分支。
+统一为 Orchestrator、Worker 两类职责角色。Allocator 的资源选择与分配职责归入 Orchestrator；研究、核验等用名称、instructions、skills 表达。标准 DSH Agent 仍是共同执行实现，角色不参与权限、验收权或生命周期分支。
 
 委派的 profile 一次携带名称、角色、职责、原生 preset、模型与技能；随成员持久化，并用于创建和冷恢复。原生系统提示组合职责，已注入的宿主技能 registry 按目标 Agent 作用域解析技能。复用成员保留配置；更新任务不会静默重配成员。未声明配置使用正常默认值，未增加旧执行机制或兼容路径。
 
