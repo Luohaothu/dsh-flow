@@ -340,6 +340,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 - 宿主信息类：
   - `readonly backend: string`: 后端类型标识，例如 `dsh`、`pi`、`codex`
   - `readonly host: HostContext`: 当前实现绑定的原生宿主上下文，供 Context 登记；不向上层暴露可操作的原生 Agent 句柄
+  - `readonly capabilities: Readonly<HostCapabilities>`: 适配器对可选能力的声明，未声明的项视为不支持。目前包括：`usage`，是否发送下述 `usage` 事件；`uiPanel`，是否提供宿主 UI 扩展点，即能否在宿主前端挂载 Flow 的看板面板。声明只描述能力，不改变本文其他接口的约定
 - Agent 生命周期类：
   - `createAgent(flowAgent: Agent, p: AgentProfile, history?: string) -> Promise<HostAgent>`: 为传入的上层 Agent 独立创建原生实例，使用 `p.sessionID` 作为新会话身份，支持持久化时亦以该身份定位存储；可选导入已有上下文，不接收父 HostAgent。适配器通过 `flowAgent.getMailbox()` 取得其 Mailbox，在初始化阶段完成本后端工具注册，并将工具执行函数绑定到这些对象；同时安装 `p.permission` 对应的固定权限，关闭该实例的权限修改和升权申请入口。返回初始化完成的 HostAgent 对象，其会话、配置、权限和工具均已就绪；此时尚未提交初始消息。后端无法保证固定权限时创建失败；若会话已存在则失败，恢复已有会话应调用 `resumeAgent`
   - `resumeAgent(flowAgent: Agent, session: SessionID) -> Promise<HostAgent>`: 为传入的新上层 Agent 从持久化会话独立冷恢复原生实例，返回新的 HostAgent 对象，保存的身份信息通过其 `profile` 获取。恢复对话历史和必要配置，按持久化身份信息重新安装原固定权限及其工作区边界、工具与运行时设施，并将工具回调绑定到传入的 `flowAgent` 及其新建的空 Mailbox，不恢复旧通信关系或复用旧实例的闭包、工具绑定。首次模型执行前完成旧 Flow 待处理通知的剔除和恢复说明的准备，具体规则见下文。原权限无法恢复、会话不存在或已有活跃实例时失败，不能重复创建同一会话的执行实例
@@ -362,7 +363,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 
 - `HostAgent`: 宿主无关的运行时对象接口，由具体适配器通过 `createAgent/resumeAgent` 创建并返回，公开只读字段 `readonly profile: Readonly<AgentProfile>`，供调用方读取身份信息。它与一个原生 Agent 实例对应，具体原生对象、句柄及所有权记录封装在适配器实现内部，不由调用方拼装，也不重复登记到 Context
 - `SessionID`: 当前宿主内的稳定会话标识，支持持久化时亦用于定位会话存储；适配器内部负责转换为后端的原生 ID 类型
-- `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
+- `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`；可选的 `type = 'usage'` 时携带 `usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }`，表示该实例自上一条 `usage` 以来新增的模型调用用量，各项互不重叠，仅在 `capabilities.usage` 声明支持时发送。`fork` 产生的实例只统计导入快照之后的调用，不计母版前缀（DSH 为 `inheritedEventCount` 之后的事件）；`herb` 的总结与合并调用计入新建的子 Agent。DSH 适配器从 `assistant/message.usage`、`assistant/attempt` 中的 usage 记录及 `compaction/summary.usage` 取值，`herb` 的辅助调用取自 `BlockAssembler` 的用量。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
 **等待工具与执行准入**：适配器的等待工具仅绑定调用方自身的 `wait(condition, timeout)`，根据模型填写的目标及消息条件构造回调，不执行模型提供的任意程序。登记等待后结束当前轮次，工具结果说明已登记等待；本次检查已发现匹配时不结束当前轮次，工具结果直接带回匹配消息的 ID、来源和摘要，并将该消息本次尚未提交的通知视为已完成。不将工具调用保持为等待整个超时时长的未返回状态。工具结果中的分支说明可由 `hasPendingWait()` 判断；等待条件、计时、匹配及超时通知均归 Flow 管理。
@@ -432,3 +433,31 @@ DSH 的 `compaction-basic` 提供了可参考的总结方式：读取会话当�
 ### Agent 界面看板
 
 Agent 界面看板提供了一个智能体标签页，用户可以在此标签页中直观查看当前已派发的智能体团队架构、智能体运行状态及消息通信情况，具体包含以下设计要素：
+
+- **运行位置**：Flow 在 `127.0.0.1` 上提供看板页面及下述事件流接口，任何宿主均可使用该独立页面。适配器声明 `capabilities.uiPanel` 时，同时在宿主前端提供原生面板，独立页面保留为兜底；面板与页面复用同一套前端组件，均直接连接 Flow 的本地接口。面板与页面使用同一份事件契约，均输出相同的信封与 `seq` 语义。没有 GUI 扩展点的宿主只提供独立页面；DSH 没有 TUI 扩展点（round5-harness-panel.md §2）。
+- **DSH 面板**（依据 round5-harness-panel.md，DSH 0.2.0-rc.2；前端约定见 round5-ui-event-contract.md §0）：
+  - 注册：经 `dsh plugin add` 安装的第三方包不修改 DSH 即可加载并注册 UI，客户端模块加载没有白名单（§7）。M1 以 `ctx.slots.register` 注册到中央 `main` keyed slot，用 `ctx.layout.selectPanel` 选中，并在 `sidebar.panellist` 放置入口（§1）；面板是全局的运行视图，不使用按 Session 划分的右侧栏标签。面板是宿主 React 树中的普通 React 组件，不是 iframe（§2）。仅 Web-capable profile 加载 UI（§7）。
+  - 数据：面板与独立页面一样，在浏览器中直接连接 Flow 本机的快照与 SSE 接口，协议与 `seq` 语义相同。面板运行在浏览器，Flow 运行在宿主进程；两者之间的官方通道是 DSH Remote，而新增 Remote 命名空间或转发事件需修改 `dsh-api-remotes`（§3、§7 缺口 1），注册时的 `inject` 闭包只能取得浏览器端服务，跨不过这一边界（§2），因此面板不使用 Remote 与 `inject` 取数，避开该缺口。CORS 头由 Flow 服务返回，rc.2 主页面没有 CSP，Web 端直连未发现阻断但未实测（待原型验证）（§3）。Desktop 端页面源为 `dsh-app://app/`，发出的 Origin 为 `dsh-app://app`；DSH Desktop 没有 CSP，主窗口不拦截 http 请求，Electron 默认关闭本地网络访问检查，未发现阻断配置，真机能否连通（待原型验证）（补充 B）。
+  - 同源候选：Host 侧可用公开 API `ctx.connection.fetch.register` 把端点挂在 DSH 的 `/api` 下，同源并复用 DSH 的认证，可省去端口与 `/bootstrap`（补充 A2）。它只作为原型候选，不作为基线；能否承载 SSE 长连接（待原型验证）。
+  - 停止：面板的停止操作经 Flow 的本地操作接口交给宿主进程内的 Flow，由 Flow 通过适配器执行 `kill` 或 `Context.release`，最终使用适配器自身持有的 `AgentHandle.dispose()`（见 HostAdaptor 中的 DSH 说明），不调用 DSH 的 session Remote，因此不受“rc.2 没有 dispose/kill session 的 Remote”这一缺口影响（§4、§7 缺口 2）。Flow 成员由适配器以自身 Context 创建为顶层实例，不登记为原生父子关系（见 HostAdaptor 中的 DSH 说明），也不涉及“子代理会话只能由客户端 `interruptByParent` 中断”的限制（§4）。
+  - 打包：官方 `clientBundle` 预设未发布（§5、§7 缺口 3），面板按源码推出的等价配置自行构建（补充 C）。包在 `package.json` 声明 `dsh.client{ platform: 'web' }` 并导出 `./client`（§1）；产物为单文件 CJS（`platform: 'browser'`，不做代码分割）`lib/client.js`，以 banner/footer 包成 `window.__ModuleLoader__.load({ id: <包名>, factory: (require) => { … } })`，`id` 等于包名，导出 `apply`。external 恰好等于 rc.2 的 9 个 `PLATFORM_MODULES`：`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-dockkit`（§6、补充 C），React 使用宿主内嵌的 18.3.1；其余依赖全部打包，包括 rc.2 中不是共享模块的 `zod` 与 `@tanstack/react-virtual`。构建时 `NODE_ENV=production`，JSX 使用 production 运行时，不导入清单以外的子路径（如 `react/jsx-dev-runtime`）；CSS 内联进 JS。面板试构建及按补充 C 第 7 条校验产物（待原型验证）。
+  - 前端组件：独立页面自行打包 React 18.3.1，与面板共用同一份组件源码；共享组件不依赖 `dsh-client-ui-primitives`，也不使用 React 19 才有的 API。
+  - 端口：Flow 默认使用一个固定的本机端口，可在插件配置中修改。客户端读不到插件配置，由 Flow 包的 Host 侧经公开事件 `webserver/index-inject` 注入 `{ kind: 'global', name: '__DSH_FLOW__', value: { port } }`，面板从 `globalThis.__DSH_FLOW__` 读取；这是官方公开 API，不属于补丁（补充 A1）。Desktop 只在启动时收集一次注入内容，端口变更后需重启 Desktop。令牌不写入注入内容，仍经 `GET /bootstrap` 换取。
+- **树结构**：一张卡片对应一个 Agent 实例，树的边只表示逻辑父子关系（`getParent()`）；顶层 Agent 挂在运行（run）根下。Group 成员、作业和 `herb` 的另一来源以叠加层表示，不参与布局。实例在工厂完成登记发布后才出现在树上，初始化失败的实例不出现。冷恢复产生的新实例画为新卡片，以“恢复自”连到原实例；`transfer` 使卡片连同子树移到新父级下。
+- **重试**：看板不提供单个 Agent 的用户重试。团队模式或父 Agent 发起的重试显示为新节点，挂在失败实例的逻辑父级下，标注“重试自”并连到失败实例，失败实例保留；该关系只由 Flow、团队模式或父 Agent 填写。用户可通过入口工具整体重跑一次运行。
+- **状态显示**：未终止的实例只显示运行中、等待中或空闲，空闲不表示完成。等待中显示为“等 <对方>”及剩余时间，不表示需要用户处理。已终止后，按终止前最后一个轮次推导完成、失败或已停止：被用户或父级取消的为已停止；最后轮次失败、出现错误或作业失败的为失败；作业已提交或最后轮次完成的为完成；其余为已停止，推导不出时只显示“已终止”及信号。资源清理以独立标记显示（收尾中、强制清理、清理完成、清理失败、已放弃），不改变上述结论；放弃不计为失败，持久化失败另加标记。
+- **不打断用户**：看板没有“需要你”状态，不弹出打断式提醒，也不提供审批。权限被改动、清理放弃以持久标记 `permission-violation`、`cleanup-abandoned` 挂在节点上，设置后一直保留；作业失败显示为作业或节点的结果；运行失败记在运行的结束结果中。Flow 发现实例权限被改动时，按固定权限的执行约束由适配器拒绝该实例此后的全部工具执行并报告，Flow 不自动终止该实例，也不改变其逻辑状态，只挂 `permission-violation` 标记；DSH 的 `tools.guard` 变更不产生事件，属于观察盲区。宿主按审批策略自动拒绝的调用按 `callId` 逐次记为卡片上的“自动拒绝”小标记，不表示节点状态；该类事件的出现频率（待原型验证），DSH 沙箱拦截 bash、文件工具时的结果形状（待原型验证）。
+- **花费**：卡片默认显示该实例自身的 token 数（四项之和），分支合计由前端汇总；用户配置了按模型区分的单价表时，再折算为金额。宿主不支持 `usage` 时显示为不可用，不显示为 0。
+- **团队模式与作业**：节点的 `pattern` 为团队模式注册时的名字，是不透明字符串，不设枚举；`patternInstanceId` 区分同一模式的多次运行；模式内的层级路径留待以后补充。卡片显示当前作业的类型与提交次数，`flow_submit` 的重新提交不新增节点。
+- **操作**：M1 只提供停止。停止非顶层 Agent 时由其父级调用 `kill(agent)`，停止顶层 Agent 时调用 `Context.release`，均先优雅收尾、超时后强制清理，重复的终止请求按信号规则合并；看板不直接调用 `recvSignal`。每个操作带客户端生成的 `actionId`，服务端按其去重，结果以 `action.result` 事件回报，前端以事件为准。
+
+**事件流接口**：Flow 由逻辑状态转移生成看板事件，不直接透传原生事件。
+
+- 快照：`GET /runs/:id/snapshot` 返回当前 `seq` 及折叠后的完整状态；随后以 SSE 订阅 `GET /runs/:id/events`，`seq` 作为事件 `id`，断线后按 `Last-Event-ID` 续传；缓冲已覆盖时发送 `reset`，客户端重新拉取快照。进程重启后运行失效，接口返回 `410`，前端显示“该运行已随重启失效”。
+- 信封：`{ v, runId, seq, ts, type, agentId, data }`。`seq` 在同一运行内严格递增；`ts` 为 Flow 处理事件的毫秒时间。`agentId` 为实例键 `<sessionID>#<n>`，`n` 为同一运行内同一 `sessionID` 的实例序号，冷恢复时加 1 并在 `data.resumedFrom` 中给出原实例键。`v` 为唯一的主版本号：新增字段或事件类型不改变 `v`，客户端忽略不认识的类型和字段；删除字段或改变语义时 `v` 加 1，版本不一致时客户端拒绝连接。
+- 事件类型：`agent.created`（逻辑父级、来源 `create|fork|herb|resume|retry`、`resumedFrom`、`retryOf`、`herbOther`、名称、模型、权限、任务、`pattern`、`patternInstanceId`）、`agent.status`（运行中、等待中、空闲，等待目标及截止时间）、`agent.turn`、`agent.error`、`agent.usage`、`agent.permissions`、`agent.approval`（按 `callId` 记录的只读小标记）、`agent.reparented`、`agent.terminated`（信号、发起方、处理方式、传播来源）、`agent.cleanup`（阶段、原因、截止时间、持久化失败、原因说明）、`group.*`、`assignment.*`、`agent.flag`（`permission-violation | cleanup-abandoned`，持久保留）、`action.result`、`run.ended`（结束结果 `completed | failed | stopped`）、`run.invalidated`。同一实例的 `agent.created` 最先出现，`agent.terminated` 最多一次，之后不再有 `agent.status`。超时升级为 `immediate` 时，由 Flow 发出 `agent.cleanup{ phase: 'immediate', cause: 'timeout' }`。`pattern.planned` 只保留类型名，`stage`、`round`、`patternPath` 不进入当前版本，以后作为新增可选字段补充。
+- 事件落盘：每个运行的事件按 `seq` 顺序追加写入本地文件，与研究 trace 分开，供后续回放使用。
+- 本地鉴权：接口只绑定回环地址；进程启动时生成随机令牌，面板与页面通过 `GET /bootstrap` 换取，不写入页面注入内容。服务端只对白名单中的 `Origin` 返回 CORS 头，白名单包括独立页面自身的 origin、DSH Web 客户端的 origin（默认 `http://127.0.0.1:3080` 及其 localhost 写法，可配置）及 Desktop 的 `dsh-app://app`，其他网页读不到返回内容；写操作须同时携带令牌并通过 `Origin` 校验。
+- 操作：`POST /runs/:id/actions`，请求体包含 `actionId`、目标 `agentId` 及操作类型，M1 仅有 `stop`。
+
+**里程碑范围**：M1 提供完整的实时树，包括卡片、状态、token、先优雅后强制的停止、弹层、动画、暗色模式及窄屏回退，以及事件落盘、DSH 原生面板与独立页面兜底。宽度不小于 560px 时首层并列、深层挂在父级之下，卡片等宽；更窄时改为逐级缩进，连线走左侧。新实例先画出连线再浮现卡片，结构变化时卡片滑动到新位置，`prefers-reduced-motion` 时直接呈现；暗色跟随祖先元素的主题设置；树采用 `tree/treeitem/group` 无障碍结构，顶栏合计（Agent 数、运行中、失败、token）以礼貌方式播报。回放、时间轴及跨运行对比放在 M2。
