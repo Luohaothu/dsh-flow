@@ -99,7 +99,7 @@ Agent 编排系统是 dsh-flow 的核心组件，其定义了智能体等核心�
     - `joinGroup(g: Group)`: 由 Group 对象在创建时调用，建立初始成员关联；不作为运行期间主动入群的入口
     - `quitGroup(g: Group)`: 由 Agent 逻辑终止、释放或 Group 解散的生命周期流程调用，解除双方成员关联；重复解除不产生额外操作，不作为主动退群的入口
   - 生命周期类：
-    - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、逻辑父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文。父级在创建前根据任务明确指定 `p.permission`，创建后固定，且不得高于父级自身的权限；根 Agent 由外部调用方指定权限，其父级为 `null`。父级参数仅用于 Flow 编排关系
+    - 静态异步工厂 `Agent.create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg: Message, history?: string) -> Promise<Agent>`: 通过身份信息、逻辑父 Agent 对象和初始消息创建 Agent，可选传递序列化的历史上下文。父级在创建前根据任务明确指定 `p.permission`，创建时只安装该初始权限，不保证实例存续期间不被改变；无法安装所要求的初始权限时创建失败。该初始权限不得高于父级自身的权限；根 Agent 由外部调用方指定权限，其父级为 `null`。父级参数仅用于 Flow 编排关系
     - 静态异步工厂 `Agent.resume(ctx: Context, parent: Agent | null, session: SessionID) -> Promise<Agent>`: 通过持久化会话 ID 冷恢复对话与配置，创建新的 Agent 实例，重新初始化空 Mailbox 及通信关系。逻辑父级仅由本次传入的 `parent` 建立，不从历史恢复；恢复的资源归属于新实例，不依赖父 Agent 的资源；旧实例的引用不会自动指向恢复后的新实例
     - 析构函数：结束 Agent 在 Flow 中的生命周期，清理其编排关系及运行时绑定。原生 Agent 的停止、持久化或保留由宿主适配器按后端能力实现，不作为逻辑终止的前提
     - `fork() -> Promise<Agent>`：以自身为母版创建一个逻辑子 Agent，复制母版 `AgentProfile` 的字段并将 `sessionID` 替换为新分配的会话身份，建立独立的只读 Profile 记录。对话通过显式快照导入新会话，不继承通信关系；子 Agent 的运行状态、Mailbox、工具及其他运行时资源均独立初始化，不复用父 Agent 的资源
@@ -115,7 +115,7 @@ Agent 内部持有宿主适配器返回的 `HostAgent` 对象，并将该对象�
 
 1. 对双方分别调用 `summarizeContext`，由各自的模型基于自身上下文生成总结；两份总结可并行生成，各自基于本次调用捕获的上下文，不自动读取尚未进入模型上下文的 Mailbox 消息。
 2. 两份总结均完成后，调用一次 `mergeContextSummaries`，使用母版 Agent 的模型配置，对两份文字进行合并、去重和归纳。合并时保留来源、关键约束、未完成事项及相互矛盾的信息，无法消解的分歧列入待确认事项，不自行编造结论。
-3. 复制母版的 `AgentProfile`，将其中的 `sessionID` 替换为新分配的会话身份，再将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 传入该 Profile 和初始消息创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。
+3. 复制母版的 `AgentProfile`，将其中的 `sessionID` 替换为新分配的会话身份，再将合并总结放入 `System` 来源的初始 Message 的 `payload`，通过 `Agent.create` 传入该 Profile 和初始消息创建子 Agent，不传递 `history`。该文本作为初始输入中的背景上下文，不替代子 Agent 的角色及权限配置；不继承双方原始对话日志、Mailbox 或通信关系。任一总结或合并失败时，本次 `herb` 失败，不创建子 Agent；子 Agent 创建失败则遵循异步工厂的清理规则。两次总结分别使用来源 Agent 自己的模型，合并使用母版的模型。这些辅助调用各产生一条 `usage`，记在新建的子 Agent 上；事件中的 `provider` 与 `model` 是实际执行的模型，不是子 Agent Profile 的模型。
 
 双方总结与合并结果均使用以下标准文字格式；没有内容的章节填写“无”，信息不足时明确标注“未知”。来源信息由适配器根据实际 Agent 身份填写，合并结果保留双方来源。这里的上下文总结不受 Message 的短字段 `summary` 的 50 字符限制。
 
@@ -364,7 +364,7 @@ Agent 恢复后，原 `SessionID` 可查找到新登记的 Agent，但已释放�
 
 - `HostAgent`: 宿主无关的运行时对象接口，由具体适配器通过 `createAgent/resumeAgent` 创建并返回，公开只读字段 `readonly profile: Readonly<AgentProfile>`，供调用方读取身份信息。它与一个原生 Agent 实例对应，具体原生对象、句柄及所有权记录封装在适配器实现内部，不由调用方拼装，也不重复登记到 Context
 - `SessionID`: 当前宿主内的稳定会话标识，支持持久化时亦用于定位会话存储；适配器内部负责转换为后端的原生 ID 类型
-- `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`；可选的 `type = 'usage'` 时携带 `usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }`，表示该实例自上一条 `usage` 以来新增的模型调用用量，各项互不重叠，仅在 `capabilities.usage` 声明支持时发送。`fork` 产生的实例只统计导入快照之后的调用，不计母版前缀（DSH 为 `inheritedEventCount` 之后的事件）；`herb` 的总结与合并调用计入新建的子 Agent。DSH 适配器从 `assistant/message.usage`、`assistant/attempt` 中的 usage 记录及 `compaction/summary.usage` 取值，`herb` 的辅助调用取自 `BlockAssembler` 的用量。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
+- `HostEvent`: 包含 `agent: HostAgent`、`timestamp` 和 `type`，其中 `agent` 为触发事件的同一运行时对象。`type = 'status'` 时携带 `status: 'idle' | 'running'`；`type = 'output'` 时携带一条已完成的助手输出 `text: string`；`type = 'turn-end'` 时携带 `reason: 'completed' | 'cancelled' | 'failed'`；`type = 'error'` 时携带错误描述 `message: string`；可选的 `type = 'usage'` 时携带 `usage: { provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }`，一次模型调用一条事件，用量只计该次调用，各项互不重叠，仅在 `capabilities.usage` 声明支持时发送。`provider` 与 `model` 是实际执行该次调用的模型，`model` 对应 Profile 中的 `model.id`，不取 Agent Profile 上的模型。`fork` 产生的实例只统计导入快照之后的调用，不计母版前缀（DSH 为 `inheritedEventCount` 之后的事件）；`herb` 的总结与合并调用计入新建的子 Agent，各事件仍填写实际执行的 `provider` 与 `model`。DSH 适配器从 `assistant/message.usage`、`assistant/attempt` 中的 usage 记录及 `compaction/summary.usage` 取值，`herb` 的辅助调用取自 `BlockAssembler` 的用量。事件写入日志或跨通信边界传输时，将对象引用转换为 `agent.profile.sessionID`
 - `history` 是适配器可识别的上下文交换格式，不是任意拼接的宿主事件日志。实现方应校验来源和格式版本；导入历史时，新会话身份以创建参数为准，不沿用历史所属会话的 ID。跨后端导入不在当前统一契约中保证
 
 **等待工具与执行准入**：适配器的等待工具仅绑定调用方自身的 `wait(condition, timeout)`，根据模型填写的目标及消息条件构造回调，不执行模型提供的任意程序。登记等待后结束当前轮次，工具结果说明已登记等待；本次检查已发现匹配时不结束当前轮次，工具结果直接带回匹配消息的 ID、来源和摘要，并将该消息本次尚未提交的通知视为已完成。不将工具调用保持为等待整个超时时长的未返回状态。工具结果按 `wait` 返回值的 `kind` 选择分支；等待条件、计时、匹配及超时通知均归 Flow 管理。
@@ -448,15 +448,15 @@ Agent 界面看板提供了一个智能体标签页，用户可以在此标签�
 - **重试**：看板不提供单个 Agent 的用户重试。团队模式或父 Agent 发起的重试显示为新节点，挂在失败实例的逻辑父级下，标注“重试自”并连到失败实例，失败实例保留；该关系只由 Flow、团队模式或父 Agent 填写。用户可通过入口工具整体重跑一次运行。
 - **状态显示**：未终止的实例只显示运行中、等待中或空闲，空闲不表示完成。等待中显示为“等 <对方>”及剩余时间，不表示需要用户处理。已终止后，按终止前最后一个轮次推导完成、失败或已停止：被用户或父级取消的为已停止；最后轮次失败、出现错误或作业失败的为失败；作业已提交或最后轮次完成的为完成；其余为已停止，推导不出时只显示“已终止”及信号。资源清理以独立标记显示（收尾中、强制清理、清理完成、清理失败、已放弃），不改变上述结论；放弃不计为失败，持久化失败另加标记。
 - **不打断用户**：看板没有“需要你”状态，不弹出打断式提醒，也不提供审批。清理放弃以持久标记 `cleanup-abandoned` 挂在节点上，设置后一直保留；作业失败显示为作业或节点的结果；运行失败记在运行的结束结果中。宿主按审批策略自动拒绝的调用按 `callId` 逐次记为卡片上的“自动拒绝”小标记，不表示节点状态；该类事件的出现频率（待原型验证），DSH 沙箱拦截 bash、文件工具时的结果形状（待原型验证）。
-- **花费**：卡片默认显示该实例自身的 token 数（四项之和），分支合计由前端汇总；用户配置了按模型区分的单价表时，再折算为金额。宿主不支持 `usage` 时显示为不可用，不显示为 0。
+- **花费**：卡片默认显示该实例自身的 token 数（四项之和），分支合计由前端汇总；用户配置了按模型区分的单价表时，按每条 `usage` 事件自身的 `provider` 与 `model` 折算金额，不用节点 Profile 的模型。`herb` 的辅助调用记在子节点上，仍按事件中实际执行的模型计价。宿主不支持 `usage` 时显示为不可用，不显示为 0。
 - **团队模式与作业**：节点的 `pattern` 为团队模式注册时的名字，是不透明字符串，不设枚举；`patternInstanceId` 区分同一模式的多次运行；模式内的层级路径留待以后补充。卡片显示当前作业的类型与提交次数，`flow_submit` 的重新提交不新增节点。
 - **操作**：M1 只提供停止。停止非顶层 Agent 时由其父级调用 `kill(agent)`，停止顶层 Agent 时调用 `Context.release`，均先优雅收尾、超时后强制清理，重复的终止请求按信号规则合并；看板不直接调用 `recvSignal`。每个操作带客户端生成的 `actionId`，服务端按其去重，结果以 `action.result` 事件回报，前端以事件为准。
 
 **事件流接口**：Flow 由逻辑状态转移生成看板事件，不直接透传原生事件。
 
-- 快照：`GET /runs/:id/snapshot` 返回当前 `seq` 及折叠后的完整状态；随后以 SSE 订阅 `GET /runs/:id/events`，`seq` 作为事件 `id`，断线后按 `Last-Event-ID` 续传；缓冲已覆盖时发送 `reset`，客户端重新拉取快照。进程重启后运行失效，接口返回 `410`，前端显示“该运行已随重启失效”。
+- 快照：`GET /runs/:id/snapshot` 返回当前 `seq` 及折叠后的完整状态。首次 SSE 订阅传入该 `seq`，例如 `GET /runs/:id/events?after=<seq>`；服务端重放全部 `seq > after` 的事件，随后继续实时推送，`seq` 作为事件 `id`。断线重连时 `Last-Event-ID` 优先于 `after`。`after` 早于仍保留的缓冲时，事件接口返回 `410`，客户端重新拉取快照后再以新的 `seq` 订阅。进程重启后运行失效，快照与事件接口均返回 `410`，前端显示“该运行已随重启失效”。
 - 信封：`{ v, runId, seq, ts, type, agentId, data }`。`seq` 在同一运行内严格递增；`ts` 为 Flow 处理事件的毫秒时间。`agentId` 为实例键 `<sessionID>#<n>`，`n` 为同一运行内同一 `sessionID` 的实例序号，冷恢复时加 1 并在 `data.resumedFrom` 中给出原实例键。`v` 为唯一的主版本号：新增字段或事件类型不改变 `v`，客户端忽略不认识的类型和字段；删除字段或改变语义时 `v` 加 1，版本不一致时客户端拒绝连接。
-- 事件类型：`agent.created`（逻辑父级、来源 `create|fork|herb|resume|retry`、`resumedFrom`、`retryOf`、`herbOther`、名称、模型、初始权限、任务、`pattern`、`patternInstanceId`）、`agent.status`（运行中、等待中、空闲，等待目标及截止时间）、`agent.turn`、`agent.error`、`agent.usage`、`agent.approval`（按 `callId` 记录的只读小标记）、`agent.reparented`、`agent.terminated`（信号、发起方、处理方式、传播来源）、`agent.cleanup`（阶段、原因、截止时间、持久化失败、原因说明）、`group.*`、`assignment.*`、`agent.flag`（`cleanup-abandoned`，持久保留）、`action.result`、`run.ended`（结束结果 `completed | failed | stopped`）、`run.invalidated`。同一实例的 `agent.created` 最先出现，`agent.terminated` 最多一次，之后不再有 `agent.status`。超时升级为 `immediate` 时，由 Flow 发出 `agent.cleanup{ phase: 'immediate', cause: 'timeout' }`。`pattern.planned` 只保留类型名，`stage`、`round`、`patternPath` 不进入当前版本，以后作为新增可选字段补充。
+- 事件类型：`agent.created`（逻辑父级、来源 `create|fork|herb|resume|retry`、`resumedFrom`、`retryOf`、`herbOther`、名称、模型、初始权限、任务、`pattern`、`patternInstanceId`）、`agent.status`（运行中、等待中、空闲，等待目标及截止时间）、`agent.turn`、`agent.error`、`agent.usage`（一次模型调用一条，含该次 `provider`、`model` 与 token；`herb` 辅助调用记在子节点，按事件中的模型计价）、`agent.approval`（按 `callId` 记录的只读小标记）、`agent.reparented`、`agent.terminated`（信号、发起方、处理方式、传播来源）、`agent.cleanup`（阶段、原因、截止时间、持久化失败、原因说明）、`group.*`、`assignment.*`、`agent.flag`（`cleanup-abandoned`，持久保留）、`action.result`、`run.ended`（结束结果 `completed | failed | stopped`）、`run.invalidated`。同一实例的 `agent.created` 最先出现，`agent.terminated` 最多一次，之后不再有 `agent.status`。超时升级为 `immediate` 时，由 Flow 发出 `agent.cleanup{ phase: 'immediate', cause: 'timeout' }`。`pattern.planned` 只保留类型名，`stage`、`round`、`patternPath` 不进入当前版本，以后作为新增可选字段补充。
 - 事件落盘：每个运行的事件按 `seq` 顺序追加写入本地文件，与研究 trace 分开，供后续回放使用。
 - 本地鉴权：接口只绑定回环地址；进程启动时生成随机令牌，面板与页面通过 `GET /bootstrap` 换取，不写入页面注入内容。服务端只对白名单中的 `Origin` 返回 CORS 头，白名单包括独立页面自身的 origin、DSH Web 客户端的 origin（默认 `http://127.0.0.1:3080` 及其 localhost 写法，可配置）及 Desktop 的 `dsh-app://app`，其他网页读不到返回内容；写操作须同时携带令牌并通过 `Origin` 校验。
 - 操作：`POST /runs/:id/actions`，请求体包含 `actionId`、目标 `agentId` 及操作类型，M1 仅有 `stop`。
