@@ -1,256 +1,410 @@
-/** A single Session owns its communication callbacks and native execution. */
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
-import type * as T from '../types.ts';
-import { fail } from '../errors.ts';
-import type { NativeMember } from './runtime.ts';
-import { registerMemberTools } from './member-tools.ts';
-import type { FlowSystem } from './system.ts';
-const terminal = (state: T.FlowTeamState) => ['completed', 'failed', 'cancelled'].includes(state);
-export class FlowAgent {
-  private handle: NativeMember | undefined;
-  private creation: Promise<NativeMember> | undefined;
-  private activity: Promise<void> | undefined;
-  private suspension = false;
-  private readonly taskInputs = new Map<string, string>();
-  private readonly publishedMessages = new Set<string>();
-  private readonly pendingMessages = new Map<string, UserMessage>();
-  private binding: { promise: Promise<NativeMember>; resolve: (member: NativeMember) => void; reject: (error: unknown) => void } | undefined;
-  private closing: Promise<void> | undefined;
-  constructor(readonly sessionId: string, private readonly system: FlowSystem) {}
-  private get store() { return this.system.store; }
-  private get closed() { return this.system.closed; }
-  get observed() { return !!this.handle; }
-  get active() { return !!this.activity || !!this.creation; }
-  get suspended() { return this.suspension; }
-  get running() { return this.handle?.running() ?? false; }
-  events() { return this.handle?.events() ?? []; }
-  private member() { return this.store.getMember(this.sessionId) ?? fail('Unknown member', 404); }
-  private run(id: string) { return this.store.getTeam(id) ?? fail('Unknown team', 404); }
-  private taskOf(id: string) { return this.store.getTask(id) ?? fail('Unknown task', 404); }
-  async send(request: T.FlowMessageRequest, operationId?: string): Promise<T.FlowMessage> {
-    const message = this.system.collaboration.recordMessage(this.sessionId, request, operationId);
-    await this.system.submitMessage(message);
-    return this.store.getMessage(message.id) ?? message;
+import type { Context } from './context.js';
+import type { Group } from './group.js';
+import { Mailbox } from './mailbox.js';
+import { agentControl, contextControl, groupControl, mailboxControl, type AgentControl } from './internals.js';
+import { deadlineAfter, scheduleDeadline, type DeadlineTimer } from './deadline.js';
+import { AuxiliaryCallError, beginAuxiliaryUsageSettlement, settleAuxiliaryUsage } from './auxiliary-usage.js';
+import { checkPermission, snapshotProfile } from './profile.js';
+import { formatSource, isTrustedSystemMessage, markWaitCompletion, newSessionID, sameSource, snapshotMessage, snapshotSource, sourceAgent, trustedSystemMessage, waitDescription } from './message.js';
+import { emitCore } from './observation.js';
+import type { AgentProfile, AgentStatus, ContextSummary, HostAdaptor, HostAgent, HostEvent, MailboxQuery, Message, MessageID, MessageMeta, MessageSource, SessionID, Signal, Usage, WaitResult } from './types.js';
+
+type Binding = { kind: 'initializing' } | { kind: 'bound'; host: HostAgent; unsubscribe?: () => void } | { kind: 'released'; host?: HostAgent };
+type WaitRecord = { condition: MailboxQuery; startedAt: number; timeout: number; deadline: number; timer?: DeadlineTimer; evaluating: boolean; registered: boolean; examined: Set<MessageID> };
+type Batch = { entries: MessageMeta[]; prompted: MessageSource[]; message: Message; mode: 'followup' | 'steer' };
+
+export class Agent {
+  private binding: Binding = { kind: 'initializing' };
+  private readonly mailbox = new Mailbox();
+  private parent: Agent | null = null;
+  private readonly children = new Set<Agent>();
+  private readonly groups = new Set<Group>();
+  private status: AgentStatus = 'idle';
+  private published = false;
+  private closing = false;
+  private closePromise?: Promise<void>;
+  private strongestSignal: Signal = 'SIGTERM';
+  private nativeRound = false;
+  private temporaryRun = false;
+  private pendingWait: WaitRecord | undefined;
+  private pending = new Map<MessageID, MessageMeta>();
+  private submitting = new Set<MessageID>();
+  private prompted: MessageSource[] = [];
+  private prompting: MessageSource[] = [];
+  private queuedEvents: Readonly<HostEvent>[] = [];
+  readonly [agentControl]: AgentControl;
+
+  private constructor(private readonly context: Context, private readonly adaptor: HostAdaptor) {
+    const self = this;
+    this[agentControl] = {
+      get context() { return self.context; },
+      get host() { return self.host(); },
+      assertAvailable: () => this.assertAvailable(),
+      release: signal => this.terminate(signal),
+    };
+    this.mailbox[mailboxControl].bind(context);
+    this.mailbox[mailboxControl].onRead(message => emitCore(context, { type: 'message-read', timestamp: Date.now(), agent: this, message }));
   }
-  async receive(message: T.FlowMessage): Promise<void> {
-    if (this.closed) return;
-    this.store.transaction(() => {
-      if (!this.store.events(message.team_id).some(event => event.type === 'message-received' && (event.data as { message_id?: string }).message_id === message.id))
-        this.store.event(message.team_id, 'message-received', { message_id: message.id, session_id: this.sessionId });
-    });
-    // Communication stays responsive while this Session's execution job runs.
-    const native = this.handle?.agent ?? this.system.ctx.agents.get(SessionId(this.sessionId));
-    if (native && (native.status === 'running' || message.mode === 'notice' || !this.store.getMember(this.sessionId))) await this.deliver(message);
-    else this.wake();
+  getProfile(): Readonly<AgentProfile> { return this.host().profile; }
+  getParent(): Agent | null { return this.parent; }
+  getChildren(): Agent[] { return [...this.children]; }
+  getStatus(): AgentStatus { return this.status; }
+  hasPendingWait(): boolean { return this.pendingWait !== undefined; }
+  getMailbox(): Mailbox { return this.mailbox; }
+
+  static create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg?: Message, history?: string): Promise<Agent> {
+    return Agent.createFrom(ctx, p, parent, initmsg, history, parent ? [parent] : [], 'create');
   }
-  confirmInput(event: SessionEvent): void {
-    if (this.closed || event.type !== 'user/message' || event.data.source.kind !== 'flow-message') return;
-    const message = this.store.getMessage(event.data.source.message_id);
-    if (message && message.to_session_id === this.sessionId && message.state === 'queued') this.store.transaction(() => {
-      this.store.put('messages', { ...message, state: 'delivered', delivered_at: Date.now() });
-      this.store.event(message.team_id, 'message-delivered', { message_id: message.id });
-    });
+  private static createFrom(ctx: Context, profile: AgentProfile, parent: Agent | null, initmsg: Message | undefined, history: string | undefined, sources: Agent[], origin: 'create' | 'fork' | 'herb'): Promise<Agent> {
+    let p: Readonly<AgentProfile>;
+    let input: Message | undefined;
+    try {
+      ctx[contextControl].assertOpen();
+      if (parent) ctx[contextControl].assertAvailable(parent);
+      for (const source of sources) ctx[contextControl].assertAvailable(source);
+      p = snapshotProfile(profile);
+      checkPermission(p, parent?.getProfile() ?? null);
+      input = initmsg === undefined ? undefined : snapshotMessage(initmsg);
+    } catch (error) { return Promise.reject(error); }
+    return Agent.assemble(ctx, parent, agent => agent.adaptor.createAgent(agent, p, history), sources, origin, input);
   }
-  recordControl(request: T.FlowControlRequest): void {
-    const member = this.store.getMember(this.sessionId);
-    if (!member) return;
-    if (member.active_task_id) this.taskInputs.delete(member.active_task_id);
-    if (request.action === 'resume') this.suspension = false;
-    else if (request.target !== 'task') this.suspension = true;
-    if (request.target !== 'task') this.store.put('members', { ...member,
-      state: request.action === 'cancel' ? 'closed' : request.action === 'pause' ? 'paused' : 'idle', updated: Date.now() });
-    if (request.action === 'cancel' && request.target !== 'task') this.binding?.reject(new Error('Member is closed; native binding cancelled'));
+  static resume(ctx: Context, parent: Agent | null, session: SessionID): Promise<Agent> {
+    return Agent.assemble(ctx, parent, agent => agent.adaptor.resumeAgent(agent, session), parent ? [parent] : [], 'resume');
   }
-  control(request: T.FlowControlRequest): void {
-    this.recordControl(request);
-    if (request.action === 'resume') { this.wake(); return; }
-    setImmediate(() => {
-      if (this.closed) return;
-      void (request.action === 'cancel' && request.target !== 'task' ? this.close() : this.handle?.cancel())
-        ?.catch(error => this.system.warn(error)).finally(() => this.system.wake());
-    });
+  private static async assemble(ctx: Context, parent: Agent | null, initialize: (agent: Agent) => Promise<HostAgent>, sources: Agent[], origin: 'create' | 'resume' | 'fork' | 'herb', input?: Message): Promise<Agent> {
+    ctx[contextControl].assertOpen();
+    if (parent) ctx[contextControl].assertAvailable(parent);
+    for (const source of sources) ctx[contextControl].assertAvailable(source);
+    const adaptor = ctx.getHostAdaptor();
+    const finishCreation = ctx[contextControl].beginCreation();
+    const agent = new Agent(ctx, adaptor);
+    try {
+      const host = await initialize(agent);
+      if (agent.closing) {
+        agent.binding = { kind: 'released', host };
+        const release = Promise.resolve().then(() => adaptor.releaseAgent(host, 'immediate'));
+        ctx[contextControl].trackRelease(agent, release);
+        await release;
+        throw new Error('Agent terminated during initialization');
+      }
+      agent.binding = { kind: 'bound', host };
+      snapshotProfile(host.profile);
+      checkPermission(host.profile, parent?.getProfile() ?? null);
+      agent.nativeRound = adaptor.getStatus(host) === 'running';
+      agent.binding.unsubscribe = adaptor.subscribe(host, event => agent.onHostEvent(event));
+      ctx[contextControl].publish(agent, agent.mailbox, sources, () => {
+        if (agent.closing) throw new Error('Agent terminated during initialization');
+        agent.parent = parent;
+        parent?.children.add(agent);
+        agent.published = true;
+      });
+      emitCore(ctx, { type: 'agent-created', timestamp: Date.now(), agent, parent, origin, sources: sources.slice() });
+      for (const event of agent.queuedEvents.splice(0)) agent.onHostEvent(event);
+      agent.assertAvailable();
+      for (const source of sources) ctx[contextControl].assertAvailable(source);
+      if (input) {
+        agent.nativeRound = true;
+        agent.setStatus('running');
+        agent.assertAvailable();
+        await adaptor.send(host, input, 'followup', 'input');
+        agent.assertAvailable();
+      } else agent.syncStatus();
+      return agent;
+    } catch (error) {
+      const cleanup: unknown[] = [];
+      try { await agent.terminate('SIGKILL'); } catch (failure) { cleanup.push(failure); }
+      agent.parent?.children.delete(agent);
+      agent.parent = null;
+      ctx[contextControl].rollback(agent, agent.mailbox);
+      if (cleanup.length) throw new AggregateError([error, ...cleanup], 'Agent initialization and rollback failed');
+      throw error;
+    } finally { finishCreation(); }
   }
-  resetFailure(): void {
-    const member = this.member();
-    if (member.state === 'failed') this.store.put('members', { ...member, state: 'idle', error: null, updated: Date.now() });
+  async fork(): Promise<Agent> {
+    this.assertAvailable();
+    const history = await this.adaptor.exportHistory(this.host());
+    this.assertAvailable();
+    return Agent.createFrom(this.context, { ...this.getProfile(), sessionID: newSessionID() }, this, undefined, history, [this], 'fork');
   }
-  fail(error: unknown): void {
-    if (this.closed) return;
-    const member = this.store.getMember(this.sessionId);
-    if (!member) { this.system.warn(error); return; }
-    if (member.state === 'closed' || terminal(this.run(member.team_id).state)) return;
-    this.store.transaction(() => {
-      this.store.put('members', { ...member, state: 'failed', error: error instanceof Error ? error.message : String(error), updated: Date.now() });
-      this.system.collaboration.failed(this.sessionId, error);
-    });
+  async herb(other: Agent): Promise<Agent> {
+    this.assertAvailable(); this.context[contextControl].assertAvailable(other);
+    const mother = this.host();
+    const finishUsage = beginAuxiliaryUsageSettlement(this.adaptor, mother);
+    const ledger: Usage[] = [];
+    let target = mother;
+    const capture = (result: PromiseSettledResult<ContextSummary>): string | undefined => {
+      if (result.status === 'fulfilled') { ledger.push(...result.value.usage); return result.value.summary; }
+      if (result.reason instanceof AuxiliaryCallError) ledger.push(...result.reason.usage);
+      return undefined;
+    };
+    try {
+      const summarize = (source: HostAgent): Promise<ContextSummary> => {
+        try { return this.adaptor.summarizeContext(source); } catch (error) { return Promise.reject(error); }
+      };
+      const summaries = await Promise.allSettled([summarize(mother), summarize(other.host())]);
+      const own = capture(summaries[0]!); const another = capture(summaries[1]!);
+      const errors = summaries.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (errors.length) throw new AggregateError(errors.map(result => result.reason), 'Context summarization failed');
+      this.assertAvailable(); this.context[contextControl].assertAvailable(other);
+      let merged: ContextSummary;
+      try { merged = await this.adaptor.mergeContextSummaries(mother, own!, another!); }
+      catch (error) { if (error instanceof AuxiliaryCallError) ledger.push(...error.usage); throw error; }
+      ledger.push(...merged.usage);
+      this.assertAvailable(); this.context[contextControl].assertAvailable(other);
+      const child = await Agent.createFrom(this.context, { ...this.getProfile(), sessionID: newSessionID() }, this,
+        trustedSystemMessage('合并上下文', merged.summary), undefined, [this, other], 'herb');
+      target = child.host();
+      return child;
+    } finally {
+      try { settleAuxiliaryUsage(this.adaptor, target, ledger); }
+      finally { finishUsage(); }
+    }
   }
-  restore(): void {
-    const member = this.store.getMember(this.sessionId);
-    if (!member) return;
-    this.suspension = member.state === 'paused' || this.run(member.team_id).state === 'paused';
-    if (member.state === 'running') this.store.put('members', { ...member, state: 'idle', updated: Date.now() });
+  kill(agent: Agent): Promise<void> {
+    this.assertAvailable();
+    if (agent.parent !== this || !this.children.has(agent)) return Promise.reject(new Error('Target is not a direct child'));
+    return agent.recvSignal('SIGTERM');
   }
-  private eligibleTask(): T.FlowTask | undefined {
-    const member = this.store.getMember(this.sessionId);
-    if (!member || this.suspension || ['closed', 'failed'].includes(member.state) || this.run(member.team_id).state !== 'running') return;
-    return this.store.tasks(member.team_id).find(task => task.assignee_session_id === this.sessionId && task.id !== this.run(task.team_id).root_task_id && task.status === 'OPEN' && !task.paused && this.taskInputs.get(task.id) !== `${task.version}`);
+  transfer(child: Agent, adopt: Agent): void {
+    this.context[contextControl].assertAvailable(this);
+    this.context[contextControl].assertAvailable(child);
+    this.context[contextControl].assertAvailable(adopt);
+    if (child.parent !== this || !this.children.has(child)) throw new Error('Target is not a direct child');
+    for (let node: Agent | null = adopt; node; node = node.parent) if (node === child) throw new Error('Transfer would create a cycle');
+    if (adopt === this) return;
+    this.children.delete(child); adopt.children.add(child); child.parent = adopt;
+    emitCore(this.context, { type: 'agent-parent', timestamp: Date.now(), agent: child, previous: this, parent: adopt });
   }
-  private messages(): T.FlowMessage[] {
-    return this.store.all('messages').filter(message => message.to_session_id === this.sessionId && message.state === 'queued' && !this.publishedMessages.has(message.id) && this.canReceive(message));
+  joinGroup(group: Group): void {
+    this.assertAvailable();
+    if (group[groupControl].context !== this.context || !group[groupControl].members().includes(this)) throw new Error('Invalid Group association');
+    this.groups.add(group);
   }
-  private canReceive(message: T.FlowMessage): boolean {
-    const run = this.run(message.team_id), member = this.store.getMember(this.sessionId);
-    return !terminal(run.state) && (member?.team_id !== run.id || (run.state !== 'paused' && !this.suspension && member.state !== 'closed'));
+  quitGroup(group: Group): void {
+    if (!this.groups.delete(group)) return;
+    group[groupControl].leave(this);
   }
-  wake(): void {
-    if (this.closed || this.closing || this.active) return;
-    const member = this.store.getMember(this.sessionId);
-    if (!member && !this.system.ctx.agents.get(SessionId(this.sessionId))) return;
-    const submitted = member?.active_task_id ? this.store.getTask(member.active_task_id) : undefined;
-    const needsCheckpoint = submitted?.status === 'SUBMITTED' && submitted.result_id && !this.store.getResult(submitted.result_id)?.ready && !this.suspension && this.run(submitted.team_id).state === 'running';
-    if (this.eligibleTask() || needsCheckpoint || this.messages().some(message => message.mode === 'request' || this.handle))
-      this.system.submitWork(this.sessionId, () => this.execute());
+  recvSignal(signal: Signal): Promise<void> {
+    if (signal !== 'SIGTERM' && signal !== 'SIGKILL') return Promise.reject(new TypeError('Unknown signal'));
+    return this.terminate(signal);
   }
-  private async execute(): Promise<void> {
-    if (this.closed || this.closing) return;
-    const task = this.eligibleTask();
-    const member = this.store.getMember(this.sessionId);
-    if (!member) { for (const message of this.messages()) await this.deliver(message); return; }
-    const submitted = member.active_task_id ? this.store.getTask(member.active_task_id) : undefined;
-    if (!task && !this.messages().some(message => message.mode === 'request' || this.handle) && !(submitted?.status === 'SUBMITTED' && !this.suspension)) return;
-    const handle = await this.ensureNative();
-    if (this.closed || this.closing) return;
-    if (task) {
-      const current = this.taskOf(task.id), run = this.run(task.team_id);
-      if (run.state === 'running' && !this.suspension && !current.paused && current.version === task.version && current.status === 'OPEN') {
-        this.store.put('members', { ...this.member(), active_task_id: task.id, state: 'running', updated: Date.now() });
-        this.taskInputs.set(task.id, `${task.version}`);
-        const alreadyQueued = [...handle.agent.inbox.nextTurn, ...handle.agent.inbox.nextStep].some(input => input.source.kind === 'flow-task' && input.source.task_id === task.id && input.source.task_version === task.version);
-        const priorInput = handle.events().some(event => event.type === 'user/message' && event.data.source.kind === 'flow-task' && event.data.source.task_id === task.id && event.data.source.task_version === task.version);
-        if (!alreadyQueued && !(priorInput && handle.running())) {
-            const input = createUserMessage({ source: { kind: 'flow-task', team_id: run.id, task_id: task.id, task_version: task.version }, content: [{ type: 'text', text: `${priorInput ? 'Continue from your native Session history and completed actions.\n' : ''}Task ${task.id} (version ${task.version}), owner ${task.owner_session_id}\n${task.objective}\nWorkspace: ${run.workspace}\nUse your standard native tools. Business scripts and temporary files follow the task's output-directory restrictions. Delegate independent business work with flow_task when useful; check existing child deliverables and flow_review their results. If waiting is all that remains, return naturally; result messages resume the work. Finish with one concise final reply giving artifact paths, checks and limitations: the completed native return is published for owner review. For incomplete work, explicitly flow_result with partial or blocked. An explicit result needs only a brief final acknowledgement.` }] });
-            handle.send(input, handle.running() ? 'steer' : 'followup');
-        }
+  recvMessage(message: Message): void {
+    this.assertAvailable();
+    const id = this.mailbox.put(message);
+    if (id === null) return;
+    this.assertAvailable();
+    const meta = this.mailbox.peak(id)!;
+    this.pending.set(id, meta);
+    const wait = this.pendingWait;
+    if (wait && !wait.evaluating) {
+      if (Date.now() >= wait.deadline) this.timeoutWait(wait);
+      else this.matchArrival(wait);
+    }
+    emitCore(this.context, { type: 'message-received', timestamp: Date.now(), agent: this, message: meta });
+    if (this.closing) return;
+    this.flushHigh(); this.flushNormal();
+  }
+  wait(condition: MailboxQuery, timeout: number): WaitResult {
+    this.assertAvailable();
+    if (typeof condition !== 'function' || !Number.isFinite(timeout) || timeout <= 0) throw new TypeError('Wait requires a condition and finite positive timeout');
+    if (this.pendingWait) throw new Error('Agent already has a pending wait');
+    const startedAt = Date.now();
+    const record: WaitRecord = { condition, startedAt, timeout, deadline: deadlineAfter(timeout, startedAt), evaluating: true, registered: false, examined: new Set() };
+    this.pendingWait = record;
+    try {
+      const match = this.findMatch(record);
+      this.assertAvailable();
+      if (this.pendingWait !== record) throw new Error('Wait was cancelled during matching');
+      if (match) {
+        this.clearWait(record); this.pending.delete(match.id);
+        return { kind: 'matched', message: match };
+      }
+      record.evaluating = false; record.registered = true;
+      record.startedAt = Date.now(); record.deadline = deadlineAfter(timeout, record.startedAt);
+      record.timer = scheduleDeadline(record.deadline, () => this.timeoutWait(record));
+      this.temporaryRun = false; this.setStatus('waiting');
+      return { kind: 'registered' };
+    } catch (error) {
+      if (this.pendingWait === record) this.clearWait(record);
+      this.syncStatus();
+      throw error;
+    } finally { this.flushHigh(); }
+  }
+  private findMatch(record: WaitRecord): MessageMeta | null {
+    for (;;) {
+      const candidates = this.mailbox.query(message => !message.read && sourceAgent(message.source) !== null).filter(meta => !record.examined.has(meta.id));
+      if (!candidates.length) return null;
+      for (const candidate of candidates) {
+        if (this.pendingWait !== record || this.closing) return null;
+        record.examined.add(candidate.id);
+        const message = this.mailbox[mailboxControl].inspect(candidate.id);
+        if (!message || message.read) continue;
+        const matched = record.condition(message);
+        if (this.pendingWait !== record || this.closing) return null;
+        const current = this.mailbox.peak(candidate.id);
+        if (matched && current && !current.read) return current;
       }
     }
-    for (const message of this.messages()) await this.deliver(message);
-    do { await this.watch(handle); } while (!this.closed && handle.running());
   }
-  waitForBinding(): Promise<NativeMember> {
-    if (this.handle) return Promise.resolve(this.handle);
-    if (!this.binding) {
-      let resolve!: (member: NativeMember) => void, reject!: (error: unknown) => void;
-      const promise = new Promise<NativeMember>((yes, no) => { resolve = yes; reject = no; });
-      this.binding = { promise, resolve, reject };
+  private matchArrival(record: WaitRecord): void {
+    record.evaluating = true;
+    try {
+      const match = this.findMatch(record);
+      if (this.pendingWait !== record || !match) return;
+      if (Date.now() >= record.deadline) { this.timeoutWait(record); return; }
+      this.clearWait(record);
+      const deferred = [...this.pending.values()].filter(meta => meta.id !== match.id && meta.priority !== 'high' && !this.submitting.has(meta.id));
+      this.submitEntries([match, ...deferred], match.priority === 'high' ? 'steer' : 'followup', match);
+    } catch (error) {
+      this.reportError(error);
+    } finally { record.evaluating = false; this.flushHigh(); }
+  }
+  private clearWait(record: WaitRecord): void {
+    if (this.pendingWait !== record) return;
+    record.timer?.cancel(); this.pendingWait = undefined; this.temporaryRun = false;
+  }
+  private timeoutWait(record: WaitRecord): void {
+    if (this.pendingWait !== record || this.closing) return;
+    this.clearWait(record);
+    const message = markWaitCompletion(trustedSystemMessage('等待超时', `等待目标超时未返回。目标：${waitDescription(record.condition) ?? '此前指定的消息条件'}；发起时间：${record.startedAt}；超时时长：${record.timeout} 毫秒。`));
+    message.priority = 'high';
+    this.sendBatch({ entries: [], prompted: [], message, mode: 'steer' });
+  }
+  private flushHigh(): void {
+    if (!this.published || this.closing || this.pendingWait?.evaluating) return;
+    for (const entry of [...this.pending.values()]) {
+      if (entry.priority === 'high' && !this.submitting.has(entry.id)) this.submitEntries([entry], 'steer');
     }
-    return this.binding.promise;
   }
-  async bindExecution(): Promise<void> {
-    const member = this.member();
-    if (this.closed || this.closing || member.state === 'closed' || terminal(this.run(member.team_id).state)) {
-      this.binding?.reject(new Error('Member is closed; native binding cancelled')); return;
-    }
-    const native = await this.ensureNative();
-    const task = member.active_task_id ? this.store.getTask(member.active_task_id) : undefined;
-    if (native.running() || (task?.status === 'SUBMITTED' && task.result_id && !this.store.getResult(task.result_id)?.ready)) await this.waitForExecution();
+  private flushNormal(): void {
+    if (!this.published || this.closing || this.pendingWait || this.nativeRound) return;
+    const entries = [...this.pending.values()].filter(meta => meta.priority !== 'high' && !this.submitting.has(meta.id));
+    if (entries.length) this.submitEntries(entries, 'followup');
+    else this.syncStatus();
   }
-  async waitForExecution(): Promise<void> { if (this.handle) do { await this.watch(this.handle); } while (!this.closed && this.handle.running()); }
-  async ensureNative(): Promise<NativeMember> {
-    if (this.closed) fail('Flow is closed', 409);
-    if (this.handle) return this.handle;
-    if (this.creation) return this.creation;
-    const member = this.member(), run = this.run(member.team_id), model = member.model ?? run.model;
-    this.creation = this.system.factory(this.system.ctx, { sessionId: this.sessionId, name: member.name, role: member.role ?? 'worker', ...(member.instructions ? { instructions: member.instructions } : {}), ...(member.skills ? { skills: member.skills } : {}), ...(member.parent_id ? { parentSessionId: member.parent_id } : {}), workspace: run.workspace, ...(member.preset ? { preset: member.preset } : {}), ...(model ? { model } : {}), signal: this.system.signal, setup: agentCtx => registerMemberTools(agentCtx, this.system.service, this.sessionId), onEvent: event => this.observe(event) }).then(async handle => {
-      if (this.closed) { await handle.dispose(); throw new Error('Flow disposed during Agent creation'); }
-      this.handle = handle; if (!this.closing) this.binding?.resolve(handle); return handle;
-    }).catch(error => { this.binding?.reject(error); this.binding = undefined; throw error; }).finally(() => { this.creation = undefined; });
-    return this.creation;
-  }
-  observe(event: SessionEvent): void {
-    this.confirmInput(event);
-    if (this.closed || event.type !== 'turn/start') return;
-    queueMicrotask(() => {
-      if (this.closed) return;
-      if (!this.handle) {
-        if (!this.store.getMember(this.sessionId)) void Promise.all(this.messages().map(message => this.deliver(message))).catch(error => this.system.warn(error));
-        return;
+  private submitEntries(entries: MessageMeta[], mode: 'followup' | 'steer', match?: MessageMeta): void {
+    if (this.closing || entries.length === 0) return;
+    const included = entries.filter(meta => !this.submitting.has(meta.id));
+    if (!included.length && !match) return;
+    const prompts: MessageSource[] = [];
+    const lines: string[] = [];
+    let low = 0;
+    for (const entry of included) {
+      if (entry.priority === 'low' && entry.id !== match?.id) low++;
+      else lines.push(`[${entry.id}] ${formatSource(entry.source)}：${entry.summary}`);
+      if (this.mailbox.getSourcePriority(entry.source) === null && !this.prompted.some(source => sameSource(source, entry.source)) && !this.prompting.some(source => sameSource(source, entry.source)) && !prompts.some(source => sameSource(source, entry.source))) {
+        const stored = this.mailbox[mailboxControl].inspect(entry.id);
+        if (!stored || isTrustedSystemMessage(stored)) continue;
+        prompts.push(snapshotSource(entry.source));
       }
-      const member = this.store.getMember(this.sessionId);
-      if (!member || ['closed', 'failed', 'paused'].includes(member.state)) return;
-      const run = this.run(member.team_id);
-      if (terminal(run.state) || run.state === 'paused' || this.suspension) return;
-      this.store.put('members', { ...member, state: 'running', updated: Date.now() });
-      this.watch(this.handle);
-      this.system.submitWork(this.sessionId, async () => { if (this.handle) do { await this.watch(this.handle); } while (!this.closed && this.handle.running()); });
-    });
-  }
-  private watch(handle: NativeMember): Promise<void> {
-    if (this.activity) return this.activity;
-    this.activity = (async () => {
-      do {
-        await handle.whenIdle(); await handle.flush();
-        if (this.closed) return;
-        if (handle.running()) continue;
-        const input = handle.events().findLast(event => event.type === 'user/message' && event.data.source.kind === 'flow-task');
-        const source = input?.type === 'user/message' && input.data.source.kind === 'flow-task' ? input.data.source : undefined;
-        await this.system.collaboration.settle(this.sessionId, { end: handle.events().findLast(event => event.type === 'turn/end'), summary: handle.lastText(), task: source ? { id: source.task_id, version: source.task_version } : undefined });
-        const member = this.member();
-        if (!this.closed && !handle.running() && !['closed', 'failed'].includes(member.state) && !terminal(this.run(member.team_id).state))
-          this.store.put('members', { ...member, state: this.suspension ? 'paused' : 'idle', error: null, updated: Date.now() });
-      } while (handle.running());
-    })().catch(error => this.fail(error)).finally(() => {
-      this.activity = undefined;
-      if (!this.closed && handle.running()) this.watch(handle);
-      this.system.wake();
-    });
-    return this.activity;
-  }
-  private async deliver(offered: T.FlowMessage): Promise<void> {
-    if (this.closed) return;
-    const message = this.store.getMessage(offered.id);
-    if (!message || message.state !== 'queued') return;
-    const run = this.run(message.team_id); if (terminal(run.state)) return;
-    const member = this.store.getMember(this.sessionId);
-    if (!this.canReceive(message)) return;
-    const handle = this.handle;
-    const agent = handle?.agent ?? this.system.ctx.agents.get(SessionId(this.sessionId));
-    if (!agent || this.closed || this.store.getMessage(message.id)?.state !== 'queued') return;
-    const matches = (input: UserMessage) => input.source.kind === 'flow-message' && input.source.message_id === message.id;
-    const events = agent.session.snapshotEvents();
-    if (events.some(event => event.type === 'user/message' && matches(event.data))) {
-      this.store.transaction(() => { this.store.put('messages', { ...message, state: 'delivered', delivered_at: Date.now() }); this.store.event(run.id, 'message-delivered', { message_id: message.id }); });
-      return;
     }
-    // A native claim may have consumed the Inbox before user/message appears.
-    // Durable insertion acknowledges publication; only user/message proves delivery.
-    const published = agent.inbox.nextTurn.some(matches) || agent.inbox.nextStep.some(matches) || events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(matches));
-    if (!published) {
-      let input = this.pendingMessages.get(message.id);
-      if (!input) { input = createUserMessage({ source: { kind: 'flow-message', team_id: run.id, message_id: message.id, ...(message.task_id ? { task_id: message.task_id } : {}) }, content: [{ type: 'text', text: message.content }] }); this.pendingMessages.set(message.id, input); }
-      if (handle) handle.send(input, message.mode === 'notice' ? 'notice' : handle.running() ? 'steer' : 'followup');
-      else if (message.mode === 'notice') agent.inject(input);
-      else if (agent.status === 'running') agent.steer(input);
-      else agent.followup(input);
+    if (low) lines.push(`不重要消息：${low} 条`);
+    for (const source of prompts) lines.push(`请根据当前任务通过 setSourcePriority 评定 ${formatSource(source)} 的重要性。该来源的优先级后续可随时调整。`);
+    const message = trustedSystemMessage(match ? '等待完成' : '收件箱通知', `${match ? '等待已匹配：\n' : ''}${lines.join('\n')}`);
+    message.priority = mode === 'steer' ? 'high' : 'normal';
+    if (match) markWaitCompletion(message);
+    for (const entry of included) this.submitting.add(entry.id);
+    this.prompting.push(...prompts);
+    this.sendBatch({ entries: included, prompted: prompts, message, mode });
+  }
+  private sendBatch(batch: Batch): void {
+    if (this.closing) return;
+    const finishBatch = () => {
+      for (const entry of batch.entries) this.submitting.delete(entry.id);
+      this.prompting = this.prompting.filter(source => !batch.prompted.includes(source));
+    };
+    this.nativeRound = true;
+    if (this.pendingWait) this.temporaryRun = true;
+    this.setStatus('running');
+    if (this.closing) { finishBatch(); return; }
+    let sent: Promise<void>;
+    try { this.assertAvailable(); sent = this.adaptor.send(this.host(), batch.message, batch.mode, 'notification'); }
+    catch (error) { sent = Promise.reject(error); }
+    void sent.then(() => {
+      for (const entry of batch.entries) this.pending.delete(entry.id);
+      for (const source of batch.prompted) if (!this.prompted.some(existing => sameSource(existing, source))) this.prompted.push(source);
+    }, error => {
+      if (!this.closing) {
+        try { this.nativeRound = this.adaptor.getStatus(this.host()) === 'running'; } catch {}
+        this.syncStatus();
+      }
+      this.reportError(error);
+    }).finally(finishBatch);
+  }
+  private onHostEvent(event: Readonly<HostEvent>): void {
+    if (!this.published) { this.queuedEvents.push(event); return; }
+    if (event.agent !== this.host()) return;
+    if (!this.closing) {
+      if (event.type === 'status') {
+        if (event.status === 'running') this.nativeRound = true;
+        this.syncStatus();
+      } else if (event.type === 'turn-end') {
+        this.nativeRound = false; this.temporaryRun = false; this.syncStatus();
+        queueMicrotask(() => this.flushNormal());
+      }
     }
-    this.publishedMessages.add(message.id);
-    if (handle && member && message.mode === 'request') this.watch(handle);
+    emitCore(this.context, { type: 'host-event', timestamp: event.timestamp, agent: this, event });
   }
-  close(): Promise<void> {
-    this.binding?.reject(new Error('Member is closed; native binding cancelled'));
-    if (!this.closed) { const member = this.store.getMember(this.sessionId); if (member) this.store.put('members', { ...member, state: 'closed', updated: Date.now() }); }
-    return this.closing ??= (async () => {
-      const handle = this.handle ?? await this.creation;
-      if (!handle) return;
-      try { await handle.cancel(); await handle.flush(); }
-      finally { await handle.dispose(); }
-    })();
+  private host(): HostAgent {
+    if (this.binding.kind === 'initializing' || !this.binding.host) throw new Error('Agent HostAgent is not initialized');
+    return this.binding.host;
   }
-  async dispose(): Promise<void> {
-    this.binding?.reject(new Error('Flow is closed; native binding cancelled'));
-    if (this.closing) { await this.closing; return; }
-    await this.creation?.catch(() => {});
-    await this.handle?.dispose();
-    await this.activity;
+  private assertAvailable(): void {
+    if (this.closing || !this.published || !this.context.has(this) || this.binding.kind !== 'bound') throw new Error('Agent is not available');
+  }
+  private syncStatus(): void {
+    if (this.closing) return;
+    this.setStatus(this.pendingWait && !this.temporaryRun ? 'waiting' : this.nativeRound ? 'running' : 'idle');
+  }
+  private setStatus(status: AgentStatus): void {
+    if (this.status === status) return;
+    this.status = status;
+    if (this.published) emitCore(this.context, { type: 'agent-status', timestamp: Date.now(), agent: this, status });
+  }
+  private reportError(error: unknown): void {
+    if (!this.published) return;
+    const event: HostEvent = { agent: this.host(), timestamp: Date.now(), type: 'error', message: error instanceof Error ? error.message : String(error) };
+    emitCore(this.context, { type: 'host-event', timestamp: event.timestamp, agent: this, event });
+  }
+  private terminate(signal: Signal): Promise<void> {
+    if (signal === 'SIGKILL') this.strongestSignal = signal;
+    if (this.closePromise) {
+      if (this.binding.kind === 'bound') void this.adaptor.releaseAgent(this.binding.host, this.strongestSignal === 'SIGKILL' ? 'immediate' : 'after-turn').catch(() => {});
+      for (const child of [...this.children]) void child.recvSignal(this.strongestSignal).catch(() => {});
+      return this.closePromise;
+    }
+    let resolve!: () => void; let reject!: (error: unknown) => void;
+    this.closePromise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    this.context[contextControl].trackRelease(this, this.closePromise);
+    this.closing = true; this.status = 'terminated';
+    this.mailbox[mailboxControl].stopReceiving();
+    if (this.pendingWait) this.clearWait(this.pendingWait);
+    this.context[contextControl].markReleasing(this);
+    this.context[contextControl].markReleasing(this.mailbox);
+    this.pending.clear();
+    for (const group of [...this.groups]) this.quitGroup(group);
+    const children = [...this.children];
+    const childClosures = children.map(child => child.recvSignal(this.strongestSignal));
+    this.context[contextControl].terminated(this);
+    if (this.published) emitCore(this.context, { type: 'agent-terminated', timestamp: Date.now(), agent: this, signal: this.strongestSignal });
+    const finishOwn = async () => {
+      if (this.binding.kind === 'bound') {
+        const binding = this.binding;
+        await this.adaptor.releaseAgent(binding.host, this.strongestSignal === 'SIGKILL' ? 'immediate' : 'after-turn');
+        binding.unsubscribe?.();
+        this.binding = { kind: 'released', host: binding.host };
+      } else this.binding = { kind: 'released' };
+      const mailboxClose = this.mailbox[mailboxControl].close();
+      this.context[contextControl].trackRelease(this.mailbox, mailboxClose);
+      await mailboxClose;
+    };
+    void Promise.allSettled([finishOwn(), ...childClosures]).then(results => {
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (errors.length) { reject(new AggregateError(errors.map(result => result.reason), 'Agent release failed')); return; }
+      this.parent?.children.delete(this); this.parent = null; this.children.clear();
+      this.context[contextControl].rollback(this, this.mailbox);
+      resolve();
+    });
+    return this.closePromise;
   }
 }

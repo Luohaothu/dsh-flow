@@ -1,6 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "lib/types", "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo", "types": ["node"] },
-  "include": ["src/*.ts", "src/core/*.ts"],
-  "exclude": ["src/client.ts"]
-}

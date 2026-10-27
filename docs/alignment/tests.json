@@ -12,7 +12,17 @@
       "id": "T001",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "scripts/client-build.ts",
@@ -279,7 +289,17 @@
       "id": "T020",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/core-values.test.ts",
@@ -294,7 +314,17 @@
       "id": "T021",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/core.test.ts",
@@ -312,7 +342,17 @@
       "id": "T022",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/graph-layout.test.ts",
@@ -341,7 +381,17 @@
       "id": "T024",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/helpers/preset-host.ts",
@@ -355,7 +405,17 @@
       "id": "T025",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/helpers/reader-nesting-fixture.tsx",
@@ -397,7 +457,17 @@
       "id": "T028",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/helpers/team-ui-fixture.tsx",
@@ -439,7 +509,17 @@
       "id": "T031",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/integration/fixtures/native-browser-probe.ts",
@@ -453,7 +533,17 @@
       "id": "T032",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/integration/fixtures/native-member-probe.ts",
@@ -468,7 +558,17 @@
       "id": "T033",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/integration/fixtures/team-command-probe.ts",
@@ -494,7 +594,17 @@
       "id": "T035",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/integration/native-member.test.ts",
@@ -509,7 +619,17 @@
       "id": "T036",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/integration/provider-settings.test.ts",
@@ -662,7 +782,17 @@
       "id": "T047",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "not-adopted",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/runtime-settings.test.ts",
@@ -750,7 +880,17 @@
       "id": "T053",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/agent-communication.test.ts",
@@ -764,7 +904,17 @@
       "id": "T054",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/agent-lifecycle.test.ts",
@@ -778,7 +928,17 @@
       "id": "T055",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/agent-profile.test.ts",
@@ -792,7 +952,17 @@
       "id": "T056",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/agent-queue.test.ts",
@@ -806,7 +976,17 @@
       "id": "T057",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/collaboration-state-model.test.ts",
@@ -878,7 +1058,17 @@
       "id": "T063",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/native-close-regression.test.ts",
@@ -902,7 +1092,17 @@
       "id": "T065",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/profile-models.test.ts",
@@ -982,7 +1182,17 @@
       "id": "T071",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P1",
+        "decision": "删除旧行为测试/夹具，按设计重新建立 Core 与真实 DSH runtime 合同。",
+        "replacement": [
+          "tests/contracts/core/",
+          "tests/contracts/host/"
+        ],
+        "state": "removed",
+        "evidence": "docs/alignment/p1-verification.json"
+      }
     },
     {
       "path": "tests/unit/queued-task-update.test.ts",

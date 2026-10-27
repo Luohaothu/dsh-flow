@@ -1,0 +1,133 @@
+{
+  "phase": "P1",
+  "recordedAt": "2026-10-27T15:56:54.992850+00:00",
+  "baseCommit": "8ae85a2dcae0ee1aa1e198918acc1291fb3fca3d",
+  "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
+  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "scope": {
+    "contracts": [
+      "C001",
+      "C002",
+      "C003",
+      "C004",
+      "C005",
+      "C006",
+      "C007",
+      "C008",
+      "C009",
+      "C010",
+      "C011",
+      "C012",
+      "C013",
+      "C014",
+      "C015",
+      "C016",
+      "C017",
+      "C018",
+      "C019",
+      "C020",
+      "C021",
+      "C022",
+      "C023",
+      "C024",
+      "C025",
+      "C026",
+      "C027",
+      "C028",
+      "C029",
+      "C030",
+      "C031",
+      "C032",
+      "C033",
+      "C034",
+      "C035"
+    ],
+    "contractCount": 35,
+    "scenarioCount": 93,
+    "artifact": "Core and DSH Host ESM modules and declarations"
+  },
+  "environment": {
+    "node": "v26.12.1",
+    "pnpm": "12.9.1",
+    "dsh": "0.2.0-rc.2",
+    "patchedDependencies": false
+  },
+  "checks": [
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "result": "PASS"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "PASS"
+    },
+    {
+      "command": "pnpm test",
+      "result": "PASS",
+      "tests": 119,
+      "failed": 0,
+      "skipped": 0,
+      "coreTests": 77,
+      "hostTopLevelTests": 36,
+      "hostSubtests": 6
+    },
+    {
+      "command": "pnpm build",
+      "result": "PASS"
+    },
+    {
+      "command": "Built ESM import smoke test",
+      "result": "PASS",
+      "assertions": [
+        "Core entry points share Agent/Context/Group/Mailbox identity",
+        "Host exports load"
+      ]
+    },
+    {
+      "command": "python3 scripts/verify-alignment.py",
+      "result": "PASS"
+    },
+    {
+      "command": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
+      "result": "PASS",
+      "tests": 8
+    },
+    {
+      "command": "pnpm docs:build",
+      "result": "PASS",
+      "warning": "Existing VitePress large chunk warning"
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "auditFixes": [
+    "Failed factory release dependencies remain in Context disposal barrier, including prior and concurrent rollback failures.",
+    "Reentrant running-status termination prevents input handover; filter termination prevents late Mailbox commit while retaining old messages.",
+    "Cold resume validates and reuses saved effective configuration; unknown HostExtras fields reject before native creation.",
+    "Summary and merge share strict v1 parsing, canonical source insertion is literal, and invalid merge inputs issue no model calls.",
+    "Unsubscribe assertions run outside isolated observers; a deliberately ineffective unsubscribe is detected.",
+    "Active strong resource registries drop successfully released resources; weak Promise caches preserve identity, while pending/failed dependencies preserve disposal barriers."
+  ],
+  "reviewStatus": "First exact-head review found three further issues; fixes pass local checks and await exact-head re-review.",
+  "limits": [
+    "Runtime tests use actual Cordis, AgentLoop, ToolRuntime and JSONL services with a deterministic model adapter; external model behavior is reserved for P7.",
+    "Management guard probes use actual ToolRuntime and official rc.2 tool/action names, without mutating a real plugin backend.",
+    "120s/10s defaults are inspected; deadline transitions use explicit short test settings.",
+    "Summary structure and request instructions are tested; natural-language factual preservation requires later model evaluation.",
+    "Full plugin entry, application services, protocol, UI and clean-install acceptance follow P2-P7. Native UI observation and API ownership protection follow P6."
+  ],
+  "commentReview": {
+    "deleted": 14,
+    "retained": 2,
+    "suppressions": 0,
+    "openAcceptedFlags": 0,
+    "restored": 0
+  },
+  "legacyDisposition": "Old P1 tests and fixtures removed or not adopted; legacy patches and custom Typert package removed; later phase source stays outside active module exports/build.",
+  "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/9",
+  "reviewTriage": {
+    "groupDissolve": "Corrected misleading member-only description. Per design, post/append require membership, while Context.release and blackboard reads have no member-only contract; no new membership authorization model added."
+  }
+}

@@ -1,12 +1,6 @@
 packages:
-  - packages/*
-
-# The vendored Typert face is for generation; runtime dependencies use the
-# published protocol. Only explicit workspace: dependencies link locally.
+  - packages/dsh-flow
 linkWorkspacePackages: false
-
-# Native runtime dependencies need their install helpers. The Google SDK's
-# preinstall is a no-op and does not need to run.
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': false
@@ -14,19 +8,3 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: true
-
-patchedDependencies:
-  '@deepseek-ai/dsh-api-remotes@0.2.0-rc.2': patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-api-session-controller@0.2.0-rc.2': patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-chat@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-commands@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-dockkit@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-layout@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-plan@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-plugin-manager@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-renderer@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-subagent@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-client-ui-workspace@0.2.0-rc.2': patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-commands@0.2.0-rc.2': patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch
-  '@deepseek-ai/dsh-session@0.2.0-rc.2': patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch

@@ -1,0 +1,13 @@
+import type { TestContext } from 'node:test';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import { runtime, input } from '../../../helpers/contract-runtime.js';
+const directory = process.argv[2];
+if (!directory) throw new Error('Isolated fixture directory is required');
+const fixture = await runtime({ after() {} } as unknown as TestContext, { directory });
+const agent = await fixture.create('crash-checkpoint'), native = fixture.native(agent), host = fixture.hostAgent(agent);
+native.inject(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'CRASH-USER' }] }));
+await fixture.adaptor.send(host, input('CRASH-TASK'), 'notice', 'input');
+await fixture.adaptor.send(host, input('STALE-FLOW-NOTICE'), 'notice', 'notification');
+await fixture.adaptor.persist(host);
+process.stdout.write('CHECKPOINT-DURABLE\n');
+process.exit(0);

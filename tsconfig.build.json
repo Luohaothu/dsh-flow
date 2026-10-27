@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "ESNext.Disposable"
+    ],
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "packages/dsh-flow/src",
+    "outDir": "packages/dsh-flow/lib/types"
+  },
+  "include": [
+    "packages/dsh-flow/src/index.ts",
+    "packages/dsh-flow/src/core/**/*.ts",
+    "packages/dsh-flow/src/host/**/*.ts"
+  ]
+}

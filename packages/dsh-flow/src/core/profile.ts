@@ -1,45 +1,32 @@
-/** Role/persona and skills are native prompt composition, independent of collaboration authority. */
-import type { Context } from '@deepseek-ai/cordis';
-import type { Agent } from '@deepseek-ai/dsh-agent';
-import { isModelInvocable, isSkillName, renderSkillContent, type SkillRegistry } from '@deepseek-ai/dsh-skill';
-import type {} from '@deepseek-ai/dsh-system-prompt';
-import { z } from 'zod';
-import type { FlowAgentProfile } from '../types.ts';
+import type { AgentPermission, AgentProfile } from './types.js';
+import { sessionID } from './message.js';
+import { freezeData, snapshotData } from './snapshot-data.js';
 
-const text = z.string().trim().min(1);
-const profileSchema = z.object({
-  name: text.optional(), role: z.enum(['orchestrator', 'worker']).optional(), instructions: text.optional(), preset: text.optional(),
-  model: z.object({ provider: text.optional(), model: text.optional(), reasoningEffort: text.optional() }).strict().optional(),
-  skills: z.array(text.refine(isSkillName, 'Invalid native skill name')).transform(names => [...new Set(names)]).optional(),
-}).strict();
-
-export function agentProfile(value: FlowAgentProfile | undefined): FlowAgentProfile {
-  const parsed = profileSchema.parse(value ?? {}), profile: FlowAgentProfile = {};
-  for (const key of ['name', 'instructions', 'preset'] as const) if (parsed[key] !== undefined) profile[key] = parsed[key];
-  if (parsed.role !== undefined) profile.role = parsed.role;
-  if (parsed.skills !== undefined) profile.skills = parsed.skills;
-  if (parsed.model !== undefined) {
-    profile.model = {};
-    for (const key of ['provider', 'model', 'reasoningEffort'] as const) if (parsed.model[key] !== undefined) profile.model[key] = parsed.model[key];
-  }
-  return profile;
+const permissions: Record<AgentPermission, number> = { 'read-only': 0, 'workspace-write': 1, 'full-access': 2 };
+function record(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
 }
-
-/** Resolve once per native creation/resume, not once per turn or tool call. */
-export async function composeMemberProfile(ctx: Context, agent: Agent, profile: FlowAgentProfile, skills: Pick<SkillRegistry, 'get'>, signal?: AbortSignal): Promise<void> {
-  const responsibility = profile.role === 'orchestrator'
-    ? '协调者（Orchestrator）。负责所派目标的规划、资源选择、任务分配、验收和汇总，也可亲自执行工作。'
-    : '执行者（Worker）。负责受派任务与交付，也可按需要委派并协调子任务。';
-  const sections = [`团队角色：${responsibility} 角色描述职责；原生工具按宿主配置使用，验收权来自实际委派关系。`];
-  if (profile.instructions) sections.push(profile.instructions);
-  for (const name of profile.skills ?? []) {
-    const skill = await skills.get(name, { scope: agent, cwd: agent.session.header.cwd, ...(signal ? { signal } : {}) });
-    signal?.throwIfAborted();
-    if (!skill || !isModelInvocable(skill)) throw new Error(`Role skill ${name} is unavailable for model delegation`);
-    sections.push(renderSkillContent(skill));
-  }
-  ctx.systemPrompt.section({
-    name: 'dsh-flow:member-role', order: ctx.systemPrompt.getSectionOrder('TEAM_POLICY'),
-    interpolate: false, text: sections.join('\n\n'),
-  });
+function keys(value: object, allowed: readonly string[], name: string): void {
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) throw new TypeError(`Unknown ${name} field ${key}`);
+}
+function text(value: unknown, name: string): asserts value is string {
+  if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${name} must be a nonempty string`);
+}
+export function snapshotProfile(value: AgentProfile): Readonly<AgentProfile> {
+  record(value, 'Profile');
+  keys(value, ['role', 'sessionID', 'permission', 'name', 'model', 'params', 'hostExtras'], 'Profile');
+  text(value.role, 'role'); text(value.name, 'name'); sessionID(value.sessionID);
+  if (!Object.hasOwn(permissions, value.permission)) throw new TypeError('Unknown initial permission');
+  record(value.model, 'model'); keys(value.model, ['provider', 'id'], 'model');
+  text(value.model.provider, 'model.provider'); text(value.model.id, 'model.id');
+  record(value.params, 'params'); keys(value.params, ['version', 'temperature', 'reasoningEffort', 'maxTokens'], 'params');
+  if (value.params.version !== 1) throw new TypeError('Unsupported reasoning params version');
+  if (value.params.temperature !== undefined && !Number.isFinite(value.params.temperature)) throw new TypeError('temperature must be finite');
+  if (value.params.reasoningEffort !== undefined) text(value.params.reasoningEffort, 'reasoningEffort');
+  if (value.params.maxTokens !== undefined && (!Number.isSafeInteger(value.params.maxTokens) || value.params.maxTokens <= 0)) throw new TypeError('maxTokens must be a positive integer');
+  if (value.hostExtras !== undefined) record(value.hostExtras, 'hostExtras');
+  return freezeData(snapshotData(value));
+}
+export function checkPermission(profile: Readonly<AgentProfile>, parent: Readonly<AgentProfile> | null): void {
+  if (parent && permissions[profile.permission] > permissions[parent.permission]) throw new Error('Child initial permission exceeds parent initial permission');
 }
