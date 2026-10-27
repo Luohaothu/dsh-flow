@@ -26,6 +26,9 @@
     "packages/dsh-flow/src/host/**/*.ts",
     "tests/contracts/**/*.ts",
     "tests/helpers/contract-*.ts",
-    "scripts/build.ts"
+    "scripts/build.ts",
+    "packages/dsh-flow/src/run/**/*.ts",
+    "packages/dsh-flow/src/assignments/**/*.ts",
+    "scripts/verify-result-schema.ts"
   ]
 }

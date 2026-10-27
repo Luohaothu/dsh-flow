@@ -15,6 +15,8 @@ await build({
     index: 'packages/dsh-flow/src/index.ts',
     'core/index': 'packages/dsh-flow/src/core/index.ts',
     'host/index': 'packages/dsh-flow/src/host/index.ts',
+    'run/index': 'packages/dsh-flow/src/run/index.ts',
+    'assignments/index': 'packages/dsh-flow/src/assignments/index.ts',
   },
   outdir: 'packages/dsh-flow/lib',
   bundle: true,

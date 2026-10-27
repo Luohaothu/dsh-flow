@@ -11,11 +11,12 @@
   "scripts": {
     "build": "tsx scripts/build.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test tests/contracts/core/*.test.ts tests/contracts/host/*.test.ts",
+    "test": "node --import tsx --test tests/contracts/*/*.test.ts",
     "test:inventory": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
     "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
     "docs:build": "vitepress build docs/design",
-    "docs:preview": "vitepress preview docs/design"
+    "docs:preview": "vitepress preview docs/design",
+    "test:schema": "tsx scripts/verify-result-schema.ts"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",

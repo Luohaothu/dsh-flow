@@ -7,7 +7,7 @@
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
-  "description": "Flow Core contracts and DSH host adapter.",
+  "description": "Flow orchestration, persistent teams, assignments and DSH integration.",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
@@ -23,7 +23,15 @@
       "types": "./lib/types/host/index.d.ts",
       "default": "./lib/host/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./run": {
+      "types": "./lib/types/run/index.d.ts",
+      "default": "./lib/run/index.js"
+    },
+    "./assignments": {
+      "types": "./lib/types/assignments/index.d.ts",
+      "default": "./lib/assignments/index.js"
+    }
   },
   "files": [
     "lib",

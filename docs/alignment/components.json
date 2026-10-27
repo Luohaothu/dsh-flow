@@ -1051,7 +1051,16 @@
       "disposition": "rewrite",
       "phase": "P2",
       "section": "作业模型",
-      "rationale": "删除扁平 AssignmentManager 与 restoreBindings，整体重写作业树、完整 Spec、prepare/deliver、幂等回执、四状态、固定纠正机会、递归取消、存续理由及显式历史后继；成功持久化后再报告提交完成。"
+      "rationale": "删除扁平 AssignmentManager 与 restoreBindings，整体重写作业树、完整 Spec、prepare/deliver、幂等回执、四状态、固定纠正机会、递归取消、存续理由及显式历史后继；成功持久化后再报告提交完成。",
+      "resolution": {
+        "phase": "P2",
+        "state": "replaced",
+        "decision": "原本地patterns作业/校验实现不导入；按Run与AssignmentService及选定方言重新实现。",
+        "replacement": [
+          "packages/dsh-flow/src/run/",
+          "packages/dsh-flow/src/assignments/"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/patterns/engine.ts",
@@ -1073,7 +1082,16 @@
       "disposition": "rewrite",
       "phase": "P2",
       "section": "提交与完成",
-      "rationale": "按目标 schema 方言整体重写声明、验证与摘要，加入 minimum/maximum 并接受任意合法 JSON 值；方言版本参与摘要，删除对象结果限定与旧关键字缺口，不提供旧方言兼容。"
+      "rationale": "按目标 schema 方言整体重写声明、验证与摘要，加入 minimum/maximum 并接受任意合法 JSON 值；方言版本参与摘要，删除对象结果限定与旧关键字缺口，不提供旧方言兼容。",
+      "resolution": {
+        "phase": "P2",
+        "state": "replaced",
+        "decision": "原本地patterns作业/校验实现不导入；按Run与AssignmentService及选定方言重新实现。",
+        "replacement": [
+          "packages/dsh-flow/src/run/",
+          "packages/dsh-flow/src/assignments/"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/service.ts",
