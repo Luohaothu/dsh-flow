@@ -1,0 +1,1631 @@
+{
+  "createdAt": "2026-10-27T13:51:04.419159+00:00",
+  "head": "872c1dec9e9945f1a8d8962ff4b9c59b12131eea",
+  "main": "d0289968fb49a6570db97a2c3d8f8b2c0bdb2b32",
+  "files": {
+    ".agents/skills/module-design/SKILL.md": {
+      "sha256": "3b749db4a59a213a5c5ad9bc91813655bc3dd0a4663dfef7070b783f1f459d62",
+      "mode": 420
+    },
+    ".agents/skills/module-design/references/interface-review.md": {
+      "sha256": "64878e539f1dc83e1cd595ddebc7c99bfc7e2756b485d9344d77620285011db2",
+      "mode": 420
+    },
+    ".agents/skills/module-design/scripts/check_sections.py": {
+      "sha256": "17941807bf80489b49205e935619ab963f45712f0e851ceb1b008e3825eaf8f7",
+      "mode": 420
+    },
+    ".agents/skills/module-design/scripts/test_check_sections.py": {
+      "sha256": "45b5688d39d8cb058f1727739af413e14a790d70ff64a196f07fb085855837d4",
+      "mode": 420
+    },
+    ".gitattributes": {
+      "sha256": "e19c4e5c6feb475901d5d716b4d72a5f684f142a89f202b549401d7a9218952a",
+      "mode": 420
+    },
+    ".gitignore": {
+      "sha256": "3a11c482a92fb30e79e1cf5b9c66c63acb1f38c34bf70043892ddf5d7e48bc45",
+      "mode": 420
+    },
+    "AGENTS.md": {
+      "sha256": "77caef2b4e6026fb37f04e88f6d69c2e5ee73ce315fc76fe2ebfe762347edf6f",
+      "mode": 420
+    },
+    "GLOSSARY.md": {
+      "sha256": "5e7fb97972dc30789d26d89f6b4342bc24294ac6f697477b38aaa5e3c8dcce52",
+      "mode": 420
+    },
+    "README.md": {
+      "sha256": "96a9704231c84cda9f483c305c85cfc9a0f18abbdd21cae863de0c2cd568293f",
+      "mode": 420
+    },
+    "docs/agents/domain.md": {
+      "sha256": "057550e9a7686be16f856bfd9ca9fcc4cfe4af2db035fada05e7d5d3ae320fc1",
+      "mode": 420
+    },
+    "docs/agents/issue-tracker.md": {
+      "sha256": "7f8c1044c3408ce53cdbc867adf9db936b939158849c4734a240172d116d203f",
+      "mode": 420
+    },
+    "docs/agents/triage-labels.md": {
+      "sha256": "346e248de5673de35d543fb723b65e073edde6f918fe13b36c66bf76d84069e9",
+      "mode": 420
+    },
+    "docs/design/.vitepress/config.mts": {
+      "sha256": "6d4327da946aea10999836f0dda66ee5f04751504f5702c3828961f8da134ede",
+      "mode": 420
+    },
+    "docs/design/.vitepress/theme/index.ts": {
+      "sha256": "123e0f1869c2376cb0b5997e5f2d4d9fed290637718bd5e27565a7c02f87a58f",
+      "mode": 420
+    },
+    "docs/design/.vitepress/theme/style.css": {
+      "sha256": "b3ac5cc2f1a7fe6d854f8c837aca5838f3285e8bdc1956c590b52bc85e4c8192",
+      "mode": 420
+    },
+    "docs/design/components/AgentTreeFigure.vue": {
+      "sha256": "773558b1f0e18523627584a6070704bea07c4d779d1f2dc58fe88c8675f9ee2f",
+      "mode": 420
+    },
+    "docs/design/components/AgentTreeMotion.vue": {
+      "sha256": "a5ea7d0c1919f7cb7f08b96c0314f4626f1d771e9318c97bde07837755b5efb3",
+      "mode": 420
+    },
+    "docs/design/components/DshHostMotion.vue": {
+      "sha256": "4d93a8428bc4e781626719f38613924cc02d3e6571bada56ffd1f98296087991",
+      "mode": 420
+    },
+    "docs/design/components/agentCardDesign.mjs": {
+      "sha256": "053afadd785319773b553340513fa1ffd054eebaa30d7924885acdfe5c1e2eae",
+      "mode": 420
+    },
+    "docs/design/components/dshNavigationDesign.mjs": {
+      "sha256": "917bd5a2999ac5132a113f878bea406e1d5a89ea252c8f18fb93e76ef9abb609",
+      "mode": 420
+    },
+    "docs/design/components/dshPanelsDesign.mjs": {
+      "sha256": "2431188dbfdb256de53176942a753c3cef2fb5b7da14be12f31729b23dc1f9e6",
+      "mode": 420
+    },
+    "docs/design/design.md": {
+      "sha256": "1833479c192da86ae36897c0327e1ae06d441f2ce1f6fa3ff627fb72d61901f5",
+      "mode": 420
+    },
+    "docs/design/index.md": {
+      "sha256": "8f377381ecebd0cdd4f4a77706e36d6ade73166640ba303418c8baa176343819",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/LICENSE.deepseek-icon.txt": {
+      "sha256": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/appearance.svg": {
+      "sha256": "46b7006189613a5b90d9f95d2878086a0df98fac9f5ea4f5dfa7c7c6da7378fb",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/card.svg": {
+      "sha256": "a5ccca89822bf52f83c3221e2d5869e92a3f4556571ab28625327423e8cb8c63",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/details.svg": {
+      "sha256": "49eefd1ab08be0e3a0cb1159d72288bf8885a8a809a44d199baa93f4f3bb1855",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/dsh-global.svg": {
+      "sha256": "ab0e7520e6ff12c5ab4bd5e1702c87b6f7265e1404ca88f2b46210a54257d9ab",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/dsh-observer.svg": {
+      "sha256": "49cca560f208107bd1480429af2746077ad29a1a3b9bd33ab6c46537186497b6",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/dsh-session.svg": {
+      "sha256": "041ba6dd03f2385628aca08519fb02d4558ba3abdcf417446818a25ac8770936",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/dsh-settings.svg": {
+      "sha256": "22d2d209ee41a0e8aef720ed431073d2041883f52b8943ef4967ebf0fbbb9896",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/inbox.svg": {
+      "sha256": "210ca80db00234f8a3e2bc363106834179ecdf342defd07a3c0b85b1655fa7b0",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/overview.svg": {
+      "sha256": "ab55717800df3f1848ca4370a26efb390369871f5a8880f8859eb1f3d86700f1",
+      "mode": 420
+    },
+    "docs/design/public/images/agent-tree-design/responsive.svg": {
+      "sha256": "482fc7df566eb39a8092b3a71b44c82539efbc9dbca06422fda53a6fe445a7c4",
+      "mode": 420
+    },
+    "docs/design/public/patterns/debate/pattern.yaml": {
+      "sha256": "5d46193d4d7f58fc853e27a700790f700201871a2fa702c514f7e11349e0fbd4",
+      "mode": 420
+    },
+    "docs/design/public/patterns/expert-router/pattern.yaml": {
+      "sha256": "f6f90a084b0d49f39c3d6b09e77f5e02dd7f393a0b21c178ee0e0011c1f109b4",
+      "mode": 420
+    },
+    "docs/design/public/patterns/generate-review-revise/pattern.yaml": {
+      "sha256": "f67cdb900578e2042f07d8dea0f262cf90b208e30c4b7a086238458028572756",
+      "mode": 420
+    },
+    "docs/design/public/patterns/heterogeneous-ensemble/pattern.yaml": {
+      "sha256": "65dc430a611941247f2d7b408e249b7979af57fe573fbbd3c16839681dae34d3",
+      "mode": 420
+    },
+    "docs/design/public/patterns/hierarchical/pattern.yaml": {
+      "sha256": "6a850adcb0667e4df69c149017f3a6989cb91d2b95d85cb5f94df5ad778ded5f",
+      "mode": 420
+    },
+    "docs/design/public/patterns/independent-vote/pattern.yaml": {
+      "sha256": "c7ed8eb04ce838b06398e612b1d96f05a8767317fec3c92ea8d5caeb6b4f3527",
+      "mode": 420
+    },
+    "docs/design/public/patterns/mixture-of-agents/pattern.yaml": {
+      "sha256": "9d0969f10454c76a4ce303b4b54d8e135426a343b501e3f8253e5c787d5e68c1",
+      "mode": 420
+    },
+    "docs/design/public/patterns/pipeline/pattern.yaml": {
+      "sha256": "cf96331fdde1c9a60f80dad5dcbbb4f8b7671a22fb44a01f544e8e4c2fc67ff0",
+      "mode": 420
+    },
+    "docs/design/public/patterns/search-swarm/pattern.yaml": {
+      "sha256": "4ff10d9f2c91a9cd5397d34bffb5e8a6598a35bbc3b3d6bcd7c48f4adf78d06c",
+      "mode": 420
+    },
+    "docs/design/public/patterns/shared-review/pattern.yaml": {
+      "sha256": "87d7b7c15694a6af0d9b838c9d5eb4f031b77f38f03b1f973e18f12b2ef55b59",
+      "mode": 420
+    },
+    "docs/design/public/patterns/sparse-routing/pattern.yaml": {
+      "sha256": "3c9acbfc5f58c1ba49cfad715df61d780c2be40d60c16a0b16f84e9b86efb756",
+      "mode": 420
+    },
+    "docs/design/public/patterns/tool-specialists/pattern.yaml": {
+      "sha256": "b2d1037bb2c08fa8a943a801568a29c4b41f8f67255c168020e408e24639cd3d",
+      "mode": 420
+    },
+    "docs/design/public/patterns/tournament-evolution/pattern.yaml": {
+      "sha256": "76af3384b396a8107874782d1fd5f69698570b3a218a5ea24f37e36e59b0f74d",
+      "mode": 420
+    },
+    "docs/design/public/patterns/workflow-search/pattern.yaml": {
+      "sha256": "f3911ffee86f5d872f57a704e3cc412f6ec37e75f2ed227cf068c5bcc4616c74",
+      "mode": 420
+    },
+    "docs/design/quick-start.md": {
+      "sha256": "323fbb192ba2b0abdc7e66699ae92f7c4970c9901dd7cee813cd58c7e19bb644",
+      "mode": 420
+    },
+    "docs/design/runtime.md": {
+      "sha256": "26a239ea8fb8f65b823ad33ff2065983bbb09ce6b7fd43d2681c366185f99f19",
+      "mode": 420
+    },
+    "docs/design/scripts/generate-card-appearance.mjs": {
+      "sha256": "10438e6a003fa3b94e251382c2479667495a933eb22da2794ee25f8dbb5fabc6",
+      "mode": 420
+    },
+    "docs/design/scripts/generate-dsh-navigation.mjs": {
+      "sha256": "33f7fef213fdb62589320cf13bfa0095586d365e6a0b4ed6da2a4972ed3bc346",
+      "mode": 420
+    },
+    "docs/design/scripts/generate-dsh-panels.mjs": {
+      "sha256": "aec9e57da47917d27bdf31d7a49b655bb667396221a8f44acfda1e7f525ff3b4",
+      "mode": 420
+    },
+    "docs/design/scripts/generate-overview-responsive.mjs": {
+      "sha256": "5a592b6b8193811b6aa1938b4e1dda7b7d5ee148308ba86d72f4f040219802a9",
+      "mode": 420
+    },
+    "docs/design/validation.md": {
+      "sha256": "7404f3968bafda93677d31d42495d29035fe4c5534db12db710e3f5fcb25f107",
+      "mode": 420
+    },
+    "docs/reimplementation/acceptance.md": {
+      "sha256": "613a3bf0a2e57a10deffbf5ca01a5761b157b3d6dcc9d1ef3803f1746ca3e26c",
+      "mode": 420
+    },
+    "docs/reimplementation/baseline.json": {
+      "sha256": "2773bed018607704dca7d3757d9a27035b0f9e270c6db0248ae8c91d5a051fea",
+      "mode": 420
+    },
+    "docs/reimplementation/core-architecture.md": {
+      "sha256": "4f375ad5af1593b42b4a67b98dcaaac4f5092193ab6eebf777d3ae9d1474f802",
+      "mode": 420
+    },
+    "docs/reimplementation/decisions.tsv": {
+      "sha256": "528a1ed03c0fd137057d4a29061e149fe7b739e5cf51eea63e75d842b4db6365",
+      "mode": 420
+    },
+    "docs/reimplementation/design-alignment-plan.md": {
+      "sha256": "cb2a14943b82638c27a5c56a00b6384ae81aa307b94a93bbaaa3b0dc13e6def1",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/checks.json": {
+      "sha256": "33a474a60e7c8f50a646d04b07a772c9693f92fb97e26499e7a4eb52df655817",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/deepseek-blocked.json": {
+      "sha256": "1a08fdc6b10e071ea7be220ebb372b045c57b9ef1b9de12ea761fd2b610d9b3e",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/docs/design.png": {
+      "sha256": "0f180cc66687ab6c53f328ce4304a7d6fd0954939f61c0adee647f59f95491d3",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/docs/quick-start.png": {
+      "sha256": "0a098976cb24edab993d620966e55670f6f24db5de50c45c08ae9bfb0d19d490",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/docs/result.json": {
+      "sha256": "4e200b81beb4c665dcbc13c7729c9a7c841703944e9090d79763aa3949237e24",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/full-tests.txt": {
+      "sha256": "a3d3d14125792caef8314b52ff4d6b3b25fb11cdc12d616097b14481cc1ffc8a",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/browser-results.json": {
+      "sha256": "4d9804461019bbad721ac40fdfb6cff2071ab0e9fa2b56fee482abc11fd9ca90",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/deepseek-collaboration.json": {
+      "sha256": "d856c53353a1494a6c50e5e07489be1313869fbd4b754e8033ef4127446b34d8",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/earlier-attempts.json": {
+      "sha256": "de97abaeda3d9db5ae53de45da57fd609483cbe2d395bdcef5d1055117081bf2",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/incidents.csv": {
+      "sha256": "36c123ab5baafd4930a951c4c145779fd643afdbc45cd04348bfffa4111f1162",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/native-deepseek.json": {
+      "sha256": "d27129d42c4ac6ac20e353b062dae1f19923e9a7c74df72938424b095c5e7646",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/package-install.json": {
+      "sha256": "17a1b0870b095ee41c9a0c47172e446cd6ef459eff501a367c43333c8e0a0f48",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/release-notes.md": {
+      "sha256": "62313328a8c6b1f4be8317c31615a297ee2688d30f0ed4ab2112f8c62849daf5",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/product-entry/release-report.md": {
+      "sha256": "4c93429c89b83f8c1e2b49487a03c0de8c51a35022fa5d9a4c0a4259f3a31f1a",
+      "mode": 384
+    },
+    "docs/reimplementation/evidence/product-entry/release-summary.json": {
+      "sha256": "44a69a759ebf4ac2a6960bfb80dfe9263bfb7296f6555fa8f13b39d09af4af6a",
+      "mode": 384
+    },
+    "docs/reimplementation/evidence/retained-design/browser-results.json": {
+      "sha256": "7c0be55fb2afc4f8a7d8b7a561b1838124033be534dc09c1921ce214957c7b79",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/chrome-settings.png": {
+      "sha256": "79c3e3b9ae5e4763699a84ba76146e620a019c9de7b734d6935ad97c34045e42",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/chrome-team.png": {
+      "sha256": "a05fb5723339b96286f3ed82a018d045b90687d53a00ceb3e43143a966bb2859",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/final-checks.json": {
+      "sha256": "be95793abb9a4a76b6deba2fe7787556f766df927a856d10228dfa2d4327c3f6",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/full-tests.txt": {
+      "sha256": "84e86a19db216e81486b77a60384b4ab530d2f75aa285791c395b4888342384c",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/integrity.json": {
+      "sha256": "c9ace738a4998f017f30723107ca6f6088be5891bbde7398346698b328ff2f9e",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/limits-audit.json": {
+      "sha256": "be3b93e92a1fb33614a897da6d13457076826306b733ea3afbc5000dbe5e05e8",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/material-fixture.json": {
+      "sha256": "e6cf1ea20ba00149d17d3ab34d2f1bbb118d808444352a22b846edfee287da58",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/native-deepseek-release-report.md": {
+      "sha256": "6a24fbddd75f41df6dcdab0e12ddaf99c60539fd71d7c2f4119dee3146bdf728",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/native-deepseek-summary.json": {
+      "sha256": "bbb2d1ff0ec7b1b1c3397d93c36f4a792f86898a0969644c49b1ded458d5b64d",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/native-deepseek.json": {
+      "sha256": "f25611b562937bf3e5254e0412fbc53cc73c22b5e5687dd83192de7c322553bf",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/native-settings.json": {
+      "sha256": "f7309a974b48a37256e9de3dde7a0a0150f38dc3aaebbb9f951e04eb7652a676",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/package-install.json": {
+      "sha256": "b754952828ac6f1103c1e4548c366f0fd59bf62bea6bc05f874d20534b901994",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/user-decisions.json": {
+      "sha256": "7191035313e1c4bf8fd47a3ba871dfc37e415fbd57f11053b3e3f23a5ca6937a",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/retained-design/user-prompt.txt": {
+      "sha256": "d883dc1bd42a236cea7cc5a5ecc3657c9951e13a3c9bbef46c708196537a7602",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/source-launch.json": {
+      "sha256": "ce1d3f017f376f646a8e86973c2c24075a3012243bf4ca2ba03bcb8a3bdc5c44",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/browser-results.json": {
+      "sha256": "4d9804461019bbad721ac40fdfb6cff2071ab0e9fa2b56fee482abc11fd9ca90",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/client-checks.json": {
+      "sha256": "9b0855477b1f2697d4a8887accbc9e5ffc70f788a339dcd3f78d0b4cfefa48c8",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/native-dsh-accessibility.txt": {
+      "sha256": "7a46402e64d54351b4024b86e598d1249e63e72543f0d4429e13623644cddb43",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/native-dsh-initial-accessibility.txt": {
+      "sha256": "0c63083785ab4b949ec19a7dc6fdcfe51dfd0a873321d0b3b76fe175418870f2",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/native-dsh-initial.png": {
+      "sha256": "cdc53ec4b36c2d79830fd517c646a9a369d118e6bce3a16552b9f5c2a4801a1d",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/native-dsh-main-panel.png": {
+      "sha256": "1468e6f4739651ad449865e76b523f9d81b5691c14a338061f579d2f658717a5",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/native-dsh-results.json": {
+      "sha256": "2146ab113d345837906d97b2c2861cd1fb35db3f23c692530a8b86d57b6e97f0",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-1100-dark.png": {
+      "sha256": "67210e1b8a7ff1a77f7a0db7377a651b9df47218a0c5e57a8e70f7a41639596c",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-375-light.png": {
+      "sha256": "ca5c45e3264de6ad4f37b832a2646e4e95f0b6b0c1a30d08529108c6cd94e4a4",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-559-accessibility.txt": {
+      "sha256": "be59674efe2642ca783431f481ab0d565e331098dca9c7e141d2583003cf9f55",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-559-light.png": {
+      "sha256": "4dbd84d3f3bc50684d3ac7f7763bd7e5d0b516e705db3f2632717b7d88a2a66c",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-560-accessibility.txt": {
+      "sha256": "14d6c7e5b96b8002847c2b359be1e0970461da56c8bfe5e04216ef9cceba771f",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-560-light.png": {
+      "sha256": "8e53659f75a6321004376f517d47a3528cfcc8aa4f0dd376aa4f6d6151873034",
+      "mode": 420
+    },
+    "docs/reimplementation/evidence/ui/standalone-production-server.png": {
+      "sha256": "5e45cef1fe3ec0e941af0d5a9fe05acb938d18ead74cc565599011cd7e037a4c",
+      "mode": 420
+    },
+    "docs/reimplementation/host-evidence.md": {
+      "sha256": "14d350df8d7c1216a3578f8ef8c49328e3495b167d92ad8dabadf071a2820b35",
+      "mode": 420
+    },
+    "docs/reimplementation/product-entry.md": {
+      "sha256": "4aee55a42a317d579ddf703e975229f8e9e802da6a4e6a218b7ca2c5aff6c930",
+      "mode": 420
+    },
+    "docs/reimplementation/retained-design-plan.md": {
+      "sha256": "ecabf85161e642693b445b72d83ed6b84a886b9b56e8176dd7fb56e2d1aa5e20",
+      "mode": 420
+    },
+    "docs/reimplementation/retained-validation.md": {
+      "sha256": "2a68b9b3f52aaed76adbe9e9c49a3c539615b4ec085fc092be8c8ac6468ea8f8",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/README.md": {
+      "sha256": "8fbcdd828194a162840e04213ecd4cc6739e5c12e49be987ed77b7616ff69a43",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/core-review-followup.md": {
+      "sha256": "883212795f348026cab4e6fa1745a141be9b2d3338a5f6ee6fc4dc29a40b3477",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/core-review.md": {
+      "sha256": "c549bc6d97b4641693dc88922e0fa408d6b68e1cb41e6529a46357400ae5f3ec",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/integration-review-followup.md": {
+      "sha256": "dfc97845125cd6e2e25a82488d2c46c4e1bd8324b2e8f31e8f85a14fd7eaf75f",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/integration-review.md": {
+      "sha256": "befad34908d4f3f2ad4db75f6489263c2ac0b8f0a617aaf41cbe0c25dcb8b6d8",
+      "mode": 420
+    },
+    "docs/reimplementation/reviews/retained-design.md": {
+      "sha256": "a9f05e1bccaf1e21a6a6653e74f63add783a5938b32f8393899e218ff343c396",
+      "mode": 420
+    },
+    "docs/reimplementation/validation.md": {
+      "sha256": "6877e8f0d54c76f6aa8cc7554aee9884dfa4469f0414863a3f511b78104dcb56",
+      "mode": 420
+    },
+    "docs/reimplementation/workflow.md": {
+      "sha256": "35b879ca94cf7418980a51fcc34965c65d20ce254d114d970cc2d7333c0215b7",
+      "mode": 420
+    },
+    "examples/flow.patch.yml": {
+      "sha256": "1587a4605e9fed85b3aafd9554c55462b40165c84f330e63cddb5982b34b49f6",
+      "mode": 420
+    },
+    "package.json": {
+      "sha256": "aa8d53bebb4b7094d55fa30c029a82285703b254241e8d333c24b408f026d20b",
+      "mode": 420
+    },
+    "packages/dsh-flow/README.md": {
+      "sha256": "7b09c970c146b3424143d605fe8b578ac58ecb1d55037e9b965b4038a745e457",
+      "mode": 420
+    },
+    "packages/dsh-flow/cordis.patch.yml": {
+      "sha256": "b9314c34997204ee8685f5c8739fee75cfa2e6300c27783a206ffcb6e181d8ad",
+      "mode": 420
+    },
+    "packages/dsh-flow/host-extensions/install.d.mts": {
+      "sha256": "af835e0fdcad400b1529929820964f4e05495fe82cf7899e2ccd21fcec79ac03",
+      "mode": 420
+    },
+    "packages/dsh-flow/host-extensions/install.mjs": {
+      "sha256": "35963c0e08bd35dd7ca392043655d12b8429fd296c154f2dee21b53730f6e6b8",
+      "mode": 493
+    },
+    "packages/dsh-flow/host-extensions/rc2.json": {
+      "sha256": "8b11f4ff6c413d7b9e9305ccaf55bddf3eab055832fa24903f9d2805f37b3f8b",
+      "mode": 420
+    },
+    "packages/dsh-flow/locale/en.json": {
+      "sha256": "6cb3a45626ed1958330fe09a4194afe7840c0546a9feec2dbe0bcf62a201f0de",
+      "mode": 420
+    },
+    "packages/dsh-flow/locale/zh.json": {
+      "sha256": "90f4279a2384c7bd137958447b83943c4af4e48892f38d1ef5030dd302ffafb8",
+      "mode": 420
+    },
+    "packages/dsh-flow/package.json": {
+      "sha256": "97922e1aaaceaba34775c1efedaf3fd0c3dd2722a86c63e1d31272ad01df5b4a",
+      "mode": 420
+    },
+    "packages/dsh-flow/skills/agent-team/SKILL.md": {
+      "sha256": "012f1a2384758a67adda85d3b4c38693fe7bfee8f217f08ffc31daedd44b1bed",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client.ts": {
+      "sha256": "5f625d471b0268604f54d971f102d369b06363e70235385bf41d453e205a41e2",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/Dashboard.tsx": {
+      "sha256": "a8ca85fd99dc9adaaac3b2e91e1ce14d464ea9b862d6f5c707aa44d29e3d4996",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/Native.tsx": {
+      "sha256": "2c8f1ff35cc3e33b669dc2288f25d88401068e9068d38d3740631a930ad97f8f",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/Settings.tsx": {
+      "sha256": "e17b076215493f7cd7e910a82474720c1b9b41b37b47aa0d98cfe0695ad6d3e9",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/assets.d.ts": {
+      "sha256": "0f0201196245e3bfc628da30a2c2b412334397e4970061dc9f5a0e015011f003",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/connection.ts": {
+      "sha256": "5b15e924391cabd0ccabb9b94d8d45e380a5cbbe3ca75736058a82792bdb87a6",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/identity.ts": {
+      "sha256": "592984cde06b5c2b469a727b4e63fe27f5cf3a06b9e8ac529247c09f065e4618",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/model.ts": {
+      "sha256": "1274e3c3a754b9a69bfd1b89558d3aff6ee3f066cc06d14a3ccd4b417d0ebdc4",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/reader-source.ts": {
+      "sha256": "ef7bbe94539875916e2c64031b9d47690b755460869f5ad55c72ce72de30c4df",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/reader.tsx": {
+      "sha256": "1a9c81a4f93ac7c74e132366bdd1ea190280a1f06d0d2d7bcc098e77f4776bba",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/sidebar.tsx": {
+      "sha256": "f173315e7c25c8b128131a1c51b5f41951386ffcd6c37e70399f5def218a1b03",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/standalone.tsx": {
+      "sha256": "b71ef3c27288dc2a57abc0b20e0d043cac157944e93d2138a9c75d5fb8fbb226",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/client/styles.css": {
+      "sha256": "f32928cabc6fe9c9612e41e37ee7a1100bd1f8457f40412a4d18a7ebfcd0df96",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/agent.ts": {
+      "sha256": "28230b5e8349cf87abfab186215e13151ab26f069eeb11afac4cace9ccfecfd4",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/context.ts": {
+      "sha256": "0895ff6066962ae2035078e285a03fdee3e88e3c73d5c00916e360435faf390a",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/deadline.ts": {
+      "sha256": "27fbd2fff7104eae1e849ece971316ab8de7d05bad5b1df5ceeedc236618726c",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/group.ts": {
+      "sha256": "ead422e2e7759894df7857db25ea8a7505ebcf8fd75dd1bf96e00e8ca6fab3e3",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/index.ts": {
+      "sha256": "eb052bdeb5871861056864e72ec369153f68d124274e89b521cd952b8a627963",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/mailbox.ts": {
+      "sha256": "7d457e58772833bb39917148c8971beec888ff60ac47d7b4f3ef0cf4d1ba1263",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/message.ts": {
+      "sha256": "85f633926deff88848020a90eeaea58b20d808abe121a88f6e367c7944bb7a25",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/profile.ts": {
+      "sha256": "298d4166e771991083a1ea46b5a8da094f9c2d0c20a4444e161f9f95b910dec8",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/snapshot-data.ts": {
+      "sha256": "a394625c103e5307f673f4871bdfdcb80bd64e0a9a827650b872f45388ce525c",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/core/types.ts": {
+      "sha256": "a874f9d00daa4fef3a7bc68e4c7db4f8de1259eae03bea2a433828e667ae1b0e",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/dashboard/protocol.ts": {
+      "sha256": "e28faa8ff1ce25fe64d75955f1edf6ac0872a9c6c8e9b729f5363074652d713c",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/dashboard/runs.ts": {
+      "sha256": "35a9deb2e7a71706944cbc4a12e0eb0750333665d0d48dd3db8404418ef8a429",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/dashboard/server.ts": {
+      "sha256": "67eafdb1bc95bfaa2a8afe2ee4a65df3be956275141be23c7a8805c0b1c33fc7",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/capacity.ts": {
+      "sha256": "d8638b1d2c15d4a21cb612eb7071debd2d7d76c53452fd90590dbffdb24fdd67",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/dsh-adaptor.ts": {
+      "sha256": "f3cb222a7261b58a445e4b82985ff924af07b3a4c1eebd5210b68b782666ada4",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/index.ts": {
+      "sha256": "69ab6d7452fdcf33fd20a962a71ff1062e167b6bbd0a8233aaad0158b5764115",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/materials.ts": {
+      "sha256": "26125b6f8013be349e49438f8da0bb5bb4337010a2828bd2bca650c0cd232f00",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/model-selection.ts": {
+      "sha256": "778f96860edf8cec23cfaa84bf09708b9c6b4e2bc011b31fd66fe3aacc29b002",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/start-intents.ts": {
+      "sha256": "df236a7742e945040c585cc0c7ab954ee9021167a8dd6f8d78779ae412870208",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/host/tools.ts": {
+      "sha256": "4e2e89ec8c719efddac6267f5e10b47b6b2b3ea842a3aefc14c982748d67d15e",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/index.ts": {
+      "sha256": "7c7afc7b22ebb17247c42d719d48b02db288fbb22b924c915af0248a2bc74591",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/patterns/assignments.ts": {
+      "sha256": "273aa0b86ee1d842c8f0f2b765d586ea157b8c70079eed8397244a2e82f0d3b3",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/patterns/engine.ts": {
+      "sha256": "1b292b224d19486712391082008afcced8c2d1cb50ae28f79a9cee5bc1562070",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/patterns/schema.ts": {
+      "sha256": "39a3dd5309323d8f1a6e483d27ed1f9c28c0014ed2c9ccf5269804005cb17dac",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/service.ts": {
+      "sha256": "91a2f567aa53e737ed4aec86e86b4133dd4740501b827d95e4dee806107d8aa4",
+      "mode": 420
+    },
+    "packages/dsh-flow/src/skill.ts": {
+      "sha256": "92e4a21f0d8b4043f2767b8396a2c216e3ca1508f4e197a11d8a3bf27d5bbd45",
+      "mode": 420
+    },
+    "pnpm-lock.yaml": {
+      "sha256": "de2ce7ad7f10ea58f41183919489b5b87d719e4b0b84f6a0feb9a5624f9d8b49",
+      "mode": 420
+    },
+    "pnpm-workspace.yaml": {
+      "sha256": "461795158a599c5dc2456e8f9aec8c77067662d6330f2d27b885b464af407726",
+      "mode": 384
+    },
+    "scripts/boot.ts": {
+      "sha256": "22a453e8a75cc97b63352734e1da6c0048e7793fef3188b742d38786e69095e0",
+      "mode": 420
+    },
+    "scripts/build.ts": {
+      "sha256": "5da6821ecbeebb31bfbaf4a9bc4c8829ff6a67448456c514a3f51be12887112a",
+      "mode": 420
+    },
+    "scripts/client-build.ts": {
+      "sha256": "b714b3f6d96421754a441d056d630f9d15ca7366c8bab3275200c193956db780",
+      "mode": 420
+    },
+    "scripts/client-native-preview.ts": {
+      "sha256": "4fee79346d2099b2883a158dfabbfac50b1240992527abb1751972ce624bec00",
+      "mode": 420
+    },
+    "scripts/e2e.ts": {
+      "sha256": "72fc11adddb90e5ccbd14aba3582b9766e3fd67d8db85b5c3a11eeaa602c19be",
+      "mode": 420
+    },
+    "scripts/host-smoke.ts": {
+      "sha256": "fb8d5cb379530dce4c555397f4c4cf00e3fd9703c883c4bb89a621b2b53b3bb1",
+      "mode": 420
+    },
+    "scripts/launch-dsh.ts": {
+      "sha256": "22a6d2c4e1a62dac46c61dab0e2814351b271126d490e250fe96146f88ea51be",
+      "mode": 420
+    },
+    "scripts/serve.ts": {
+      "sha256": "8d6b875c409d97f255f94508538cf68d97a5fe1396a0dcc69379217e3c4778c0",
+      "mode": 420
+    },
+    "scripts/verify-package.ts": {
+      "sha256": "02847b247f6aac12e5a692a80f8e0f68839184188b02d9c07031e8d5149d2901",
+      "mode": 420
+    },
+    "scripts/verify-retained-e2e.ts": {
+      "sha256": "f8ac17e4a2f6081756e7172d580688ed5f1b95f2628aaff01dbf36731cbe8c4c",
+      "mode": 420
+    },
+    "tests/assignments.test.ts": {
+      "sha256": "1d67344eb3d4f5fd98e2b23124594a0b931844b728ee87c0bdeacca2cdbbc51c",
+      "mode": 420
+    },
+    "tests/card-rendering.test.ts": {
+      "sha256": "a814b47cc02deba8b74920984cb55ca7cda0efd47c8e0ccc54e6ac15436ed23f",
+      "mode": 420
+    },
+    "tests/client-retained-ui.test.ts": {
+      "sha256": "faf7163a003bf334d1ee2d5dd53b580e18245ae07603bfc4c74a246070b694a1",
+      "mode": 420
+    },
+    "tests/client-retained.test.ts": {
+      "sha256": "f0f163f8f15f8e78ce4aed06df0208c0cc0e6039b746ae7c7598e5a687eeddd3",
+      "mode": 420
+    },
+    "tests/client-ui.test.ts": {
+      "sha256": "d9d86debe4b795788c40dcbb35313723a4c0ad312df45085381c8bb0b6597ae3",
+      "mode": 420
+    },
+    "tests/client.test.ts": {
+      "sha256": "b5038b41a0d7db31663e4f797326e006427a3f80123beafb8761543ac41b29b9",
+      "mode": 420
+    },
+    "tests/core-races.test.ts": {
+      "sha256": "aa22eac6b1e11dcbcc5d69c238162eaed1bfec44ba2889b1ae07bf2c6bd1284d",
+      "mode": 420
+    },
+    "tests/core-values.test.ts": {
+      "sha256": "3323b4e21bf128e66a3635f1c32351deb557bfc1b6a1b1baf732f6562631534c",
+      "mode": 420
+    },
+    "tests/core.test.ts": {
+      "sha256": "ed53dc01cacb52c751dfa26b95aeb488f982013b16925ae6d63198537a319b3c",
+      "mode": 420
+    },
+    "tests/graph-layout.test.ts": {
+      "sha256": "c3d24f9e7e6a189d73654cef5bf5b3ad9c394310aac703ebbe6951f5d54ee9ba",
+      "mode": 420
+    },
+    "tests/helpers/fake-host.ts": {
+      "sha256": "dddbad0096c725764bb0244a80276d0b855b6c69c232ba322c1faae87e26b93c",
+      "mode": 420
+    },
+    "tests/helpers/preset-host.ts": {
+      "sha256": "faabcc1cc9bc3afc3f4a2676873ccd21f8aa0c1523ce736863aea26c692cd7a2",
+      "mode": 420
+    },
+    "tests/helpers/reader-nesting-fixture.tsx": {
+      "sha256": "cf54d8c12a63dad42b4b8d3122b263951a3d99d74a5464e51b559479b8b11a64",
+      "mode": 420
+    },
+    "tests/helpers/retained-ui-fixture.tsx": {
+      "sha256": "10350ce5c8b9bfc68ad10ddecc37e6566cb8fed2f628a15bbc5b809439fac258",
+      "mode": 420
+    },
+    "tests/helpers/runtime-host.ts": {
+      "sha256": "d07485cdd975f8d59409be17a8368cc6eb701b777112aa1a90d15670da8b5583",
+      "mode": 420
+    },
+    "tests/host-extensions.test.ts": {
+      "sha256": "8741c66742a6987a2456504a4dd47c82a9f286db3d31521b05733602a2f475e1",
+      "mode": 420
+    },
+    "tests/host.test.ts": {
+      "sha256": "13871842e5695acd2f7f75e3ebfb9e7c0ee77e6b416211c7a0e9d48780444b8f",
+      "mode": 420
+    },
+    "tests/launch-profile.test.ts": {
+      "sha256": "d87cd4c39229293daac5df72ef9399247737b5a06eb12ab855b634940b5b38db",
+      "mode": 420
+    },
+    "tests/observation-extension.test.ts": {
+      "sha256": "6eb8831b4508f728b94f844731ea73c23987924e0462df3571fcb09fbaa14f58",
+      "mode": 420
+    },
+    "tests/patterns.test.ts": {
+      "sha256": "ddfb59fa81c2f9ccc409eba9aa12633f052c41087fbce94fe10d9e21c6332f70",
+      "mode": 420
+    },
+    "tests/plugin-entry.test.ts": {
+      "sha256": "37c23fc3072cc7e573ed44468e49fcf6809b47424b807300750398f8be6936ba",
+      "mode": 420
+    },
+    "tests/reader-nesting.test.ts": {
+      "sha256": "22ae215b1bc7db50b1b4bd099e62ecbc9931434fd47006e94f6bdbef974d75e5",
+      "mode": 420
+    },
+    "tests/retained-e2e-evidence.test.ts": {
+      "sha256": "cbdc76fd50c50e8576fb2ff745c3418073efaae43b1fe8ff5e71c1a3dbc2e6a0",
+      "mode": 420
+    },
+    "tests/runs.test.ts": {
+      "sha256": "34bfec2744d1004dc641ddb8807bd9c9b0babb22767de8225a5114e52e8c0b82",
+      "mode": 420
+    },
+    "tests/runtime-capacity.test.ts": {
+      "sha256": "45e16d270acf20082ffc8bc8c5716db89f169353fec93536ad0365e8ffecc07b",
+      "mode": 420
+    },
+    "tests/runtime-settings.test.ts": {
+      "sha256": "2243b3690acb6bd92da7a21a9b3aec9194506b2d718d6570134db6a4db557551",
+      "mode": 420
+    },
+    "tests/schema.test.ts": {
+      "sha256": "7f80d4539de5acf182d0a653633b837470ab3fd3a6a6980a6d89813ca00dfb97",
+      "mode": 420
+    },
+    "tests/server.test.ts": {
+      "sha256": "4d2fb7fd34e7f131e9d4424e644a9eaac2b0d96bb68f4470094cd4c7ff6d4ff2",
+      "mode": 420
+    },
+    "tests/usage.test.ts": {
+      "sha256": "59dc7fc2e91aa67fb0f1c483100c23ce67609470869c4c3166084f53f67fe0e0",
+      "mode": 420
+    },
+    "tsconfig.build.json": {
+      "sha256": "46c97c36ff2c82d3a31f829502d26f744edb2a362e92d24fee7e0dd639f7df29",
+      "mode": 420
+    },
+    "tsconfig.client.json": {
+      "sha256": "427528b217da0464837a110018c52c5dbdd85e464a08e0b54161a9f904aa0926",
+      "mode": 420
+    },
+    "tsconfig.json": {
+      "sha256": "37049ce2d6aa2f7bbba9b297e2d134a101fb2490f765382b784ee5478ce18ac6",
+      "mode": 420
+    }
+  },
+  "deleted": [
+    "CONTEXT.md",
+    "docs/design/.vitepress/theme/Layout.vue",
+    "docs/design/.vitepress/theme/MermaidDiagram.vue",
+    "docs/design/.vitepress/theme/PageActions.vue",
+    "docs/design/.vitepress/theme/mermaid.ts",
+    "docs/design/advanced.md",
+    "docs/design/agents.md",
+    "docs/design/communication.md",
+    "docs/design/configuration/agents.md",
+    "docs/design/configuration/cluster.md",
+    "docs/design/development/action-catalog.md",
+    "docs/design/development/api.md",
+    "docs/design/development/code-structure.md",
+    "docs/design/development/compatibility.md",
+    "docs/design/development/components/communication.md",
+    "docs/design/development/components/control-plane.md",
+    "docs/design/development/components/observability.md",
+    "docs/design/development/components/persistence.md",
+    "docs/design/development/components/runtime.md",
+    "docs/design/development/components/transactions.md",
+    "docs/design/development/index.md",
+    "docs/design/development/interface.md",
+    "docs/design/development/provider-baseline.json",
+    "docs/design/development/provider-interfaces.md",
+    "docs/design/development/setup.md",
+    "docs/design/development/validation.md",
+    "docs/design/dispatch.md",
+    "docs/design/hierarchy.md",
+    "docs/design/public/downloads/cluster.patch.yml",
+    "docs/design/public/favicon.svg",
+    "docs/design/public/images/native-team/desktop-details.png",
+    "docs/design/public/images/native-team/desktop.png",
+    "docs/design/public/images/native-team/mobile.png",
+    "docs/diagnostics/ashare-session-efficiency-2026-10-12.md",
+    "docs/plans/README.md",
+    "docs/plans/archive/2026-10-12/agent-prompts-and-task-handoffs-validation.md",
+    "docs/plans/archive/2026-10-12/agent-prompts-and-task-handoffs.md",
+    "docs/plans/archive/2026-10-12/ashare-session-efficiency-2026-10-12.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-delivery.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-plan.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-validation.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-interface-audit.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-upgrade-plan.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-upgrade-validation.md",
+    "docs/plans/archive/2026-10-12/images/README.md",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/README.md",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/mobile.png",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/topology.png",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/wide-details.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/01-workspace-model.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/02-request.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/03-created.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/04-topology.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-calculation.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-file-verification.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-remaining.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/06-audit.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/06-remaining.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/07-delivery.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/08-history.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/agent-details.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/agent-usage.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-result.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-running.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-team.png",
+    "docs/plans/archive/2026-10-12/model-context-token-limits-plan.md",
+    "docs/plans/archive/2026-10-12/model-context-token-limits-validation.md",
+    "docs/plans/archive/2026-10-13/README.md",
+    "docs/plans/archive/2026-10-13/native-agent-simplification-plan.md",
+    "docs/plans/archive/2026-10-13/native-agent-simplification-validation.md",
+    "docs/plans/archive/2026-10-13/standard-agent-before-role-clarification.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-execution-plan.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-observation-draft.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-validation-draft.md",
+    "docs/plans/archive/README.md",
+    "docs/plans/native-agent-simplification-plan.md",
+    "docs/plans/native-agent-simplification-validation.md",
+    "examples/cluster.patch.yml",
+    "examples/cluster.web.patch.yml",
+    "examples/deepseek.patch.yml",
+    "examples/instance-runtime.patch.yml",
+    "examples/instance.patch.yml",
+    "examples/omlx.patch.yml",
+    "examples/openai-compatible.patch.yml",
+    "packages/dsh-flow/src/client/agent-session.ts",
+    "packages/dsh-flow/src/client/observer.ts",
+    "packages/dsh-flow/src/client/styles.ts",
+    "packages/dsh-flow/src/client/surfaces.tsx",
+    "packages/dsh-flow/src/client/team-view.tsx",
+    "packages/dsh-flow/src/client/tree.ts",
+    "packages/dsh-flow/src/command.ts",
+    "packages/dsh-flow/src/config.ts",
+    "packages/dsh-flow/src/core/agent-queue.ts",
+    "packages/dsh-flow/src/core/collaboration.ts",
+    "packages/dsh-flow/src/core/controller.ts",
+    "packages/dsh-flow/src/core/member-tools.ts",
+    "packages/dsh-flow/src/core/message-queue.ts",
+    "packages/dsh-flow/src/core/runtime.ts",
+    "packages/dsh-flow/src/core/store.ts",
+    "packages/dsh-flow/src/core/system.ts",
+    "packages/dsh-flow/src/errors.ts",
+    "packages/dsh-flow/src/main-model.ts",
+    "packages/dsh-flow/src/tool-arguments.ts",
+    "packages/dsh-flow/src/types.ts",
+    "packages/dsh-flow/src/web.ts",
+    "packages/dsh-flow/tsconfig.client.json",
+    "packages/dsh-flow/tsconfig.host.json",
+    "packages/dsh-flow/tsconfig.json",
+    "packages/typert-protocol/LICENSE",
+    "packages/typert-protocol/README.md",
+    "packages/typert-protocol/lib/index.js",
+    "packages/typert-protocol/lib/types/index.d.ts",
+    "packages/typert-protocol/lib/types/index.js",
+    "packages/typert-protocol/lib/types/json-value.d.ts",
+    "packages/typert-protocol/lib/types/json-value.js",
+    "packages/typert-protocol/lib/types/owned-value.d.ts",
+    "packages/typert-protocol/lib/types/owned-value.js",
+    "packages/typert-protocol/lib/types/remote-error.d.ts",
+    "packages/typert-protocol/lib/types/remote-error.js",
+    "packages/typert-protocol/lib/types/types.d.ts",
+    "packages/typert-protocol/lib/types/types.js",
+    "packages/typert-protocol/package.json",
+    "packages/typert-protocol/src/index.ts",
+    "packages/typert-protocol/src/types.ts",
+    "packages/typert-protocol/tsconfig.host.json",
+    "patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+    "patches/README.md",
+    "scripts/initialize-omlx-profile.ts",
+    "scripts/native-agent-ashare-e2e-lib.ts",
+    "scripts/native-agent-ashare-e2e.ts",
+    "scripts/native-agent-ashare-stage.ts",
+    "src/host/browser.ts",
+    "src/host/dsh-launch.ts",
+    "src/host/host.ts",
+    "src/host/profile-models.ts",
+    "src/host/session-scan.ts",
+    "tests/acceptance/COVERAGE.md",
+    "tests/acceptance/native-live.ts",
+    "tests/helpers/team-ui-fixture.tsx",
+    "tests/integration/fixtures/native-browser-probe.ts",
+    "tests/integration/fixtures/native-member-probe.ts",
+    "tests/integration/fixtures/team-command-probe.ts",
+    "tests/integration/native-browser.test.ts",
+    "tests/integration/native-member.test.ts",
+    "tests/integration/provider-settings.test.ts",
+    "tests/integration/team-command.test.ts",
+    "tests/integration/team-ui.test.ts",
+    "tests/types/flow-contracts.client.ts",
+    "tests/types/flow-contracts.host.ts",
+    "tests/unit/agent-binding.test.ts",
+    "tests/unit/agent-communication.test.ts",
+    "tests/unit/agent-lifecycle.test.ts",
+    "tests/unit/agent-profile.test.ts",
+    "tests/unit/agent-queue.test.ts",
+    "tests/unit/collaboration-state-model.test.ts",
+    "tests/unit/control-message-regression.test.ts",
+    "tests/unit/flow-controller.test.ts",
+    "tests/unit/host-profile.test.ts",
+    "tests/unit/member-tools.test.ts",
+    "tests/unit/message-queue.test.ts",
+    "tests/unit/native-close-regression.test.ts",
+    "tests/unit/native-fixture.ts",
+    "tests/unit/profile-models.test.ts",
+    "tests/unit/provider-baseline.test.ts",
+    "tests/unit/provider-factory-scope.test.ts",
+    "tests/unit/provider-message.test.ts",
+    "tests/unit/provider-observation.test.ts",
+    "tests/unit/provider-session-restore.test.ts",
+    "tests/unit/queued-task-update.test.ts",
+    "tests/unit/reader-source.test.ts",
+    "tests/unit/root-completion-regression.test.ts",
+    "tests/unit/same-member-order-regression.test.ts",
+    "tests/unit/session-scan.test.ts",
+    "tests/unit/team-command-regression.test.ts",
+    "tests/unit/team-tree.test.ts",
+    "tsconfig.base.client.json",
+    "tsconfig.base.json",
+    "tsconfig.host.json"
+  ],
+  "archive": {
+    "name": "pre-p0-worktree.tar.gz",
+    "sha256": "39d7e6341767655ff10a02d8aa662949774aebbad24716b62e0e993adfe807d6",
+    "bytes": 2485406,
+    "storage": "local audit directory; not published"
+  },
+  "restoreVerification": {
+    "filesVerified": 211,
+    "deletionsVerified": 191,
+    "mismatches": []
+  },
+  "design": {
+    "mainSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+    "localSha256": "1833479c192da86ae36897c0327e1ae06d441f2ce1f6fa3ff627fb72d61901f5",
+    "difference": "Only local line 1732 describes restarting the whole run. The shared explicit persistent-team contracts govern; merged main already uses reuse/create then assign. No design change in P0."
+  },
+  "planSha256": "cb2a14943b82638c27a5c56a00b6384ae81aa307b94a93bbaaa3b0dc13e6def1",
+  "trackedMainFiles": [
+    ".agents/skills/module-design/SKILL.md",
+    ".agents/skills/module-design/references/interface-review.md",
+    ".agents/skills/module-design/scripts/check_sections.py",
+    ".agents/skills/module-design/scripts/test_check_sections.py",
+    ".gitattributes",
+    ".gitignore",
+    "AGENTS.md",
+    "GLOSSARY.md",
+    "README.md",
+    "docs/agents/domain.md",
+    "docs/agents/issue-tracker.md",
+    "docs/agents/triage-labels.md",
+    "docs/design/.vitepress/config.mts",
+    "docs/design/.vitepress/theme/Layout.vue",
+    "docs/design/.vitepress/theme/MermaidDiagram.vue",
+    "docs/design/.vitepress/theme/PageActions.vue",
+    "docs/design/.vitepress/theme/index.ts",
+    "docs/design/.vitepress/theme/mermaid.ts",
+    "docs/design/.vitepress/theme/style.css",
+    "docs/design/agents.md",
+    "docs/design/api.md",
+    "docs/design/assignments.md",
+    "docs/design/communication.md",
+    "docs/design/components/AgentTreeFigure.vue",
+    "docs/design/components/AgentTreeMotion.vue",
+    "docs/design/components/DshHostMotion.vue",
+    "docs/design/components/agentCardDesign.mjs",
+    "docs/design/components/dshNavigationDesign.mjs",
+    "docs/design/components/dshPanelsDesign.mjs",
+    "docs/design/configuration.md",
+    "docs/design/dashboard.md",
+    "docs/design/design.md",
+    "docs/design/development/provider-baseline.json",
+    "docs/design/index.md",
+    "docs/design/public/favicon.svg",
+    "docs/design/public/images/agent-tree-design/LICENSE.deepseek-icon.txt",
+    "docs/design/public/images/agent-tree-design/appearance.svg",
+    "docs/design/public/images/agent-tree-design/card.svg",
+    "docs/design/public/images/agent-tree-design/details.svg",
+    "docs/design/public/images/agent-tree-design/dsh-global.svg",
+    "docs/design/public/images/agent-tree-design/dsh-observer.svg",
+    "docs/design/public/images/agent-tree-design/dsh-session.svg",
+    "docs/design/public/images/agent-tree-design/dsh-settings.svg",
+    "docs/design/public/images/agent-tree-design/inbox.svg",
+    "docs/design/public/images/agent-tree-design/overview.svg",
+    "docs/design/public/images/agent-tree-design/responsive.svg",
+    "docs/design/public/patterns/debate/pattern.yaml",
+    "docs/design/public/patterns/expert-router/pattern.yaml",
+    "docs/design/public/patterns/generate-review-revise/pattern.yaml",
+    "docs/design/public/patterns/heterogeneous-ensemble/pattern.yaml",
+    "docs/design/public/patterns/hierarchical/pattern.yaml",
+    "docs/design/public/patterns/independent-vote/pattern.yaml",
+    "docs/design/public/patterns/mixture-of-agents/pattern.yaml",
+    "docs/design/public/patterns/pipeline/pattern.yaml",
+    "docs/design/public/patterns/search-swarm/pattern.yaml",
+    "docs/design/public/patterns/shared-review/pattern.yaml",
+    "docs/design/public/patterns/sparse-routing/pattern.yaml",
+    "docs/design/public/patterns/tool-specialists/pattern.yaml",
+    "docs/design/public/patterns/tournament-evolution/pattern.yaml",
+    "docs/design/public/patterns/workflow-search/pattern.yaml",
+    "docs/design/quick-start.md",
+    "docs/design/runtime.md",
+    "docs/design/scripts/generate-card-appearance.mjs",
+    "docs/design/scripts/generate-dsh-navigation.mjs",
+    "docs/design/scripts/generate-dsh-panels.mjs",
+    "docs/design/scripts/generate-overview-responsive.mjs",
+    "docs/design/teams.md",
+    "docs/design/templates.md",
+    "docs/design/validation.md",
+    "docs/diagnostics/ashare-session-efficiency-2026-10-12.md",
+    "docs/plans/README.md",
+    "docs/plans/archive/2026-10-12/agent-prompts-and-task-handoffs-validation.md",
+    "docs/plans/archive/2026-10-12/agent-prompts-and-task-handoffs.md",
+    "docs/plans/archive/2026-10-12/ashare-session-efficiency-2026-10-12.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-delivery.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-plan.md",
+    "docs/plans/archive/2026-10-12/auditor-removal-validation.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-interface-audit.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-upgrade-plan.md",
+    "docs/plans/archive/2026-10-12/dsh-0.2.0-rc2-upgrade-validation.md",
+    "docs/plans/archive/2026-10-12/images/README.md",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/README.md",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/mobile.png",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/topology.png",
+    "docs/plans/archive/2026-10-12/images/auditor-removal-team/wide-details.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/01-workspace-model.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/02-request.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/03-created.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/04-topology.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-calculation.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-file-verification.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/05-remaining.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/06-audit.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/06-remaining.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/07-delivery.png",
+    "docs/plans/archive/2026-10-12/images/deepseek-case/08-history.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/agent-details.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/agent-usage.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-result.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-running.png",
+    "docs/plans/archive/2026-10-12/images/quick-start/main-team.png",
+    "docs/plans/archive/2026-10-12/model-context-token-limits-plan.md",
+    "docs/plans/archive/2026-10-12/model-context-token-limits-validation.md",
+    "docs/plans/archive/2026-10-13/README.md",
+    "docs/plans/archive/2026-10-13/native-agent-simplification-plan.md",
+    "docs/plans/archive/2026-10-13/native-agent-simplification-validation.md",
+    "docs/plans/archive/2026-10-13/standard-agent-before-role-clarification.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-execution-plan.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-observation-draft.md",
+    "docs/plans/archive/2026-10-13/strict-comparison-validation-draft.md",
+    "docs/plans/archive/README.md",
+    "docs/plans/native-agent-simplification-plan.md",
+    "docs/plans/native-agent-simplification-validation.md",
+    "examples/cluster.patch.yml",
+    "examples/cluster.web.patch.yml",
+    "examples/deepseek.patch.yml",
+    "examples/instance-runtime.patch.yml",
+    "examples/instance.patch.yml",
+    "examples/omlx.patch.yml",
+    "examples/openai-compatible.patch.yml",
+    "package.json",
+    "packages/dsh-flow/README.md",
+    "packages/dsh-flow/cordis.patch.yml",
+    "packages/dsh-flow/package.json",
+    "packages/dsh-flow/skills/agent-team/SKILL.md",
+    "packages/dsh-flow/src/client.ts",
+    "packages/dsh-flow/src/client/agent-session.ts",
+    "packages/dsh-flow/src/client/observer.ts",
+    "packages/dsh-flow/src/client/reader-source.ts",
+    "packages/dsh-flow/src/client/reader.tsx",
+    "packages/dsh-flow/src/client/sidebar.tsx",
+    "packages/dsh-flow/src/client/styles.ts",
+    "packages/dsh-flow/src/client/surfaces.tsx",
+    "packages/dsh-flow/src/client/team-view.tsx",
+    "packages/dsh-flow/src/client/tree.ts",
+    "packages/dsh-flow/src/command.ts",
+    "packages/dsh-flow/src/config.ts",
+    "packages/dsh-flow/src/core/agent-queue.ts",
+    "packages/dsh-flow/src/core/agent.ts",
+    "packages/dsh-flow/src/core/collaboration.ts",
+    "packages/dsh-flow/src/core/controller.ts",
+    "packages/dsh-flow/src/core/member-tools.ts",
+    "packages/dsh-flow/src/core/message-queue.ts",
+    "packages/dsh-flow/src/core/profile.ts",
+    "packages/dsh-flow/src/core/runtime.ts",
+    "packages/dsh-flow/src/core/store.ts",
+    "packages/dsh-flow/src/core/system.ts",
+    "packages/dsh-flow/src/errors.ts",
+    "packages/dsh-flow/src/index.ts",
+    "packages/dsh-flow/src/main-model.ts",
+    "packages/dsh-flow/src/service.ts",
+    "packages/dsh-flow/src/tool-arguments.ts",
+    "packages/dsh-flow/src/types.ts",
+    "packages/dsh-flow/src/web.ts",
+    "packages/dsh-flow/tsconfig.client.json",
+    "packages/dsh-flow/tsconfig.host.json",
+    "packages/dsh-flow/tsconfig.json",
+    "packages/typert-protocol/LICENSE",
+    "packages/typert-protocol/README.md",
+    "packages/typert-protocol/lib/index.js",
+    "packages/typert-protocol/lib/types/index.d.ts",
+    "packages/typert-protocol/lib/types/index.js",
+    "packages/typert-protocol/lib/types/json-value.d.ts",
+    "packages/typert-protocol/lib/types/json-value.js",
+    "packages/typert-protocol/lib/types/owned-value.d.ts",
+    "packages/typert-protocol/lib/types/owned-value.js",
+    "packages/typert-protocol/lib/types/remote-error.d.ts",
+    "packages/typert-protocol/lib/types/remote-error.js",
+    "packages/typert-protocol/lib/types/types.d.ts",
+    "packages/typert-protocol/lib/types/types.js",
+    "packages/typert-protocol/package.json",
+    "packages/typert-protocol/src/index.ts",
+    "packages/typert-protocol/src/types.ts",
+    "packages/typert-protocol/tsconfig.host.json",
+    "patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+    "patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+    "patches/README.md",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "scripts/build.ts",
+    "scripts/initialize-omlx-profile.ts",
+    "scripts/native-agent-ashare-e2e-lib.ts",
+    "scripts/native-agent-ashare-e2e.ts",
+    "scripts/native-agent-ashare-stage.ts",
+    "src/host/browser.ts",
+    "src/host/dsh-launch.ts",
+    "src/host/host.ts",
+    "src/host/profile-models.ts",
+    "src/host/session-scan.ts",
+    "tests/acceptance/COVERAGE.md",
+    "tests/acceptance/native-live.ts",
+    "tests/helpers/team-ui-fixture.tsx",
+    "tests/integration/fixtures/native-browser-probe.ts",
+    "tests/integration/fixtures/native-member-probe.ts",
+    "tests/integration/fixtures/team-command-probe.ts",
+    "tests/integration/native-browser.test.ts",
+    "tests/integration/native-member.test.ts",
+    "tests/integration/provider-settings.test.ts",
+    "tests/integration/team-command.test.ts",
+    "tests/integration/team-ui.test.ts",
+    "tests/types/flow-contracts.client.ts",
+    "tests/types/flow-contracts.host.ts",
+    "tests/unit/agent-binding.test.ts",
+    "tests/unit/agent-communication.test.ts",
+    "tests/unit/agent-lifecycle.test.ts",
+    "tests/unit/agent-profile.test.ts",
+    "tests/unit/agent-queue.test.ts",
+    "tests/unit/collaboration-state-model.test.ts",
+    "tests/unit/control-message-regression.test.ts",
+    "tests/unit/flow-controller.test.ts",
+    "tests/unit/host-profile.test.ts",
+    "tests/unit/member-tools.test.ts",
+    "tests/unit/message-queue.test.ts",
+    "tests/unit/native-close-regression.test.ts",
+    "tests/unit/native-fixture.ts",
+    "tests/unit/profile-models.test.ts",
+    "tests/unit/provider-baseline.test.ts",
+    "tests/unit/provider-factory-scope.test.ts",
+    "tests/unit/provider-message.test.ts",
+    "tests/unit/provider-observation.test.ts",
+    "tests/unit/provider-session-restore.test.ts",
+    "tests/unit/queued-task-update.test.ts",
+    "tests/unit/reader-source.test.ts",
+    "tests/unit/root-completion-regression.test.ts",
+    "tests/unit/same-member-order-regression.test.ts",
+    "tests/unit/session-scan.test.ts",
+    "tests/unit/team-command-regression.test.ts",
+    "tests/unit/team-tree.test.ts",
+    "tsconfig.base.client.json",
+    "tsconfig.base.json",
+    "tsconfig.client.json",
+    "tsconfig.host.json",
+    "tsconfig.json"
+  ],
+  "contractIds": [
+    "C001",
+    "C002",
+    "C003",
+    "C004",
+    "C005",
+    "C006",
+    "C007",
+    "C008",
+    "C009",
+    "C010",
+    "C011",
+    "C012",
+    "C013",
+    "C014",
+    "C015",
+    "C016",
+    "C017",
+    "C018",
+    "C019",
+    "C020",
+    "C021",
+    "C022",
+    "C023",
+    "C024",
+    "C025",
+    "C026",
+    "C027",
+    "C028",
+    "C029",
+    "C030",
+    "C031",
+    "C032",
+    "C033",
+    "C034",
+    "C035",
+    "C036",
+    "C037",
+    "C038",
+    "C039",
+    "C040",
+    "C041",
+    "C042",
+    "C043",
+    "C044",
+    "C045",
+    "C046",
+    "C047",
+    "C048",
+    "C049",
+    "C050",
+    "C051",
+    "C052",
+    "C053",
+    "C054",
+    "C055",
+    "C056",
+    "C057",
+    "C058",
+    "C059",
+    "C060",
+    "C061",
+    "C062",
+    "C063",
+    "C064",
+    "C065",
+    "C066",
+    "C067",
+    "C068",
+    "C069",
+    "C070",
+    "C071",
+    "C072",
+    "C073",
+    "C074",
+    "C075",
+    "C076",
+    "C077",
+    "C078",
+    "C079",
+    "C080",
+    "C081",
+    "C082",
+    "C083",
+    "C084",
+    "C085"
+  ],
+  "scenarioIds": [
+    "C001-01",
+    "C001-02",
+    "C002-01",
+    "C002-02",
+    "C003-01",
+    "C003-02",
+    "C004-01",
+    "C004-02",
+    "C005-01",
+    "C005-02",
+    "C005-03",
+    "C006-01",
+    "C006-02",
+    "C007-01",
+    "C007-02",
+    "C007-03",
+    "C008-01",
+    "C008-02",
+    "C009-01",
+    "C009-02",
+    "C009-03",
+    "C010-01",
+    "C010-02",
+    "C010-03",
+    "C011-01",
+    "C011-02",
+    "C011-03",
+    "C012-01",
+    "C012-02",
+    "C013-01",
+    "C013-02",
+    "C013-03",
+    "C013-04",
+    "C014-01",
+    "C014-02",
+    "C015-01",
+    "C015-02",
+    "C015-03",
+    "C016-01",
+    "C016-02",
+    "C017-01",
+    "C017-02",
+    "C017-03",
+    "C018-01",
+    "C018-02",
+    "C019-01",
+    "C019-02",
+    "C019-03",
+    "C020-01",
+    "C020-02",
+    "C021-01",
+    "C021-02",
+    "C022-01",
+    "C022-02",
+    "C022-03",
+    "C023-01",
+    "C023-02",
+    "C023-03",
+    "C024-01",
+    "C024-02",
+    "C025-01",
+    "C025-02",
+    "C025-03",
+    "C026-01",
+    "C026-02",
+    "C026-03",
+    "C026-04",
+    "C027-01",
+    "C027-02",
+    "C027-03",
+    "C028-01",
+    "C028-02",
+    "C028-03",
+    "C029-01",
+    "C029-02",
+    "C029-03",
+    "C029-04",
+    "C029-05",
+    "C030-01",
+    "C030-02",
+    "C030-03",
+    "C031-01",
+    "C031-02",
+    "C031-03",
+    "C032-01",
+    "C032-02",
+    "C032-03",
+    "C033-01",
+    "C033-02",
+    "C034-01",
+    "C034-02",
+    "C035-01",
+    "C035-02",
+    "C036-01",
+    "C036-02",
+    "C036-03",
+    "C037-01",
+    "C037-02",
+    "C037-03",
+    "C038-01",
+    "C038-02",
+    "C039-01",
+    "C039-02",
+    "C039-03",
+    "C040-01",
+    "C040-02",
+    "C041-01",
+    "C041-02",
+    "C041-03",
+    "C042-01",
+    "C042-02",
+    "C043-01",
+    "C043-02",
+    "C044-01",
+    "C044-02",
+    "C044-03",
+    "C045-01",
+    "C045-02",
+    "C046-01",
+    "C046-02",
+    "C046-03",
+    "C047-01",
+    "C047-02",
+    "C048-01",
+    "C048-02",
+    "C048-03",
+    "C049-01",
+    "C049-02",
+    "C049-03",
+    "C050-01",
+    "C050-02",
+    "C051-01",
+    "C051-02",
+    "C051-03",
+    "C052-01",
+    "C052-02",
+    "C053-01",
+    "C053-02",
+    "C053-03",
+    "C053-04",
+    "C054-01",
+    "C054-02",
+    "C055-01",
+    "C055-02",
+    "C056-01",
+    "C056-02",
+    "C056-03",
+    "C056-04",
+    "C057-01",
+    "C057-02",
+    "C057-03",
+    "C057-04",
+    "C057-05",
+    "C058-01",
+    "C058-02",
+    "C058-03",
+    "C059-01",
+    "C059-02",
+    "C059-03",
+    "C059-04",
+    "C060-01",
+    "C060-02",
+    "C061-01",
+    "C061-02",
+    "C061-03",
+    "C061-04",
+    "C062-01",
+    "C062-02",
+    "C062-03",
+    "C063-01",
+    "C063-02",
+    "C063-03",
+    "C063-04",
+    "C064-01",
+    "C064-02",
+    "C064-03",
+    "C065-01",
+    "C065-02",
+    "C065-03",
+    "C066-01",
+    "C066-02",
+    "C066-03",
+    "C067-01",
+    "C067-02",
+    "C067-03",
+    "C068-01",
+    "C068-02",
+    "C068-03",
+    "C068-04",
+    "C069-01",
+    "C069-02",
+    "C070-01",
+    "C070-02",
+    "C070-03",
+    "C071-01",
+    "C071-02",
+    "C071-03",
+    "C072-01",
+    "C072-02",
+    "C072-03",
+    "C073-01",
+    "C073-02",
+    "C074-01",
+    "C074-02",
+    "C074-03",
+    "C075-01",
+    "C075-02",
+    "C075-03",
+    "C076-01",
+    "C076-02",
+    "C077-01",
+    "C077-02",
+    "C077-03",
+    "C078-01",
+    "C078-02",
+    "C079-01",
+    "C079-02",
+    "C080-01",
+    "C080-02",
+    "C080-03",
+    "C081-01",
+    "C081-02",
+    "C081-03",
+    "C082-01",
+    "C082-02",
+    "C082-03",
+    "C083-01",
+    "C083-02",
+    "C083-03",
+    "C084-01",
+    "C084-02",
+    "C085-01",
+    "C085-02",
+    "C085-03"
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "phases": [
+    {
+      "id": "P0",
+      "dependsOn": [],
+      "status": "in-progress",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P1",
+      "dependsOn": [
+        "P0"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P2",
+      "dependsOn": [
+        "P1"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P3",
+      "dependsOn": [
+        "P2"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P4",
+      "dependsOn": [
+        "P3"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P5",
+      "dependsOn": [
+        "P4"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P6",
+      "dependsOn": [
+        "P5"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    },
+    {
+      "id": "P7",
+      "dependsOn": [
+        "P6"
+      ],
+      "status": "pending",
+      "pullRequest": null,
+      "review": null,
+      "mergeCommit": null
+    }
+  ]
+}
