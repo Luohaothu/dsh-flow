@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Agent } from './agent.js';
 import type { Context } from './context.js';
 import { agentControl, contextControl, createOwned, groupControl, type GroupControl } from './internals.js';
@@ -67,11 +68,16 @@ export class Group {
   }
   postToBlackboard(source: Agent, message: Message): void {
     this.assertMember(source); assertConstructionSource(message.source);
-    const timestamp = Math.max(Date.now(), this.lastTimestamp + 1);
-    const saved = snapshotMessage({ ...message, source: { agent: source, g: this }, timestamp, read: false, read_timestamp: null });
-    this.assertMember(source);
-    this.lastTimestamp = timestamp; this.blackboard.push(saved);
-    emitCore(this.context, { type: 'group-blackboard', timestamp, group: this, message: snapshotMessage(saved) });
+    const id = randomUUID();
+    emitCore(this.context, { type: 'blackboard-write', timestamp: Date.now(), agent: source, group: this, id, active: true });
+    try {
+      this.assertMember(source);
+      const timestamp = Math.max(Date.now(), this.lastTimestamp + 1);
+      const saved = snapshotMessage({ ...message, source: { agent: source, g: this }, timestamp, read: false, read_timestamp: null });
+      this.assertMember(source);
+      this.lastTimestamp = timestamp; this.blackboard.push(saved);
+      emitCore(this.context, { type: 'group-blackboard', timestamp, group: this, message: snapshotMessage(saved) });
+    } finally { emitCore(this.context, { type: 'blackboard-write', timestamp: Date.now(), agent: source, group: this, id, active: false }); }
   }
   readBlackboard(after?: Timestamp): Message[] {
     this.assertOpen();

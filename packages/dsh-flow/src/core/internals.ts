@@ -3,13 +3,15 @@ import type { Agent } from './agent.js';
 import type { Context } from './context.js';
 import type { Group } from './group.js';
 import type { Mailbox } from './mailbox.js';
-import type { AgentStatus, HostAgent, MessageMeta, Signal } from './types.js';
+import type { RetrySource } from './observation.js';
+import type { AgentProfile, Message, AgentStatus, HostAgent, MessageMeta, Signal } from './types.js';
 
 export const createOwned: unique symbol = Symbol('Flow owned construction');
 export const agentControl: unique symbol = Symbol('Flow Agent lifecycle');
 export const mailboxControl: unique symbol = Symbol('Flow Mailbox lifecycle');
 export const groupControl: unique symbol = Symbol('Flow Group lifecycle');
 export const contextControl: unique symbol = Symbol('Flow Context publication');
+export type TerminationInitiator = 'user' | 'parent' | 'context' | 'self';
 export interface AgentControl {
   readonly context: Context;
   readonly host: HostAgent;
@@ -17,7 +19,11 @@ export interface AgentControl {
   assertAvailable(scope?: ConstructionScope): void;
   join(group: Group, scope?: ConstructionScope): void;
   leave(group: Group): void;
-  release(signal: Signal): Promise<void>;
+  release(signal: Signal, initiator?: TerminationInitiator, propagated?: boolean): Promise<void>;
+  kill(child: Agent, initiator: TerminationInitiator): Promise<void>;
+  retry(profile: AgentProfile, retryOf: string, initmsg?: Message, history?: string): Promise<Agent>;
+  getRetrySource(retryOf: string): Readonly<RetrySource>;
+  recordAssignmentOutcome(status: 'pending' | 'submitted' | 'failed' | 'cancelled'): void;
 }
 export interface MailboxControl {
   readonly context: Context | undefined;
@@ -36,6 +42,7 @@ export interface GroupControl {
   members(): Agent[];
 }
 export interface ContextControl {
+  dispose(initiator: TerminationInitiator): Promise<void>;
   assertOpen(): void;
   assertAvailable(agent: Agent, scope?: ConstructionScope): void;
   has(object: Agent | Group | Mailbox): boolean;

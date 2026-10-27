@@ -31,6 +31,7 @@
     "packages/dsh-flow/src/assignments/**/*.ts",
     "scripts/verify-result-schema.ts",
     "packages/dsh-flow/src/patterns/**/*.ts",
-    "scripts/verify-pattern-package.ts"
+    "scripts/verify-pattern-package.ts",
+    "packages/dsh-flow/src/dashboard/**/*.ts"
   ]
 }

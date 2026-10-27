@@ -15,7 +15,7 @@ export type AssignmentRequest =
   | { sender: Agent; recipient: Agent; parentAssignment: Assignment; spec: AssignmentSpec }
   | { sender: Run; recipient: Agent; parentAssignment: null; spec: AssignmentSpec };
 export interface AssignmentSubmission { result: JsonValue; continuingChildren: { assignment: Assignment; reason: string }[] }
-export type AssignmentActor = { kind: 'run'; runId: string } | { kind: 'agent'; sessionID: string };
+export type AssignmentActor = { kind: 'run'; runId: string } | { kind: 'agent'; sessionID: string; instanceId: string };
 export interface SchemaError { path: string; message: string }
 export interface SubmissionReceipt {
   kind: 'accepted' | 'missing-children' | 'invalid-result' | 'terminal';
@@ -29,7 +29,7 @@ export interface SubmissionAttempt {
 }
 export interface AssignmentSnapshot {
   id: AssignmentID; runId: string; spec: AssignmentSpec; sender: AssignmentActor;
-  recipientSessionID: string; parentAssignmentId: AssignmentID | null; status: AssignmentStatus;
+  recipientSessionID: string; recipientInstanceId: string; parentAssignmentId: AssignmentID | null; status: AssignmentStatus;
   submissions: SubmissionAttempt[]; submissionCount: number; schemaFailures: number;
   schemaDialect: string; schemaDigest: string; continuingChildren: { assignmentId: AssignmentID; reason: string }[];
   result?: JsonValue; reason?: string;

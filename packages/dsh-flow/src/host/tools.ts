@@ -3,6 +3,8 @@ import { assertObjectJsonSchema, validateJsonSchemaValue, type JsonSchemaNode, t
 import { Agent, Group,
   type AgentProfile, type Context, type MailboxQuery, type Message, type MessageSource } from '../core/index.js';
 import { USER, SYSTEM, groupID, messageID, newSessionID, serializeMessage, serializeMeta, sessionID, sameSource, describeWait } from '../core/message.js';
+import { agentControl } from '../core/internals.js';
+import { getAgentInstanceId } from '../core/observation.js';
 import { snapshotProfile } from '../core/profile.js';
 
 const string: JsonSchemaNode = { type: 'string' };
@@ -69,7 +71,7 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
   }
   const outgoing = (args: Record<string, unknown>): Message => ({ source: caller, timestamp: Date.now(), read: false,
     read_timestamp: null, summary: args.summary as string, payload: args.payload });
-  const info = (value: Agent) => ({ profile: value.getProfile(), status: value.getStatus(), parent: value.getParent()?.getProfile().sessionID ?? null,
+  const info = (value: Agent) => ({ instanceId: getAgentInstanceId(value), profile: value.getProfile(), status: value.getStatus(), parent: value.getParent()?.getProfile().sessionID ?? null,
     children: value.getChildren().map(child => child.getProfile().sessionID) });
   function tool(name: string, description: string, parameters: JsonSchemaNode,
     run: (args: Record<string, unknown>, execution: ToolRunContext) => unknown | Promise<unknown>) {
@@ -101,13 +103,19 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
     tool('flow_get_source_priority', 'Read your current rating for a source.', schema({ source: sourceSchema }, ['source']), args => ({ priority: mailbox.getSourcePriority(source(args.source)) }));
     tool('flow_fork', 'Create your direct child from an independent history snapshot.', schema({}), async () => info(await caller.fork()));
     tool('flow_herb', 'Summarize and merge two contexts into your direct child.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); return info(await caller.herb(agent(args.sessionID))); });
-    tool('flow_create', 'Create an idle direct child with an explicit profile; optional initmsg supplies its first input.', schema({ profile: { type: 'object' }, initmsg: schema(messageFields, ['summary', 'payload']), history: string }, ['profile']), async args => {
+    tool('flow_create', 'Create an idle direct child with an explicit profile; optional initmsg supplies its first input. retryOf records the exact instanceId of your failed terminated child; it creates a new instance.', schema({ profile: { type: 'object' }, initmsg: schema(messageFields, ['summary', 'payload']), history: string, retryOf: string }, ['profile']), async args => {
       const profile = snapshotProfile({ ...(args.profile as AgentProfile), sessionID: newSessionID() });
-      return info(await Agent.create(context, profile, caller, args.initmsg === undefined ? undefined : outgoing(args.initmsg as Record<string, unknown>), args.history as string | undefined));
+      const initmsg = args.initmsg === undefined ? undefined : outgoing(args.initmsg as Record<string, unknown>), history = args.history as string | undefined;
+      return info(await (args.retryOf === undefined ? Agent.create(context, profile, caller, initmsg, history)
+        : caller[agentControl].retry(profile, args.retryOf as string, initmsg, history)));
     });
     tool('flow_resume', 'Cold-resume a persisted session as your direct child.', schema({ sessionID: string }, ['sessionID']), async args => info(await Agent.resume(context, caller, sessionID(args.sessionID as string))));
     tool('flow_kill', 'Release your direct child after its current turn.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); await caller.kill(agent(args.sessionID)); });
-    tool('flow_signal', 'Signal your lifecycle: SIGTERM lets this turn finish, SIGKILL cancels it.', schema({ signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL'] } }, ['signal']), args => { void caller.recvSignal(args.signal as 'SIGTERM' | 'SIGKILL').catch(() => {}); return { accepted: true }; });
+    tool('flow_signal', 'Signal your lifecycle: SIGTERM lets this turn finish, SIGKILL cancels it.', schema({ signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL'] } }, ['signal']), args => {
+      const signal = args.signal;
+      if (signal !== 'SIGTERM' && signal !== 'SIGKILL') throw new TypeError('Unknown signal');
+      void caller[agentControl].release(signal, 'self').catch(() => {}); return { accepted: true };
+    });
     tool('flow_transfer', 'Transfer your direct child to another active Agent.', schema({ childSessionID: string, adoptSessionID: string }, ['childSessionID', 'adoptSessionID']), args => caller.transfer(agent(args.childSessionID), agent(args.adoptSessionID)));
     tool('flow_group_create', 'Create a Group with fixed membership.', schema({ sessionIDs: { type: 'array', items: string } }, ['sessionIDs']), args => ({ groupID: new Group(context, (args.sessionIDs as string[]).map(agent)).getID() }));
     tool('flow_group_post', 'Post to a Group you belong to.', schema({ groupID: string, ...messageFields }, ['groupID', 'summary', 'payload']), args => group(args.groupID).postMessage(caller, outgoing(args)));

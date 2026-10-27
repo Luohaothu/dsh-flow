@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Agent } from '../core/agent.js';
-import { agentControl } from '../core/internals.js';
+import { agentControl, contextControl } from '../core/internals.js';
 import { Context } from '../core/context.js';
 import { AssignmentService } from '../assignments/service.js';
 import { assertJson, digestJson } from '../assignments/schema.js';
 import type { Assignment, AssignmentArchiveReadResult, AssignmentOutcome, AssignmentSnapshot, AssignmentSpec } from '../assignments/types.js';
 import { catalogControl } from '../patterns/internal.js';
-import { bindRun, originKey, runState, verifiedOrigin, type RunState } from './internal.js';
+import { bindRun, originKey, runState, verifiedOrigin, runServiceControl, type RunState, type RunReadView, type RunServiceControl } from './internal.js';
 import type { HostOrigin, RunDefaults, RunRecord, RunServiceDependencies, RunSnapshot, RunStatus } from './types.js';
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -28,6 +28,14 @@ export class Run {
 export class RunService {
   readonly epoch = randomUUID();
   private runs = new Map<string, Run>();
+  private readonly observers = new Set<(view: RunReadView) => void>();
+  private readonly revisions = new Map<string, number>();
+  readonly [runServiceControl]: RunServiceControl = {
+    enumerate: () => [...this.runs.values()].map(run => this.readView(run)),
+    observe: listener => { this.observers.add(listener); return () => { this.observers.delete(listener); }; },
+    snapshot: id => this.readView(this.lookup(id)),
+    release: (id, epoch) => { if (epoch !== this.epoch) return Promise.reject(new Error('Run epoch expired')); const run = this.lookup(id); return this.releaseRun(run, 'user'); },
+  };
   private createKeys = new Map<string, { digest: string; run: Run }>();
   constructor(private readonly dependencies: RunServiceDependencies) {}
   create(origin: HostOrigin, defaults: RunDefaults, requestId: string): Run {
@@ -44,27 +52,35 @@ export class RunService {
     const run = new Run(randomUUID());
     const record: RunRecord = {
       id: run.id, runId: run.id, epoch: this.epoch, revision: 0, status: 'starting', origin: structuredClone(source),
-      defaults: effective, overrides, cleanup: 'pending', assignments: {}, prepareKeys: {}, receipts: {},
+      startedAt: Date.now(), defaults: effective, overrides, cleanup: 'pending', assignments: {}, prepareKeys: {}, receipts: {},
       createRequestId: requestId, createDigest: digest,
     };
     this.dependencies.store.write(record);
     const state: RunState = {
       record, patternCatalog, dependencies: this.dependencies, context: new Context(), accepting: false, initialization: Promise.resolve(),
-      commit: change => {
-        this.dependencies.store.assertWritable(run.id);
-        const draft = structuredClone(state.record);
-        const result = change(draft);
-        draft.revision++;
-        this.dependencies.store.write(draft);
-        state.record = draft;
-        return result;
+      commit: (change, publish = true) => {
+        try {
+          this.dependencies.store.assertWritable(run.id);
+          const draft = structuredClone(state.record);
+          const result = change(draft);
+          draft.revision++;
+          this.dependencies.store.write(draft);
+          state.record = draft;
+          state.afterCommit?.(draft);
+          if (publish) state.notify();
+          return result;
+        } catch (error) { state.notify(); throw error; }
+      },
+      notify: () => {
+        this.revisions.set(run.id, (this.revisions.get(run.id) ?? 0) + 1);
+        for (const observer of this.observers) observer(this.readView(run));
       },
       outcome: assignment => {
         if (assignment.sender.kind !== 'run' || !this.dependencies.onTopLevelOutcome) return;
         try {
           const delivery = this.dependencies.onTopLevelOutcome(source, run, structuredClone(assignment));
-          if (delivery) void delivery.catch(error => { state.runtimeError = errorText(error); });
-        } catch (error) { state.runtimeError = errorText(error); }
+          if (delivery) void delivery.catch(error => { state.runtimeError = errorText(error); state.notify(); });
+        } catch (error) { state.runtimeError = errorText(error); state.notify(); }
       },
     };
     bindRun(run, state);
@@ -76,19 +92,21 @@ export class RunService {
         state.root = root;
         state.assignments = new AssignmentService(run);
         if (state.record.status === 'starting') {
-          state.commit(draft => { draft.status = 'active'; draft.rootSessionID = root.getProfile().sessionID; });
           state.accepting = true;
+          state.commit(draft => { draft.status = 'active'; draft.rootSessionID = root.getProfile().sessionID; });
         }
       } catch (error) {
         state.accepting = false;
         const errors: unknown[] = [error];
         if (state.context) { try { await state.context.dispose(); } catch (cleanup) { errors.push(cleanup); } }
         state.runtimeError = errors.map(errorText).join('; ');
-        state.runtimeStatus = 'failed'; state.runtimeCleanup = errors.length === 1 ? 'complete' : 'failed';
-        try { state.commit(draft => { draft.status = 'failed'; draft.error = state.runtimeError!; draft.cleanup = errors.length === 1 ? 'complete' : 'failed'; }); }
+        state.runtimeEndedAt = Date.now(); state.runtimeStatus = 'failed'; state.runtimeCleanup = errors.length === 1 ? 'complete' : 'failed';
+        try { state.commit(draft => { draft.endedAt = Date.now(); draft.status = 'failed'; draft.error = state.runtimeError!; draft.cleanup = errors.length === 1 ? 'complete' : 'failed'; }); }
         catch (storage) { state.runtimeError += `; ${errorText(storage)}`; }
+        state.notify();
       }
     });
+    state.notify();
     return run;
   }
   list(origin: HostOrigin): RunSnapshot[] {
@@ -115,22 +133,35 @@ export class RunService {
   readArchive(id: string): AssignmentArchiveReadResult { return this.dependencies.store.readArchive(id, this.epoch); }
   release(origin: HostOrigin, run: Run): Promise<void> {
     this.assertOwn(origin, run);
+    return this.releaseRun(run);
+  }
+  private releaseRun(run: Run, initiator: 'user' | 'context' = 'context'): Promise<void> {
     const state = runState(run);
     if (state.releasePromise) return state.releasePromise;
     let resolve!: () => void; let reject!: (error: unknown) => void;
     state.releasePromise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     state.accepting = false;
+    state.runtimeStatus = 'stopping';
     const errors: unknown[] = [];
     try { state.commit(draft => { draft.status = 'stopping'; }); } catch (error) { errors.push(error); }
     if (state.assignments) { try { state.assignments.stop('Run explicitly released'); } catch (error) { errors.push(error); } }
     void Promise.resolve().then(async () => {
       await state.initialization;
-      if (state.context) { try { await state.context.dispose(); state.runtimeCleanup = 'complete'; } catch (error) { state.runtimeCleanup = 'failed'; errors.push(error); } }
-      try { state.commit(draft => { draft.status = errors.length ? 'failed' : 'stopped'; draft.cleanup = errors.length ? 'failed' : 'complete'; if (errors.length) draft.error = errors.map(errorText).join('; '); }); }
+      if (state.context) { try { await state.context[contextControl].dispose(initiator); state.runtimeCleanup = 'complete'; } catch (error) { state.runtimeCleanup = 'failed'; errors.push(error); } }
+      state.runtimeEndedAt = Date.now();
+      state.runtimeStatus = errors.length ? 'failed' : 'stopped';
+      try { state.commit(draft => { draft.endedAt = Date.now(); draft.status = errors.length ? 'failed' : 'stopped'; draft.cleanup = errors.length ? 'failed' : 'complete'; if (errors.length) draft.error = errors.map(errorText).join('; '); }); }
       catch (error) { errors.push(error); }
-      if (errors.length) { state.runtimeCleanup = 'failed'; state.runtimeStatus = 'failed'; state.runtimeError = errors.map(errorText).join('; '); throw new AggregateError(errors, 'Run release failed'); }
+      if (errors.length) { state.runtimeCleanup = 'failed'; state.runtimeStatus = 'failed'; state.runtimeError = errors.map(errorText).join('; '); state.notify(); throw new AggregateError(errors, 'Run release failed'); }
+      state.notify();
     }).then(resolve, reject);
     return state.releasePromise;
+  }
+  private lookup(id: string): Run { const run = this.runs.get(id); if (!run) throw new Error('Run is unavailable'); return run; }
+  private readView(run: Run): RunReadView {
+    const state = runState(run);
+    if (!state.context) throw new Error('Run has no Context');
+    return { run: this.snapshot(run), assignments: structuredClone(Object.values(state.record.assignments)), context: state.context, ...(state.root ? { root: state.root } : {}), revision: this.revisions.get(run.id) ?? 0 };
   }
   private service(run: Run): AssignmentService { const service = runState(run).assignments; if (!service) throw new Error('Run is not ready'); return service; }
   private assertOwn(origin: HostOrigin, run: Run): void {
@@ -143,7 +174,7 @@ export class RunService {
     const state = runState(run);
     const { assignments, prepareKeys: _prepareKeys, receipts: _receipts, createDigest: _createDigest, createRequestId: _createRequestId, ...record } = state.record;
     const storageError = this.dependencies.store.error(run.id);
-    return structuredClone({ ...record, ...(state.runtimeStatus ? { status: state.runtimeStatus } : {}), ...(state.runtimeCleanup ? { cleanup: state.runtimeCleanup } : {}), pendingAssignments: Object.values(assignments).filter(assignment => assignment.status === 'pending').length,
-      ...(state.runtimeError && !record.error ? { error: state.runtimeError } : {}), ...(storageError ? { storageError } : {}) });
+    return structuredClone({ ...record, ...(state.runtimeEndedAt === undefined ? {} : { endedAt: state.runtimeEndedAt }), ...(state.runtimeStatus ? { status: state.runtimeStatus } : {}), ...(state.runtimeCleanup ? { cleanup: state.runtimeCleanup } : {}), pendingAssignments: Object.values(assignments).filter(assignment => assignment.status === 'pending').length,
+      ...(state.runtimeError ? { error: state.runtimeError } : {}), ...(storageError ? { storageError } : {}) });
   }
 }

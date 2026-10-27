@@ -1,0 +1,113 @@
+{
+  "phase": "P5",
+  "status": "implemented-awaiting-exact-commit-review",
+  "contracts": [
+    "C070",
+    "C071",
+    "C072",
+    "C073",
+    "C074",
+    "C075",
+    "C076"
+  ],
+  "designAuthority": "docs/design/design.md",
+  "baseCommit": "fe0e5ea9dec805e84b6135dbebde612e615c6606",
+  "implementation": {
+    "identity": "Persistent instance UUID distinct from reusable SessionID; committed birth immutable, aborted construction never publishes.",
+    "provenance": "create/fork/herb/resume and explicit Native flow_create retryOf UUID; last logical parent and failed termination validated without automatic retry policy.",
+    "persistence": "Run envelope v2 persists true timestamps and Assignment instance UUIDs; no v1 compatibility. Journal original and uncertain bytes retained, full-state recovery in new durable segment.",
+    "connection": "Six loopback HTTP routes, exact Host/Origin, short-lived Bearer, fetch SSE, independent cursors and subscription generations.",
+    "operations": "operationId plus targetEpoch; mutually exclusive agentId or scope:run for starting Runs without a root. Accepted and terminal state are separate.",
+    "usage": "Actual rc.2 assistant-stream/durable event sequence correlation; cumulative call replacement, auxiliary call attribution and cleanup/automatic refusal facts.",
+    "client": "Constructive complete DTO decoding with reference checks, additive/unknown event handling, reconnect and failure recovery."
+  },
+  "implementationExtensions": {
+    "stopRunTarget": "scope:run is the minimum explicit whole-Run management target for starting Runs without a root; it never invents an instance ID.",
+    "retryIntent": "Optional retryOf in the existing Native flow_create tool is explicit parent intent, not a new public Core method or retry strategy. Tool results expose instanceId so the model can obtain the source identity.",
+    "usageIdentity": "Optional internal callId/kind associates actual Native calls; generic hosts must provide stable call IDs to deduplicate reports represented by different objects.",
+    "priceUnits": "Per million tokens; explicit actual model and currency; missing price/total stays unavailable."
+  },
+  "removedLegacy": [
+    "packages/dsh-flow/src/client.ts",
+    "packages/dsh-flow/src/web.ts",
+    "packages/dsh-flow/src/types.ts",
+    "packages/dsh-flow/src/client/surfaces.tsx",
+    "packages/dsh-flow/src/client/styles.ts",
+    "packages/dsh-flow/src/client/reader.tsx",
+    "packages/dsh-flow/src/client/reader-source.ts",
+    "packages/dsh-flow/src/client/team-view.tsx",
+    "packages/dsh-flow/src/client/sidebar.tsx",
+    "packages/dsh-flow/src/client/agent-session.ts",
+    "packages/dsh-flow/src/client/tree.ts",
+    "packages/dsh-flow/src/client/observer.ts",
+    "tests/unit/reader-source.test.ts",
+    "tests/unit/team-tree.test.ts",
+    "tests/integration/team-ui.test.ts"
+  ],
+  "initialIndependentFindings": [
+    "Failed missing-instance stop poisoned full snapshot decoding.",
+    "Model self-signal was misclassified as user termination.",
+    "Reentrant append during replay pending drain broke strict cursor order.",
+    "Failed initial connect left an aborted controller causing false success on retry.",
+    "Retry origin had no actual intent producer."
+  ],
+  "checks": [
+    {
+      "command": "pnpm test",
+      "tests": 634,
+      "pass": 634,
+      "failed": 0,
+      "skipped": 0,
+      "netAdditionalTests": 81
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "pass"
+    },
+    {
+      "command": "pnpm test:inventory",
+      "tests": 8,
+      "result": "pass"
+    },
+    {
+      "command": "pnpm test:patterns-package",
+      "result": "pass",
+      "selfBuild": true,
+      "matchingPatternAssets": 14,
+      "matchingSkillAssets": 2,
+      "runtimeOnlyConsumer": [
+        "patterns",
+        "dashboard/client",
+        "dashboard/protocol"
+      ]
+    },
+    {
+      "command": "independent gpt-6-astra focused contracts and counterexamples",
+      "tests": 85,
+      "pass": 85,
+      "skipped": 0,
+      "scope": "dashboard, retry identity/intent/transfer guards, actual Native lifecycle and usage/cleanup, new durable format and four independent probes"
+    },
+    {
+      "command": "Comment Sicko",
+      "keep": 8,
+      "kill": 1,
+      "flag": 0,
+      "changes": "One misplaced parser doc removed; removeComments emit identical."
+    }
+  ],
+  "materialLimits": [
+    "P5 provides backend/client protocol; P6 supplies shared UI and native registration.",
+    "Actual external model and full native UI acceptance remain P7.",
+    "Starting Run release waits for actual native initializer; no promise of forcibly aborting an uncooperative factory."
+  ],
+  "review": {
+    "status": "pending-final-recheck",
+    "model": "gpt-6-astra",
+    "functionalVerdict": "PASS"
+  },
+  "recordedAt": "2026-10-27T21:13:00.855306+00:00",
+  "testRepair": "An initial full run exposed an abandoned-resource test teardown race (633/634 passed). The test now waits for actual Native handle disposal after the late persistence writer rather than sleeping. Production success/failure semantics were preserved; corrected final full run 634/634.",
+  "initialFindingsStatus": "All five initial independent findings have direct successful regression evidence; final exact-commit source-hash lock pending.",
+  "sourceOwnershipBoundary": "Projector must attach before any committed Context observations; composition observes Run creation before initialization. No duplicate unbounded raw Core event history."
+}
