@@ -26,6 +26,8 @@ try {
   execFileSync('tar', ['-xzf', archive, '-C', scratch]);
   const assets = files(source);
   for (const path of assets) assert.deepEqual(readFileSync(join(scratch, 'package/patterns', relative(source, path))), readFileSync(path), relative(source, path));
+  const skills = files(join(root, 'packages/dsh-flow/skills'));
+  for (const path of skills) assert.deepEqual(readFileSync(join(scratch, 'package/skills', relative(join(root, 'packages/dsh-flow/skills'), path))), readFileSync(path), relative(root, path));
   const expectedIds = assets.filter(path => path.endsWith('/pattern.yaml')).map(path => {
     const value: unknown = parse(readFileSync(path, 'utf8'));
     assert.ok(value && typeof value === 'object' && 'id' in value && typeof value.id === 'string');
@@ -52,7 +54,7 @@ console.log(JSON.stringify({ packages: listed.patterns.length, installed: true }
 `;
   writeFileSync(join(runner, 'probe.mjs'), probe);
   const result: unknown = JSON.parse(execFileSync(process.execPath, ['probe.mjs'], { cwd: runner, encoding: 'utf8' }));
-  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, runtimeDependencyOnly: true, builtFromSource: true }));
+  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, matchingSkillFiles: skills.length, runtimeDependencyOnly: true, builtFromSource: true }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

@@ -1,0 +1,103 @@
+{
+  "phase": "P4",
+  "recordedAt": "2026-10-27T20:04:08.031286+00:00",
+  "baseCommit": "84009e7ef1736c87710744199ea8e07c40e5146c",
+  "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
+  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "contracts": [
+    "C053",
+    "C054",
+    "C055",
+    "C056"
+  ],
+  "scenarioCount": 12,
+  "checks": [
+    {
+      "command": "pnpm test",
+      "result": "PASS",
+      "tests": 522,
+      "previousPhaseTests": 475,
+      "netAdditionalTests": 47
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "PASS"
+    },
+    {
+      "command": "pnpm test:inventory",
+      "result": "PASS",
+      "tests": 8
+    },
+    {
+      "command": "pnpm test:patterns-package",
+      "result": "PASS",
+      "buildsCurrentSource": true,
+      "canonicalPatterns": 14,
+      "matchingPatternAssets": 14,
+      "matchingSkillAssets": 2,
+      "isolatedConsumer": "Flow and yaml only, no repository imports or SDK peers; patterns entry loads independently."
+    }
+  ],
+  "implementation": {
+    "nativeIdentity": "Exact live native object, registry identity, opaque SDK execution token and durable tool/call sequence plus own callId. PTC parent tokens link subcalls. Main tools are installed only in ordinary own scopes.",
+    "provisioning": "Backend-neutral prepare-all/reserve/create/finally contract; typed NativePlan carries Context/Profile/config/cwd/recipe; per-registry SessionID reservations and actual native scope own consumed resources.",
+    "strategy": "Every Flow native installs actual team-strategy and role content; preset and additional skills are mounted and validated in their real scopes. Standalone Core Adaptor also installs strategy and Core tools.",
+    "snapshots": "Trusted origin seeds capture actual model selection, defaults, cwd, permission and cleanup. Initializer receives that origin explicitly. New catalogs/defaults apply to new Runs; existing Run snapshots do not change.",
+    "materials": "Durable admitted Native message/attachment and successful tool-result provenance, actual assignment recipient/parent grants, recipient file access/digest/model-modality checks and pure ContentBlock rendering. Native DTO queries expose only caller-visible material refs.",
+    "notifications": "Actual SessionController resolves the saved originating session; idle/busy/cold followup uses a Flow source. Missing origins report errors; prompts do not impersonate users.",
+    "plugin": "Named Cordis entry, actual service installation/disposal, skill-only agent-team command, defaults/catalog configuration and shared capacity. P5/P6 services/UI remain separate phases."
+  },
+  "auditFixes": [
+    "Durable material rename precedes cache publication; failed writes remain failures on retry and clean temporary files.",
+    "Partial main/member/Core registration rolls back only owned disposers; foreign own-layer definitions survive.",
+    "Schema and parser both require finite positive cleanup timeouts, matching native execution; positive fractions remain valid.",
+    "The actual stable-loop file projection is checked using recipient fs before prepare and again on read. presentedLocation identifies the real readable model handle.",
+    "Reservation cleanup errors preserve original creation failures and remain separate cleanup errors; successfully established objects are recorded before cleanup."
+  ],
+  "independentEvidence": {
+    "model": "gpt-6-astra",
+    "preliminaryAudit": "PASS after four findings fixed",
+    "directTargetContracts": 48,
+    "directRegressionAndConcurrencyProbes": 5,
+    "independentNewTests": 6,
+    "savedAgentMalformedVariants": 65,
+    "realSDKScenarios": [
+      "PTC Node subprocess parallel submits with distinct own call IDs",
+      "after-turn assignment read and terminal submit",
+      "SessionController idle/busy/cold/missing outcome",
+      "native file-tool output to material index, child assignment and actual file/image request",
+      "two main sessions and Runs with isolated resources/current-default snapshots"
+    ]
+  },
+  "commentReview": {
+    "retained": 16,
+    "deleted": 4,
+    "flags": 0,
+    "behaviorProof": "TypeScript removeComments outputs identical for all four edited files."
+  },
+  "legacyDisposition": {
+    "removedComponents": [
+      "src/service.ts",
+      "src/errors.ts",
+      "src/tool-arguments.ts",
+      "src/main-model.ts"
+    ],
+    "removedOldTestsAndFixtures": 5,
+    "rewrittenComponents": [
+      "config",
+      "command",
+      "skills/agent-team",
+      "plugin composition"
+    ],
+    "frozenUntilP5P6": [
+      "src/types.ts and existing UI/protocol imports are not adopted by the new entry."
+    ]
+  },
+  "reviewStatus": "Preliminary independent audit PASS; exact committed-head review follows PR creation.",
+  "limits": [
+    "rc.2 AgentLoop executes through stable llm/tools/systemPrompt services. Isolated incompatible preset service replacements are rejected during preflight rather than claimed as supported.",
+    "Materials whose actual SDK projection is not readable in the recipient execution world are rejected before assignment saving; normal supported file and image paths are exercised.",
+    "Real external model execution and browser/native-panel scenarios are P7 acceptance work. P4 uses real Native SDK with deterministic model fixtures.",
+    "P4 validates connection settings; dashboard server/protocol and shared/native UI are implemented in P5/P6."
+  ]
+}

@@ -17,11 +17,13 @@ import type { Agent, AgentProfile, Context, ContextSummary, HostAdaptor, HostAge
   Message, ReleaseMode, SendMode, SendPurpose, SessionID, Usage } from '../core/index.js';
 import { assertNoPendingConstruction } from '../core/construction.js';
 import { snapshotProfile } from '../core/profile.js';
-import { isWaitCompletion } from '../core/message.js';
+import { isWaitCompletion, sessionID } from '../core/message.js';
+import { decodeModelConfiguration } from './configuration.js';
 import { AuxiliaryCallError, registerAuxiliaryUsageSink, awaitAuxiliaryUsageSettlements } from '../core/auxiliary-usage.js';
 import { ExecutionCapacity } from './capacity.js';
-import { DshConfigurationResolver } from './configuration.js';
-import { installFlowTools } from './tools.js';
+import { NativePreparation, decodeNativeRecipe, nativeService } from './provisioning.js';
+import type { NativePlan, NativeRecipe } from './native-types.js';
+import { NativeFlowBindings } from './native-bindings.js';
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap { flow: { kind: 'flow'; purpose: SendPurpose; priority: 'high' | 'normal' | 'low'; waitCompletion: boolean } }
@@ -32,6 +34,8 @@ export interface DshHostAdaptorOptions {
   afterTurnTimeoutMs?: number;
   immediateTimeoutMs?: number;
   capacity?: ExecutionCapacity;
+  preparation?: NativePreparation;
+  bindings?: NativeFlowBindings;
 }
 interface PendingInput { target: InboxTarget; message: UserMessage }
 interface CloseOperation {
@@ -51,6 +55,8 @@ interface OwnedAgent {
   handle?: AgentHandle;
   config: LlmCallConfig;
   workspaceRoot: string;
+  recipe: NativeRecipe;
+  commit(): void;
   listeners: Set<(event: Readonly<HostEvent>) => void>;
   bindings: (() => void)[];
   deferred: PendingInput[];
@@ -64,7 +70,7 @@ interface OwnedAgent {
   auxiliary: Set<{ controller: AbortController; completion: Promise<unknown> }>;
 }
 interface SavedAgent {
-  format: 'dsh-flow-agent'; version: 1; profile: AgentProfile; config: LlmCallConfig; workspaceRoot: string; pending: PendingInput[];
+  format: 'dsh-flow-agent'; version: 2; profile: AgentProfile; config: LlmCallConfig; workspaceRoot: string; recipe: NativeRecipe; pending: PendingInput[];
 }
 interface History {
   format: 'dsh-flow-history'; version: 1; backend: 'dsh'; source: { sessionID: string; name: string }; events: SessionEvent[];
@@ -94,6 +100,79 @@ function timeout(value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   if (!Number.isFinite(value) || value <= 0) throw new TypeError('Cleanup timeout must be finite and positive');
   return value;
+}
+function dataRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`Invalid ${label}`);
+  return Object.fromEntries(Object.entries(value));
+}
+function dataKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  if (Object.keys(value).some(key => !allowed.includes(key))) throw new TypeError(`Unknown ${label} field`);
+}
+function dataText(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new TypeError(`Invalid ${label}`);
+  return value;
+}
+function decodeProfile(value: unknown): AgentProfile {
+  const p = dataRecord(value, 'Profile');
+  dataKeys(p, ['role', 'sessionID', 'permission', 'name', 'model', 'params', 'hostExtras'], 'Profile');
+  const model = dataRecord(p.model, 'model'); dataKeys(model, ['provider', 'id'], 'model');
+  const params = dataRecord(p.params, 'params'); dataKeys(params, ['version', 'reasoningEffort', 'temperature', 'maxTokens'], 'params');
+  if (params.version !== 1 || (p.permission !== 'read-only' && p.permission !== 'workspace-write' && p.permission !== 'full-access')) throw new TypeError('Invalid Profile permission or params version');
+  if (params.temperature !== undefined && (typeof params.temperature !== 'number' || !Number.isFinite(params.temperature))) throw new TypeError('Invalid Profile temperature');
+  if (params.maxTokens !== undefined && (typeof params.maxTokens !== 'number' || !Number.isSafeInteger(params.maxTokens) || params.maxTokens <= 0)) throw new TypeError('Invalid Profile maxTokens');
+  return snapshotProfile({ role: dataText(p.role, 'role'), name: dataText(p.name, 'name'), sessionID: sessionID(dataText(p.sessionID, 'sessionID')),
+    permission: p.permission, model: { provider: dataText(model.provider, 'provider'), id: dataText(model.id, 'model id') },
+    params: { version: 1, ...(params.temperature === undefined ? {} : { temperature: params.temperature }),
+      ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }),
+      ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: dataText(params.reasoningEffort, 'reasoningEffort') }) },
+    ...(p.hostExtras === undefined ? {} : { hostExtras: dataRecord(p.hostExtras, 'hostExtras') }) });
+}
+function positiveInteger(value: unknown): boolean { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0; }
+function assertPendingMessage(value: unknown): asserts value is UserMessage {
+  const m = dataRecord(value, 'pending message'); dataKeys(m, ['id', 'role', 'source', 'content'], 'pending message');
+  dataText(m.id, 'message id');
+  if (m.role !== 'user' || !Array.isArray(m.content)) throw new TypeError('Invalid pending message role or content');
+  const source = dataRecord(m.source, 'message source'); dataText(source.kind, 'source kind');
+  if (source.kind === 'model') { dataText(source.provider, 'model source provider'); dataText(source.model, 'model source route'); }
+  if (source.kind === 'tool') dataText(source.callId, 'tool source callId');
+  if (source.kind === 'skill-invocation' && (source.form !== 'instructions' || typeof source.name !== 'string' || !source.name.trim())) throw new TypeError('Invalid skill invocation source');
+  if (source.kind === 'flow-outcome') { dataText(source.runId, 'outcome Run'); dataText(source.assignmentId, 'outcome assignment'); }
+  if (source.form === 'notice' && typeof source.summary !== 'string') throw new TypeError('Invalid notice source summary');
+  if (source.form === 'snapshot') {
+    if (!Array.isArray(source.sections)) throw new TypeError('Invalid source snapshot sections');
+    for (const entry of source.sections) {
+      const section = dataRecord(entry, 'source snapshot section'); dataKeys(section, ['name', 'text'], 'source snapshot section');
+      dataText(section.name, 'source section name'); if (typeof section.text !== 'string') throw new TypeError('Invalid source section text');
+    }
+  }
+  if (source.kind === 'flow' && ((source.purpose !== 'input' && source.purpose !== 'notification')
+    || !['high', 'normal', 'low'].includes(String(source.priority)) || typeof source.waitCompletion !== 'boolean')) throw new TypeError('Invalid pending Flow source');
+  for (const raw of m.content) {
+    const block = dataRecord(raw, 'message content block');
+    if (block.type === 'text' || block.type === 'reasoning') {
+      dataKeys(block, ['type', 'text'], 'text block'); if (typeof block.text !== 'string') throw new TypeError('Invalid content text');
+    } else if (block.type === 'image' || block.type === 'file') {
+      dataKeys(block, block.type === 'image' ? ['type', 'attachment', 'offloaded'] : ['type', 'attachment'], 'attachment block');
+      const ref = dataRecord(block.attachment, 'attachment reference');
+      dataText(ref.attachmentId, 'attachment identity');
+      if (typeof ref.bytes !== 'number' || !Number.isSafeInteger(ref.bytes) || ref.bytes < 0) throw new TypeError('Invalid attachment bytes');
+      if (block.type === 'image') {
+        dataKeys(ref, ['attachmentId', 'bytes', 'mediaType', 'width', 'height', 'name', 'originalDimensions'], 'image reference');
+        if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(String(ref.mediaType)) || !positiveInteger(ref.width) || !positiveInteger(ref.height)
+          || (block.offloaded !== undefined && block.offloaded !== true)) throw new TypeError('Invalid image reference');
+        if (ref.originalDimensions !== undefined) {
+          const size = dataRecord(ref.originalDimensions, 'image dimensions'); dataKeys(size, ['width', 'height'], 'image dimensions');
+          if (!positiveInteger(size.width) || !positiveInteger(size.height)) throw new TypeError('Invalid original image dimensions');
+        }
+        if (ref.name !== undefined) dataText(ref.name, 'image name');
+      } else { dataKeys(ref, ['attachmentId', 'bytes', 'name'], 'file reference'); dataText(ref.name, 'file name'); }
+    } else if (block.type === 'tool-call') {
+      dataKeys(block, ['type', 'id', 'name', 'arguments'], 'tool-call block'); dataText(block.id, 'tool call id'); dataText(block.name, 'tool name');
+      if (typeof block.arguments !== 'string') throw new TypeError('Invalid tool arguments');
+    } else if (block.type === 'tool-addition' || block.type === 'tool-removal') {
+      dataKeys(block, ['type', 'toolName'], 'tool change block'); dataText(block.toolName, 'tool name');
+    } else throw new TypeError('Unsupported pending content block');
+  }
 }
 /** DSH reports uncached input separately; Flow input includes cache and preserves provider totals. */
 export function normalizeUsage(usage: TokenUsage, model: { provider: string; id: string }, timestamp = Date.now()): Usage {
@@ -127,14 +206,17 @@ export class DshHostAdaptor implements HostAdaptor {
   private readonly capacity: ExecutionCapacity;
   private readonly afterTurnTimeoutMs: number;
   private readonly immediateTimeoutMs: number;
-  private readonly workspaceRoot: string;
+  private readonly preparation: NativePreparation;
+  private readonly nativeBindings: NativeFlowBindings;
   private readonly stateDirectory: string;
   private readonly removeUsageSink: () => void;
   private disposed = false;
   private disposal?: Promise<void>;
-  constructor(readonly host: DshContext, private readonly context: Context, options: DshHostAdaptorOptions,
-    private readonly configurationResolver = new DshConfigurationResolver(host.llm)) {
-    this.workspaceRoot = resolve(options.workspaceRoot); this.stateDirectory = resolve(options.stateDirectory);
+  constructor(readonly host: DshContext, private readonly context: Context, options: DshHostAdaptorOptions) {
+    this.stateDirectory = resolve(options.stateDirectory);
+    this.preparation = options.preparation ?? new NativePreparation(host, context, { cwd: resolve(options.workspaceRoot) });
+    if (this.preparation.context !== context || this.preparation.host !== host) throw new Error('Native preparation belongs to another Context or host');
+    this.nativeBindings = options.bindings ?? new NativeFlowBindings(host);
     this.capacity = options.capacity ?? new ExecutionCapacity();
     this.afterTurnTimeoutMs = timeout(options.afterTurnTimeoutMs, 120_000); this.immediateTimeoutMs = timeout(options.immediateTimeoutMs, 10_000);
     for (const service of ['agents', 'llm', 'tools', 'sessions', 'systemPrompt', 'sandboxPolicy', 'approval']) {
@@ -148,40 +230,53 @@ export class DshHostAdaptor implements HostAdaptor {
   async createAgent(flow: Agent, input: AgentProfile, history?: string): Promise<HostAgent> {
     this.assertOpen();
     const profile = snapshotProfile(input);
-    const config = await this.configurationResolver.configuration(profile);
     this.reserve(profile.sessionID);
     let owned: OwnedAgent | undefined;
+    let plan: NativePlan | undefined;
+    let lease: { dispose(): void } | undefined;
     try {
+      plan = this.preparation.consume(profile.sessionID, flow, profile);
+      if (!plan) {
+        const prepared = await this.preparation.prepare(profile, {});
+        lease = this.preparation.reserve(prepared);
+        plan = this.preparation.consume(profile.sessionID, flow, profile)!;
+      }
       if (await this.host.get('sessionPersistence')?.stat(SessionId(profile.sessionID))) throw new Error('Session already exists; resume is required');
       const imported = history === undefined ? undefined : parseHistory(history);
       const last = imported?.events.at(-1);
       const seed = last === undefined ? undefined : buildForkSeed(imported!.events, last.seq);
+      const creation = plan;
       const handle = await this.host.agents.create({ sessionId: SessionId(profile.sessionID),
-        meta: { cwd: this.workspaceRoot, ...(seed ? { parentSession: SessionId(imported!.source.sessionID), isSeeded: true } : {}) },
-        ...(seed ? { seed, inheritedEventCount: SessionLogOffset(imported!.events.length) } : {}), agentOptions: config,
-        setup: (scope, native) => { owned = this.bind(scope, native, flow, profile, config, this.workspaceRoot); },
+        meta: { cwd: creation.cwd, origin: 'subagent', ...(seed ? { parentSession: SessionId(imported!.source.sessionID), isSeeded: true } : {}) },
+        ...(seed ? { seed, inheritedEventCount: SessionLogOffset(imported!.events.length) } : {}), agentOptions: structuredClone(creation.config),
+        setup: async (scope, native) => { owned = await this.bind(scope, native, flow, creation); return { commit: () => { this.assertOpen(); owned!.commit(); } }; },
       });
       if (!owned) { await handle.dispose(); throw new Error('DSH did not initialize the Agent scope'); }
       owned.handle = handle; this.owned.set(owned.public, owned);
       return owned.public;
     } catch (error) {
       if (owned) { this.unbind(owned); await owned.handle?.dispose(); this.owned.delete(owned.public); }
+      if (plan) this.preparation.release(plan, flow);
       this.reserved.delete(profile.sessionID); throw error;
-    }
+    } finally { lease?.dispose(); }
   }
   async resumeAgent(flow: Agent, id: SessionID): Promise<HostAgent> {
     this.assertOpen();
     if (!this.host.get('sessionPersistence')) throw new Error('DSH persistence is unavailable');
     this.reserve(id);
     let owned: OwnedAgent | undefined;
+    let plan: NativePlan | undefined;
+    let lease: { dispose(): void } | undefined;
     try {
       const saved = await this.readMetadata(id);
-      const profile = snapshotProfile(saved.profile);
-      const config = await this.configurationResolver.configuration(profile, saved.config);
-      const handle = await this.host.agents.resume({ resumeSessionId: SessionId(id), agentOptions: config,
-        setup: (scope, native) => {
+      plan = await this.preparation.prepareSaved(saved.profile, saved.config, saved.workspaceRoot, saved.recipe);
+      lease = this.preparation.reserve(plan);
+      this.preparation.consume(id, flow, saved.profile);
+      const restoration = plan;
+      const handle = await this.host.agents.resume({ resumeSessionId: SessionId(id), agentOptions: structuredClone(restoration.config),
+        setup: async (scope, native) => {
+          owned = await this.bind(scope, native, flow, restoration);
           if (resolve(native.session.header.cwd ?? '') !== saved.workspaceRoot) throw new Error('Persisted workspace differs from the saved permission boundary');
-          owned = this.bind(scope, native, flow, profile, config, saved.workspaceRoot);
           for (const input of [...native.inbox.nextTurn, ...native.inbox.nextStep]) if (isNotification(input)) native.inbox.remove(input.id);
           const existing = new Set([...native.inbox.nextTurn, ...native.inbox.nextStep].map(message => message.id));
           for (const event of native.session.snapshotEvents()) if (event.type === 'user/message') existing.add(event.data.id);
@@ -190,28 +285,36 @@ export class DshHostAdaptor implements HostAdaptor {
           }
           native.inject(createUserMessage({ source: { kind: 'flow', purpose: 'notification', priority: 'normal', waitCompletion: false },
             content: [{ type: 'text', text: recoveryInstruction }] }));
+          return { commit: () => { this.assertOpen(); owned!.commit(); } };
         },
       });
       if (!owned) { await handle.dispose(); throw new Error('DSH did not initialize the resumed scope'); }
       owned.handle = handle; this.owned.set(owned.public, owned); return owned.public;
     } catch (error) {
       if (owned) { this.unbind(owned); await owned.handle?.dispose(); this.owned.delete(owned.public); }
+      if (plan) this.preparation.release(plan, flow);
       this.reserved.delete(id); throw error;
-    }
+    } finally { lease?.dispose(); }
   }
   private reserve(id: string): void {
     if (this.reserved.has(id) || this.host.agents.get(SessionId(id))) throw new Error('Session already has an active Agent');
     this.reserved.add(id);
   }
-  private bind(scope: DshContext, native: NativeAgent, flow: Agent, profile: Readonly<AgentProfile>, config: LlmCallConfig, workspaceRoot: string): OwnedAgent {
-    const owned: OwnedAgent = { public: Object.freeze({ profile }), native, flow, config, workspaceRoot, listeners: new Set(), bindings: [],
+  private async bind(scope: DshContext, native: NativeAgent, flow: Agent, plan: NativePlan): Promise<OwnedAgent> {
+    const binding = this.nativeBindings.bind(native, flow, plan);
+    const releaseBinding = scope.effect(() => () => { this.nativeBindings.release(binding); this.preparation.release(plan, flow); });
+    const { profile, cwd: workspaceRoot } = plan;
+    const config = structuredClone(plan.config);
+    const owned: OwnedAgent = { public: Object.freeze({ profile }), native, flow, config, workspaceRoot, recipe: plan.recipe, commit: () => { throw new Error('Native installation is incomplete'); }, listeners: new Set(), bindings: [releaseBinding],
       deferred: [], claimed: new Map(), completions: new Map(), capacityHeld: false, persistTail: Promise.resolve(), auxiliary: new Set() };
+    const installation = await this.preparation.install(scope, native, plan);
+    owned.commit = installation.commit;
     const mode = profile.permission === 'full-access' ? 'danger-full-access' : profile.permission;
     setSandboxMode(native.session, mode); setApprovalPolicy(native.session, 'never');
-    const installed = this.host.sandboxPolicy.resolve({ session: native.session });
+    const installed = nativeService(this.host, scope, 'sandboxPolicy').resolve({ session: native.session });
     if (installed.mode !== mode || resolve(installed.workspaceRoot) !== workspaceRoot) throw new Error('Requested initial file permission could not be installed');
     owned.bindings.push(
-      scope.systemPrompt.section({ name: 'flow-role', order: 0, text: profile.role, interpolate: false }),
+      nativeService(this.host, scope, 'systemPrompt').section({ name: 'flow-role', order: 0, text: profile.role, interpolate: false }),
       scope.on('agent/request', async () => ({ ...config })),
       scope.on('agent/inbox/claimed', ({ message }) => { owned.claimed.set(message.id, message); }),
       scope.on('agent/pre-step', async (payload, next) => {
@@ -257,7 +360,7 @@ export class DshHostAdaptor implements HostAdaptor {
     const commands = scope.get('commands');
     if (commands) owned.bindings.push(commands.register({ name: 'permission', description: 'Flow permissions are selected at creation',
       handler: () => { throw new Error('Flow does not expose permission changes'); } }));
-    owned.bindings.push(...installFlowTools(scope, this.context, flow, execution => this.assertCaller(owned, execution), () => this.releaseCapacity(owned)));
+    owned.bindings.push(...this.nativeBindings.installMember(scope, binding, execution => this.assertCaller(owned, execution), () => this.releaseCapacity(owned)));
     return owned;
   }
   private assertCaller(owned: OwnedAgent, execution: ToolRunContext): void {
@@ -327,8 +430,8 @@ export class DshHostAdaptor implements HostAdaptor {
       ...owned.native.inbox.nextStep.map(message => ({ target: 'next-step' as const, message })),
       ...owned.native.inbox.nextTurn.map(message => ({ target: 'next-turn' as const, message })),
     ].filter(input => !isNotification(input.message));
-    const saved: SavedAgent = { format: 'dsh-flow-agent', version: 1, profile: structuredClone(owned.public.profile), config: structuredClone(owned.config),
-      workspaceRoot: owned.workspaceRoot, pending: structuredClone([...new Map(pending.map(input => [input.message.id, input])).values()]) };
+    const saved: SavedAgent = { format: 'dsh-flow-agent', version: 2, profile: structuredClone(owned.public.profile), config: structuredClone(owned.config),
+      workspaceRoot: owned.workspaceRoot, recipe: structuredClone(owned.recipe), pending: structuredClone([...new Map(pending.map(input => [input.message.id, input])).values()]) };
     const operation = owned.persistTail.catch(() => {}).then(async () => {
       if (!this.host.get('sessionPersistence')) throw new Error('DSH persistence is unavailable');
       if (!await this.host.sessions.flush(owned.native.session)) throw new Error('DSH session has no successful durability listener');
@@ -340,16 +443,21 @@ export class DshHostAdaptor implements HostAdaptor {
   }
   private metadataPath(id: string): string { return resolve(this.stateDirectory, `${createHash('sha256').update(id).digest('hex')}.json`); }
   private async readMetadata(id: SessionID): Promise<SavedAgent> {
-    const value = JSON.parse(await readFile(this.metadataPath(id), 'utf8')) as SavedAgent;
-    if (!value || value.format !== 'dsh-flow-agent' || value.version !== 1 || value.profile?.sessionID !== id
-      || !isAbsolute(value.workspaceRoot) || !value.config || !Array.isArray(value.pending)) throw new Error('Invalid saved Flow metadata');
-    snapshotProfile(value.profile);
-    for (const input of value.pending) {
-      if (input.target !== 'next-step' && input.target !== 'next-turn') throw new Error('Invalid pending input target');
-      if (input.message?.role !== 'user') throw new Error('Invalid pending input');
-      input.message = freezeMessage(input.message);
-    }
-    return value;
+    const value: unknown = JSON.parse(await readFile(this.metadataPath(id), 'utf8'));
+    const input = dataRecord(value, 'saved Flow metadata');
+    dataKeys(input, ['format', 'version', 'profile', 'config', 'workspaceRoot', 'recipe', 'pending'], 'saved Flow metadata');
+    if (input.format !== 'dsh-flow-agent' || input.version !== 2 || typeof input.workspaceRoot !== 'string'
+      || !isAbsolute(input.workspaceRoot) || resolve(input.workspaceRoot) !== input.workspaceRoot || !Array.isArray(input.pending)) throw new Error('Invalid saved Flow metadata');
+    const profile = decodeProfile(input.profile);
+    if (profile.sessionID !== id) throw new Error('Saved Profile identity does not match requested session');
+    const pending = input.pending.map((item: unknown): PendingInput => {
+      const entry = dataRecord(item, 'pending input'); dataKeys(entry, ['target', 'message'], 'pending input');
+      if (entry.target !== 'next-step' && entry.target !== 'next-turn') throw new Error('Invalid pending input target');
+      assertPendingMessage(entry.message);
+      return { target: entry.target, message: freezeMessage(entry.message) };
+    });
+    return { format: 'dsh-flow-agent', version: 2, profile, config: decodeModelConfiguration(input.config),
+      workspaceRoot: input.workspaceRoot, recipe: decodeNativeRecipe(input.recipe), pending };
   }
   async exportHistory(agent: HostAgent): Promise<string> {
     const owned = this.active(agent);
@@ -375,7 +483,7 @@ export class DshHostAdaptor implements HostAdaptor {
       const usage = () => assembler.usage && actual ? [normalizeUsage(assembler.usage, actual)] : [];
       try {
         await this.capacity.acquire(call, controller.signal);
-        const prepared = await this.host.llm.prepareCall(owned.config, controller.signal);
+        const prepared = await nativeService(this.host, owned.native.ctx, 'llm').prepareCall(owned.config, controller.signal);
         actual = { provider: prepared.config.provider, id: prepared.config.model };
         for await (const chunk of prepared.stream({ ...prepared.config, messages: [{ role: 'user', content: [{ type: 'text', text }] }], signal: controller.signal })) assembler.push(chunk);
         const blocks = assembler.blocks(), result = blocks.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();

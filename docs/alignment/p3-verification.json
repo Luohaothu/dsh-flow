@@ -80,7 +80,7 @@
     "engine": "Not adopted; local-only patterns/engine.ts was already absent from the P2 merge. No new deletion is claimed.",
     "tests": "Local-only tests/patterns.test.ts was already absent; fixed execution/round/completion-release behaviors were not imported."
   },
-  "reviewStatus": "Review findings repaired; 475 contracts pass, clean and stale package checks pass; updated-head review pending.",
+  "reviewStatus": "PASS at ee76c054709e39fd8173951591c9c97259f9bacd; PR #11 merged as 84009e7ef1736c87710744199ea8e07c40e5146c.",
   "limits": [
     "P3 rejects explicit preset/skills requirements before creation because native provisioning is implemented in P4; default team-strategy installation is also P4.",
     "Pattern catalog and apply domain are implemented; actual flow_patterns/define/apply tool identity and serialization are integrated in P4.",

@@ -53,7 +53,7 @@ export class AssignmentService {
     if (spec.materials?.length) {
       const validator = this.state.dependencies.validateMaterials;
       if (!validator) throw new Error('Material validation and model presentation capability are unavailable');
-      await validator(request.recipient, structuredClone(spec.materials));
+      await validator({ sender: request.sender, recipient: request.recipient, parentAssignment: request.parentAssignment, materials: structuredClone(spec.materials) });
     }
     let created: Assignment | undefined;
     this.state.commit(draft => {

@@ -13,7 +13,7 @@ import { withTrustedCall } from '../../packages/dsh-flow/src/assignments/interna
 import type { Assignment } from '../../packages/dsh-flow/src/assignments/index.js';
 import type { AssignmentSpec, AssignmentSubmission } from '../../packages/dsh-flow/src/assignments/types.js';
 import { PatternCatalog } from '../../packages/dsh-flow/src/patterns/catalog.js';
-import { ContractPatternRoleValidator } from './contract-patterns.js';
+import { ContractPatternRoleProvisioner } from './contract-patterns.js';
 import { ContractHost, profile } from './contract-host.js';
 
 type ServiceOptions = ConstructorParameters<typeof RunService>[0];
@@ -22,7 +22,7 @@ type Origin = Parameters<RunService['create']>[0];
 type StoreOptions = NonNullable<ConstructorParameters<typeof RunStore>[1]>;
 type FaultStage = Parameters<NonNullable<StoreOptions['fault']>>[0];
 export type RunBinding = { context: Context; host: ContractHost; root: Agent };
-export type RunFixtureOptions = Partial<Pick<ServiceOptions, 'validateMaterials' | 'onTopLevelOutcome' | 'patternCatalog' | 'patternRoleValidator'>> & {
+export type RunFixtureOptions = Partial<Pick<ServiceOptions, 'validateMaterials' | 'onTopLevelOutcome' | 'patternCatalog' | 'patternRoleProvisioner'>> & {
   directory?: string;
   originDefaults?: Defaults | ServiceOptions['getOriginDefaults'];
   onInitialize?: (run: Run, defaults: Defaults, environment: Omit<RunBinding, 'root'>) => Promise<void> | void;
@@ -64,7 +64,7 @@ export async function runFixture(t: TestContext, options: RunFixtureOptions = {}
   const service = new RunService({
     store,
     patternCatalog: options.patternCatalog ?? new PatternCatalog({ includeBuiltins: false }),
-    patternRoleValidator: options.patternRoleValidator ?? new ContractPatternRoleValidator(),
+    patternRoleProvisioner: options.patternRoleProvisioner ?? new ContractPatternRoleProvisioner(),
     getOriginDefaults: typeof configuredDefaults === 'function'
       ? configuredDefaults : () => configuredDefaults ?? base,
     initialize: async (run, defaults, context) => {
