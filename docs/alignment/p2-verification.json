@@ -1,6 +1,6 @@
 {
   "phase": "P2",
-  "recordedAt": "2026-10-27T17:01:18.828092+00:00",
+  "recordedAt": "2026-10-27T17:28:15.532621+00:00",
   "baseCommit": "0a0db4e795da5c89f8270f528dcb8da1c9f8c789",
   "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
   "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
@@ -26,9 +26,9 @@
     {
       "command": "pnpm test",
       "result": "PASS",
-      "tests": 237,
+      "tests": 251,
       "predecessorTests": 119,
-      "runTests": 26,
+      "runTests": 40,
       "assignmentAndSchemaTests": 92,
       "failed": 0,
       "skipped": 0
@@ -82,10 +82,10 @@
   "auditFixes": [
     "Release caches its completion Promise before synchronous cancellation notifications can reenter.",
     "Schema field names and object const/enum values do not invoke prototype methods or inherit properties.",
-    "Annotation meta typing, initialization save failure status and notification outcomes were checked against new contracts."
+    "Annotation meta typing, initialization save failure status and notification outcomes were checked against new contracts.",
+    "Archive scans isolate unrelated unreadable records, preserve damaged bytes, and report unavailable rather than not-found when absence cannot be established."
   ],
-  "reviewStatus": "Independent semantic re-audit PASS; final exact-head PR review follows.",
-  "auditSnapshotFingerprint": "531b8eb6ca27c426b1fa9dde3d3a9d44bf0a686b43eda524c7bfb6a744ca46d6",
+  "reviewStatus": "Exact-head review passed before archive isolation finding; fixed archive/envelope and 14 regressions pass locally, awaiting updated-head review.",
   "commentReview": {
     "retained": 1,
     "deleted": 0,
@@ -101,5 +101,12 @@
     "Trusted invocation identity and material validation are injected domain seams; P4 must validate real native keys, permissions, rendering and originating-session followup.",
     "Historical records retain pending/interrupted facts without active bindings; explicit successor jobs create new trees.",
     "Synchronous whole-run snapshot writes are not a scalability benchmark; abrupt power-loss and platform-matrix validation are not claimed."
-  ]
+  ],
+  "storageFormat": {
+    "format": "dsh-flow-run",
+    "version": 1,
+    "payload": "record",
+    "reader": "Strict current envelope; no legacy flat decoding."
+  },
+  "previousAuditSnapshotFingerprint": "531b8eb6ca27c426b1fa9dde3d3a9d44bf0a686b43eda524c7bfb6a744ca46d6"
 }
