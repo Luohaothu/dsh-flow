@@ -3,7 +3,7 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, r
 import { join } from 'node:path';
 import type { AssignmentArchiveReadResult, AssignmentSnapshot } from '../assignments/types.js';
 import { assertJson } from '../assignments/schema.js';
-import type { RunDefaults, RunRecord } from './types.js';
+import type { HostOrigin, RunDefaults, RunRecord } from './types.js';
 
 const runIdPattern = /^[a-zA-Z0-9_-]+$/;
 const recordVersion = 1;
@@ -119,9 +119,10 @@ export class RunStore {
     if (errors.length) throw new AggregateError(errors, 'Run record read unavailable');
     return records;
   }
-  readArchive(id: string, epoch?: string): AssignmentArchiveReadResult {
+  readArchive(id: string, epoch?: string, origin?: HostOrigin): AssignmentArchiveReadResult {
     const { records, errors } = this.scan();
     for (const record of records) {
+      if (origin && (record.origin.backend !== origin.backend || record.origin.callerSessionId !== origin.callerSessionId)) continue;
       if (!Object.hasOwn(record.assignments, id)) continue;
       const assignment = structuredClone(record.assignments[id]!);
       return { kind: 'found', assignment, interrupted: assignment.status === 'pending' && record.epoch !== epoch };

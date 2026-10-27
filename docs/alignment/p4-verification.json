@@ -1,6 +1,6 @@
 {
   "phase": "P4",
-  "recordedAt": "2026-10-27T20:04:08.031286+00:00",
+  "recordedAt": "2026-10-27T20:18:55.714364+00:00",
   "baseCommit": "84009e7ef1736c87710744199ea8e07c40e5146c",
   "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
   "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
@@ -15,9 +15,9 @@
     {
       "command": "pnpm test",
       "result": "PASS",
-      "tests": 522,
+      "tests": 526,
       "previousPhaseTests": 475,
-      "netAdditionalTests": 47
+      "netAdditionalTests": 51
     },
     {
       "command": "pnpm typecheck",
@@ -52,7 +52,8 @@
     "Partial main/member/Core registration rolls back only owned disposers; foreign own-layer definitions survive.",
     "Schema and parser both require finite positive cleanup timeouts, matching native execution; positive fractions remain valid.",
     "The actual stable-loop file projection is checked using recipient fs before prepare and again on read. presentedLocation identifies the real readable model handle.",
-    "Reservation cleanup errors preserve original creation failures and remain separate cleanup errors; successfully established objects are recorded before cleanup."
+    "Reservation cleanup errors preserve original creation failures and remain separate cleanup errors; successfully established objects are recorded before cleanup.",
+    "AssignmentService archive reads and explicit continuation checks are scoped by the owning Run origin backend and callerSessionId; trusted backend global storage reads remain separate."
   ],
   "independentEvidence": {
     "model": "gpt-6-astra",
@@ -67,7 +68,8 @@
       "SessionController idle/busy/cold/missing outcome",
       "native file-tool output to material index, child assignment and actual file/image request",
       "two main sessions and Runs with isolated resources/current-default snapshots"
-    ]
+    ],
+    "archiveOriginProbe": "Independent 170 targeted tests/probes confirm active/historical cross-session and cross-backend rejection, same-origin historical/restart continuation and unchanged damaged-record semantics."
   },
   "commentReview": {
     "retained": 16,
@@ -93,7 +95,7 @@
       "src/types.ts and existing UI/protocol imports are not adopted by the new entry."
     ]
   },
-  "reviewStatus": "Preliminary independent audit PASS; exact committed-head review follows PR creation.",
+  "reviewStatus": "Archive-origin isolation repair passes 526 contracts, types and package checks; updated-head independent review pending.",
   "limits": [
     "rc.2 AgentLoop executes through stable llm/tools/systemPrompt services. Isolated incompatible preset service replacements are rejected during preflight rather than claimed as supported.",
     "Materials whose actual SDK projection is not readable in the recipient execution world are rejected before assignment saving; normal supported file and image paths are exercised.",

@@ -19,6 +19,8 @@ import { enablePluginHost } from '../../helpers/contract-plugin.js';
 import NodePtcRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
 import SubprocessLocal from '@deepseek-ai/dsh-subprocess-local';
 import SandboxLocal from '@deepseek-ai/dsh-sandbox-local';
+import { Agent } from '../../../packages/dsh-flow/src/core/agent.js';
+import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
 
 async function fixture(t: Parameters<typeof runtime>[0]) {
   const f = await runtime(t);
@@ -242,5 +244,52 @@ test('Core and member tool batches unwind earlier registrations in borrowed nati
     assert.equal(f.host.tools.get('flow_self', native), undefined); assert.equal(f.host.tools.get('flow_team_read', native), undefined);
     assert.equal(f.host.tools.get(foreign.name, native), foreign);
   }
+  await f.bridge.dispose();
+});
+
+test('real native archive tools hide another ordinary session history and reject its continuation while preserving same-origin history', async t => {
+  const f = await fixture(t), mainA = await f.ordinary('archive-owner-A'), mainB = await f.ordinary('archive-owner-B');
+  f.bridge.attachRunService(f.service);
+  const a = await f.active(mainA, 'source-A'), b = await f.active(mainB, 'target-B');
+  const secret = 'only-owner-A-private-result';
+  const spec = { name: 'archive task', type: 'test', background: '', requirements: '', acceptanceCriteria: '', resultSchema: true };
+  const saved = await a.run.assignments!.prepare({ sender: a.run, recipient: a.root, parentAssignment: null, spec }, 'secret-task');
+  let stepA = 0;
+  f.model.script = () => stepA++ === 0 ? { tool: 'flow_submit', args: { assignmentId: saved.id, result: { secret }, continuingChildren: [] } } : 'DONE';
+  a.run.assignments!.deliver(saved); await f.native(a.root).whenIdle();
+  assert.equal(a.run.assignments!.read(a.run, saved).status, 'submitted');
+  await f.service.release(a.origin, a.run);
+  const childB = await Agent.create(b.run.context!, { ...b.root.getProfile(), sessionID: newSessionID(), name: 'B continuation child' }, b.root);
+  const parentB = await b.run.assignments!.prepare({ sender: b.run, recipient: b.root, parentAssignment: null, spec }, 'B-parent');
+  let stepB = 0;
+  f.model.script = () => {
+    if (stepB++ === 0) return { tool: 'flow_assignment_archive_read', args: { assignmentId: saved.id } };
+    if (stepB === 2) return { tool: 'flow_assign', args: { recipientSessionID: childB.getProfile().sessionID, parentAssignmentId: parentB.id, spec: { ...spec, resumesAssignmentId: saved.id }, requestId: 'foreign-continuation' } };
+    return 'DONE';
+  };
+  const nativeB = f.native(b.root);
+  b.run.assignments!.deliver(parentB); await nativeB.whenIdle();
+  const eventsB = nativeB.session.snapshotEvents();
+  const archiveCall = eventsB.find(event => event.type === 'tool/call' && event.data.name === 'flow_assignment_archive_read');
+  assert.equal(archiveCall?.type, 'tool/call'); if (archiveCall?.type !== 'tool/call') throw new Error('Missing native archive call');
+  const archiveResult = eventsB.find(event => event.type === 'tool/result' && event.data.message.toolCallId === archiveCall.data.callId);
+  assert.equal(archiveResult?.type, 'tool/result'); if (archiveResult?.type !== 'tool/result') throw new Error('Missing native archive result');
+  assert.equal(archiveResult.data.message.isError, false);
+  assert.deepEqual(JSON.parse(archiveResult.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('')), { kind: 'not-found', id: saved.id });
+  const continuationCall = eventsB.find(event => event.type === 'tool/call' && event.data.name === 'flow_assign');
+  assert.equal(continuationCall?.type, 'tool/call'); if (continuationCall?.type !== 'tool/call') throw new Error('Missing native continuation call');
+  const continuationResult = eventsB.find(event => event.type === 'tool/result' && event.data.message.toolCallId === continuationCall.data.callId);
+  assert.equal(continuationResult?.type === 'tool/result' ? continuationResult.data.message.isError : false, true);
+  assert.equal(JSON.stringify(eventsB).includes(secret), false);
+  assert.equal(b.run.assignments!.list(b.run).length, 1); assert.equal(childB.getMailbox().count(), 0);
+  const nextA = await f.active(mainA, 'same-origin-next-A'); let queryA = false;
+  f.model.script = () => { if (queryA) return 'DONE'; queryA = true; return { tool: 'flow_assignment_archive_read', args: { assignmentId: saved.id } }; };
+  const nextJob = await nextA.run.assignments!.prepare({ sender: nextA.run, recipient: nextA.root, parentAssignment: null, spec }, 'same-origin-query');
+  nextA.run.assignments!.deliver(nextJob); const nativeNextA = f.native(nextA.root); await nativeNextA.whenIdle();
+  const ownResult = nativeNextA.session.snapshotEvents().find(event => event.type === 'tool/result');
+  assert.equal(ownResult?.type, 'tool/result'); if (ownResult?.type !== 'tool/result') throw new Error('Missing own native archive result');
+  assert.equal(ownResult.data.message.isError, false);
+  const history = JSON.parse(ownResult.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''));
+  assert.equal(history.kind, 'found'); assert.deepEqual(history.assignment.result, { secret });
   await f.bridge.dispose();
 });

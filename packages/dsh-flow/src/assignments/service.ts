@@ -114,7 +114,7 @@ export class AssignmentService {
     if ('parentAssignment' in query) parent = query.parentAssignment === null ? null : this.binding(query.parentAssignment!).handle.id;
     return Object.values(this.state.record.assignments).filter(record => (parent === undefined || record.parentAssignmentId === parent) && (query.status === undefined || record.status === query.status)).map(record => structuredClone(record));
   }
-  readArchive(id: AssignmentID): AssignmentArchiveReadResult { return this.state.dependencies.store.readArchive(id, this.state.record.epoch); }
+  readArchive(id: AssignmentID): AssignmentArchiveReadResult { return this.state.dependencies.store.readArchive(id, this.state.record.epoch, this.state.record.origin); }
   async submit(caller: Agent, assignment: Assignment, submission: AssignmentSubmission): Promise<SubmissionReceipt> {
     this.assertCaller(caller);
     const binding = this.binding(assignment);
