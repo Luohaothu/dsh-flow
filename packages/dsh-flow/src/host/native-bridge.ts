@@ -15,6 +15,7 @@ import { agentControl } from '../core/internals.js';
 import type { Context, AgentProfile } from '../core/index.js';
 import { newSessionID } from '../core/message.js';
 import { freezeData } from '../core/snapshot-data.js';
+import { checkPermission } from '../core/profile.js';
 import { issueHostOrigin } from '../run/internal.js';
 import type { Run, RunService } from '../run/run.js';
 import type { AssignmentMaterialRequest, HostOrigin, RunDefaults } from '../run/types.js';
@@ -39,8 +40,9 @@ export interface DshNativeBridgeOptions {
   getConfiguration?(): NativeBridgeConfiguration;
   agentTeamSkill?: SkillDefinition;
 }
-interface OriginSeed { defaults: RunDefaults; native: NativeRunSeed; rootRole: string; cleanup?: NativeBridgeConfiguration['cleanup'] }
+interface OriginSeed { defaults: RunDefaults; native: NativeRunSeed; permissionCeiling: AgentProfile['permission']; rootRole: string; cleanup?: NativeBridgeConfiguration['cleanup'] }
 interface MainBinding { authority: NativeCallAuthority; dispose: (() => void)[] }
+const permissionRanks = { 'read-only': 0, 'workspace-write': 1, 'full-access': 2 };
 export class DshNativeBridge {
   readonly bindings: NativeFlowBindings;
   readonly materials: NativeMaterials;
@@ -79,13 +81,16 @@ export class DshNativeBridge {
     if (header?.config.maxTokens !== undefined && (!pending || header.adapterDefaults?.maxTokens !== true)) params.maxTokens = header.config.maxTokens;
     const policy = this.host.sandboxPolicy.resolve({ session: native.session });
     const preset = this.host.get('agentPresets')?.composedPreset(native.ctx);
-    const defaults: RunDefaults = { model, params, permission: policy.mode === 'danger-full-access' ? 'full-access' : policy.mode,
+    const nativePermission = policy.mode === 'danger-full-access' ? 'full-access' : policy.mode;
+    const configuredPermission = configured.defaults?.permission;
+    const permissionCeiling = configuredPermission && permissionRanks[configuredPermission] > permissionRanks[nativePermission] ? configuredPermission : nativePermission;
+    const defaults: RunDefaults = { model, params, permission: nativePermission,
       ...(header?.config.stop ? { hostExtras: { dsh: { stop: [...header.config.stop] } } } : {}),
       ...(preset === undefined ? {} : { preset }), ...configured.defaults };
     const cwd = configured.cwd ?? native.session.header.cwd;
     if (!cwd) throw new Error('Originating native Session has no cwd');
     const origin = issueHostOrigin({ backend: 'dsh', callerSessionId: native.session.id });
-    const seed: OriginSeed = { defaults, native: { cwd: resolve(cwd),
+    const seed: OriginSeed = { defaults, permissionCeiling, native: { cwd: resolve(cwd),
       ...(defaults.preset === undefined ? {} : { preset: defaults.preset }), ...(defaults.skills === undefined ? {} : { skills: defaults.skills }) },
       rootRole: configured.rootRole ?? '管理团队成员、正式作业与交付。按需读取 team-strategy，保持空闲直到收到作业。',
       ...(configured.cleanup === undefined ? {} : { cleanup: configured.cleanup }) };
@@ -94,12 +99,15 @@ export class DshNativeBridge {
   getOriginDefaults(origin: HostOrigin): RunDefaults { return structuredClone(this.seed(origin).defaults); }
   async initialize(run: Run, defaults: RunDefaults, context: Context, origin: HostOrigin): Promise<Agent> {
     const seed = this.seed(origin);
-    const preparation = new NativePreparation(this.host, context, { ...seed.native,
-      ...(defaults.preset === undefined ? {} : { preset: defaults.preset }), ...(defaults.skills === undefined ? {} : { skills: defaults.skills }) });
-    this.preparations.set(context, preparation); this.rememberRun(run, origin);
+    this.rememberRun(run, origin);
     if (!defaults.model || !defaults.permission) throw new Error('Run model and permission must resolve before initialization');
     const profile: AgentProfile = { sessionID: newSessionID(), name: '团队根', role: seed.rootRole, model: defaults.model,
       permission: defaults.permission, params: defaults.params ?? { version: 1 }, ...(defaults.hostExtras === undefined ? {} : { hostExtras: defaults.hostExtras }) };
+    try { checkPermission(profile, { ...profile, permission: seed.permissionCeiling }); }
+    catch (error) { throw new Error('Run initial permission exceeds trusted native authority ceiling', { cause: error }); }
+    const preparation = new NativePreparation(this.host, context, { ...seed.native,
+      ...(defaults.preset === undefined ? {} : { preset: defaults.preset }), ...(defaults.skills === undefined ? {} : { skills: defaults.skills }) });
+    this.preparations.set(context, preparation);
     const plan = await preparation.prepare(profile, {});
     const runPreparation = new NativePreparation(this.host, context, { ...seed.native, recipe: plan.recipe });
     this.preparations.set(context, runPreparation);

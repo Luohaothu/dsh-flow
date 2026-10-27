@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { join } from 'node:path';
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model';
-import { createUserMessage, ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm';
+import { createUserMessage, LlmAdapter, ReasoningEffortId, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { DshNativeBridge } from '../../../packages/dsh-flow/src/host/native-bridge.js';
+import { DshNativeBridge, type NativeBridgeConfiguration } from '../../../packages/dsh-flow/src/host/native-bridge.js';
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
 import { RunService } from '../../../packages/dsh-flow/src/run/run.js';
 import { RunStore } from '../../../packages/dsh-flow/src/run/store.js';
@@ -21,12 +21,14 @@ import SubprocessLocal from '@deepseek-ai/dsh-subprocess-local';
 import SandboxLocal from '@deepseek-ai/dsh-sandbox-local';
 import { Agent } from '../../../packages/dsh-flow/src/core/agent.js';
 import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
+import { NativeCallAuthority } from '../../../packages/dsh-flow/src/host/native-bindings.js';
+import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
 
-async function fixture(t: Parameters<typeof runtime>[0]) {
+async function fixture(t: Parameters<typeof runtime>[0], getConfiguration?: () => NativeBridgeConfiguration) {
   const f = await runtime(t);
   await f.host.plugin(AgentDefaultModel, { provider: 'fixture', model: 'model', reasoningEffort: 'medium' });
   const catalog = new PatternCatalog({ includeBuiltins: false });
-  const bridge = new DshNativeBridge(f.host, { stateDirectory: join(f.directory, 'bridge'), catalog });
+  const bridge = new DshNativeBridge(f.host, { stateDirectory: join(f.directory, 'bridge'), catalog, ...(getConfiguration ? { getConfiguration } : {}) });
   const service = new RunService({ store: new RunStore(join(f.directory, 'runs')), patternCatalog: catalog, patternRoleProvisioner: bridge,
     getOriginDefaults: origin => bridge.getOriginDefaults(origin), initialize: (...args) => bridge.initialize(...args),
     validateMaterials: request => bridge.validateMaterials(request) });
@@ -291,5 +293,104 @@ test('real native archive tools hide another ordinary session history and reject
   assert.equal(ownResult.data.message.isError, false);
   const history = JSON.parse(ownResult.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''));
   assert.equal(history.kind, 'found'); assert.deepEqual(history.assignment.result, { secret });
+  await f.bridge.dispose();
+});
+
+test('malformed raw native calls fall through SDK validation without attesting an older valid event with the same callId', async t => {
+  const f = await fixture(t), main = await f.ordinary('malformed-native-main'); f.bridge.attachRunService(f.service);
+  class RawArgumentModel extends LlmAdapter {
+    calls = 0;
+    override async resolveModel(provider: string, model: string) { return { provider, id: model, name: 'Raw native fixture', reasoning: { efforts: [{ id: ReasoningEffortId('medium'), name: 'Medium' }] } }; }
+    override async *stream(_options: GenerateOptions): AsyncIterable<StreamChunk> {
+      const index = this.calls++;
+      if (index < 2) {
+        const block = { type: 'tool-call' as const, id: ToolCallId('reused-native-call'), name: 'flow_team_create', arguments: index === 0 ? '{"requestId":"valid-before-malformed"}' : '{' };
+        yield { type: 'block-start', index: 0, blockType: block.type };
+        yield { type: 'tool-call-delta', index: 0, id: block.id, name: block.name, argumentsDelta: block.arguments };
+        yield { type: 'block-end', index: 0, block };
+        yield { type: 'finish', reason: { kind: 'tool-calls' } };
+      } else {
+        yield { type: 'block-start', index: 0, blockType: 'text' };
+        yield { type: 'text-delta', index: 0, text: 'DONE' };
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: 'DONE' } };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      }
+    }
+  }
+  const raw = new RawArgumentModel(); f.host.llm.registerAdapter(['raw-native-fixture'], raw);
+  main.ctx.on('agent/request', async () => ({ provider: 'raw-native-fixture', model: 'model' }));
+  const authority = new NativeCallAuthority(f.host, main);
+  let malformedReachedNext = false, staleDenied = false;
+  main.ctx.on('tools/pre-execute', async (execution, next) => {
+    if (execution.agent === main && execution.arguments === '{') {
+      malformedReachedNext = true;
+      assert.throws(() => authority.assert(execution), /admitted native tool execution/);
+      const stale = await f.host.tools.execute({ agent: main, callId: execution.callId, name: execution.name,
+        arguments: { requestId: 'valid-before-malformed' }, signal: execution.signal });
+      staleDenied = stale.isError;
+    }
+    return next();
+  });
+  main.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'exercise malformed native arguments' }] }));
+  await main.whenIdle();
+  assert.equal(malformedReachedNext, true, JSON.stringify({ calls: raw.calls, events: main.session.snapshotEvents().filter(event => event.type === 'turn/end' || event.type === 'tool/call' || event.type === 'tool/result') }));
+  assert.equal(staleDenied, true); assert.equal(raw.calls, 3);
+  const events = main.session.snapshotEvents(), results = events.filter(event => event.type === 'tool/result');
+  assert.equal(results.length, 2);
+  assert.equal(results[1]?.type === 'tool/result' ? results[1].data.message.isError : false, true);
+  assert.match(JSON.stringify(results[1]), /object/i); assert.doesNotMatch(JSON.stringify(results[1]), /JSON at position|property name/i);
+  assert.ok(events.some(event => event.type === 'turn/end' && event.data.reason.kind === 'completed'));
+  assert.equal(f.service.list(f.bridge.createOrigin(main)).length, 1);
+  authority.dispose(); await f.bridge.dispose();
+});
+
+test('real main tools bound root permissions by native grants and explicit trusted configuration without turning lower defaults into a ceiling', async t => {
+  let configuration: NativeBridgeConfiguration = {};
+  const f = await fixture(t, () => configuration), main = await f.ordinary('permission-matrix-main'); f.bridge.attachRunService(f.service);
+  const permissionOrder = ['read-only', 'workspace-write', 'full-access'] as const;
+  const create = t.mock.method(f.host.agents, 'create'); let request = 0;
+  for (const nativePermission of permissionOrder) for (const configured of [undefined, ...permissionOrder]) for (const requested of permissionOrder) {
+    const label = `${nativePermission}/${configured ?? 'inherited'}/${requested}`;
+    setSandboxMode(main.session, nativePermission === 'full-access' ? 'danger-full-access' : nativePermission);
+    configuration = configured === undefined ? {} : { defaults: { permission: configured } };
+    let called = false; const requestId = `matrix-${request++}`;
+    f.model.script = () => { if (called) return 'DONE'; called = true; return { tool: 'flow_team_create', args: { defaults: { permission: requested }, requestId } }; };
+    const before = create.mock.callCount();
+    main.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: label }] })); await main.whenIdle();
+    const origin = f.bridge.createOrigin(main), listed = f.service.list(origin), run = f.bridge.resolveRun(origin, listed.at(-1)!.id);
+    await runState(run).initialization;
+    const allowed = permissionOrder.indexOf(requested) <= Math.max(permissionOrder.indexOf(nativePermission), configured === undefined ? -1 : permissionOrder.indexOf(configured));
+    assert.equal(run.status, allowed ? 'active' : 'failed', label);
+    assert.equal(create.mock.callCount() - before, allowed ? 1 : 0, label);
+    if (allowed) {
+      assert.equal(run.root!.getProfile().permission, requested, label);
+      assert.equal(f.host.sandboxPolicy.resolve({ session: f.native(run.root!).session }).mode, requested === 'full-access' ? 'danger-full-access' : requested, label);
+    } else assert.match(f.service.read(origin, run).error!, /permission/i, label);
+    await f.service.release(origin, run);
+  }
+  await f.bridge.dispose();
+});
+
+test('permission authority is frozen in the issued origin across initialization and idempotent replay', async t => {
+  let configuration: NativeBridgeConfiguration = {};
+  const f = await fixture(t, () => configuration), main = await f.ordinary('permission-snapshot-main'); f.bridge.attachRunService(f.service);
+  const create = t.mock.method(f.host.agents, 'create');
+  setSandboxMode(main.session, 'read-only');
+  const lowOrigin = f.bridge.createOrigin(main), denied = f.service.create(lowOrigin, { permission: 'full-access' }, 'original-low');
+  const before = create.mock.callCount();
+  setSandboxMode(main.session, 'danger-full-access'); configuration = { defaults: { permission: 'full-access' } };
+  await runState(denied).initialization; assert.equal(denied.status, 'failed'); assert.equal(create.mock.callCount(), before);
+  assert.equal(f.service.create(f.bridge.createOrigin(main), { permission: 'full-access' }, 'original-low'), denied);
+  assert.equal(create.mock.callCount(), before);
+  configuration = { defaults: { permission: 'read-only' } };
+  const grantedOrigin = f.bridge.createOrigin(main);
+  assert.equal(f.bridge.getOriginDefaults(grantedOrigin).permission, 'read-only');
+  setSandboxMode(main.session, 'read-only'); configuration = {};
+  const granted = f.service.create(grantedOrigin, { permission: 'full-access' }, 'native-full-at-issue');
+  await runState(granted).initialization; assert.equal(granted.status, 'active'); assert.equal(granted.root!.getProfile().permission, 'full-access');
+  configuration = { defaults: { permission: 'full-access' } }; const trustedOrigin = f.bridge.createOrigin(main);
+  configuration = {};
+  const trusted = f.service.create(trustedOrigin, { permission: 'full-access' }, 'trusted-full-at-issue');
+  await runState(trusted).initialization; assert.equal(trusted.status, 'active'); assert.equal(trusted.root!.getProfile().permission, 'full-access');
   await f.bridge.dispose();
 });

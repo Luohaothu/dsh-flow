@@ -25,7 +25,10 @@ export class NativeCallAuthority {
         else if (event?.type === 'tool/call') {
           const events = native.session.snapshotEvents();
           const ended = events.some(item => item.seq > event.seq && item.type === 'turn/end' && item.data.turn === event.data.turn);
-          if (!ended && digestJson(JSON.parse(event.data.arguments)) === digestJson(execution.arguments)) {
+          let matches = false;
+          try { matches = digestJson(event.data.arguments ? JSON.parse(event.data.arguments) : {}) === digestJson(execution.arguments); }
+          catch { }
+          if (!ended && matches) {
             this.calls.set(execution.token, { sequence: event.seq, turn: event.data.turn });
           }
         }

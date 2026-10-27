@@ -1,8 +1,8 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
 import type { Agent as NativeAgent, AgentHandle, InboxTarget } from '@deepseek-ai/dsh-agent';
-import { BlockAssembler, createUserMessage, freezeMessage, lastAssistantStreamChunk,
+import { BlockAssembler, createUserMessage, lastAssistantStreamChunk,
   type LlmCallConfig, type RequestMessage, type TokenUsage, type UserMessage } from '@deepseek-ai/dsh-llm';
-import { SessionId, SessionLogOffset, buildForkSeed, snapshotSessionEvent, type SessionEvent } from '@deepseek-ai/dsh-session';
+import { SessionId, SessionLogOffset, SessionSeq, buildForkSeed, snapshotSessionEvent, type SessionEvent } from '@deepseek-ai/dsh-session';
 import '@deepseek-ai/dsh-session-persistence';
 import '@deepseek-ai/dsh-system-prompt';
 import '@deepseek-ai/dsh-compaction';
@@ -454,7 +454,8 @@ export class DshHostAdaptor implements HostAdaptor {
       const entry = dataRecord(item, 'pending input'); dataKeys(entry, ['target', 'message'], 'pending input');
       if (entry.target !== 'next-step' && entry.target !== 'next-turn') throw new Error('Invalid pending input target');
       assertPendingMessage(entry.message);
-      return { target: entry.target, message: freezeMessage(entry.message) };
+      const event = snapshotSessionEvent({ type: 'user/message', seq: SessionSeq(0), time: 0, surfaceOp: 'append', data: entry.message });
+      return { target: entry.target, message: event.data };
     });
     return { format: 'dsh-flow-agent', version: 2, profile, config: decodeModelConfiguration(input.config),
       workspaceRoot: input.workspaceRoot, recipe: decodeNativeRecipe(input.recipe), pending };
