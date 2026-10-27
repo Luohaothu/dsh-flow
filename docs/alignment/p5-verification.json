@@ -54,11 +54,11 @@
   "checks": [
     {
       "command": "pnpm test",
-      "tests": 634,
-      "pass": 634,
+      "tests": 639,
+      "pass": 639,
       "failed": 0,
       "skipped": 0,
-      "netAdditionalTests": 81
+      "netAdditionalTests": 86
     },
     {
       "command": "pnpm typecheck",
@@ -102,12 +102,23 @@
     "Starting Run release waits for actual native initializer; no promise of forcibly aborting an uncooperative factory."
   ],
   "review": {
-    "status": "pending-final-recheck",
+    "status": "pending-exact-commit-release-fix-review",
     "model": "gpt-6-astra",
     "functionalVerdict": "PASS"
   },
-  "recordedAt": "2026-10-27T21:13:00.855306+00:00",
+  "recordedAt": "2026-10-27T21:33:45.998038+00:00",
   "testRepair": "An initial full run exposed an abandoned-resource test teardown race (633/634 passed). The test now waits for actual Native handle disposal after the late persistence writer rather than sleeping. Production success/failure semantics were preserved; corrected final full run 634/634.",
   "initialFindingsStatus": "All five initial independent findings have direct successful regression evidence; final exact-commit source-hash lock pending.",
-  "sourceOwnershipBoundary": "Projector must attach before any committed Context observations; composition observes Run creation before initialization. No duplicate unbounded raw Core event history."
+  "sourceOwnershipBoundary": "Projector must attach before any committed Context observations; composition observes Run creation before initialization. No duplicate unbounded raw Core event history.",
+  "postPrFixes": [
+    {
+      "finding": "Initialization failure during or before release was overwritten by stopped and a new end time.",
+      "change": "Publish failure before cleanup and preserve failed/error/original endedAt across release; resource cleanup and operation result remain separate.",
+      "evidence": "Five new Run/user-stop race contracts failed on the previous implementation and pass after the fix; final full639/types/selfbuilt package green; independent incremental11/11 pass.",
+      "sourceScope": [
+        "src/run/run.ts"
+      ],
+      "compatibility": "No compatibility branch or design change."
+    }
+  ]
 }
