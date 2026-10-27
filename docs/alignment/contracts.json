@@ -1,0 +1,1920 @@
+{
+  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "contracts": [
+    {
+      "id": "C001",
+      "module": "对象边界",
+      "section": "总体定位",
+      "phase": "P1",
+      "requirement": "同环境接口使用对象引用，列表仅复制容器；隔离数据由所属模块快照，生命周期显式释放。",
+      "scenarios": [
+        {
+          "id": "C001-01",
+          "expectation": "向接口传入对象及数组后修改原数组，不改变被保存的成员集合；查询列表的元素仍为同一对象。",
+          "level": "contract"
+        },
+        {
+          "id": "C001-02",
+          "expectation": "对象释放完成后，新执行与变更请求均失败；外部序列化使用业务 ID，不递归展开实体对象。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C002",
+      "module": "AgentProfile",
+      "section": "身份信息",
+      "phase": "P1",
+      "requirement": "Profile 在创建时形成独立只读快照，全生命周期共享同一记录；模型、版本化推理参数及宿主附加配置在创建前校验。",
+      "scenarios": [
+        {
+          "id": "C002-01",
+          "expectation": "修改创建入参的嵌套配置不改变 Profile；反复 getProfile 返回同一只读记录，保留 role、sessionID、permission、name、model、params 和可选 hostExtras。",
+          "level": "contract"
+        },
+        {
+          "id": "C002-02",
+          "expectation": "temperature、reasoningEffort、maxTokens 的值或组合无法落实，以及未知推理或 hostExtras 字段，使创建在原生实例发布前失败。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C003",
+      "module": "Agent 执行",
+      "section": "执行模型",
+      "phase": "P1",
+      "requirement": "send 完成仅代表宿主接管；followup、steer、notice 分别按轮次、步骤和不唤醒语义处理。",
+      "scenarios": [
+        {
+          "id": "C003-01",
+          "expectation": "默认 followup 唤醒空闲实例并在下一轮处理；steer 唤醒空闲实例或在下一可接收步骤处理；notice 等后续步骤且不主动启动轮次。",
+          "level": "contract"
+        },
+        {
+          "id": "C003-02",
+          "expectation": "宿主接管输入后 send 即可完成，模型尚未完成首轮也不阻塞调用；turn-end 才确认轮次结束。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C004",
+      "module": "Agent 状态",
+      "section": "运行状态",
+      "phase": "P1",
+      "requirement": "Flow 独立维护 running、waiting、idle、terminated，原生空闲不覆盖主动等待。",
+      "scenarios": [
+        {
+          "id": "C004-01",
+          "expectation": "无进一步工作且无未完成等待时为 idle；有尚未完成等待时即使原生 idle，也保持 waiting。",
+          "level": "contract"
+        },
+        {
+          "id": "C004-02",
+          "expectation": "terminated 不再接收新业务请求或被消息唤醒；后端实例仍在线不改变逻辑终止事实。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C005",
+      "module": "Agent 工厂",
+      "section": "生命周期模型",
+      "phase": "P1",
+      "requirement": "create、resume、fork、herb 共用初始化与原子发布；失败完成本次回滚和绑定清理后才拒绝。",
+      "scenarios": [
+        {
+          "id": "C005-01",
+          "expectation": "适配器注册工具时可取得本次唯一 Agent 的 Mailbox；工具回调不提前调用依赖 HostAgent 的 getProfile。成功返回时工具、监听、父子关系及 Context 登记全部就绪。",
+          "level": "contract"
+        },
+        {
+          "id": "C005-02",
+          "expectation": "初始化、订阅或发布期间父级终止时，不发布可执行半成品；本次登记、父子关联、Mailbox 和监听撤销，已建立 Flow 绑定清理完成后工厂拒绝。",
+          "level": "contract"
+        },
+        {
+          "id": "C005-03",
+          "expectation": "herb 发布同时检查两方来源仍可用；适配器初始化未返回即失败时自行清理工具及关联资源。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C006",
+      "module": "Agent 创建",
+      "section": "生命周期模型",
+      "phase": "P1",
+      "requirement": "创建先初始化并登记，再接管可选 initmsg；历史导入与初始输入分别处理。",
+      "scenarios": [
+        {
+          "id": "C006-01",
+          "expectation": "省略 initmsg 创建根或成员，返回已登记 idle 实例，send 次数为 0 且不启动模型轮次。",
+          "level": "contract"
+        },
+        {
+          "id": "C006-02",
+          "expectation": "提供 initmsg 时，输入只在原子发布后交给宿主，宿主接管后返回且不等待模型完成；提供 history 可导入快照。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C007",
+      "module": "Agent 冷恢复",
+      "section": "生命周期模型",
+      "phase": "P1",
+      "requirement": "resume 新建实例并按持久 Profile 恢复，通信对象与父子关系按本次环境重建。",
+      "scenarios": [
+        {
+          "id": "C007-01",
+          "expectation": "恢复保留 SessionID、对话及完整配置，不采用当前默认值；逻辑父级只来自本次 parent，新 Mailbox 无消息、已读、过滤、来源评级、通知进度或等待。",
+          "level": "contract"
+        },
+        {
+          "id": "C007-02",
+          "expectation": "不恢复旧子节点或群资格；旧 MessageID 查询为 null，历史来源不重新绑定，通信目标不存在时报错且不隐式恢复对方。",
+          "level": "contract"
+        },
+        {
+          "id": "C007-03",
+          "expectation": "首次可执行前移除尚未消费的旧 Flow 通知，保留用户和任务输入；准备带 Flow 标记的恢复说明，下一请求包含重建与旧编号无效提示，说明本身不启动轮次。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C008",
+      "module": "Agent transfer",
+      "section": "接口定义",
+      "phase": "P1",
+      "requirement": "transfer 只原子改变逻辑父子关系并遵守同 Context、可用性与无环条件。",
+      "scenarios": [
+        {
+          "id": "C008-01",
+          "expectation": "转移直接子节点后，child 的 parent 与两侧子列表一致；HostAgent、Profile、会话、Mailbox、权限、绑定和当前执行保持原对象，后续递归控制沿新树。",
+          "level": "contract"
+        },
+        {
+          "id": "C008-02",
+          "expectation": "目标不是直接子节点、跨 Context、任一方终止或释放、adopt 为 child 或其后代时失败且树不变；adopt 已是当前父级时无操作。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C009",
+      "module": "Agent 逻辑终止",
+      "section": "生命周期模型",
+      "phase": "P1",
+      "requirement": "终止先立即改变逻辑状态、撤销等待并退群，再处理自身和后代资源；保留轮次资格与清理分开。",
+      "scenarios": [
+        {
+          "id": "C009-01",
+          "expectation": "running、waiting、idle 收到终止均立即变 terminated；等待计时撤销，全部群关联解除，不再生成新通知。",
+          "level": "contract"
+        },
+        {
+          "id": "C009-02",
+          "expectation": "after-turn 拒绝新执行步骤但保留关闭前轮次需要的 Mailbox、工具和业务资格至轮次结束，资格不依赖 Context.has；immediate 立即撤销资格并取消执行。",
+          "level": "contract"
+        },
+        {
+          "id": "C009-03",
+          "expectation": "轮次自然结束、SIGKILL、升级或进入资源清理时撤销业务资格；终止后的 turn-end 只推进收尾，历史逻辑对象仍可用于展示。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C010",
+      "module": "Agent 关闭协调",
+      "section": "生命周期模型",
+      "phase": "P1",
+      "requirement": "关闭按 HostAgent 身份共享完成 Promise，合并模式、原子进入清理并按统一时限升级。",
+      "scenarios": [
+        {
+          "id": "C010-01",
+          "expectation": "重复 after-turn 等待原操作，默认 120 秒未进入清理则升级 immediate；immediate 默认清理时限 10 秒，两时限可配置。",
+          "level": "contract"
+        },
+        {
+          "id": "C010-02",
+          "expectation": "SIGKILL 与自然轮次结束并发仅启动一次清理；等待中的 immediate 撤销资格并立即结束自然收尾等待，已清理或完成后的调用复用原 Promise 与结果。",
+          "level": "contract"
+        },
+        {
+          "id": "C010-03",
+          "expectation": "持久化错误记录在关闭结果且清理继续；immediate 超时记录 abandoned 与原因，Promise 失败，依赖该释放的后续操作不继续。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C011",
+      "module": "Agent 权限",
+      "section": "执行权限模型",
+      "phase": "P1",
+      "requirement": "初始权限按 read-only < workspace-write < full-access 比较，创建、派生、恢复不得超过逻辑父级，权限与工作区边界独立安装。",
+      "scenarios": [
+        {
+          "id": "C011-01",
+          "expectation": "create 采用 p.permission，fork/herb 继承母版初始权限；权限高于逻辑父级时创建失败，等于或较低时由适配器安装。",
+          "level": "contract"
+        },
+        {
+          "id": "C011-02",
+          "expectation": "resume 重装持久初始权限及工作区边界，权限缺失、无法安装或高于新父级时失败；更改初始权限须创建新会话。",
+          "level": "contract"
+        },
+        {
+          "id": "C011-03",
+          "expectation": "运行中尽力关闭权限修改及升权入口；Profile.permission 保持初始记录，Flow 不额外检测或否决宿主权限变化；操作受限由 Agent 报告。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C012",
+      "module": "Agent fork",
+      "section": "上下文派生模型",
+      "phase": "P1",
+      "requirement": "fork 复制母版配置及显式对话快照，使用新 SessionID，母版为逻辑父级。",
+      "scenarios": [
+        {
+          "id": "C012-01",
+          "expectation": "fork 导出调用时快照并以 history 创建子节点，role/name/permission/model/params/hostExtras 相同而 SessionID 新分配；原会话和执行保持不变。",
+          "level": "contract"
+        },
+        {
+          "id": "C012-02",
+          "expectation": "导入快照有适配器格式版本与来源校验，新会话身份以创建参数为准，不复制执行栈或未完成工具调用；子节点用量只计导入后的调用。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C013",
+      "module": "Agent herb",
+      "section": "上下文派生模型",
+      "phase": "P1",
+      "requirement": "herb 各自总结两方快照，再以母版模型执行一次合并，仅以标准文字初始输入创建子节点。",
+      "scenarios": [
+        {
+          "id": "C013-01",
+          "expectation": "a.herb(b) 分别用 a、b 的模型总结捕获时上下文，无须等待原轮次或工具；合并输入只有合并指令与两份总结，使用 a 的模型。",
+          "level": "contract"
+        },
+        {
+          "id": "C013-02",
+          "expectation": "两份总结和合并为 Flow 上下文总结 v1，包含实际身份与六个规定章节，无内容填无、未知填未知；合并保留双方来源、约束和无法消解的分歧。",
+          "level": "contract"
+        },
+        {
+          "id": "C013-03",
+          "expectation": "子节点以 a 为父级和配置母版，用 System payload 携带合并文字，不传 history；辅助调用不执行工具、不用 send 写回原会话。",
+          "level": "contract"
+        },
+        {
+          "id": "C013-04",
+          "expectation": "空、截断或格式不符的输出使调用失败；不增加 LLM 修订调用；原会话历史不改变。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C014",
+      "module": "herb 用量",
+      "section": "上下文派生模型",
+      "phase": "P1",
+      "requirement": "辅助调用先缓冲用量，成功归子节点，任何步骤失败归母版，并按实际模型计价。",
+      "scenarios": [
+        {
+          "id": "C014-01",
+          "expectation": "子节点发布后立即计入双方总结和合并的实际用量，事件在实例出现之后；按每次实际执行模型计价。",
+          "level": "contract"
+        },
+        {
+          "id": "C014-02",
+          "expectation": "总结、合并或创建子节点失败，所有已收集用量含失败辅助调用宿主回报用量归 a；宿主未声明 usage 时返回空用量。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C015",
+      "module": "Agent wait 登记",
+      "section": "主动等待模型",
+      "phase": "P1",
+      "requirement": "等待使用结构化条件转换的只读回调，检查现有未读匹配和登记原子完成。",
+      "scenarios": [
+        {
+          "id": "C015-01",
+          "expectation": "已有匹配未读点对点或 AgentInGroup 消息时返回 matched 元信息，不标记正文已读，完成该消息未提交通知并保持轮次。",
+          "level": "contract"
+        },
+        {
+          "id": "C015-02",
+          "expectation": "没有匹配时返回 registered，等待工具立即成功结束当前轮次；检查与登记之间到达的合格消息不会遗漏。",
+          "level": "contract"
+        },
+        {
+          "id": "C015-03",
+          "expectation": "timeout 必须是有限正毫秒数；重复登记、已终止或释放中的实例失败且不覆盖原等待，不执行模型提供的程序。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C016",
+      "module": "Agent wait 完成",
+      "section": "主动等待模型",
+      "phase": "P1",
+      "requirement": "匹配、超时、终止只结清一次等待，期限按 Flow 接收处理计，旧计时器不能影响新等待。",
+      "scenarios": [
+        {
+          "id": "C016-01",
+          "expectation": "期限内匹配解除等待并取消计时；到期未匹配解除等待，发 high System steer 通知，说明目标、发起时间与超时时长，不自动重试。",
+          "level": "contract"
+        },
+        {
+          "id": "C016-02",
+          "expectation": "消息匹配、终止和超时并发只有一次完成；旧计时回调到达不结束之后新建的等待。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C017",
+      "module": "Agent wait 临时执行",
+      "section": "主动等待模型",
+      "phase": "P1",
+      "requirement": "等待期间普通输入暂缓，high 可临时唤醒而不清除等待，完成提示优先于暂缓输入。",
+      "scenarios": [
+        {
+          "id": "C017-01",
+          "expectation": "normal/low 仍按规则入箱但不处理；无关 high 使实例 running，hasPendingWait 仍 true 且截止时间不变，轮次结束未完成等待则回 waiting。",
+          "level": "contract"
+        },
+        {
+          "id": "C017-02",
+          "expectation": "即将进入模型时依可信发送元信息放行 Flow high 或等待完成提示；普通输入和伪造 System/high 不能绕过准入。",
+          "level": "contract"
+        },
+        {
+          "id": "C017-03",
+          "expectation": "匹配或超时先由宿主接管完成提示再恢复暂缓输入；释放删除其中 Flow 通知，用户与任务输入保留供冷恢复。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C018",
+      "module": "通信来源评级",
+      "section": "通信模型",
+      "phase": "P1",
+      "requirement": "首次接受的未评级来源按 normal 处理，首次实际通知提示接收者评级，提示进度和已读分别记录。",
+      "scenarios": [
+        {
+          "id": "C018-01",
+          "expectation": "未评级来源消息以 normal 入箱，第一次实际发出通知提示 setSourcePriority 及后续可随时调整，同批同来源只提示一次。",
+          "level": "contract"
+        },
+        {
+          "id": "C018-02",
+          "expectation": "只有宿主接管提示后才完成首次提示记录；未评级仍按 normal，工具读取正文才更新已读，不因已通知标已读。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C019",
+      "module": "通信通知批次",
+      "section": "通信模型",
+      "phase": "P1",
+      "requirement": "按本地优先级调度通知，批次固定范围且最多提交一次；失败保留待通知状态。",
+      "scenarios": [
+        {
+          "id": "C019-01",
+          "expectation": "high 立即 steer，normal 在无等待时于空闲立即或 turn-end 收尾后异步 followup；low 同批只显示数量，只有 low 也形成批次。",
+          "level": "contract"
+        },
+        {
+          "id": "C019-02",
+          "expectation": "high/normal 条目为 [消息ID] 来源：摘要，low 为不重要消息：N 条；通知为单独 System payload，purpose=notification，级别按通知规则，不带原 payload。",
+          "level": "contract"
+        },
+        {
+          "id": "C019-03",
+          "expectation": "提交中新增消息属于后续批次，宿主接管仅推进本批进度；发送失败仍待通知，无消息不生成空批或额外轮次。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C020",
+      "module": "通信等待合并",
+      "section": "通信模型",
+      "phase": "P1",
+      "requirement": "成功入箱先完成等待匹配，完成提示合并暂缓普通通知且不受后续新等待阻挡。",
+      "scenarios": [
+        {
+          "id": "C020-01",
+          "expectation": "normal/low 匹配消息也及时解除等待；high 匹配用 steer，其余匹配 followup，提示含匹配 ID、来源与摘要并结清该消息尚未提交通知。",
+          "level": "contract"
+        },
+        {
+          "id": "C020-02",
+          "expectation": "等待期间暂缓普通通知按原评级并在匹配消息之后合并到同一完成提示；随后新登记等待不阻挡已形成的完成提示和并入通知。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C021",
+      "module": "Signal",
+      "section": "信号",
+      "phase": "P1",
+      "requirement": "SIGTERM/SIGKILL 最高优先级立即向全部当前逻辑后代传播并合并收尾方式。",
+      "scenarios": [
+        {
+          "id": "C021-01",
+          "expectation": "两信号分别映射 after-turn/immediate，不等待本节点收尾即递归传播；kill 只允许直接子节点，先 TERM 后超时 KILL。",
+          "level": "contract"
+        },
+        {
+          "id": "C021-02",
+          "expectation": "释放期间仍保留待收尾子节点引用，后续 KILL 继续传播；重复终止共享关闭结果，终止请求不能被普通消息过滤阻挡。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C022",
+      "module": "Group 生命周期",
+      "section": "群聊",
+      "phase": "P1",
+      "requirement": "群在创建时固定成员和稳定唯一 ID，终止退群不自动解散，解散解除关联并释放黑板。",
+      "scenarios": [
+        {
+          "id": "C022-01",
+          "expectation": "构造仅接受同 Context 中已初始化且未终止或释放的成员，建立双方关联；ID 唯一不复用，查询成员容器不泄露可改数组。",
+          "level": "contract"
+        },
+        {
+          "id": "C022-02",
+          "expectation": "Agent 终止立即退所有群，不终止其他成员或解散群；Context 解散群解除剩余关联、释放黑板，重复解除无额外操作。",
+          "level": "contract"
+        },
+        {
+          "id": "C022-03",
+          "expectation": "已解散群拒绝消息和全部黑板操作且不可恢复；成员 Mailbox 中已收到群消息和历史 GroupID 仍可读取识别。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C023",
+      "module": "Group 投递与黑板",
+      "section": "群聊",
+      "phase": "P1",
+      "requirement": "群消息同步按成员快照投递其他成员，黑板独立追加快照且严格递增时间戳。",
+      "scenarios": [
+        {
+          "id": "C023-01",
+          "expectation": "postMessage 采用 {agent: source,g: 当前群}，同次同步操作向除发送方外的调用时成员逐一 recvMessage；非成员或解散后发送失败，群自身不保存消息历史。",
+          "level": "contract"
+        },
+        {
+          "id": "C023-02",
+          "expectation": "postToBlackboard 同一时间至多一个子代理追加，由 Group 分配同板严格递增 timestamp，不投 Mailbox；非成员追加失败。",
+          "level": "contract"
+        },
+        {
+          "id": "C023-03",
+          "expectation": "readBlackboard 返回隔离快照，t 仅返回大于 t 的记录，hasNewMsgOnboard 与之对应；黑板忽略消息读取状态。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C024",
+      "module": "Message",
+      "section": "消息",
+      "phase": "P1",
+      "requirement": "消息快照隔离来源描述和可变 payload，接收方独立维护优先级与读取状态。",
+      "scenarios": [
+        {
+          "id": "C024-01",
+          "expectation": "同一消息进入两个 Mailbox，各自 read/read_timestamp/priority 独立，入箱和读取均复制字段与 AgentInGroup 容器，容器内实体仍为原对象，可变 payload 不串改。",
+          "level": "contract"
+        },
+        {
+          "id": "C024-02",
+          "expectation": "summary 不超过 50 字符，来源序列化为 SessionID、GroupID 与展示快照，历史脱离活跃对象仍可呈现，不递归序列化对象。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C025",
+      "module": "Mailbox 读取",
+      "section": "收件箱",
+      "phase": "P1",
+      "requirement": "Mailbox 按时间及同时间接收序排序，元信息读取不改已读，正文读取原子标记首次时间。",
+      "scenarios": [
+        {
+          "id": "C025-01",
+          "expectation": "put 不改调用方，保存时 read=false/read_timestamp=null；timestamp 升序且同时间按入箱顺序，priority 不改变排序。",
+          "level": "contract"
+        },
+        {
+          "id": "C025-02",
+          "expectation": "peak 返回无 payload 元信息，count 和 query 默认 peak 不改 read；get 原子选择、首次标读并返回快照，再读保持首次时间，不存在返回 null。",
+          "level": "contract"
+        },
+        {
+          "id": "C025-03",
+          "expectation": "getLastUnread 返回排序最后的未读消息并同 get 标读，没有未读返回 null。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C026",
+      "module": "Mailbox 迭代与规则",
+      "section": "收件箱",
+      "phase": "P1",
+      "requirement": "迭代只标记实际产出消息，过滤和来源评级只作用于未来，可信 System 编排指令固定 normal。",
+      "scenarios": [
+        {
+          "id": "C026-01",
+          "expectation": "getUnread 固定创建时范围，逐条升序产出并标读，创建迭代器不标读，跳过其他读取已标读项，不含后来消息；query get 对选中集合原子标读。",
+          "level": "contract"
+        },
+        {
+          "id": "C026-02",
+          "expectation": "setFilters 整体替换并复制容器，命中任一规则丢弃返回 null；只读过滤/查询回调不能改消息嵌套数据。",
+          "level": "contract"
+        },
+        {
+          "id": "C026-03",
+          "expectation": "来源以 Agent 对象、Agent+Group 组合或 User/System 类别识别；调整评级只影响后入箱消息，不改旧评级或重发通知；可信 System 作业/开场不受过滤评级且固定 normal。",
+          "level": "contract"
+        },
+        {
+          "id": "C026-04",
+          "expectation": "新 Mailbox 各规则为空，析构后不再收件；同 SessionID 冷恢复的新 MessageID 不复用旧编号。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C027",
+      "module": "Context 注册与查询",
+      "section": "上下文",
+      "phase": "P1",
+      "requirement": "Context 以对象身份和业务 ID 原子登记管理对象，借用宿主上下文且仅绑定一个适配器。",
+      "scenarios": [
+        {
+          "id": "C027-01",
+          "expectation": "空 Context 尚无适配器，创建/恢复前须注册；同适配器重注册无操作，另一适配器报错；未注册或已关闭时 getHostAdaptor 失败。",
+          "level": "contract"
+        },
+        {
+          "id": "C027-02",
+          "expectation": "register 同对象幂等，跨 Context 对象和重复 SessionID/GroupID 失败；登记与索引原子，Agent/Mailbox 仅由工厂登记。",
+          "level": "contract"
+        },
+        {
+          "id": "C027-03",
+          "expectation": "has/list/getAgent/getGroup 排除释放中的对象；list 可只读筛选并复制容器，getHostContext 返回借用的不透明宿主引用。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C028",
+      "module": "Context 关闭与观察",
+      "section": "上下文",
+      "phase": "P1",
+      "requirement": "Context 负责终止同步观察与全部对象关闭，重复释放复用一次操作，清理顺序和失败如实报告。",
+      "scenarios": [
+        {
+          "id": "C028-01",
+          "expectation": "onAgentTerminated 在逻辑终止后同步且仅一次，不等宿主收尾、不回放，异常不撤销终止；返回取消订阅函数，订阅者再核对已知状态。",
+          "level": "contract"
+        },
+        {
+          "id": "C028-02",
+          "expectation": "release 非本 Context 对象失败，同对象重复释放等待原操作，完成后移除登记；关闭后拒绝注册和创建。",
+          "level": "contract"
+        },
+        {
+          "id": "C028-03",
+          "expectation": "dispose 先解散群，再释放 Agent/Mailbox，全部成员并行按相同时限收尾升级，最后 dispose 适配器；重复 dispose 等原操作，不销毁借用 HostContext。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C029",
+      "module": "HostAdaptor 通用边界",
+      "section": "宿主适配器",
+      "phase": "P1",
+      "requirement": "适配器校验 HostAgent 身份与生命周期，工具注入真实调用者，公开能力、持久化与事件完成语义一致。",
+      "scenarios": [
+        {
+          "id": "C029-01",
+          "expectation": "跨适配器或已释放 HostAgent 的执行及状态查询失败；HostAgent 由适配器返回，原生句柄封装内部；未声明 usage/uiPanel 即不支持。",
+          "level": "contract"
+        },
+        {
+          "id": "C029-02",
+          "expectation": "工具注册、执行及清理由适配器负责；调用者来自宿主上下文，与已绑定实例核对，初始化未登记、immediate 或释放后拒绝；序列化 ID 只在当前 Context/自身 Mailbox 解析，条件转成只读回调。",
+          "level": "contract"
+        },
+        {
+          "id": "C029-03",
+          "expectation": "whenIdle 在新输入继续触发执行时继续等待；persist 成功表示调用时已记录事件、身份、配置、权限及边界已落盘且不停止执行，不支持持久化时报错。",
+          "level": "contract"
+        },
+        {
+          "id": "C029-04",
+          "expectation": "subscribe 不重放历史，按原生顺序交付同一 HostAgent 的 status/output/turn-end/error，监听异常不改执行结果，释放自动退订，日志边界用 SessionID 替代引用。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C030",
+      "module": "DSH 实例与工具",
+      "section": "实例创建与工具绑定",
+      "phase": "P1",
+      "requirement": "DSH 从稳定宿主 Context 独立创建实例并在 setup 绑定工具，Flow 父子树不登记为 DSH parentAgent。",
+      "scenarios": [
+        {
+          "id": "C030-01",
+          "expectation": "创建、恢复、fork/herb 的原生作用域独立于逻辑父级，转移或关闭旧父级不提前销毁孩子资源；parentSession 仅为来源。",
+          "level": "integration"
+        },
+        {
+          "id": "C030-02",
+          "expectation": "setup 中向本次 Flow Agent/Mailbox 安装工具与角色协作规则，HostAgent 返回前配置、权限和工具就绪；已有 SessionID 创建失败，已有活跃实例不能再 resume。",
+          "level": "integration"
+        },
+        {
+          "id": "C030-03",
+          "expectation": "树内只获得直属成员管理工具，整个团队释放只绑定会话入口和用户操作。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C031",
+      "module": "DSH 模型与权限",
+      "section": "模型与权限配置",
+      "phase": "P1",
+      "requirement": "DSH 显式安装完整模型配置和推理强度，映射文件沙箱及 never 审批，并局部 guard 权限管理工具。",
+      "scenarios": [
+        {
+          "id": "C031-01",
+          "expectation": "create/resume/fork 均传完整 Profile 和 reasoningEffort，未知 seed/top_p 等参数创建前失败；full-access 映射 danger-full-access。",
+          "level": "integration"
+        },
+        {
+          "id": "C031-02",
+          "expectation": "创建及恢复 setup 同时写所选 sandbox 与 never，拒绝需原生审批请求；fork seed 中权限事件被显式覆盖。",
+          "level": "integration"
+        },
+        {
+          "id": "C031-03",
+          "expectation": "Agent 作用域尽力拒绝 /permission，并用 tools.guard 拒绝可写权限的管理工具；不加入运行时权限一致性检测。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C032",
+      "module": "DSH 输入与等待",
+      "section": "输入与主动等待",
+      "phase": "P1",
+      "requirement": "DSH 将三模式映射 followup/steer/inject，等待工具及时结束轮次并妥善暂存已出队输入。",
+      "scenarios": [
+        {
+          "id": "C032-01",
+          "expectation": "followup/steer/notice 分别走同名原生 followup/steer 和 inject，purpose 与 priority 持久保存于可信 source 元数据。",
+          "level": "integration"
+        },
+        {
+          "id": "C032-02",
+          "expectation": "registered 调 concludeTurn 后立即成功返回，不悬挂工具等待后续消息；matched 不调 concludeTurn。",
+          "level": "integration"
+        },
+        {
+          "id": "C032-03",
+          "expectation": "agent/pre-step 发现等待时保留已从 Inbox 取出的普通输入，临时 high 轮次仍用 hasPendingWait；完成提示先接管，再恢复暂存和排队输入。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C033",
+      "module": "DSH 上下文派生",
+      "section": "上下文派生",
+      "phase": "P1",
+      "requirement": "DSH 辅助总结与合并使用独立模型请求和有效上下文快照，不修改原会话。",
+      "scenarios": [
+        {
+          "id": "C033-01",
+          "expectation": "双方 deriveMessages 快照与各自模型构造独立总结，用 ctx.llm.stream 类路径和 BlockAssembler 收集完整文本与用量；未完成工具整理为文字背景。",
+          "level": "integration"
+        },
+        {
+          "id": "C033-02",
+          "expectation": "辅助调用不调用 compactNow、不运行工具，不把总结或合并写回来源会话；合并只执行一次且模型为母版。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C034",
+      "module": "DSH 事件与用量",
+      "section": "事件与用量",
+      "phase": "P1",
+      "requirement": "轮次结束以已记录 turn/end 为准，结算与辅助用量按实际调用来源映射。",
+      "scenarios": [
+        {
+          "id": "C034-01",
+          "expectation": "turn/end 映射 turn-end，不能用 agent/turn-stopping 触发通知延长原轮次；批量通知发生于原生事件发布及收尾之后。",
+          "level": "integration"
+        },
+        {
+          "id": "C034-02",
+          "expectation": "读取 assistant/message.usage、assistant/attempt、compaction/summary.usage，herb 读 BlockAssembler；每调用结算一条，标实际模型，缓存属于输入分项，缺 totalTokens 时总量不可用。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C035",
+      "module": "DSH 恢复与释放",
+      "section": "会话恢复与资源释放",
+      "phase": "P1",
+      "requirement": "适配器在原生 dispose 前处理收尾、保存非 Flow 待处理输入并持久化，恢复时只替换旧 Flow 通知。",
+      "scenarios": [
+        {
+          "id": "C035-01",
+          "expectation": "适配器先协调 after-turn/immediate，再使用 cancel 与 whenIdle，原生 dispose 复用一次 Promise；dispose 清空 Inbox 前保存用户/任务输入并持久化。",
+          "level": "integration"
+        },
+        {
+          "id": "C035-02",
+          "expectation": "resume 加载持久会话后在未发布 setup 还原非 Flow 输入；按来源标记从 nextTurn/nextStep remove 旧通知并记录取消保留历史，用 inject 准备新恢复说明而不唤醒。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C036",
+      "module": "Run 创建与来源",
+      "section": "接口定义",
+      "phase": "P2",
+      "requirement": "RunService 从可信 HostOrigin 创建独立团队，立即返回 starting 句柄，异步建立空闲根并按来源幂等。",
+      "scenarios": [
+        {
+          "id": "C036-01",
+          "expectation": "create 不接收首份任务，立即返回 runId/starting；根就绪才 active，采用发起会话模型及未覆盖配置，RunDefaults 叠加显式覆盖。",
+          "level": "contract"
+        },
+        {
+          "id": "C036-02",
+          "expectation": "同来源同 requestId 同参数返回原句柄，异参数报错；list/read/assign/cancel/release 校验所属真实会话，不可用模型提供身份冒充。",
+          "level": "contract"
+        },
+        {
+          "id": "C036-03",
+          "expectation": "初始化失败标 failed 并清理本次资源；保存或清理失败如实报告，不能报完成。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C037",
+      "module": "Run 持续运行",
+      "section": "团队运行模型",
+      "phase": "P2",
+      "requirement": "Run 持有 Context、根、群、作业及事件，可持续承接多份任务，作业完成与团队生命周期独立。",
+      "scenarios": [
+        {
+          "id": "C037-01",
+          "expectation": "同一主会话创建多团队，一个 active 团队承接两份并行或先后顶层作业，全部作业结束后仍 active，根、成员与群仍可复用。",
+          "level": "contract"
+        },
+        {
+          "id": "C037-02",
+          "expectation": "顶层 sender 为本 Run、recipient 为其根、parentAssignment=null；assign 仅 active，保存并入箱后返回，不等待模型或结果；单次交付失败不释放团队。",
+          "level": "contract"
+        },
+        {
+          "id": "C037-03",
+          "expectation": "空闲不回收，状态仅 starting/active/stopping/stopped/failed，未结束作业数独立更新，成员由各级父 Agent 管理。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C038",
+      "module": "Run 释放与失效",
+      "section": "团队运行模型",
+      "phase": "P2",
+      "requirement": "只有所属会话或用户显式解散团队，停止接单并取消 pending 作业、解散群、释放 Context；重启使旧句柄失效。",
+      "scenarios": [
+        {
+          "id": "C038-01",
+          "expectation": "release 进入 stopping 后不接新任务，取消未结束作业并完成资源处理才结束；重复调用等待同一次操作，失败如实返回，已存结果仍可读。",
+          "level": "contract"
+        },
+        {
+          "id": "C038-02",
+          "expectation": "重启后原 runId 查询返回该运行已随重启失效，不恢复旧运行句柄；会话与作业历史分别保留。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C039",
+      "module": "AssignmentSpec 与 schema",
+      "section": "任务内容与派发关系",
+      "phase": "P2",
+      "requirement": "作业保存完整交付约定、关系和计数，结果 schema 使用规定方言并记录版本摘要。",
+      "scenarios": [
+        {
+          "id": "C039-01",
+          "expectation": "记录含名称、类型、背景、需求、验收标准、材料、schema、ID、双方、父作业、状态、提交次数、格式失败数、接受结果和存续理由或原因。",
+          "level": "contract"
+        },
+        {
+          "id": "C039-02",
+          "expectation": "校验支持 type/oneOf/properties/required/additionalProperties/items/enum/const/minimum/maximum 及注解，未知关键词派发前失败；方言版本参与摘要。",
+          "level": "contract"
+        },
+        {
+          "id": "C039-03",
+          "expectation": "合法 JSON 字符串、数组、数字、布尔、null、对象均按本份 schema 校验，不强制结果为对象。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C040",
+      "module": "Assignment 派发关系",
+      "section": "任务内容与派发关系",
+      "phase": "P2",
+      "requirement": "树内作业仅由当前父 Agent 发给直属成员，父作业接收者须为派发者且仍 pending；登记关系后固定。",
+      "scenarios": [
+        {
+          "id": "C040-01",
+          "expectation": "非直属、父作业已结束或其接收者非发送者时拒绝；合法派发同次登记建立父子作业关系，同接收者可持有不同父作业下多份任务。",
+          "level": "contract"
+        },
+        {
+          "id": "C040-02",
+          "expectation": "发送方、接收方、父作业登记后不可变；fork 无作业继承，transfer 不取消/改派已有作业，新派发按转移后的直属关系检查。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C041",
+      "module": "Assignment prepare/deliver",
+      "section": "接口定义",
+      "phase": "P2",
+      "requirement": "准备验证并保存但不启动模型；交付完成只表示入箱，准备和交付分别幂等。",
+      "scenarios": [
+        {
+          "id": "C041-01",
+          "expectation": "prepare 校验同 run、双方活跃、派发关系、schema、材料和模型呈现能力，保存方言摘要后返回且不 send；同 sender/requestId/参数复用，同键异参报错。",
+          "level": "contract"
+        },
+        {
+          "id": "C041-02",
+          "expectation": "deliver 再核对 pending 和接收者可用，System 消息含完整任务、schema 与材料索引；同一活跃作业重复调用只入箱一次，通知失败仍按通知机制重试。",
+          "level": "contract"
+        },
+        {
+          "id": "C041-03",
+          "expectation": "交付失败记录具体原因并结清作业；read/list 返回所属 run 的快照，可按父作业和状态查询。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C042",
+      "module": "Assignment 子作业处置",
+      "section": "提交与完成",
+      "phase": "P2",
+      "requirement": "提交先核对接收者与 pending，并为每份 pending 直属子作业检查非空存续理由，与终态保存协调排序。",
+      "scenarios": [
+        {
+          "id": "C042-01",
+          "expectation": "遗漏或空理由返回全部未交代的子作业 ID，格式失败计数不变；被接受结果保存逐项理由，已结束子作业无需理由。",
+          "level": "contract"
+        },
+        {
+          "id": "C042-02",
+          "expectation": "并发新增子作业、提交或取消与父提交使用一致的子作业状态，不存在父完成但遗漏当时 pending 子作业的窗口。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C043",
+      "module": "Assignment 格式与重放",
+      "section": "提交与完成",
+      "phase": "P2",
+      "requirement": "首次格式失败后固定两次纠正，传输重放复用回执，真实新提交独立计数。",
+      "scenarios": [
+        {
+          "id": "C043-01",
+          "expectation": "第一次和第二次格式错误返回字段路径及原因且仍 pending，第三次不合格 failed；不自动调用模型纠正，不提供可配置纠正次数。",
+          "level": "contract"
+        },
+        {
+          "id": "C043-02",
+          "expectation": "相同工具传输重放返回原 receipt，不增加提交或格式失败计数；模型另行提交终态作业被拒并返回既定状态，实际模型提交记录及用量。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C044",
+      "module": "Assignment 终态与持久化",
+      "section": "提交与完成",
+      "phase": "P2",
+      "requirement": "只接受 pending 到一次终态变更，首份合格结果持久化成功后才 submitted，接收者终止结束 pending 作业。",
+      "scenarios": [
+        {
+          "id": "C044-01",
+          "expectation": "格式通过但存储失败返回错误而不报告 submitted；落盘成功后首份合格结果固定，runtime 不追加内容验收流程。",
+          "level": "contract"
+        },
+        {
+          "id": "C044-02",
+          "expectation": "合法状态只有 pending/submitted/failed/cancelled；纠正中和执行中仍 pending；Context 终止观察同步推动该接收者未结束作业 failed 并记录原因。",
+          "level": "contract"
+        },
+        {
+          "id": "C044-03",
+          "expectation": "提交、取消、接收者终止并发最多一次 pending 到终态，不因 Agent waiting/idle 或作业结束互相改写状态。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C045",
+      "module": "Assignment 递归取消",
+      "section": "取消、通知与历史记录",
+      "phase": "P2",
+      "requirement": "真实发送方可递归取消作业子树全部 pending 后代，穿过已结束节点，保留结果与其他任务。",
+      "scenarios": [
+        {
+          "id": "C045-01",
+          "expectation": "非发送方不能主动取消；遍历经过 submitted/failed/cancelled 中间节点仍取消后代 pending，保留既定终态与已提交结果。",
+          "level": "contract"
+        },
+        {
+          "id": "C045-02",
+          "expectation": "取消不终止 Agent、不影响其他作业树，后续提交返回 cancelled；重复取消返回既定结果且不重复通知。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C046",
+      "module": "Assignment 通知与历史",
+      "section": "取消、通知与历史记录",
+      "phase": "P2",
+      "requirement": "作业读取、提交、通知分别记录；异步终态走普通 System 提示，历史未完成作业保持未绑定并显式续接。",
+      "scenarios": [
+        {
+          "id": "C046-01",
+          "expectation": "树内完成/失败等异步终态给仍活跃发送者普通查询提示，可合并；主动取消以工具回执交付，接收者取消提示只要求停相关工作，不能撤销外部操作。",
+          "level": "contract"
+        },
+        {
+          "id": "C046-02",
+          "expectation": "readArchive 无活跃对象，重启后可查询完整任务/schema/输入/关系/结果/存续理由，未完成项保留中断事实且不自动绑定恢复实例。",
+          "level": "contract"
+        },
+        {
+          "id": "C046-03",
+          "expectation": "继续工作先 resume 会话建立当前组织，再建新的顶层及后继作业，resumesAssignmentId 指向历史且新父子关系明确。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C047",
+      "module": "PatternCatalog",
+      "section": "模板定义与管理指引",
+      "phase": "P3",
+      "requirement": "内置与用户包共用加载编译器，按包根解析资源及 use 引用，返回不可变定义并检查循环。",
+      "scenarios": [
+        {
+          "id": "C047-01",
+          "expectation": "pattern.yaml、guidance.md、roles 文件或正文指引在包根解析；加载检查 apiVersion=v1、唯一命名空间 ID、参数声明/默认、文件、角色、节点及 use 引用。",
+          "level": "contract"
+        },
+        {
+          "id": "C047-02",
+          "expectation": "缺文件、角色或模板、循环 use、重复目录 ID 等诊断在创建前返回；compile 不创建成员，resolve 按唯一 ID，list 返回用途与参数声明。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C048",
+      "module": "模板参数与节点语法",
+      "section": "模板定义与管理指引",
+      "phase": "P3",
+      "requirement": "参数按名称声明类型和说明，纯变量整值替换保持 JSON 类型，节点 count 为非负整数且保留字段不得作子名。",
+      "scenarios": [
+        {
+          "id": "C048-01",
+          "expectation": "支持 string/integer/number/boolean/array/object/null，必需参数无值报错，默认须类型正确，显式值覆盖默认，未声明参数报错。",
+          "level": "contract"
+        },
+        {
+          "id": "C048-02",
+          "expectation": "count 与 use.with 中带引号纯 {{ 参数名 }} 在 YAML 后整值替换，整数、数组、对象类型保留；count 默认 1，负数/非整数报错，0 不创建节点及其后代。",
+          "level": "contract"
+        },
+        {
+          "id": "C048-03",
+          "expectation": "root.instructions、成员 role/count/use 为保留字段；成员可内联下级或 use 二选一，角色在其所属模板 roles 解析。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C049",
+      "module": "模板嵌套、路径与群",
+      "section": "模板定义与管理指引",
+      "phase": "P3",
+      "requirement": "use 把当前节点作为子模板根逐层传参，路径和群选择器按完整展开树解析。",
+      "scenarios": [
+        {
+          "id": "C049-01",
+          "expectation": "use.id 必填，with 常量或本层参数按子模板声明补默认并校验；节点身份由外层 role，子模板 root.instructions 接于其角色指引后，子成员用子模板 roles。",
+          "level": "contract"
+        },
+        {
+          "id": "C049-02",
+          "expectation": "路径用字段名与零起始序号；* 仅匹配一级序号，群默认从模板根选，forEach 为每匹配节点建群，. 指当前、./ 指相对，嵌套路径附加引用位置。",
+          "level": "contract"
+        },
+        {
+          "id": "C049-03",
+          "expectation": "groups=2、membersPerGroup=3 展开 2 组长及每组 3 收集者、1 核验、1 审查，讨论群键含 root/leads/0/discussion；外层群能引用展开后完整路径。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C050",
+      "module": "模板应用配置与幂等",
+      "section": "接口定义",
+      "phase": "P3",
+      "requirement": "applyPattern 根来自当前 Agent，新增配置按运行默认、角色、本次路径覆盖解析，重放不重复创建。",
+      "scenarios": [
+        {
+          "id": "C050-01",
+          "expectation": "overrides 以完整展开路径覆盖含嵌套模板新节点的角色配置，不覆盖现存 root 或改变层级；根 Profile 不变，管理指引作为工具结果进入根上下文。",
+          "level": "contract"
+        },
+        {
+          "id": "C050-02",
+          "expectation": "同 run 同 root 同 requestId 同参数返回原 agents/groups/instructions，异参数报错；结果含现存 root 和本次节点、群路径，后续使用实际对象。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C051",
+      "module": "模板应用生命周期",
+      "section": "按模板创建团队",
+      "phase": "P3",
+      "requirement": "应用先完整预检，再父先子后创建 idle 成员，全部就绪后建群；失败仅收尾本次新增对象。",
+      "scenarios": [
+        {
+          "id": "C051-01",
+          "expectation": "引用、参数、数量、角色、配置、层级和完整群选择器先校验，错误时创建数为 0；逐层检查权限上界，新成员省略 initmsg，成功时全部 idle、send=0。",
+          "level": "contract"
+        },
+        {
+          "id": "C051-02",
+          "expectation": "同一根反复应用增加成员而保留旧树；模型执行共用服务容量，idle 初始化不占名额，无固定人数或树高上限。",
+          "level": "contract"
+        },
+        {
+          "id": "C051-03",
+          "expectation": "创建失败报告已建立对象及逐项原因，解散新群并释放新成员，不伤根或既有成员；根并发终止停止新增，后返回实例只收尾。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C052",
+      "module": "候选模板与参考包",
+      "section": "模板定义与管理指引",
+      "phase": "P3",
+      "requirement": "候选模板和依赖文件只在本 run 可用，注册、展开与派发分开；提供 14 份统一模板资源而非固定调度。",
+      "scenarios": [
+        {
+          "id": "C052-01",
+          "expectation": "flow_pattern_define 同格式候选经相同编译器校验，只在所属 run resolve，另一 run 与全局目录看不到定义和依赖文件；注册不创建或派发。",
+          "level": "contract"
+        },
+        {
+          "id": "C052-02",
+          "expectation": "14 包 independent-vote、heterogeneous-ensemble、debate、expert-router、pipeline、hierarchical、mixture-of-agents、generate-review-revise、tool-specialists、search-swarm、workflow-search、sparse-routing、shared-review、tournament-evolution 可加载；任务、schema、轮次和取舍由 Agent 决定。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C053",
+      "module": "宿主工具入口",
+      "section": "接口定义",
+      "phase": "P4",
+      "requirement": "模型工具使用序列化业务参数，适配器注入真实调用者与模板根，入口只组合领域接口。",
+      "scenarios": [
+        {
+          "id": "C053-01",
+          "expectation": "实际注册 flow_team_create/teams/team_get/team_assign/team_assignment_read/team_assignment_cancel/team_release，和 pattern、assign/read/list/submit/cancel、材料工具；不由模型传 sender/root 冒充。",
+          "level": "integration"
+        },
+        {
+          "id": "C053-02",
+          "expectation": "flow_assign 依次 prepare/deliver；同 Agent 工具一次安装后按不同作业 schema 提交，当前 Context 解析 Agent/Group/Assignment/Material ID；跨会话不能借句柄管理他人团队。",
+          "level": "integration"
+        },
+        {
+          "id": "C053-03",
+          "expectation": "origin.callerSessionId 来自真实执行上下文，submissionId/sourceMessageId 关联原生提交与来源消息，同次提交可复用运行身份及定位材料。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C054",
+      "module": "材料读取",
+      "section": "任务内容与派发关系",
+      "phase": "P4",
+      "requirement": "MaterialRef 保存原始身份、摘要、位置，按作业引用校验呈现能力和权限并以宿主内容块读取。",
+      "scenarios": [
+        {
+          "id": "C054-01",
+          "expectation": "prepare 保存前验证材料引用与接收模型对文本/图片/文件的呈现能力；作业消息含材料索引，flow_assignment_read 得完整任务和 schema。",
+          "level": "integration"
+        },
+        {
+          "id": "C054-02",
+          "expectation": "flow_material_read(materialId) 以工具 render 返回 DSH ContentBlock 的文本、图片或文件，读取服从接收者宿主权限；上游实际结果或材料引用可明确交给后继作业。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C055",
+      "module": "协作技能与顶层通知",
+      "section": "团队运行模型",
+      "phase": "P4",
+      "requirement": "每个 Flow 节点安装 team-strategy，共性协作规则与模板指引进入上下文，顶层终态主动 followup 原会话。",
+      "scenarios": [
+        {
+          "id": "C055-01",
+          "expectation": "根及成员默认具备 team-strategy，模板 skills 只加角色技能；/agent-team 引导先查询复用或独立创建团队，再派发作业，普通信息请求同时说明返回格式与验收标准。",
+          "level": "integration"
+        },
+        {
+          "id": "C055-02",
+          "expectation": "顶层 submitted/failed/cancelled 普通提示含 runId、assignmentId 和查询方式，经原生 followup 在空闲唤醒、忙时接续，会话读取真实结果；不等待用户再输入才交付。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C056",
+      "module": "配置解析与生效",
+      "section": "插件设置",
+      "phase": "P4",
+      "requirement": "新运行固定默认快照，成员叠加角色与显式覆盖；容量后续准入生效，服务连接重启生效。",
+      "scenarios": [
+        {
+          "id": "C056-01",
+          "expectation": "角色职责、预设、技能、模型/推理、工作目录、初始权限与清理时限在新 run 解析快照；修改配置不改既有 Profile，后续成员使用该 run 快照。",
+          "level": "integration"
+        },
+        {
+          "id": "C056-02",
+          "expectation": "patternSources 增加内置外目录，显示诊断与可用模板，命名空间区分同名且目录 ID 唯一；运行选定目录，apply 读取所选定义。",
+          "level": "integration"
+        },
+        {
+          "id": "C056-03",
+          "expectation": "maxConcurrentAgents 服务共享默认 4，保存仅改变后续执行准入，正在执行者完成；核心和适配器用同一清理快照。",
+          "level": "integration"
+        },
+        {
+          "id": "C056-04",
+          "expectation": "端口、状态目录、静态目录、允许来源、价格表保存提示重启生效，重启后采用新值。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C057",
+      "module": "UI 整体布局",
+      "section": "整体布局与树形画布",
+      "phase": "P6",
+      "requirement": "卡片对应已发布真实实例，树按逻辑父子关系排布，运行选择及统计与作业独立。",
+      "scenarios": [
+        {
+          "id": "C057-01",
+          "expectation": "工厂发布后才出现卡片，根居中且没有虚构 Agent 层；兄弟按发布顺序，首层横排、后代逐分支向下。",
+          "level": "ui"
+        },
+        {
+          "id": "C057-02",
+          "expectation": "运行栏显示名称、发起会话、状态、pending 数；默认最新活跃其次最近运行，手动选择保持，作业结束不切换团队。",
+          "level": "ui"
+        },
+        {
+          "id": "C057-03",
+          "expectation": "统计含所有展开、折叠、已终止实例的数量、running/waiting、总 token 与次要金额，数字等宽，图标悬停/聚焦/无障碍说明齐全。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C058",
+      "module": "UI 树、连线和群几何",
+      "section": "整体布局与树形画布",
+      "phase": "P6",
+      "requirement": "卡片实际几何驱动父子线、群框和通信端点，折叠与跨分支仍保留真实来源。",
+      "scenarios": [
+        {
+          "id": "C058-01",
+          "expectation": "根首层间距40px，分支列248px=卡216px+缩进32px，列距8px、深层缩进32px、纵距12px；主线1.5px空心端点，首层底中到子顶、深层左侧圆角接入。",
+          "level": "ui"
+        },
+        {
+          "id": "C058-02",
+          "expectation": "群框在卡/线下，圆角12px，联合可见成员边界四边扩24px，外缘距非成员至少8px；GroupID/图标/人数在顶边，跨分支分段同 ID，折叠标隐藏人数。",
+          "level": "ui"
+        },
+        {
+          "id": "C058-03",
+          "expectation": "内容高度、缩放、容器或结构变化更新线端和群包围盒；通信避卡内容，隐藏端点落可见祖先并标实际双方，消息圆点6px、临时虚线4px/4px。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C059",
+      "module": "UI 节点卡片",
+      "section": "节点卡片",
+      "phase": "P6",
+      "requirement": "卡片显示 Profile 真名、模型品牌、任务、附加信息及指标，按内容自然增高并遵循统一尺寸。",
+      "scenarios": [
+        {
+          "id": "C059-01",
+          "expectation": "名称为 AgentProfile.name，厂商/模型系列 Logo 正确；主标22px与名距8px，名称13/16px字重500，模型Logo12px、距4px、文字11/14px；长内容单行省略并提供完整提示。",
+          "level": "ui"
+        },
+        {
+          "id": "C059-02",
+          "expectation": "卡宽216px、圆角8px、内边距10/10/8/10px、行距6px；任务12/16px占1–2行，普通行14px、带底色行20px、分隔线1px上下6px，系统中英文字体。",
+          "level": "ui"
+        },
+        {
+          "id": "C059-03",
+          "expectation": "附加行显示等待目标/剩余时间、作业摘要及pending数量、逐份状态/提交次数、初始权限；折叠触点至少32px、视觉20px、箭头同步，内容自适应高度。",
+          "level": "ui"
+        },
+        {
+          "id": "C059-04",
+          "expectation": "底部次行由事件时间或折叠入口触发，高20px上距6px；事件时间带时钟；徽标移模型行时行高18px，静态图与动效共用同尺寸比例。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C060",
+      "module": "UI 卡片用量与时长",
+      "section": "节点卡片",
+      "phase": "P6",
+      "requirement": "输入、输出 token 分别累计最新调用值，运行时长按创建和终止时间计算并可恢复。",
+      "scenarios": [
+        {
+          "id": "C060-01",
+          "expectation": "输入▲、输出▼与时长同次要灰度，三角8×6px距数字4px，数字11px等宽，千量级k且提示完整值；缺方向显示—，支持用量尚无调用显示0。",
+          "level": "ui"
+        },
+        {
+          "id": "C060-02",
+          "expectation": "流式同调用最新累计值替换；时间每秒刷新，<60秒用45s、<1小时用1m23s、>=1小时用1h02m03s；terminatedAt 固定时长，重连用快照恢复。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C061",
+      "module": "UI 徽标与主题",
+      "section": "状态徽标、主题与选中样式",
+      "phase": "P6",
+      "requirement": "主状态、清理和持续标记组合展示，颜色、图标、选中聚焦及可访问说明跨视图一致。",
+      "scenarios": [
+        {
+          "id": "C061-01",
+          "expectation": "running蓝旋转、waiting琥珀时钟、idle灰点、completed绿勾、failed红警示、stopped灰停止；清理用扫帚配环/闪电/勾/叉/斜线，告警琥珀图标数量并可打开原因时间列表。",
+          "level": "ui"
+        },
+        {
+          "id": "C061-02",
+          "expectation": "徽标18px高圆角4px、主图标16px、段距4px，距右/顶10px，长标题移模型行，附段向左扩而右沿不动；终止结果主段不被清理覆盖。",
+          "level": "ui"
+        },
+        {
+          "id": "C061-03",
+          "expectation": "浅卡#fff/画布#fafafa/线#82bcff，深卡#1c1c1f/画布#202023/线#4f8fdb；正文61%黑/62%白，次文45%，浅描边6%黑/深分隔8%白；停止连线弱化而内容可读。",
+          "level": "ui"
+        },
+        {
+          "id": "C061-04",
+          "expectation": "原生跟宿主主题、Web跟系统；悬停增强阴影、选中蓝边、聚焦2px轮廓；通用图标12px线1.5px，按钮至少32×32px，完整含义可悬停/聚焦/辅助技术读取。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C062",
+      "module": "UI 概况与用量详情",
+      "section": "节点详情",
+      "phase": "P6",
+      "requirement": "详情保持当前节点，完整呈现多作业树、群与清理记录，自身和分支用量按实际模型计价。",
+      "scenarios": [
+        {
+          "id": "C062-01",
+          "expectation": "头部名/状态/关闭入口，切页不换节点，关闭焦点回原卡；概况含角色、Logo模型、初始权限、输出/错误/清理与逐份完整背景/需求/验收/schema/状态/结果。",
+          "level": "ui"
+        },
+        {
+          "id": "C062-02",
+          "expectation": "作业以 parentAssignmentId 呈拆分、pending 子理由；群含成员、带时间黑板，解散群斜线及提示；Agent 树仍按当前组织关系，终止节点有最终结果。",
+          "level": "ui"
+        },
+        {
+          "id": "C062-03",
+          "expectation": "用量分自身/分支，按调用显示模型、输入/输出/缓存/总量/金额，总量用宿主 totalTokens、缓存含在输入，价格用该调用实际模型及价格快照，缺项—，无总量或价格显示不可用。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C063",
+      "module": "UI 收件箱",
+      "section": "节点详情",
+      "phase": "P6",
+      "requirement": "当前节点收件箱以独立消息卡片展示摘要和真实接收状态，查看展开不改变 Mailbox。",
+      "scenarios": [
+        {
+          "id": "C063-01",
+          "expectation": "标题为{代理名称}的收件箱，发送时间倒序、同时间入箱顺序；卡含真实来源、群ID、时间、摘要，high/normal/low 红绿蓝底，已读低饱和并由点变勾，更新只来自 Mailbox。",
+          "level": "ui"
+        },
+        {
+          "id": "C063-02",
+          "expectation": "卡填满内容区，圆角8px/内距12px/卡距12px/区距8px；来源13/16px字重500、时间11px等宽，摘要12/18px占满宽自然换行、两端对齐末行左齐和任意断词。",
+          "level": "ui"
+        },
+        {
+          "id": "C063-03",
+          "expectation": "摘要默认2行，超出提供独立底行展开/收起箭头，切换保持列表位置与正文色；查看/展开只读展示快照。",
+          "level": "ui"
+        },
+        {
+          "id": "C063-04",
+          "expectation": "新消息到顶部，阅读旧消息时保持位置并提示查看N条新消息，空态暂无收到的消息；浅/深未读与已读三组底色逐项使用本节色表。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C064",
+      "module": "UI 响应式与连接状态",
+      "section": "响应式布局",
+      "phase": "P6",
+      "requirement": "560px 画布边界决定横排/纵排及详情并列/覆盖，加载与断线保留可恢复视图。",
+      "scenarios": [
+        {
+          "id": "C064-01",
+          "expectation": "可用画布宽>=560px 首层横向且详情并列；<560px 逐级纵排缩进32px、卡距12px，按最深可见层分配宽，支持深树横滚/平移、运行栏统计换行。",
+          "level": "ui"
+        },
+        {
+          "id": "C064-02",
+          "expectation": "窄屏详情覆盖画布，关闭恢复视点/折叠/焦点；初载有加载提示、无运行显示暂无团队运行。",
+          "level": "ui"
+        },
+        {
+          "id": "C064-03",
+          "expectation": "断线保留最后快照，显示连接中断正在重连及数据时间并禁用停止；重连成功更新；运行失效与协议错误有对应文字，统计/连接非打断播报，高频时间用量读当前值。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C065",
+      "module": "UI 状态与最终结果",
+      "section": "节点状态与结果呈现",
+      "phase": "P6",
+      "requirement": "存活状态、作业状态、终止结果和清理进度分别呈现，最终结果有固定优先顺序。",
+      "scenarios": [
+        {
+          "id": "C065-01",
+          "expectation": "存活显示 running/waiting/idle，作业终态只改该作业，不把 Agent 终止；终止卡保留树中并主徽标固定 outcome，清理独立继续。",
+          "level": "ui"
+        },
+        {
+          "id": "C065-02",
+          "expectation": "最终结果依次：用户/父级取消为stopped；最后轮失败/错误/作业失败为failed；作业提交或最后轮完成为completed；否则stopped，更早失败保留历史标记。",
+          "level": "ui"
+        },
+        {
+          "id": "C065-03",
+          "expectation": "等待显示 target/deadline 剩余时间，高优先临时执行主徽标running但保留等待行，倒计时0显示等待后端更新。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C066",
+      "module": "UI 选择与键盘",
+      "section": "选择、折叠与视点",
+      "phase": "P6",
+      "requirement": "树提供完整键盘语义、选择及关联对象定位，折叠和返回正确恢复焦点。",
+      "scenarios": [
+        {
+          "id": "C066-01",
+          "expectation": "tree/treeitem/group、名称状态标签、aria-expanded/selected 完整；上下移焦点、右展开/入子、左折叠/返父、Home/End首尾、Enter选择、Enter/Space折叠、Escape关覆盖详情，触屏亦可完成。",
+          "level": "ui"
+        },
+        {
+          "id": "C066-02",
+          "expectation": "选卡蓝边并更新详情/相关线标签；选发送者或群成员展开祖先并定位选中，历史来源文字保留；选群突出成员和黑板；选消息保留底色已读并重放路径。",
+          "level": "ui"
+        },
+        {
+          "id": "C066-03",
+          "expectation": "折叠包含已选后代时选择及焦点移至父入口；关闭详情回卡片，转移父级保留实例身份、选择与折叠，新恢复/重试生成新卡并保留旧历史。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C067",
+      "module": "UI 折叠汇总与视点",
+      "section": "选择、折叠与视点",
+      "phase": "P6",
+      "requirement": "折叠汇总全部隐藏后代，增量不擅改视点，状态按视图范围与运行身份保存。",
+      "scenarios": [
+        {
+          "id": "C067-01",
+          "expectation": "折叠标题保原名加·+N子代理，N为全部隐藏后代，汇总运行/等待/用量及带代理名的持续标记，后续事件仍更新；展开入口数量为直接子数。",
+          "level": "ui"
+        },
+        {
+          "id": "C067-02",
+          "expectation": "适应视口按可见卡/线边界加边距，平移缩放或增量保用户视点、仅调整受影响分支，展开按发布顺序显示最新状态。",
+          "level": "ui"
+        },
+        {
+          "id": "C067-03",
+          "expectation": "所选运行/节点/折叠/详情页签/视点按视图范围、epoch、runId 隔离，切换运行恢复相应状态，新快照按实例ID保留。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C068",
+      "module": "UI 动效与黑板活动",
+      "section": "动效设计",
+      "phase": "P6",
+      "requirement": "结构和通信动效采用实际路径，黑板气泡对应真实活动，减少动效时直接切换。",
+      "scenarios": [
+        {
+          "id": "C068-01",
+          "expectation": "加入连线420ms，卡延140ms后360ms上移8px淡入、同批错峰80ms；折叠深至浅280ms，转移400ms且端点逐帧跟随，结构缓动cubic-bezier(0.32,0.72,0.24,1)。",
+          "level": "ui"
+        },
+        {
+          "id": "C068-02",
+          "expectation": "实线圆点800ms并200ms淡出保原线；无直连先虚线240ms、圆点1160ms、线400ms收回；消息读后180ms降饱和，位置展开保留，状态/可访问说明同步。",
+          "level": "ui"
+        },
+        {
+          "id": "C068-03",
+          "expectation": "黑板活动开始显示卡右上外28px浅黄圆气泡及正在写入群GroupID黑板标签，200ms进入/写时呼吸/180ms退出，结束更新黑板；写入结束或终止清活动。",
+          "level": "ui"
+        },
+        {
+          "id": "C068-04",
+          "expectation": "prefers-reduced-motion 下位置和显示直接切换，running 用静态图标与文字；每个实时消息ID自动播放一次，用户选消息可明确重放。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C069",
+      "module": "UI 停止操作",
+      "section": "停止操作",
+      "phase": "P6",
+      "requirement": "停止明确目标与当前后代范围，区分提交、受理、逻辑终止、清理和操作结果。",
+      "scenarios": [
+        {
+          "id": "C069-01",
+          "expectation": "目标覆盖全团队显示解散团队，范围为当前逻辑后代；点击进入提交中，HTTP202后已提交等待结果，完成/失败保留结果及错误原因。",
+          "level": "ui"
+        },
+        {
+          "id": "C069-02",
+          "expectation": "结果可能先于202到达仍显示完成；逻辑终止先更新outcome与cleanup，最终 operation 单独更新反馈；断线或重连未恢复期间不能发送停止。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C070",
+      "module": "看板展示投影",
+      "section": "展示数据",
+      "phase": "P5",
+      "requirement": "原生与Web共享序列化展示记录，完整表达多作业、关系、来源、等待、终止、清理和活动。",
+      "scenarios": [
+        {
+          "id": "C070-01",
+          "expectation": "RunInfo 含身份/entry/rootSummary/status/times/pending数；AgentCard 用实例ID为键并保 sessionID、Profile真名、role/model/permission、parentId/task。",
+          "level": "contract"
+        },
+        {
+          "id": "C070-02",
+          "expectation": "节点记录含 status/waiting/outcome/termination/cleanup/markers、createdAt/terminatedAt、assignmentIds/groups、messages/outputs/errors/usage/blackboardWrites；作业含父关系、提交/失败数、schema/result/continuingChildren。",
+          "level": "contract"
+        },
+        {
+          "id": "C070-03",
+          "expectation": "消息 source 序列化真实实例ID及可选GroupID与历史展示信息，接收者为当前实例；群记录有固定成员及黑板，快照有价格和操作结果。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C071",
+      "module": "看板事件与落盘",
+      "section": "展示数据",
+      "phase": "P5",
+      "requirement": "运行事件顺序本地追加，实例出现先于其余事件，终止只一次，运行状态同步更新列表。",
+      "scenarios": [
+        {
+          "id": "C071-01",
+          "expectation": "每运行事件按序追加本地文件可回放；出现含父级、创建方式、恢复/重试/herb来源、名称/模型/权限/任务，先于该实例所有其他事件。",
+          "level": "contract"
+        },
+        {
+          "id": "C071-02",
+          "expectation": "后续覆盖状态/turn-end/错误/用量/自动拒绝/转移/终止/清理/群/作业/标记/操作/结束/失效；终止最多一次且含outcome、signal、发起方、mode、传播标志。",
+          "level": "contract"
+        },
+        {
+          "id": "C071-03",
+          "expectation": "cleanup 包含阶段/原因/deadline/持久化错误，abandoned标记持续，超时升级有说明；团队状态变化进入运行列表流，全部作业完成仍可active。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C072",
+      "module": "看板流式用量",
+      "section": "展示数据",
+      "phase": "P5",
+      "requirement": "每调用仅一份结算用量，流式累计替换不累加采样，实际模型和缺失值可追溯。",
+      "scenarios": [
+        {
+          "id": "C072-01",
+          "expectation": "同实际调用身份的累计采样以最新值替换，结算后仅一条最终记录，两个调用分别累计；整项节点记录事件更新卡片。",
+          "level": "integration"
+        },
+        {
+          "id": "C072-02",
+          "expectation": "实际调用模型含路由/compaction/herb，herb节点出现后立即记子；宿主不报用量不发事件，缓存是输入分项，total不可用不猜测，价格按实际模型快照。",
+          "level": "integration"
+        },
+        {
+          "id": "C072-03",
+          "expectation": "黑板活动开始/结束来自真实调用边界，快照保存当前活动，结束与终止移除，不能用估计时限模拟。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C073",
+      "module": "看板鉴权与HTTP",
+      "section": "查询与事件订阅",
+      "phase": "P5",
+      "requirement": "每进程随机令牌，查询订阅操作用Bearer，状态变更同时校验允许来源与令牌，接口返回规定快照和回执。",
+      "scenarios": [
+        {
+          "id": "C073-01",
+          "expectation": "GET /api/token 返回 token/epoch/version；独立页面及宿主页面来源组成允许集；查询/订阅/操作使用 Authorization:Bearer，错误令牌拒绝，stop 还拒绝非法来源。",
+          "level": "contract"
+        },
+        {
+          "id": "C073-02",
+          "expectation": "GET /api/runs 返回 version/epoch/seq/runs，GET /api/runs/<id> 返回 version/seq/run/nodes/groups/assignments/prices/operations；两事件接口按各自after接续，stop返回202 accepted operationId。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C074",
+      "module": "看板快照与双游标",
+      "section": "查询与事件订阅",
+      "phase": "P5",
+      "requirement": "运行列表与单运行流各有严格递增seq，快照后接续增量，未知事件仍推进游标。",
+      "scenarios": [
+        {
+          "id": "C074-01",
+          "expectation": "先读列表快照订其seq后列表流，选运行后读完整快照订其seq后运行流，两游标独立不混用，epoch区分进程代次。",
+          "level": "contract"
+        },
+        {
+          "id": "C074-02",
+          "expectation": "按序应用且跳过重复序号，node/group/assignment按ID整项替换；新增字段或未知事件类型忽略未知内容但推进游标。",
+          "level": "contract"
+        },
+        {
+          "id": "C074-03",
+          "expectation": "删除协议内容或改变含义属于不兼容version，客户端拒绝并展示连接错误，不把不兼容数据应用到视图。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C075",
+      "module": "看板订阅隔离与重连",
+      "section": "查询与事件订阅",
+      "phase": "P5",
+      "requirement": "订阅代次避免旧响应污染视图，断线优先游标续接，过期快照和进程认证按顺序重建。",
+      "scenarios": [
+        {
+          "id": "C075-01",
+          "expectation": "切运行或重建快照更新订阅代次，旧代响应归原视图不覆盖新运行；初载/重连恢复已有消息与blackboardWrites，不给历史消息自动投递动画。",
+          "level": "contract"
+        },
+        {
+          "id": "C075-02",
+          "expectation": "列表游标失效先重读列表；运行游标过旧先经列表确认仍有效再重读运行快照并续订；不再有效则显示失效，不恢复旧树可操作性。",
+          "level": "contract"
+        },
+        {
+          "id": "C075-03",
+          "expectation": "进程重启或认证失效先重取令牌，再读列表，再订阅；重连中保留最后快照及视点，恢复完成前不允许停止。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C076",
+      "module": "看板停止幂等",
+      "section": "查询与事件订阅",
+      "phase": "P5",
+      "requirement": "operationId 重放只执行一次，目标按当前树解析，成员kill与根release归属明确且结果可恢复。",
+      "scenarios": [
+        {
+          "id": "C076-01",
+          "expectation": "相同operationId重复stop只执行一次；非根通过当前父级kill，根通过RunService.release取消pending并释放Context，不由看板决定领域生命周期。",
+          "level": "contract"
+        },
+        {
+          "id": "C076-02",
+          "expectation": "operation-result含{id,target,status:completed|failed,error?}，快照operations恢复相同结果；受理、节点outcome、cleanup和操作结果独立。",
+          "level": "contract"
+        }
+      ]
+    },
+    {
+      "id": "C077",
+      "module": "DSH 全局与会话导航",
+      "section": "插件入口与会话导航",
+      "phase": "P6",
+      "requirement": "插件同时提供独立Web、全局面板、会话内页签与团队下拉，各视图共享身份但隔离选择状态。",
+      "scenarios": [
+        {
+          "id": "C077-01",
+          "expectation": "插件可安装启用管理并注册后端、/agent-team、客户端及设置；全局智能体入口在中央开团队面板列当前进程全部run，会话页签仅列当前会话发起run。",
+          "level": "ui"
+        },
+        {
+          "id": "C077-02",
+          "expectation": "全局和会话视图各存运行/折叠/视点，切主会话同步列表/选择/详情，返回对话定位发起会话；空态给/agent-team示例，画布边缘有图/列表与视口控件。",
+          "level": "ui"
+        },
+        {
+          "id": "C077-03",
+          "expectation": "顶部灰触发器显示运行数量而非成员数，菜单按run分组，行主体定位、右独立32px箭头观察，关闭焦点回触发器；导航13px/分组11px。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C078",
+      "module": "DSH 全局面板",
+      "section": "全局智能体面板",
+      "phase": "P6",
+      "requirement": "全局运行选择与发起会话导航联动，菜单和画布动效保持当前身份与视点。",
+      "scenarios": [
+        {
+          "id": "C078-01",
+          "expectation": "智能体侧栏激活浅蓝底蓝图标并保侧栏宽/列表位置；选择器显名称/状态/所属会话、选中勾、长名省略可提示，返回箭头更新为所选run的发起会话。",
+          "level": "ui"
+        },
+        {
+          "id": "C078-02",
+          "expectation": "菜单120ms淡入下移，切运行开始即更新身份，旧画布淡出、新画布180ms淡入；选成员蓝边与右详情，观察箭头在详情头。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C079",
+      "module": "DSH 会话页签",
+      "section": "会话内智能体页签",
+      "phase": "P6",
+      "requirement": "对话与智能体切换保持主会话和阅读位置，会话内运行数量、选择和定位一致。",
+      "scenarios": [
+        {
+          "id": "C079-01",
+          "expectation": "页签蓝字底线，180ms淡入且保主会话标题，返对话回原阅读位置；切主会话恢复该会话运行/节点/视点。",
+          "level": "ui"
+        },
+        {
+          "id": "C079-02",
+          "expectation": "团队按钮数量与运行分组一致、箭头120ms旋转，成员名/Logo/状态与卡片一致，行定位与独立观察各有聚焦反馈；定位后菜单淡出并更新详情。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C080",
+      "module": "DSH 成员只读观察",
+      "section": "成员原生会话观察",
+      "phase": "P6",
+      "requirement": "成员观察使用独立只读引用和原生阅读器，取得历史及增量，切换关闭释放引用且无执行副作用。",
+      "scenarios": [
+        {
+          "id": "C080-01",
+          "expectation": "观察不创建执行实例、不提交输入或控制成员执行；成员内部会话归智能体类别而主列表按用户会话组织，结束成员历史仍可读。",
+          "level": "integration"
+        },
+        {
+          "id": "C080-02",
+          "expectation": "右栏替换节点详情，头部名称/Logo/模型/徽标与选中节点一致；打开loading后成功阅读或失败可重试，切换释放旧引用，关闭含加载中均释放资源并焦点回入口、恢复详情/画布。",
+          "level": "ui"
+        },
+        {
+          "id": "C080-03",
+          "expectation": "用户/助手/思考/工具按原生顺序，工具展开保位置；末尾跟随增量，读历史保滚动并以带数向下箭头提示；侧栏220ms进退、切换160ms交叉淡入，新末条160ms淡入，占位行尺寸一致。",
+          "level": "ui"
+        }
+      ]
+    },
+    {
+      "id": "C081",
+      "module": "DSH 设置交互",
+      "section": "插件设置",
+      "phase": "P6",
+      "requirement": "设置以宿主profile及修订号为真值，支持继承、覆盖草稿、保存状态与版本冲突比较。",
+      "scenarios": [
+        {
+          "id": "C081-01",
+          "expectation": "按运行默认/角色/执行清理/连接分组切换保草稿，标签12px控件13px高34px并列距24px，模型选项有Logo；继承链标次色、覆盖蓝边、未存圆点、恢复继承清覆盖。",
+          "level": "ui"
+        },
+        {
+          "id": "C081-02",
+          "expectation": "底部保存条固定可见，无改动禁用、保存旋转、成功勾并清未存标但保覆盖来源；失败保草稿并显字段/顶部原因，冲突并列本地/最新值且提供重读比较后保存。",
+          "level": "ui"
+        },
+        {
+          "id": "C081-03",
+          "expectation": "读取profile与修订号并提交字段变更，成功/失败/冲突反馈来自宿主；新运行/后续执行/重启生效提示准确，列需重启项，120ms字段变化/160ms按钮交叉淡入且布局稳定。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C082",
+      "module": "DSH 来源与连接",
+      "section": "宿主数据与连接",
+      "phase": "P6",
+      "requirement": "宿主提供Flow地址、真实来源和读取引用，面板直连同一协议，允许来源与重启时机明确。",
+      "scenarios": [
+        {
+          "id": "C082-01",
+          "expectation": "首次运行事件前在列表/快照/事件写origin.callerSessionId；submissionId/sourceMessageId定位提交与材料，成员来源连接发起会话/SessionID/实例ID并支持分类切换。",
+          "level": "integration"
+        },
+        {
+          "id": "C082-02",
+          "expectation": "宿主启动页提供本机地址，Flow取令牌接协议，原生历史增量由DSH会话服务；端口修改须重启桌面端读取地址。",
+          "level": "integration"
+        },
+        {
+          "id": "C082-03",
+          "expectation": "默认允许http://127.0.0.1:3080及localhost对应地址、dsh-app://app、独立Web来源，并可配置；Flow结构状态与DSH会话数据不混淆。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C083",
+      "module": "DSH 客户端构建",
+      "section": "客户端注册与打包",
+      "phase": "P6",
+      "requirement": "客户端注册六处宿主界面，生产单浏览器脚本含样式，外部依赖与React版本符合设计。",
+      "scenarios": [
+        {
+          "id": "C083-01",
+          "expectation": "注册中央全局面板、侧栏智能体入口、会话页签、顶部团队下拉、成员观察右栏、插件详情设置；声明网页入口，导出注册模块且标识与包名一致。",
+          "level": "integration"
+        },
+        {
+          "id": "C083-02",
+          "expectation": "单个生产浏览器脚本含样式；external仅设计列出的react/react-jsx-runtime/react-dom/client等React项与cordis、dsh-client-store/ui-slots/ui-primitives/ui-dockkit；zod和react-virtual等其余运行依赖随包。",
+          "level": "integration"
+        },
+        {
+          "id": "C083-03",
+          "expectation": "原生用宿主React18.3.1，Web自行打包同版React，二者共用看板协议/组件/交互且共享组件自带样式。",
+          "level": "integration"
+        }
+      ]
+    },
+    {
+      "id": "C084",
+      "module": "完整产品安装",
+      "section": "客户端注册与打包",
+      "phase": "P7",
+      "requirement": "以同一最终构建验收安装资源、原生与Web启动及实际界面，所有设计产物可由干净状态使用。",
+      "scenarios": [
+        {
+          "id": "C084-01",
+          "expectation": "新空状态安装启动后，14模板、team-strategy和/agent-team可用，原生注册入口及独立Web资源加载，必要适配具可恢复安装和重复执行结果。",
+          "level": "acceptance"
+        },
+        {
+          "id": "C084-02",
+          "expectation": "同一最终源码的类型、新测试、产品和文档构建通过，Web与原生实测浅深色、560px边界、窄屏、键盘及减少动效，产物身份与状态一致。",
+          "level": "acceptance"
+        }
+      ]
+    },
+    {
+      "id": "C085",
+      "module": "持续团队完整场景",
+      "section": "团队运行模型",
+      "phase": "P7",
+      "requirement": "真实模型贯通模板展开、多作业、局部取消、主会话接续及显式团队解散。",
+      "scenarios": [
+        {
+          "id": "C085-01",
+          "expectation": "创建空闲团队和嵌套成员本身模型调用为0；向同团队交两份不同schema作业并逐层派发获得真实结果，首份完成后仍可用。",
+          "level": "acceptance"
+        },
+        {
+          "id": "C085-02",
+          "expectation": "取消一作业子树时另一作业继续、Agent存活并可复用；主会话主动接续通知并读结果，Web与原生显示一致。",
+          "level": "acceptance"
+        },
+        {
+          "id": "C085-03",
+          "expectation": "显式解散团队观察取消/逻辑终止/清理/操作结果；重启原句柄失效，历史结果可读，显式resume再建后继作业保resumesAssignmentId和当前关系，旧通信及作业不自动重绑。",
+          "level": "acceptance"
+        }
+      ]
+    }
+  ]
+}

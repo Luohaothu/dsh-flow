@@ -1,0 +1,1096 @@
+{
+  "tests": [
+    {
+      "path": "scripts/boot.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "reason": "作为 tests/observation-extension 与 native E2E 等的宿主启动依赖纳入盘点；插件列表、Loader、凭据及旧默认补丁逐项证明必要性后才可采用。",
+      "targetScenarios": [
+        "隔离宿主仅启动目标能力所需依赖，提供真实工具/事件边界，退出释放本次宿主资源而不影响其他会话。"
+      ],
+      "id": "T001",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/client-build.ts",
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "reason": "被浏览器测试直接导入的构建 helper 纳入；不据现有 external 清单、输出路径或 UI 包结构预先保留实现。",
+      "targetScenarios": [
+        "同一最终源码构建原生和独立 Web 客户端；两者能加载共享界面及目标协议而无旧入口、旧夹具或不必要扩展。"
+      ],
+      "id": "T002",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/client-native-preview.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "reason": "旧原生 UI 预览脚本强制 installHostExtensions 与旧界面夹具删除；当前目标构建的 UI 验证需重建隔离启动。",
+      "targetScenarios": [
+        "实际宿主验证全局/会话面板、团队分组、只读观察和设置冲突；浅深色、窄屏、560px 边界及减少动效保存当前构建证据。"
+      ],
+      "id": "T003",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/e2e.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 release-audit 自定义 execute 调度、flow_start/flow_query、固定报告产物与任务结束释放团队场景删除；以目标六项完整场景另建 E2E。",
+      "targetScenarios": [],
+      "id": "T004",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/host-smoke.ts",
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "DSH 后端适配",
+      "reason": "真实模型 smoke 用目标对象合同重建，不复用旧初始必填输入、一次性任务和旧工具链；模型证据不与确定性 fixture 混记。",
+      "targetScenarios": [
+        "已确认支持的真实模型在同一最终版本完成输入、原生工具、用量与释放，保存工具回执及实际产物并标明来源版本。"
+      ],
+      "id": "T005",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/launch-dsh.ts",
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "reason": "被 launch-profile 测试直接导入的启动设施纳入；旧开发配置和包安装结构不构成目标合同。",
+      "targetScenarios": [
+        "以新的空状态目录完成插件安装和启动，保留用户已有配置；启动只包含必要资源及已选定最小宿主能力。"
+      ],
+      "id": "T006",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/native-agent-ashare-e2e-lib.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 baseline/optimized A 股对照 campaign、固定数据日期与报告证据专用设施；删除，不能作为新产品完成条件。",
+      "targetScenarios": [],
+      "id": "T007",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/native-agent-ashare-e2e.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 baseline/optimized A 股对照 campaign、固定数据日期与报告证据专用设施；删除，不能作为新产品完成条件。",
+      "targetScenarios": [],
+      "id": "T008",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/native-agent-ashare-stage.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 baseline/optimized A 股对照 campaign、固定数据日期与报告证据专用设施；删除，不能作为新产品完成条件。",
+      "targetScenarios": [],
+      "id": "T009",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "scripts/verify-package.ts",
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "reason": "包验收须按目标产物重写，删除旧固定路径、旧配置及必须携带整包宿主补丁的断言。",
+      "targetScenarios": [
+        "空状态目录干净安装并启动模板资源、team-strategy、/agent-team、原生客户端与独立 Web，安装包只包含结清必要性的依赖与适配。",
+        "若采用最小宿主适配，重复安装及必需能力通过；若不采用，包清单与安装入口无旧扩展残留。"
+      ],
+      "id": "T010",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "scripts/verify-retained-e2e.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 flow_start/flow_query/intent 日志和固定业务报告的历史证据复核器，不是新实现的验收合同；连同其专用测试退出。",
+      "targetScenarios": [],
+      "id": "T011",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/acceptance/COVERAGE.md",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧 SQLite 控制器、强制 review 与三次 Flow 调用等覆盖说明；退出新验收输入，历史证据只保留版本适用范围。",
+      "targetScenarios": [],
+      "id": "T012",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/acceptance/native-live.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "针对 2026-10-12 A 股数据、固定报告与普通/团队对照的历史验收设施，不属于设计合同。删除旧报告断言与专用数据路径。",
+      "targetScenarios": [],
+      "id": "T013",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/assignments.test.ts",
+      "disposition": "rewrite",
+      "phase": "P2",
+      "section": "作业模型",
+      "reason": "删除自动/按 SessionID 重绑、对象结果限定、可配置纠正预算、扁平派发和作业专用 high/steer 通知预期；AssignmentManager 不作为架构保留。",
+      "targetScenarios": [
+        "prepare 校验完整 Spec、材料、schema、当前直属关系和 pending 上级作业，保存后 deliver 独立幂等交付；重复 requestId 不增记录。",
+        "提交前检查最新未结束直接子作业的非空存续理由，前置失败不消耗固定两次格式纠正机会，重放返回原回执。",
+        "首份合法 JSONValue 结果保存后才能 submitted；数值/字符串/数组均可提交，持久化失败不伪报完成。",
+        "递归取消只影响作业子树，另一作业继续且成员存活；接收者终止使其 pending 作业失败。",
+        "重启后结果可查询，未完成历史不绑定任何新 Agent；显式后继作业记录 resumesAssignmentId 及新父子关系。"
+      ],
+      "id": "T014",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/card-rendering.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "节点卡片",
+      "reason": "缩放清晰度可评估为卡片可读性验证片段，但旧卡片 DOM、截图、虚构名称与旧身份模型不继承。",
+      "targetScenarios": [
+        "当前构建的 216px 卡片显示真实 AgentProfile.name、常驻模型 Logo、分项 token 和时长；连续缩放后文字可读。"
+      ],
+      "id": "T015",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/client-retained-ui.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "reason": "旧单作业导航、现有 ConfigForm 结构与旧截图/DOM 断言删除；按完整导航、观察和设置合同重建。",
+      "targetScenarios": [
+        "团队下拉显示团队数量并按运行分组，定位和观察各自有焦点；观察关闭恢复详情及原入口焦点。",
+        "设置展示继承与显式值，模型通过选择器选择；并发修订冲突并列比较本地和最新值，容量保存反馈为随后准入生效。",
+        "空白区拖动不破坏卡片文本选择、键盘操作和窄屏详情。"
+      ],
+      "id": "T016",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/client-retained.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "插件入口与会话导航",
+      "reason": "删除稳定虚构人名与 author/reviewer 根身份断言；保留目标会话隔离及观察生命周期场景并重写数据。",
+      "targetScenarios": [
+        "每个会话只列出其发起运行，切换时旧订阅快照不能覆盖新选择；全局视图可列出全部当前团队。",
+        "观察引用只读，关闭或迟到完成不泄漏；名称始终是实际 AgentProfile.name，模型或状态变化不生成假身份。"
+      ],
+      "id": "T017",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/client-ui.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "界面设计",
+      "reason": "旧 completed run、单 assignment、模态详情及旧卡片截图断言删除，目标 UI 从多作业协议重建。",
+      "targetScenarios": [
+        "同一节点关联多份作业并呈现任务树、完整任务内容、结果和 continuingChildren；消息卡片有来源、摘要、优先级和已读标记。",
+        "宽屏详情并列、窄屏覆盖；560px 边界、浅深色、键盘、减少动效均以当前构建验证。",
+        "终止后运行时长冻结；断线或重连时停止按钮禁用，范围覆盖全树时显示解散团队。"
+      ],
+      "id": "T018",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/client.test.ts",
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "reason": "删除单作业快照、旧 run completed 状态、旧协议和一节点一作业预期；保留目标重连与停止合同并重新组织。",
+      "targetScenarios": [
+        "运行列表和单 run 独立游标接续，未知兼容事件仍推进游标；过期游标确认 run 有效后替换快照，代次过期响应被忽略。",
+        "构造不兼容 version 时拒绝连接；认证或 epoch 变化先换 token 再读取运行列表，旧句柄失效。",
+        "operationId 重放只执行一次停止，202 只表示受理，事件或新快照恢复完成/失败结果。"
+      ],
+      "id": "T019",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/core-races.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "Agent 智能体",
+      "reason": "删除作业专用中断/特殊准入测试，删除私有初始化回调与固定发布顺序约束；按可观察合同构造必要并发边界。",
+      "targetScenarios": [
+        "初始化失败或父级并发终止后不发布新实例，资源清理失败如实拒绝；已转移出去的子树按当前归属管理。",
+        "等待按接收时间、未读状态和来源匹配，旧计时不能解除后来的等待；过滤或自身群消息不能满足同伴等待。",
+        "优先消息临时唤醒后未完成等待仍在；通知失败可重试且不重复已接管内容，已读元数据查询无读取副作用。",
+        "SIGTERM/SIGKILL 与自然 turn-end 并发时只完成一次关闭，升级与长时限不会提前结束或重复清理。"
+      ],
+      "id": "T020",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/core-values.test.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "身份信息",
+      "reason": "逐项核对 Profile、HostExtras 与消息数据隔离职责；泛化任意 class/共享内存/内部快照工具的旧行为没有设计依据时删除。",
+      "targetScenarios": [
+        "Profile 创建时隔离可变输入，后续查询共享同一只读记录；推理参数与 hostExtras 拒绝未声明字段。",
+        "消息快照与收件记录不受发送方后续修改影响；列表仅复制容器、对象引用维持所属生命周期。"
+      ],
+      "id": "T021",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/core.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "Agent 编排系统",
+      "reason": "52 项专项通过不构成保留理由；删除必填初始输入、作业专用通知及任何与目标不符的等待/生命周期预期，以公开对象合同重建。",
+      "targetScenarios": [
+        "create 省略 initmsg 返回已装配 idle Agent 且零发送；提供输入只等待宿主接管，失败完成回滚后拒绝。",
+        "fork/herb 建立独立会话、Profile、Mailbox 和资源；transfer 保留实例身份并让后续信号按新树传播。",
+        "Mailbox 区分接收、通知接管与正文已读；来源评级/过滤决定本地优先级，normal/low 批处理不泄露正文。",
+        "Group 固定成员按接收者评级扇出，黑板每次至多一个追加，退出/解散及终止后的变更被拒绝。",
+        "Context 关闭停止注册，解散群并释放 Agent/Mailbox，最后释放适配器；冷恢复无旧消息、群或通信等待。"
+      ],
+      "id": "T022",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/graph-layout.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "动效设计",
+      "reason": "布局与连续动效可作为候选片段，但不保留旧协议夹具、固定 DOM 几何或超出设计的内部运动状态。",
+      "targetScenarios": [
+        "用量更新保持卡片位置，真实父级转移时卡片、主连线及群框随实际几何连续移动；减少动效时直接切换。",
+        "同一消息 ID 只播放一次投递，黑板开始/结束对应气泡出现/消失，断线重连不重播旧通信。"
+      ],
+      "id": "T023",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/fake-host.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "宿主适配器",
+      "reason": "FakeHost 不作为已保留骨架；按目标 HostAdaptor 最小公开边界重写，移除为旧作业通知和私有调用次序而设的钩子。",
+      "targetScenarios": [
+        "确定性控制宿主接管、轮次结束、释放失败及用量事件，以外部状态验证 Agent 合同而不要求内部函数调用次序。"
+      ],
+      "id": "T024",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/preset-host.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "模型与权限配置",
+      "reason": "真实宿主预设与文件权限夹具仅按最小目标必要性评估，模块列表和旧宿主补丁不预先继承。",
+      "targetScenarios": [
+        "以实际依赖公开接口启动隔离宿主，验证原生预设、完整模型配置、初始权限与管理工具 guard，清理本次资源。"
+      ],
+      "id": "T025",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/reader-nesting-fixture.tsx",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "仅评估原生阅读器跨成员展示与只读边界的最小夹具；不要求继承整个 reader 包或补丁。",
+      "targetScenarios": [
+        "加载两个成员的完整历史与增量可切换，读引用与运行实例分离，关闭观察不触发执行或终止。"
+      ],
+      "id": "T026",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/retained-ui-fixture.tsx",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "插件设置",
+      "reason": "旧默认 pattern、ConfigForm 和单团队 UI 假设移除；用目标配置、两会话多团队及多作业重建夹具。",
+      "targetScenarios": [
+        "模型继承与覆盖、保存失败、修订冲突值比较及三种生效时机可独立复现；界面数据使用目标真实身份与多作业快照。"
+      ],
+      "id": "T027",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/runtime-host.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "reason": "确定性 DSH runtime 可作为候选测试宿主，但需重审插件及 Loader 必要性，不继承旧 service 配置或默认补丁。",
+      "targetScenarios": [
+        "通过实际 DSH 注册工具与原生事件检验创建、权限、等待、输入模式和清理；无模型集成与真实外部模型证据分别记录。"
+      ],
+      "id": "T028",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/helpers/team-ui-fixture.tsx",
+      "disposition": "remove",
+      "phase": "P6",
+      "section": null,
+      "reason": "仅服务旧主会话 owner/task/result/review 投影和界面结构；按目标多作业数据重新建夹具。",
+      "targetScenarios": [],
+      "id": "T029",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/host-extensions.test.ts",
+      "disposition": "remove",
+      "phase": "P6",
+      "section": null,
+      "reason": "删除必须安装全部 19 文件补丁和旧整包哈希的断言；只有公开接口缺口被复现并选定最小适配后，才为该适配另建必要能力与干净安装测试。",
+      "targetScenarios": [],
+      "id": "T030",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/host.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "reason": "适配器与关闭骨架重审后按目标边界重写；不把既有等待钩子、计时器或两套内部关闭次序作为合同。",
+      "targetScenarios": [
+        "实际 DSH setup 安装完整模型与权限，拒绝可修改权限配置的管理工具；不支持参数在创建前失败。",
+        "followup/steer/inject 分别实现目标模式；wait registered 结束当前轮次，匹配时直接返回，暂缓普通输入不丢失。",
+        "冷恢复保留用户/任务输入，清理未消费 Flow 通知并恢复准确模型配置；读只恢复会话而不恢复旧通信。",
+        "after-turn 当前轮次仍可执行业务，immediate 立即撤销资格；持久化失败记入结果，超时放弃真实拒绝。",
+        "herb 使用独立模型调用且不改原上下文，用量归子节点并按实际模型计价。"
+      ],
+      "id": "T031",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/integration/fixtures/native-browser-probe.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "模型与权限配置",
+      "reason": "仅评估是否能作为最小原生工具与沙箱验证设施；浏览器提供者、探针消息格式及旧调用链不构成目标要求。",
+      "targetScenarios": [
+        "在实际依赖宿主中，目标 Agent 初始权限确实限制业务工具，初始化失败不发布可执行实例。"
+      ],
+      "id": "T032",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/fixtures/native-member-probe.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "reason": "旧成员控制器探针不复用为模型；重建实际 HostAdaptor 的确定性原生执行边界。",
+      "targetScenarios": [
+        "创建无 initmsg 的 Agent 保持 idle 且无模型请求；显式输入能调用已绑定工具，释放后新输入失败。",
+        "新实现先保存会话，再冷恢复完整 Profile 和空 Mailbox，历史通信对象不重绑。"
+      ],
+      "id": "T033",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/fixtures/team-command-probe.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "旧 flow_task/flow_review/flow_result、自然返回完成及命令 intent 协议专用夹具；删除并以新注册工具场景另建夹具。",
+      "targetScenarios": [],
+      "id": "T034",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/native-browser.test.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "模型与权限配置",
+      "reason": "是否保留最小原生业务工具场景须由宿主权限合同证明；不要求普通 Agent 与 Flow 使用同一浏览器提供者或特定网页。",
+      "targetScenarios": [
+        "真实宿主内按 Profile 安装沙箱与 never 审批，允许范围内工具成功、越界文件访问被拒绝。"
+      ],
+      "id": "T035",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/native-member.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "会话恢复与资源释放",
+      "reason": "将旧成员保留、任务取消与恢复场景改写为 HostAdaptor 对象及会话合同；不继承旧控制器所有权。",
+      "targetScenarios": [
+        "SIGTERM 允许已开始轮次收尾，SIGKILL 升级后拒绝业务；完成 Promise 如实反映清理失败。",
+        "冷恢复保留用户/任务输入，替换未消费旧 Flow 通知并准备不主动启动轮次的恢复说明。"
+      ],
+      "id": "T036",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/provider-settings.test.ts",
+      "disposition": "remove",
+      "phase": "P6",
+      "section": null,
+      "reason": "原生 provider 创建/编辑/删除的产品自身测试没有 Flow 目标职责；Flow 设置只验证设计规定的配置模型选择与生效时机。",
+      "targetScenarios": [],
+      "id": "T037",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/team-command.test.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "旧命令直接创建主会话自有根、自然返回与强制 requester review 流程退出；不保留固定 Flow 调用次数和旧工具。",
+      "targetScenarios": [],
+      "id": "T038",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/team-ui.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "reason": "删除旧 owner/task/result/review、旧单团队导航及 DOM/截图预期，依据目标展示模型重建。",
+      "targetScenarios": [
+        "一个主会话管理两棵团队并按团队分组导航，另一主会话只看自身运行；定位成员与打开观察分别工作。",
+        "宽屏详情并列、窄屏覆盖，观察返回恢复详情与焦点；Web 与原生面板显示同一团队及多份作业。"
+      ],
+      "id": "T039",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/launch-profile.test.ts",
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "reason": "开发启动配置仅按干净安装必要性重建，删除旧字段或整包宿主扩展默认安装要求。",
+      "targetScenarios": [
+        "空状态目录可安装并启动目标插件、策略技能、模板、原生客户端与独立 Web；重复启动不覆盖已保存用户配置。"
+      ],
+      "id": "T040",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/observation-extension.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "用目标行为证明原生观察是否可由公开接口满足；删除对旧扩展整体存在、旧内部 Session driver 和原生私有实现的约束。",
+      "targetScenarios": [
+        "只读冷观察读取完整历史和后续增量，不激活模型、不重写 Session；观察活跃成员时其当前执行继续。",
+        "成员归智能体类别，观察工具/命令记录不出现审批、分支或配置修改控件；关闭、失败、切换均释放独立引用。"
+      ],
+      "id": "T041",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/patterns.test.ts",
+      "disposition": "remove",
+      "phase": "P3",
+      "section": null,
+      "reason": "删除 parallel/review/vote 三个固定 execute 工作流、固定执行轮次/汇总和 task completion 自动释放 Context/Run 的用例；参考模板由新目录/编译/应用合同测试取代。",
+      "targetScenarios": [],
+      "id": "T042",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/plugin-entry.test.ts",
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "reason": "删除 flow_start/flow_query、notifyEntrypointComplete 旧 inject 查询、旧 Config/导出、StartIntents 与整包 patch 产物预期；新入口无兼容别名。",
+      "targetScenarios": [
+        "直接调用实际 DSH 注册团队与作业工具，同一会话创建两棵空闲团队并各派发多份任务，另一会话不能借句柄管理。",
+        "真实发送方取自宿主上下文，同次工具操作重放幂等；所有 Flow 节点安装 team-strategy，/agent-team 引导先选团队再派发作业。",
+        "顶层终态 followup 携带 runId、作业 ID 和查询信息，空闲主会话主动接续，忙碌主会话按宿主下一轮规则处理。"
+      ],
+      "id": "T043",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/reader-nesting.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "仅评估原生阅读器的必要跨会话展示能力，不保留旧 patched renderer 字节或内部递归 guard 策略。",
+      "targetScenarios": [
+        "实际宿主可从成员详情打开完整只读原生会话，切换成员不混用引用，关闭恢复详情与焦点且零模型执行副作用。"
+      ],
+      "id": "T044",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/retained-e2e-evidence.test.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "删除固定 incidents/release blocker/summary.json 格式、精确报告行与历史观察证据对照等任意业务报告测试；历史报告不得作为新测试验收输入。",
+      "targetScenarios": [],
+      "id": "T045",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/runs.test.ts",
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "展示数据",
+      "reason": "删除一节点一作业快照和作业自动重绑/跨冷恢复继续绑定预期，Run 生命周期从看板剥离；停止通过目标 RunService 与父级 kill。",
+      "targetScenarios": [
+        "展示同一团队的多份顶层/子作业、assignmentIds、结构化消息来源、黑板活动、terminatedAt 及 cleanup/operation 结果。",
+        "transfer 更新真实 parentId，resume 是新实例并记录来源；历史作业不自动绑定恢复实例。",
+        "根停止通过 RunService.release 取消 pending 作业并释放 Context，成员停止按当前父级 kill；operationId 重放一次且结果可从快照恢复。"
+      ],
+      "id": "T046",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/runtime-capacity.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "按模板创建团队",
+      "reason": "保留目标执行准入场景须重新核对宿主与容量职责；不沿袭旧队列类或 herb 私有调度次序。",
+      "targetScenarios": [
+        "多个 run 共用服务容量，空闲成员创建不占模型名额；等待成员让出执行准入，排队成员可立即终止。",
+        "缩容不取消已执行请求且只限制后续准入；herb 独立辅助调用服从容量与当前轮次关闭资格。"
+      ],
+      "id": "T047",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/runtime-settings.test.ts",
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "插件设置",
+      "reason": "删除旧 start intent/启动日志重放、默认固定模式、向全部成员复制运行材料和旧 Config 合同，按运行/作业/配置边界重建。",
+      "targetScenarios": [
+        "Run 创建时快照默认值，已有 Profile 不变；容量影响后续准入，连接设置按设计报告生效时机，patternSources 加载与诊断可见。",
+        "材料按 Assignment MaterialRef 校验与索引，flow_material_read 以实际 ContentBlock 呈现文本、图片和文件，访问遵守接收者权限与模型能力。",
+        "工具身份来自真实宿主调用，创建/派发/提交分别验证本次操作的幂等，旧 StartIntents 路径不存在。"
+      ],
+      "id": "T048",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/schema.test.ts",
+      "disposition": "rewrite",
+      "phase": "P2",
+      "section": "任务内容与派发关系",
+      "reason": "删除结果必须 object 及拒绝 minimum/maximum 的旧约束；校验片段只有符合目标方言才可复用。",
+      "targetScenarios": [
+        "schema 支持 type/oneOf/properties/required/additionalProperties/items/enum/const/minimum/maximum 及注解，未知关键字派发前拒绝。",
+        "字符串、数组、数值、布尔、null 与对象结果都按 schema 校验；不合法 JSON 值不能持久化，摘要包含方言版本和 schema 内容。",
+        "格式失败返回字段路径及原因，固定两次纠正；schema/结果不因调用方后续修改而变更已登记事实。"
+      ],
+      "id": "T049",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/server.test.ts",
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "reason": "鉴权、游标和事件落盘有设计职责，但现有 server/归档格式不预先保留；替换旧协议夹具。",
+      "targetScenarios": [
+        "令牌交换校验允许来源，查询/订阅校验 Bearer，状态变更同时校验来源；版本不兼容明确拒绝。",
+        "列表与 run 各自 seq 严格递增、事件顺序落盘回放；过期游标重建、epoch 重启失效与订阅代次隔离符合合同。",
+        "团队状态变化进入列表流，停止结果写入事件和快照供重连恢复。"
+      ],
+      "id": "T050",
+      "origins": [
+        "local"
+      ]
+    },
+    {
+      "path": "tests/types/flow-contracts.client.ts",
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "展示数据",
+      "reason": "旧 FlowTeamSnapshot/FlowAgentSession 类型合同删除；建立目标协议的独立客户端类型合同。",
+      "targetScenarios": [
+        "AgentCard 引用 assignmentIds，多份 Assignment 保留发送方、接收方、父作业、存续理由；消息来源保留 Agent/Group 身份。"
+      ],
+      "id": "T051",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/types/flow-contracts.host.ts",
+      "disposition": "rewrite",
+      "phase": "P2",
+      "section": "团队模式与作业",
+      "reason": "FlowTask/FlowResult/FlowReview 和强制 review 类型合同删除，按 Run 与 Assignment 对象边界重写。",
+      "targetScenarios": [
+        "顶层发送方是 Run，子作业发送方为当前父 Agent；prepare/deliver/submit/cancel 与 readArchive 的类型表达对象引用及 JSONValue 结果。"
+      ],
+      "id": "T052",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/agent-binding.test.ts",
+      "disposition": "remove",
+      "phase": "P1",
+      "section": null,
+      "reason": "旧队列任务发布时绑定原生成员的模型已退出；不保留延迟 task/member 绑定协议。",
+      "targetScenarios": [],
+      "id": "T053",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/agent-communication.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "执行模型",
+      "reason": "旧 request/notice 与执行队列投递模型删除，按目标消息及通知模式重写。",
+      "targetScenarios": [
+        "消息可入 Mailbox 而不等待模型执行；followup/steer 唤醒空闲 Agent，notice 不主动唤醒，通知接管不改变已读状态。"
+      ],
+      "id": "T054",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/agent-lifecycle.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "生命周期模型",
+      "reason": "删除原生自然返回直接结束旧 task 的预期，分开检验宿主轮次与逻辑生命周期。",
+      "targetScenarios": [
+        "turn-end 更新执行事实但不自动逻辑终止 Agent；明确终止后状态不被迟到宿主事件改回 running。"
+      ],
+      "id": "T055",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/agent-profile.test.ts",
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "身份信息",
+      "reason": "旧角色委派字段和旧配置验证删除，只按只读 AgentProfile 与宿主设置合同重建。",
+      "targetScenarios": [
+        "创建后 Profile 是独立只读记录；fork 复制配置但独立会话，resume 使用持久完整模型与权限而非当前默认值。"
+      ],
+      "id": "T056",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/agent-queue.test.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "按模板创建团队",
+      "reason": "容量职责有设计依据，旧执行作业队列类及 FIFO、错误回调、内部关闭次序不预先保留。",
+      "targetScenarios": [
+        "多个团队共用服务执行容量；空闲初始化不占模型名额，主动等待后其他执行可获准入，缩容只改变后续准入。"
+      ],
+      "id": "T057",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/collaboration-state-model.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "有界 SQLite task/result/review 状态穷举依赖旧验收模型，不把 7×7 或旧表变更次数当目标。",
+      "targetScenarios": [],
+      "id": "T058",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/control-message-regression.test.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "旧 pause/resume、task 版本、owner 消息投递和命令缓存协议已退出；新重放按团队/作业合同另建。",
+      "targetScenarios": [],
+      "id": "T059",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/flow-controller.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "旧主会话即根、任务修订、强制 review、SQLite schema 拒绝及旧 Inbox 恢复模型删除；新实现不提供兼容或迁移。",
+      "targetScenarios": [],
+      "id": "T060",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/host-profile.test.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "旧证据 campaign 布局及凭据继承测试只服务历史对照设施，没有相应产品合同。",
+      "targetScenarios": [],
+      "id": "T061",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/member-tools.test.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "旧六个成员工具与 flow_task 参数合同删除；新工具不提供别名或参数转接。",
+      "targetScenarios": [],
+      "id": "T062",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/message-queue.test.ts",
+      "disposition": "remove",
+      "phase": "P1",
+      "section": null,
+      "reason": "旧地址投递队列及私有 handoff/ack 顺序测试没有独立设计职责；按 Mailbox 接收、通知接管、正文已读三个事实另建。",
+      "targetScenarios": [],
+      "id": "T063",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/native-close-regression.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "删除 root-completed 自动释放及旧 task/member 生命周期断言；作业取消不终止 Agent，完成不释放团队。",
+      "targetScenarios": [],
+      "id": "T064",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/native-fixture.ts",
+      "disposition": "remove",
+      "phase": "P1",
+      "section": null,
+      "reason": "旧 controller/store/task 的原生实例夹具整体删除；不能据其回调次序限制新实现。",
+      "targetScenarios": [],
+      "id": "T065",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/profile-models.test.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "oMLX 部署表达式迁移、别名及初始化配置格式不在目标设计内；不建立旧配置转换层。",
+      "targetScenarios": [],
+      "id": "T066",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/provider-baseline.test.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "记录 14 个补丁的字节哈希和安装清单不证明目标必要性；删除整包补丁保留断言。",
+      "targetScenarios": [],
+      "id": "T067",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/provider-factory-scope.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "只评估原生阅读器跨会话嵌套是否是观察必需能力，不将已安装补丁或宿主私有 guard 实现作为保留要求。",
+      "targetScenarios": [
+        "观察另一成员的原生记录可展示；关闭只读引用不影响原 Agent，递归展示不产生无界嵌套。"
+      ],
+      "id": "T068",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/provider-message.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "移除旧 task/communication 分类补丁断言；通过实际阅读器验证目标会话记录。",
+      "targetScenarios": [
+        "用户、助手、思考与工具记录按顺序可读，观察界面没有审批、分支或配置修改等执行副作用。"
+      ],
+      "id": "T069",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/provider-observation.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "宿主数据与连接",
+      "reason": "旧 command intent codec 断言删除；只评估设计所需只读 follow 历史及增量是否可由公开接口满足。",
+      "targetScenarios": [
+        "打开已持久化成员记录不激活执行，活跃成员增量可跟随；切换/退出释放本次观察引用。"
+      ],
+      "id": "T070",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/provider-session-restore.test.ts",
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "会话恢复与资源释放",
+      "reason": "只保留新实现生成的宿主持久记录可恢复这一目标；删除为旧通知首行/旧格式迁移而设的断言。",
+      "targetScenarios": [
+        "新版本先生成持久会话再冷恢复，完整配置及用户输入保留，旧通信编号无效并以恢复说明告知。"
+      ],
+      "id": "T071",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/queued-task-update.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "旧可修订/paused task 和 membership 规则删除，当前作业关系在登记后不可变。",
+      "targetScenarios": [],
+      "id": "T072",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/reader-source.test.ts",
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "reason": "只评估独立观察引用的获取、失败、分页及释放行为；不限定 catalog 回调次序或既有 ReaderSource 类。",
+      "targetScenarios": [
+        "历史读取失败可重试，关闭发生在异步获取完成之前也不泄漏引用；切换成员释放旧引用，执行继续。"
+      ],
+      "id": "T073",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/root-completion-regression.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "旧主会话根显式结果、自审豁免、blocked/partial 结果与子作业强制 review 模型删除；任务完成与团队生命周期分离。",
+      "targetScenarios": [],
+      "id": "T074",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/same-member-order-regression.test.ts",
+      "disposition": "remove",
+      "phase": "P2",
+      "section": null,
+      "reason": "旧持久 FIFO task、acceptance 之前复用与暂停任务调度规则删除，不将私有排队顺序升级为合同。",
+      "targetScenarios": [],
+      "id": "T075",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/session-scan.test.ts",
+      "disposition": "remove",
+      "phase": "P7",
+      "section": null,
+      "reason": "仅服务历史原生对照报告的日志扫描统计，不是目标消息/作业的验收入口。",
+      "targetScenarios": [],
+      "id": "T076",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/team-command-regression.test.ts",
+      "disposition": "remove",
+      "phase": "P4",
+      "section": null,
+      "reason": "旧 /agent-team 直接根创建、intent 日志、flow_task/flow_review/flow_result 与固定三次调用断言删除；StartIntents 不迁移。",
+      "targetScenarios": [],
+      "id": "T077",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/team-tree.test.ts",
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "选择、折叠与视点",
+      "reason": "旧主会话 owner 作为树根与历史任务模型删除，布局片段仅按真实 Agent 父子树复核。",
+      "targetScenarios": [
+        "折叠聚合全部隐藏后代的状态、数量、输入输出用量及标记；按视图范围、epoch、runId 恢复选择、页签、折叠与视点。"
+      ],
+      "id": "T078",
+      "origins": [
+        "main"
+      ]
+    },
+    {
+      "path": "tests/usage.test.ts",
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "事件与用量",
+      "reason": "按实际模型调用身份重建统计，当前结算合计用例不能覆盖设计要求的流式累计替换。",
+      "targetScenarios": [
+        "同次调用的最新累计采样替换旧样本，结算后仅留一条最终记录，不同调用分别累计。",
+        "缓存读取是输入分项不重复加总；宿主无 totalTokens 时合计不可用，按实际执行模型区分零价与未知价格，herb 辅助用量归新子节点。"
+      ],
+      "id": "T079",
+      "origins": [
+        "local"
+      ]
+    }
+  ],
+  "discovery": {
+    "main": "/Users/luohao/.codex/worktrees/design-alignment-p0/dsh-flow；按磁盘完整递归清点 tests/（39 文件，含 tests/types、acceptance、integration fixtures、helpers 和本地已删的主干文件）。另清点 native-agent-ashare-e2e*.ts 及 stage 专用辅助脚本；主干 package test 当前仅发现 tests/unit/*.test.ts，原生集成另走 test:native。设计依据为目标 main docs/design/design.md，SHA256 39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6。",
+    "local": "/Users/luohao/dsh-flow；原脏工作树只读，完整递归清点 tests/（29 文件，含未跟踪文件、fixture 和仅复核历史证据的测试），并清点 e2e/verify、host-smoke、client-native-preview 及其被测试直接导入的 boot/client-build/launch-dsh 辅助路径。local package test 当前为 tests/*.test.ts，不能发现子目录；不得在迁入 tests/contracts 等后静默漏测。",
+    "target": "目标套件建议在 census 核销后新建：P1 tests/contracts/core 与 tests/integration/host；P2 tests/contracts/runs、assignments、schema；P3 tests/contracts/patterns（14 份参考包、默认参数、纯变量类型保持、count=0、嵌套 use、路径覆盖、群选择器、requestId、失败收尾及 run 内候选作用域；展开 2 名组长各含 3 收集者、核验/审查各 1，所有新成员 idle 且无 send）；P4 tests/integration/tools-materials-settings；P5 tests/contracts/dashboard 与 tests/integration/connections；P6 tests/ui 与 tests/integration/native-ui；P7 tests/acceptance 与目标包安装验证。重建测试发现入口以显式目录集合或受支持的递归发现覆盖这些路径，并让 typecheck 显式纳入 host/client 类型合同及 fixtures；pnpm test 不再使用仅根层 tests/*.test.ts 的旧 glob。生产代码、测试和 package.json 本阶段不修改。P7 从新实现生成持久记录，在同一最终源码版本验证空闲模板创建、同团队两份不同 schema 作业及逐层派发、取消一个作业子树而另一个继续、主会话 followup 与双面板一致、显式解散及重启句柄失效但结果可查、显式恢复会话与后继作业且不重绑历史。类型、确定性宿主、实际界面和真实模型证据分别记录。remove 表示旧文件及专用断言退出目标集；rewrite 表示按设计另建，不能保留冲突子用例；evaluate 仅允许核对必要性后采用最小片段，不是保留批准。旧三固定流程、完成释放团队、object-only 结果、作业重绑、单作业卡片、旧工具及任意业务报告证据断言必须删除，不以 169/52 或既有通过数设门槛。"
+  }
+}

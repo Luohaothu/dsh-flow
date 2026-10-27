@@ -1,0 +1,1674 @@
+{
+  "components": [
+    {
+      "id": "file:.agents/skills/module-design/SKILL.md",
+      "path": ".agents/skills/module-design/SKILL.md",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "非产品组件，遵守现有仓库指引；不纳入产品删除范围。P7 仅核查本文件作为实施约束的适用性，无修改任务；只有独立授权及指引变更才调整，不以产品职责缺失作删除依据。"
+    },
+    {
+      "id": "file:.agents/skills/module-design/references/interface-review.md",
+      "path": ".agents/skills/module-design/references/interface-review.md",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "非产品组件，遵守现有仓库指引；不纳入产品删除范围。P7 仅核查本文件作为实施约束的适用性，无修改任务；只有独立授权及指引变更才调整，不以产品职责缺失作删除依据。"
+    },
+    {
+      "id": "file:.agents/skills/module-design/scripts/check_sections.py",
+      "path": ".agents/skills/module-design/scripts/check_sections.py",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "非产品组件，遵守现有仓库指引；不纳入产品删除范围。P7 仅核查本文件作为实施约束的适用性，无修改任务；只有独立授权及指引变更才调整，不以产品职责缺失作删除依据。"
+    },
+    {
+      "id": "file:.agents/skills/module-design/scripts/test_check_sections.py",
+      "path": ".agents/skills/module-design/scripts/test_check_sections.py",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "非产品组件，遵守现有仓库指引；不纳入产品删除范围。P7 仅核查本文件作为实施约束的适用性，无修改任务；只有独立授权及指引变更才调整，不以产品职责缺失作删除依据。"
+    },
+    {
+      "id": "file:AGENTS.md",
+      "path": "AGENTS.md",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "非产品组件，遵守现有仓库指引；不纳入产品删除范围。P7 仅核查本文件作为实施约束的适用性，无修改任务；只有独立授权及指引变更才调整，不以产品职责缺失作删除依据。"
+    },
+    {
+      "id": "file:examples/cluster.patch.yml",
+      "path": "examples/cluster.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "旧开发控制面、Remote/命令 composition 及旧配置耦合；按新插件注册、模型与初始权限合同重写最小验收 overlay。"
+    },
+    {
+      "id": "file:examples/cluster.web.patch.yml",
+      "path": "examples/cluster.web.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "只添加原生 browser-use/Playwright 工具，无 Flow 模板、作业或观察职责；该历史浏览器工具安装 overlay 不属于目标产品必需能力，删除。"
+    },
+    {
+      "id": "file:examples/deepseek.patch.yml",
+      "path": "examples/deepseek.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "旧服务字段及角色/权限默认混入 provider overlay；按真实已确认模型与目标 Run 配置重写示例，不保留硬编码模型能力作为合同。"
+    },
+    {
+      "id": "file:examples/flow.patch.yml",
+      "path": "examples/flow.patch.yml",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "按新配置及安装入口更新模型、初始权限和连接示例；配置解析由 P4 建立，避免将旧服务字段固定为公开格式。"
+    },
+    {
+      "id": "file:examples/instance-runtime.patch.yml",
+      "path": "examples/instance-runtime.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "旧示例沿用原生 approval ask，与 Flow 成员 setup 的 never 策略不一致；按目标初始权限、稳定资源作用域与新配置重写。"
+    },
+    {
+      "id": "file:examples/instance.patch.yml",
+      "path": "examples/instance.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "旧安装 composition 和 Flow 字段与目标 Run 默认快照不一致；按新插件入口、目标权限及宿主 profile 分工重写。"
+    },
+    {
+      "id": "file:examples/omlx.patch.yml",
+      "path": "examples/omlx.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "供应商部署示例属于工程验收支持。P7 仅在当前确认可用的模型用于目标真实场景时采用必要 provider 配置，否则删除；旧模型名、限额与路由不构成目标产品约束。"
+    },
+    {
+      "id": "file:examples/openai-compatible.patch.yml",
+      "path": "examples/openai-compatible.patch.yml",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "供应商部署示例属于工程验收支持。P7 核验目标真实场景确需该路由及实际模型能力才采用最小 provider 配置，否则删除；不沿用历史固定模型能力作为验收依据。"
+    },
+    {
+      "id": "file:package.json",
+      "path": "package.json",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。"
+    },
+    {
+      "id": "file:packages/dsh-flow/README.md",
+      "path": "packages/dsh-flow/README.md",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "团队运行模型",
+      "rationale": "将安装、公开入口和示例改为持续团队、模板展开及多份作业；对应 P4 新工具与 P6 面板，不沿用一次性任务或旧控制面说明。"
+    },
+    {
+      "id": "file:packages/dsh-flow/cordis.patch.yml",
+      "path": "packages/dsh-flow/cordis.patch.yml",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按最终插件与客户端注册重写安装 composition；删除旧 web/command 插件行，保留目标运行服务、策略技能及双面板实际需要的最小注册。"
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/install.d.mts",
+      "path": "packages/dsh-flow/host-extensions/install.d.mts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "P1 先结清清单内执行所有权及观察不激活的运行时能力，P6 结清全部 19 项文件补丁与原生界面能力；仅实际 rc.2 公开接口不足且有最小复现时采用必要子集。安装器、类型声明及导出命令均非预定保留项；若无需扩展则删除，不能以旧哈希匹配或测试通过证明必要性。"
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/install.mjs",
+      "path": "packages/dsh-flow/host-extensions/install.mjs",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "P1 先结清清单内执行所有权及观察不激活的运行时能力，P6 结清全部 19 项文件补丁与原生界面能力；仅实际 rc.2 公开接口不足且有最小复现时采用必要子集。安装器、类型声明及导出命令均非预定保留项；若无需扩展则删除，不能以旧哈希匹配或测试通过证明必要性。"
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/rc2.json",
+      "path": "packages/dsh-flow/host-extensions/rc2.json",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "P1 先结清清单内执行所有权及观察不激活的运行时能力，P6 结清全部 19 项文件补丁与原生界面能力；仅实际 rc.2 公开接口不足且有最小复现时采用必要子集。安装器、类型声明及导出命令均非预定保留项；若无需扩展则删除，不能以旧哈希匹配或测试通过证明必要性。"
+    },
+    {
+      "id": "file:packages/dsh-flow/locale/en.json",
+      "path": "packages/dsh-flow/locale/en.json",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "rationale": "按持续团队、多作业、组合状态、观察侧栏和设置生效时机重建用户文案；去除旧状态与固定模式术语，文案不能决定领域状态。"
+    },
+    {
+      "id": "file:packages/dsh-flow/locale/zh.json",
+      "path": "packages/dsh-flow/locale/zh.json",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "rationale": "按持续团队、多作业、组合状态、观察侧栏和设置生效时机重建用户文案；去除旧状态与固定模式术语，文案不能决定领域状态。"
+    },
+    {
+      "id": "file:packages/dsh-flow/package.json",
+      "path": "packages/dsh-flow/package.json",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。"
+    },
+    {
+      "id": "file:packages/dsh-flow/skills/agent-team/SKILL.md",
+      "path": "packages/dsh-flow/skills/agent-team/SKILL.md",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "团队运行模型",
+      "rationale": "重写为先查找或创建持续团队、按需应用模板再交付作业的会话入口指引，覆盖查询与复用；删除三种固定执行算法及一次性完成即释放团队的指引。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client.ts",
+      "path": "packages/dsh-flow/src/client.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "客户端注册与打包",
+      "rationale": "以同一共享看板组件重新注册全局面板、侧栏入口、会话页签、团队下拉、观察侧栏与设置；删除主干旧 Remote 注入及旧视图包装，不沿用一次性运行或旧导航数据。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Dashboard.tsx",
+      "path": "packages/dsh-flow/src/client/Dashboard.tsx",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "界面设计",
+      "rationale": "按目标多作业、真实身份、群框、结构化通信、并列详情、折叠汇总和视点整体重写；旧单作业卡片、动物身份及模态详情相互耦合，不作为界面骨架保留。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Native.tsx",
+      "path": "packages/dsh-flow/src/client/Native.tsx",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "插件入口与会话导航",
+      "rationale": "重新以 RunInfo.origin、团队状态和 pendingAssignmentCount 构建全局/会话导航及团队下拉；删除旧成员数量替代团队数量和角色替代状态的展示逻辑。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Settings.tsx",
+      "path": "packages/dsh-flow/src/client/Settings.tsx",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "插件设置",
+      "rationale": "重建继承、带 Logo 的模型选择、patternSources 诊断、配置修订号及冲突值并列比较；执行容量保存提示为后续执行生效。宿主 profile 与 revision 合同必须实现，旧 ConfigForm 无保留保证。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/agent-session.ts",
+      "path": "packages/dsh-flow/src/client/agent-session.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "删除主干旧 FlowAgentSession 查询状态包装；新观察侧栏取得独立原生读取引用，历史与增量由宿主阅读器提供，不复制旧控制面的成员快照协议。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/assets.d.ts",
+      "path": "packages/dsh-flow/src/client/assets.d.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "客户端注册与打包",
+      "rationale": "CSS 资源模块声明是浏览器打包的最小类型支持。P6 按最终样式导入形式核验；仅确有资源导入时采用相应声明，否则删除，不为旧 CSS 文件强留声明。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/connection.ts",
+      "path": "packages/dsh-flow/src/client/connection.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "rationale": "重新实现令牌、epoch、双层 seq、订阅代次、去重、游标过期重建与 operationId 重放；结合 P6 的跨团队视图状态和断线禁用停止重整状态管理。上述连接合同保留，旧连接管理器不保留为固定骨架。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/identity.ts",
+      "path": "packages/dsh-flow/src/client/identity.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "节点卡片",
+      "rationale": "生成中文别名与动物图标违反真实 AgentProfile.name 和常驻模型 Logo 设计，删除身份生成器及其调用，展示身份从目标 Profile 和模型记录读取。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/model.ts",
+      "path": "packages/dsh-flow/src/client/model.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "展示数据",
+      "rationale": "重建多作业、结构化消息来源、terminatedAt、黑板写入及目标 Run 状态的解析和投影；保留版本拒绝、未知事件推进游标和按 ID 替换合同，旧单作业格式及 completed 团队状态退出协议。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/observer.ts",
+      "path": "packages/dsh-flow/src/client/observer.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "rationale": "主干 TeamObserver 轮询旧 Remote 团队快照，没有目标事件游标与订阅合同；删除该轮询控制面，由新快照加双事件流驱动共享看板。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/reader-source.ts",
+      "path": "packages/dsh-flow/src/client/reader-source.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "读取引用承担历史、增量、切换释放及只读观察的目标职责。P6 对实际 rc.2 公开接口核验 allowUnlisted/observationOnly 是否仍需最小扩展，且开关观察不得创建或驱动 Agent；仅满足独立引用和释放合同的片段可采用，否则重写。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/reader.tsx",
+      "path": "packages/dsh-flow/src/client/reader.tsx",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "原生阅读器承载用户、助手、思考与工具记录，职责有设计依据。P6 只在完整历史/增量、只读无执行副作用、滚动位置与焦点返回均成立时采用独立渲染片段；删除旧 openFull 或包装层中无目标职责部分，不为阅读器整包保留宿主补丁。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/sidebar.tsx",
+      "path": "packages/dsh-flow/src/client/sidebar.tsx",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "重建观察侧栏头部身份、模型 Logo、组合状态、成员切换、关闭释放及详情/焦点恢复；当前主干与本地的简单挂载包装不能满足完整交互。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/standalone.tsx",
+      "path": "packages/dsh-flow/src/client/standalone.tsx",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "客户端注册与打包",
+      "rationale": "按重写后的共享组件和 P5 连接入口重建独立 Web 挂载，包含自身 React 18.3.1 和样式；与原生面板使用同一目标协议及交互。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/styles.css",
+      "path": "packages/dsh-flow/src/client/styles.css",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "界面元素设计",
+      "rationale": "按 216px 卡片、分项 token、并列详情、响应式边界及浅深色重建样式；移除动物身份、旧单作业及模态详情布局，减少动效和键盘状态随新组件验证。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/styles.ts",
+      "path": "packages/dsh-flow/src/client/styles.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "界面元素设计",
+      "rationale": "删除主干旧 TEAM_CSS 字符串与旧团队状态样式；共享看板按目标卡片和布局重建，旧 CSS 包装不形成独立保留职责。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/surfaces.tsx",
+      "path": "packages/dsh-flow/src/client/surfaces.tsx",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "节点详情",
+      "rationale": "旧 ProviderPanels 使用 DockSurface 创建可分割面板结构；目标只要求画布与详情/观察共享右栏及窄屏覆盖，删除该旧布局抽象及无必要的 dock 行为。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/team-view.tsx",
+      "path": "packages/dsh-flow/src/client/team-view.tsx",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "界面设计",
+      "rationale": "删除主干 FlowTeamSnapshot/任务状态绑定的旧主要视图，其 220px 卡片、旧身份和旧面板组织不能作为目标多作业共享界面；由新视图承担设计职责。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/tree.ts",
+      "path": "packages/dsh-flow/src/client/tree.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "整体布局与树形画布",
+      "rationale": "删除主干固定角色、动物图标、220px 节点及旧 FlowMember 状态模型。若布局中有价值的纯算法样本，须脱离旧树模型按 P6 目标几何另行实现，不保留本文件 API。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/command.ts",
+      "path": "packages/dsh-flow/src/command.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "团队运行模型",
+      "rationale": "删除主干命令意图扫描与旧 createTeam 交接；/agent-team 通过新技能及真实宿主调用上下文查询/复用团队并派发作业，不提供旧命令执行链或日志转换。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/config.ts",
+      "path": "packages/dsh-flow/src/config.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "插件设置",
+      "rationale": "删除主干仅有 dataDir/workspace/preset 的旧 Config/ResolvedConfig 及导出；目标配置按 Run 快照、角色、模板来源、执行容量和服务连接重新定义，不加旧配置转接。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/agent-queue.ts",
+      "path": "packages/dsh-flow/src/core/agent-queue.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P1",
+      "section": "输入与主动等待",
+      "rationale": "删除主干按 Job 驱动的 AgentQueue 及旧调度责任；执行准入归适配器服务级容量，通知/等待归 Agent，不能保留一套旧队列决定团队生命周期。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/agent.ts",
+      "path": "packages/dsh-flow/src/core/agent.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "Agent 智能体",
+      "rationale": "主干 FlowAgent 依赖 FlowSystem 和旧持久化任务控制面，不采用；本地 Agent 已具有 Context/HostAdaptor、通知、等待与派生职责，但 create 的 initial 必填且存在 notifyAssignment。P1 逐合同核验空闲创建、原子发布、恢复、通知及清理，仅可采用吻合的独立片段，删除作业专用通知；生命周期骨架若妨碍分责则重写，不以旧测试通过作复用依据。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/collaboration.ts",
+      "path": "packages/dsh-flow/src/core/collaboration.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P2",
+      "section": "团队运行模型",
+      "rationale": "删除主干 FlowCollaboration 的团队/任务/结果/评审混合控制面；持续 Run、AssignmentService 与模板目录各自拥有生命周期和状态，不迁移旧数据库模型。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/context.ts",
+      "path": "packages/dsh-flow/src/core/context.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "上下文",
+      "rationale": "本地 Context 对象登记、原子发布、直属关系和异步释放与目标对象职责对应。P1 核验关闭资格、释放 Promise 合并、借用宿主引用及终止同步通知；仅采用必要的登记/清理片段，重整为看板服务的额外发布状态，不默认保留内部缓存与事件排队。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/controller.ts",
+      "path": "packages/dsh-flow/src/core/controller.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P1",
+      "section": "宿主适配器",
+      "rationale": "删除主干 FlowController 的转发层与 FlowSystem/Store 装配，工具直接绑定 Flow 对象、团队入口调用新 RunService，不设置无独立设计责任的总控制器。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/deadline.ts",
+      "path": "packages/dsh-flow/src/core/deadline.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "生命周期模型",
+      "rationale": "有限清理时限和主动等待截止时间需要可靠计时，这是设计未命名的最小内部设施。P1 仅在取消/长时限处理可由合同证明且与适配器共用同一时限配置时采用，不保留双层重复关闭计时或额外状态。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/group.ts",
+      "path": "packages/dsh-flow/src/core/group.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "群聊",
+      "rationale": "本地 Group 已有构造时成员、群消息、共享黑板及退出/释放职责。P1 核验独占追加、消息隔离、时间顺序与成员生命周期，只采用符合合同的独立片段；黑板写入活动须由实际调用边界提供给 P5，不能仅以现有 group-blackboard 完成事件代替。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/index.ts",
+      "path": "packages/dsh-flow/src/core/index.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "Agent 编排系统",
+      "rationale": "仅导出设计规定的对象、类型和必需程序接口；移除作业专用通知、内部状态及无设计依据的辅助导出，不为旧调用者保留别名。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/mailbox.ts",
+      "path": "packages/dsh-flow/src/core/mailbox.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "收件箱",
+      "rationale": "本地 Mailbox 的入箱、来源评级、过滤、快照与读取职责对应设计。P1 按原子选择/已读更新、迭代边界、冷恢复新 ID 与 System 编排普通通知逐项验证，仅通过目标合同的独立实现可采用，否则重写；旧测试数量不构成依据。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/member-tools.ts",
+      "path": "packages/dsh-flow/src/core/member-tools.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "删除主干旧 task/result/review/control 工具注册；适配器根据真实调用上下文绑定新的 Agent/Mailbox/Group、模板和作业工具，不保留旧工具别名。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/message-queue.ts",
+      "path": "packages/dsh-flow/src/core/message-queue.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P1",
+      "section": "执行模型",
+      "rationale": "删除主干 MessageQueue 的持久配送、重试与旧消息模型；收件归 Mailbox、通知调度归所属 Agent、宿主接管归 HostAdaptor，不能保留另一套消息拥有者。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/message.ts",
+      "path": "packages/dsh-flow/src/core/message.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "消息",
+      "rationale": "本地消息与来源快照、业务 ID 和 System 编排标记对应设计隔离与普通通知。P1 验证对象引用保持、正文快照、来源组合和冷恢复后旧编号失效，只采用必要片段；作业终态必须走普通 System 消息，不沿用特殊 steer 路径。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/profile.ts",
+      "path": "packages/dsh-flow/src/core/profile.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "身份信息",
+      "rationale": "主干 composeMemberProfile 与旧宿主配置耦合，不采用该模型；本地 Profile 快照和权限等级检查可对应只读身份及初始权限合同。P1 仅在完整参数校验、hostExtras 隔离及父级初始权限边界满足时采用独立片段，不复用旧角色定义。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/runtime.ts",
+      "path": "packages/dsh-flow/src/core/runtime.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "rationale": "删除主干 NativeMember 工厂及 FlowSystem 使用的宿主包装；原生 create/resume、模型权限、工具、恢复及资源归属统一按 HostAdaptor 重整，不保留平行运行时。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/snapshot-data.ts",
+      "path": "packages/dsh-flow/src/core/snapshot-data.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "消息",
+      "rationale": "消息正文与 Profile 附加配置必须隔离，有限数据快照是必要的最小内部设施。P1 核验支持类型、引用隔离及 owner-defined hostExtras 快照责任，只有服务该合同的实现可采用，不扩张成通用序列化/兼容层。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/store.ts",
+      "path": "packages/dsh-flow/src/core/store.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P2",
+      "section": "取消、通知与历史记录",
+      "rationale": "删除主干 SQLite teams/tasks/results/reviews/messages 表与旧 schema/version 模型；新作业历史由 AssignmentService 记录，目标持久化和显式后继仍需实现，但不迁移旧数据格式或自动重绑。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/system.ts",
+      "path": "packages/dsh-flow/src/core/system.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P1",
+      "section": "上下文",
+      "rationale": "删除主干 FlowSystem 总拥有者及其 agent/job/message 队列；对象由 Context 管理、执行由 HostAdaptor 适配、团队及作业由各自服务负责，不复用旧生命周期骨架。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/types.ts",
+      "path": "packages/dsh-flow/src/core/types.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "宿主适配器",
+      "rationale": "按设计对象接口重整类型与事件边界，补足可选 initmsg 和流式实际调用身份；清理作业专用 Core 通知及无独立职责扩展字段，保持对象引用与宿主无关合同。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/protocol.ts",
+      "path": "packages/dsh-flow/src/dashboard/protocol.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "界面与后端接口设计",
+      "rationale": "按持续团队、多作业、结构化来源、黑板活动及调用身份整体重写协议。epoch、version、双层 seq、事件落盘、operationId 与结果快照均是目标能力；旧状态和单作业类型不兼容保留。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/runs.ts",
+      "path": "packages/dsh-flow/src/dashboard/runs.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "展示数据",
+      "rationale": "移出并删除旧 Run/RunRegistry 的领域生命周期，由 P2 RunService 拥有团队；按新对象重写展示投影、事件追加、双层游标和停止结果记录。保留设计的事件回放/进程失效能力，不保留旧 dashboard 管理 Context 的责任。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/server.ts",
+      "path": "packages/dsh-flow/src/dashboard/server.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "rationale": "按新查询、事件、停止合同重建 HTTP/SSE 边界与鉴权。随机令牌、Bearer、允许来源、变更来源校验、epoch/版本和操作幂等均必须实现；仅可另行采用独立传输片段，不能预先保留现 server 作为骨架。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/errors.ts",
+      "path": "packages/dsh-flow/src/errors.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "宿主适配器",
+      "rationale": "删除主干 Typert RemoteError 转换及旧 status 包装；新宿主工具和 HTTP 边界各自表达目标错误结果，无需旧 RPC 错误兼容层。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/capacity.ts",
+      "path": "packages/dsh-flow/src/host/capacity.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "插件设置",
+      "rationale": "服务级 maxConcurrentAgents 默认 4，保存影响后续执行准入而不中断在执行成员。P1 验证公平准入不是额外产品合同、等待者释放配额及动态容量生效，只采用满足准入要求的最小独立实现；P6 验证设置呈现，不因现有类可运行而保留包装。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/dsh-adaptor.ts",
+      "path": "packages/dsh-flow/src/host/dsh-adaptor.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "rationale": "按 HostAdaptor 全面重整 756 行适配实现的实例、输入、权限、冷恢复、用量与清理边界；核验可达权限写工具并 guard，取消重复关闭状态及旧材料/固定模板耦合。实际调用身份与累计用量由 P5 联调，原生公开能力优先，不将旧适配器整体划为保留区。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/index.ts",
+      "path": "packages/dsh-flow/src/host/index.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "导出新适配器和必要工具绑定能力，删除无内部调用但公开的 notifyEntrypointComplete 及其旧 inject/query 行为，不提供旧 API 转接。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/materials.ts",
+      "path": "packages/dsh-flow/src/host/materials.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "任务内容与派发关系",
+      "rationale": "将 RunMaterial 整次运行输入重写为逐作业 MaterialRef 校验、索引与 flow_material_read；内容块实际呈现需验证模型能力和权限。附件路径、摘要及读取片段仅在该边界成立时可另行采用，不保留旧材料生命周期。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/model-selection.ts",
+      "path": "packages/dsh-flow/src/host/model-selection.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "插件设置",
+      "rationale": "按 Run 默认快照、模板角色和本次覆盖重新解析模型/推理参数/权限、技能与工作区；移除 PatternExecution 和旧配置耦合，支持 patternSources 与三种生效时机，既有 Profile 不变。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/start-intents.ts",
+      "path": "packages/dsh-flow/src/host/start-intents.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "宿主数据与连接",
+      "rationale": "删除 StartIntents 与其日志恢复、旧 RunHandle 和重放协议。真实 callerSessionId/submissionId/sourceMessageId 及新 Run/作业幂等仍按目标合同实现，不读取或转换旧意图日志。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/tools.ts",
+      "path": "packages/dsh-flow/src/host/tools.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "删除 flow_start/flow_query、旧扁平派发及 notifyEntrypointComplete，按真实宿主调用者绑定团队、模板、作业、材料与通信工具；新入口完成通知走原生 followup，任意合法 JSON 结果按 schema 判断。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/index.ts",
+      "path": "packages/dsh-flow/src/index.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "总体定位",
+      "rationale": "重建插件装配和公开接口，仅注册目标 Context/HostAdaptor、Run/Assignment/模板/入口及看板服务；删除旧 Controller/PatternEngine/Config/工具和未调用旧导出，不提供兼容入口。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/main-model.ts",
+      "path": "packages/dsh-flow/src/main-model.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "模型与权限配置",
+      "rationale": "删除主干从当前会话推导 FlowModelSelection 的旧助手；目标成员模型按新 Run 默认快照、角色及本次覆盖解析，冷恢复按持久 Profile 完整配置，不由旧默认值路径决定。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/assignments.ts",
+      "path": "packages/dsh-flow/src/patterns/assignments.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P2",
+      "section": "作业模型",
+      "rationale": "删除扁平 AssignmentManager 与 restoreBindings，整体重写作业树、完整 Spec、prepare/deliver、幂等回执、四状态、固定纠正机会、递归取消、存续理由及显式历史后继；成功持久化后再报告提交完成。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/engine.ts",
+      "path": "packages/dsh-flow/src/patterns/engine.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "remove",
+      "phase": "P3",
+      "section": "模板定义与管理指引",
+      "rationale": "删除 PatternEngine、PatternDefinition.execute 及 parallel/review/vote 固定算法；P2 新建持续 Run，P3 新建同一目录加载器、模板编译与 applyPattern，不以旧引擎转接或任务完成释放 Context。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/schema.ts",
+      "path": "packages/dsh-flow/src/patterns/schema.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P2",
+      "section": "提交与完成",
+      "rationale": "按目标 schema 方言整体重写声明、验证与摘要，加入 minimum/maximum 并接受任意合法 JSON 值；方言版本参与摘要，删除对象结果限定与旧关键字缺口，不提供旧方言兼容。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/service.ts",
+      "path": "packages/dsh-flow/src/service.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "团队运行模型",
+      "rationale": "删除主干旧 FlowService 控制面及本地 PatternEngine/StartIntents 入口链；会话服务组织新 Run、Assignment、模板、材料与配置调用，校验真实来源归属，顶层终态携带团队/作业/查询信息 followup 原会话。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/skill.ts",
+      "path": "packages/dsh-flow/src/skill.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "重建 agent-team 与所有 Flow 节点 team-strategy 的技能资源注册；去除固定三模式候选说明，资源与新模板及工具族一起安装，不保留旧指引。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/tool-arguments.ts",
+      "path": "packages/dsh-flow/src/tool-arguments.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "删除主干 strictTool 对旧工具格式的通用包装；新适配器各工具声明、参数解析和对象绑定随目标接口重建，只有新工具确需的最小校验在所属边界实现。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/types.ts",
+      "path": "packages/dsh-flow/src/types.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "总体定位",
+      "rationale": "删除主干 FlowTeam/FlowTask/FlowReview/Remote 类型模型；新 Run、AssignmentSpec、模板、Core 与展示记录由对应模块定义，不保留旧类型别名。"
+    },
+    {
+      "id": "file:packages/dsh-flow/src/web.ts",
+      "path": "packages/dsh-flow/src/web.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P5",
+      "section": "查询与事件订阅",
+      "rationale": "删除主干 Typert Remote web 服务及旧团队读/写端点；新本机 HTTP 快照、双事件流与停止接口承担客户端协议，不保留旧 Remote 门面。"
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.client.json",
+      "path": "packages/dsh-flow/tsconfig.client.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.host.json",
+      "path": "packages/dsh-flow/tsconfig.host.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.json",
+      "path": "packages/dsh-flow/tsconfig.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:packages/typert-protocol/LICENSE",
+      "path": "packages/typert-protocol/LICENSE",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "第三方许可为工程必要元数据，不纳入无产品职责即删除的范围。P7 核查最终分发内容；只要仍分发该依赖或其代码就保留相应许可，不能随旧 RPC 代码无条件删去版权声明。"
+    },
+    {
+      "id": "file:packages/typert-protocol/README.md",
+      "path": "packages/typert-protocol/README.md",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+    },
+    {
+      "id": "file:packages/typert-protocol/package.json",
+      "path": "packages/typert-protocol/package.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+    },
+    {
+      "id": "file:packages/typert-protocol/src/index.ts",
+      "path": "packages/typert-protocol/src/index.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+    },
+    {
+      "id": "file:packages/typert-protocol/src/types.ts",
+      "path": "packages/typert-protocol/src/types.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+    },
+    {
+      "id": "file:packages/typert-protocol/tsconfig.host.json",
+      "path": "packages/typert-protocol/tsconfig.host.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "宿主数据与连接",
+      "rationale": "旧补丁同时改 commands submissionId 编码与 observationOnly 读取编码。P1/P4 核验真实提交来源与新幂等入口，P6 核验观察传输；仅宿主公开接口确缺目标能力时采用最小编码改动，否则删除，不保留旧命令意图链。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P1",
+      "section": "实例创建与工具绑定",
+      "rationale": "旧补丁混合 SessionDriver 执行所有权、观察不激活、会话分类、读取引用与分页错误，以及命令调用签名/预设错误处理。P1 先验证独立原生实例及公开所有权接口，P6 再验证观察与分类；只采用实际缺少目标能力的最小改动，删除旧 legacy 分类和无设计职责修补，不能整包沿用。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "旧补丁提供 readOnly 动作抑制/初始跟随，同时加入 communication 节点与视图激活行为。P6 仅在原生阅读器完整历史、增量和只读观察确需时采用最小子集；没有目标责任的旧通信呈现扩展删除，不将整包聊天补丁带入。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "插件入口与会话导航",
+      "rationale": "删除主干保留 agent-team 命令名、sessionStorage 意图键、插件缺失模态框和跳转等旧命令 UX。目标 /agent-team 由新技能工作流提供；原生提交来源及重放需求由 P4 新调用上下文闭合，不保留该旧前端协议。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "会话内智能体页签",
+      "rationale": "旧补丁混合 contained/readOnly 呈现、availableSessions、当前页签/返回导航及阅读器嵌入。P6 按目标会话页签和只读观察核验公开 slot 能力，只采用必要最小布局/读取子集，其余旧可见性与隐藏输入行为删除。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "节点详情",
+      "rationale": "allowTabDrag 补丁仅服务旧 ProviderPanels DockSurface；目标详情/观察共用右栏可由共享界面布局实现，无需修改宿主通用 dock 行为。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "插件设置",
+      "rationale": "旧 navigationGuards/requestNavigation 提供通用离开拦截；设计要求保留编辑与比较后保存，没有要求修改全宿主导航或增加确认流程，删除无目标职责的宿主导航补丁。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "实例创建与工具绑定",
+      "rationale": "补丁仅使原生 /plan off 适应旧 commands.execute 新增参数，是旧命令签名连带修改；目标 Flow 无 plan 工具职责，随旧签名链移除。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "插件设置",
+      "rationale": "旧补丁将插件详情切换接入全局 requestNavigation 守卫，非目标设置保存/revision 合同所必需；删除通用离开拦截，设置草稿及冲突反馈在新表单中实现。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "旧补丁以 session generation 区分渲染工厂祖先，服务同页嵌入另一成员的原生阅读器。P6 仅在公开阅读器复用确实触发误报递归且可最小复现时采用作用域修正，否则删除。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P6",
+      "section": "成员原生会话观察",
+      "rationale": "补丁改变原生 subagent 视图选择与 locale，服务旧成员导航；目标 Flow 逻辑父子树不登记原生 parentAgent，成员从 Flow 侧栏按独立读取引用观察，无需改变原生 subagent 选择器。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "宿主数据与连接",
+      "rationale": "旧补丁同时加入全局导航守卫与 openSession 的 allowUnlisted/observationOnly 参数。P6 核验目标返回发起会话和只读成员观察是否确需最小导航参数扩展；只可采用必要读取能力，删除通用守卫及旧主视图观察链。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P4",
+      "section": "宿主数据与连接",
+      "rationale": "旧补丁把 submissionId 接入命令服务及编解码声明。目标确需真实 submissionId/sourceMessageId 关联与同次操作重放，但 P4 须先核验实际公开上下文；仅确缺来源字段时采用最小传递路径，否则删除，不保留旧 StartIntents。"
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P4",
+      "section": "宿主数据与连接",
+      "rationale": "旧补丁为非 surface 事件增加 ignorable 元数据，服务旧插件意图/日志协议；目标未要求向原生 Session 追加该日志，删除补丁，不建立旧记录兼容链。"
+    },
+    {
+      "id": "file:patches/README.md",
+      "path": "patches/README.md",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按 P1/P6 最终采用的最小宿主能力及安装方式重写说明；若补丁全不需要则删除失效说明和安装入口，不将历史 pnpm 补丁与 host-extensions 两套机制同时作为保留要求。"
+    },
+    {
+      "id": "file:pnpm-lock.yaml",
+      "path": "pnpm-lock.yaml",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "包管理器锁文件属于必要工程元数据；随经审查的最终依赖和宿主适配重新生成并验证干净安装。旧补丁哈希与旧依赖图不构成保留理由，不手工删除仍被最终产物使用的元数据。"
+    },
+    {
+      "id": "file:pnpm-workspace.yaml",
+      "path": "pnpm-workspace.yaml",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按最终工作区及宿主能力裁决更新 package globs、patchedDependencies 和必要构建脚本许可；移除未采用补丁及无用生成器注册，保留新安装所必需的包管理能力。"
+    },
+    {
+      "id": "file:scripts/boot.ts",
+      "path": "scripts/boot.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "DSH 后端适配",
+      "rationale": "目标安装与真实宿主验收需要隔离的原生启动入口。P7 仅在无旧插件/配置耦合、使用空状态且调用公开 boot 能力时采用最小启动片段；其余删除或重写，不把现有 BootedHost 包装当产品骨架。"
+    },
+    {
+      "id": "file:scripts/build.ts",
+      "path": "scripts/build.ts",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新源码、声明、模板/技能资源及双客户端重建产物入口；删除旧 Typert 生成和已移除模块编译，验证最终包干净构建。"
+    },
+    {
+      "id": "file:scripts/client-build.ts",
+      "path": "scripts/client-build.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P6",
+      "section": "客户端注册与打包",
+      "rationale": "本地生产模式单脚本、共享依赖白名单与独立 React 打包对应设计。P6 仅在新入口、React 18.3.1、样式内含及准确外部依赖均满足时采用必要 esbuild 配置，否则重写；旧产物路径不是约束。"
+    },
+    {
+      "id": "file:scripts/client-native-preview.ts",
+      "path": "scripts/client-native-preview.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P6",
+      "section": "DSH 宿主界面设计",
+      "rationale": "重建针对新共享看板、导航、观察与设置的真实宿主浏览器验证；只安装 P1/P6 已判必要的扩展，旧预览 DOM 与补丁存在性断言退出验收。"
+    },
+    {
+      "id": "file:scripts/e2e.ts",
+      "path": "scripts/e2e.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "团队模式与作业",
+      "rationale": "删除固定 execute 和一次性运行的完整场景；按空闲建队、嵌套模板、两份作业、递归取消、主会话 followup、显式解散与历史后继构建新场景和证据。"
+    },
+    {
+      "id": "file:scripts/host-smoke.ts",
+      "path": "scripts/host-smoke.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P1",
+      "section": "DSH 后端适配",
+      "rationale": "以实际依赖公开入口重建 Agent/HostAdaptor 合同 smoke，验证可选初始输入、权限/never、等待、恢复和清理；旧内部钩子或顺序不约束新实现。"
+    },
+    {
+      "id": "file:scripts/initialize-omlx-profile.ts",
+      "path": "scripts/initialize-omlx-profile.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "一次性 profile 模型初始化属于验收部署支持。P7 仅当最终真实模型场景仍需该路径且不覆盖用户 profile、不执行源码表达式时采用最小初始化入口，否则删除；不作为 Flow 产品配置服务保留。"
+    },
+    {
+      "id": "file:scripts/launch-dsh.ts",
+      "path": "scripts/launch-dsh.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "干净安装及宿主面板验收需要可重复启动宿主。P7 核验只装最终产物和已结清适配、使用空状态且不读取旧数据；只有必要最小 profile/启动片段可采用，其余旧包装和默认路径删除。"
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-e2e-lib.ts",
+      "path": "scripts/native-agent-ashare-e2e-lib.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "删除绑定历史 campaign、frozen-package 和旧 runtime 指纹的 A 股比较辅助库；该业务比较没有目标产品职责，已有报告只作历史证据，新验收不依赖旧统计或旧产物存在。"
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-e2e.ts",
+      "path": "scripts/native-agent-ashare-e2e.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "删除历史普通 Agent/Flow A 股对比 runner 及其旧 tests/acceptance prompt 提取路径；目标验收按设计完整团队/作业场景重新建立，旧业务成果不是产品门槛。"
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-stage.ts",
+      "path": "scripts/native-agent-ashare-stage.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "删除历史 campaign 排期、冻结身份和 A 股阶段执行脚本；不迁移旧 Flow API/部署配置，只将既有输出作为版本限定的调查材料。"
+    },
+    {
+      "id": "file:scripts/serve.ts",
+      "path": "scripts/serve.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "查询与事件订阅",
+      "rationale": "按新服务装配与目标 HTTP/SSE 协议重建独立 Web 开发启动入口；使用新配置、空状态和正确允许来源，不沿用旧 PatternEngine 服务初始化。"
+    },
+    {
+      "id": "file:scripts/verify-package.ts",
+      "path": "scripts/verify-package.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按目标模板、策略技能、原生客户端与 Web 资源重建打包/干净安装验收；仅验证已采用的最小宿主适配，不以旧导出、旧补丁哈希或历史报告存在为通过条件。"
+    },
+    {
+      "id": "file:scripts/verify-retained-e2e.ts",
+      "path": "scripts/verify-retained-e2e.ts",
+      "origins": [
+        "local"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "删除将保留的历史 A 股 CSV、native read 与观察快照当验收输入的 verifier；设计重写不承诺该案例或旧统计，P7 使用新实现同版本生成的真实证据。"
+    },
+    {
+      "id": "file:src/host/browser.ts",
+      "path": "src/host/browser.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "历史浏览器交互/DOM 业务流程包装不对应目标产品责任；新 P6/P7 验证从实际新界面构建，不迁移旧浏览器自动化控制面。"
+    },
+    {
+      "id": "file:src/host/dsh-launch.ts",
+      "path": "src/host/dsh-launch.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "原生宿主定位与启动属于干净安装验收所需的工程能力。P7 以最终包及公开 boot/CLI 路径证明必要性，仅可采用独立启动解析片段，否则删除旧 launcher，不固定历史部署参数。"
+    },
+    {
+      "id": "file:src/host/host.ts",
+      "path": "src/host/host.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "旧 campaign 的 run layout、profile 组合、网页宿主和旧产物包装相互耦合；删除后由新完整场景使用最小宿主启动设施，不保留旧工程控制面。"
+    },
+    {
+      "id": "file:src/host/profile-models.ts",
+      "path": "src/host/profile-models.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "evaluate",
+      "phase": "P7",
+      "section": "模型与权限配置",
+      "rationale": "旧 oMLX profile 初始化是部署支持而非 Flow 运行时。P7 只有实际目标模型场景需要且解析不执行 !!js、保留无关用户配置和环境凭据引用时可采用最小 YAML 编辑片段；否则删除，不保留旧模型默认值。"
+    },
+    {
+      "id": "file:src/host/session-scan.ts",
+      "path": "src/host/session-scan.ts",
+      "origins": [
+        "main"
+      ],
+      "disposition": "remove",
+      "phase": "P7",
+      "section": "总体定位",
+      "rationale": "删除解析旧 flow-delivery marker 的原生日志扫描与恰好一次统计；目标 Mailbox/交付幂等按新合同观测，新验收不依赖旧注入标记或历史日志格式。"
+    },
+    {
+      "id": "file:tsconfig.base.client.json",
+      "path": "tsconfig.base.client.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:tsconfig.base.json",
+      "path": "tsconfig.base.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:tsconfig.build.json",
+      "path": "tsconfig.build.json",
+      "origins": [
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:tsconfig.client.json",
+      "path": "tsconfig.client.json",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:tsconfig.host.json",
+      "path": "tsconfig.host.json",
+      "origins": [
+        "main"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    },
+    {
+      "id": "file:tsconfig.json",
+      "path": "tsconfig.json",
+      "origins": [
+        "main",
+        "local"
+      ],
+      "disposition": "rewrite",
+      "phase": "P7",
+      "section": "客户端注册与打包",
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+    }
+  ],
+  "hostExtensions": [
+    {
+      "package": "@deepseek-ai/dsh-api-remotes",
+      "path": "lib/client.js",
+      "capability": "聚合 API 远程客户端对 observationOnly 的编码",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/client.js",
+      "capability": "只读观察引用：allowUnlisted、observationOnly、重连不激活；历史分页错误与订阅代次隔离",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/index.js",
+      "capability": "原生执行所有权/变更入口保护、session driver；观察 follow 不激活 prepared 会话；成员来源分类",
+      "phase": "P1",
+      "disposition": "evaluate",
+      "section": "实例创建与工具绑定",
+      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/typert.host.js",
+      "capability": "SessionFollowRequest.observationOnly 的服务端编解码与声明元数据",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/typert.remote-client.js",
+      "capability": "SessionFollowRequest.observationOnly 的远程客户端编解码",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/client/contract/sessions.d.ts",
+      "capability": "SessionRetainOptions 的 allowUnlisted/observationOnly 独立只读引用声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/client/contract/snapshot.d.ts",
+      "capability": "历史分页失败的 historyError 公开快照声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/client/sessions/manager.d.ts",
+      "capability": "resolveTarget 的 allowUnlisted 本地目录预检参数声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/client/sessions/session.d.ts",
+      "capability": "Session.open 保存并沿用 observationOnly 的生命周期声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/client/transport.d.ts",
+      "capability": "重连 follow 传输保留 observationOnly 的选项声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/index.d.ts",
+      "capability": "SessionDriver 执行拥有者注册/解析与成员 session origin 分类声明",
+      "phase": "P1",
+      "disposition": "evaluate",
+      "section": "实例创建与工具绑定",
+      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "path": "lib/types/types.d.ts",
+      "capability": "公共 SessionFollowRequest.observationOnly 请求类型",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "path": "lib/client.js",
+      "capability": "原生 Chat 只读动作抑制、禁用分支/命令变更/turnTail；初始跟随及阅读位置",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "path": "lib/types/client/contract/slots.d.ts",
+      "capability": "ChatNodeOwnerProps.readOnly 对只读渲染动作的声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "path": "lib/client.js",
+      "capability": "view presentation 注册、contained/readOnly、只读无 composer/draft 镜像、初始跟随、当前页签返回导航",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "会话内智能体页签",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "path": "lib/types/client/contract/slots.d.ts",
+      "capability": "会话/视图 readOnly 与 initialFollow；header currentView/selectView 类型",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "path": "lib/types/client/contract/views.d.ts",
+      "capability": "ViewTab.contained/readOnly 视图呈现类型",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "会话内智能体页签",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "path": "lib/types/client/conversation/assembly.d.ts",
+      "capability": "UiConversation view presentation 注册/读取/订阅接口声明",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "会话内智能体页签",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-renderer",
+      "path": "lib/client.js",
+      "capability": "render factory 递归检测按 root/session generation 区分嵌套阅读器作用域",
+      "phase": "P6",
+      "disposition": "evaluate",
+      "section": "成员原生会话观察",
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。只有跨会话嵌入原生阅读器确实误报递归时才需要该最小内部修正，不以复用阅读器为由保留整包宿主扩展。"
+    }
+  ]
+}
