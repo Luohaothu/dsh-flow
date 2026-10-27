@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { join } from 'node:path';
 import { DashboardProjector } from '../../../packages/dsh-flow/src/dashboard/projector.js';
+import { readJournal } from '../../../packages/dsh-flow/src/dashboard/events.js';
 import { DashboardOperations, decodeStopRequest } from '../../../packages/dsh-flow/src/dashboard/operations.js';
 import { getAgentInstanceId } from '../../../packages/dsh-flow/src/core/observation.js';
 import { runServiceControl } from '../../../packages/dsh-flow/src/run/internal.js';
@@ -66,4 +67,21 @@ test('stop release failure publishes one failed result and concurrent replay ret
   const accepted = operations.stop(run.id, request); assert.deepEqual(operations.stop(run.id, request), accepted); await operations.settled();
   const operation = projector.snapshot(run.id).operations[0]!; assert.equal(operation.status, 'failed'); assert.match(operation.error!, /Run release failed/); assert.equal(host.disposeCount, 1);
   operations.stop(run.id, request); await operations.settled(); assert.equal(host.disposeCount, 1); assert.equal(projector.snapshot(run.id).operations.length, 1);
+});
+
+test('scope run stop during failing initialization completes cleanup while Run remains failed in snapshots and journal', async t => {
+  const initialization = deferred(); t.after(() => initialization.resolve());
+  const f = await runFixture(t, { onInitialize: async () => { await initialization.promise; throw new Error('initializer rejected during stop'); } });
+  const projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events') }); t.after(() => projector.dispose());
+  const owner = f.origin(); const run = f.service.create(owner, {}, 'starting-will-fail'); const operations = new DashboardOperations(projector, f.service);
+  const accepted = operations.stop(run.id, { operationId: 'stop-initializer', targetEpoch: f.service.epoch, scope: 'run' }); assert.equal(accepted.status, 'accepted');
+  await flush(); assert.equal(run.status, 'stopping'); initialization.resolve(); await operations.settled();
+  const actual = f.service.read(owner, run); assert.equal(actual.status, 'failed'); assert.match(actual.error!, /initializer rejected during stop/); assert.equal(actual.cleanup, 'complete');
+  const snapshot = projector.snapshot(run.id); assert.equal(snapshot.run.status, 'failed'); assert.equal(snapshot.run.endedAt, actual.endedAt); assert.equal(snapshot.operations[0]?.status, 'completed');
+  assert.equal(f.environment(run).host.disposeCount, 1); assert.equal(f.store.read(run.id)?.status, 'failed');
+  assert.equal(projector.registry().runs.find(entry => entry.id === run.id)?.status, 'failed');
+  const journal = readJournal(join(f.directory, 'events', 'runs'), run.id, f.service.epoch);
+  const runEvents = journal.events.filter(event => event.type === 'run-ended'); assert.ok(runEvents.length > 0);
+  for (const event of runEvents) { assert.ok(event.run && typeof event.run === 'object'); assert.equal('status' in event.run && event.run.status, 'failed'); assert.equal('endedAt' in event.run && event.run.endedAt, actual.endedAt); }
+  const result = journal.events.filter(event => event.type === 'operation-result').at(-1)!; assert.ok(result.operation && typeof result.operation === 'object'); assert.equal('status' in result.operation && result.operation.status, 'completed');
 });

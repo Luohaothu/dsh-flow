@@ -98,10 +98,14 @@ export class RunService {
       } catch (error) {
         state.accepting = false;
         const errors: unknown[] = [error];
+        state.runtimeError = errorText(error);
+        state.runtimeEndedAt ??= state.record.endedAt ?? Date.now();
+        state.runtimeStatus = 'failed'; state.runtimeCleanup = 'pending';
+        state.notify();
         if (state.context) { try { await state.context.dispose(); } catch (cleanup) { errors.push(cleanup); } }
         state.runtimeError = errors.map(errorText).join('; ');
-        state.runtimeEndedAt = Date.now(); state.runtimeStatus = 'failed'; state.runtimeCleanup = errors.length === 1 ? 'complete' : 'failed';
-        try { state.commit(draft => { draft.endedAt = Date.now(); draft.status = 'failed'; draft.error = state.runtimeError!; draft.cleanup = errors.length === 1 ? 'complete' : 'failed'; }); }
+        state.runtimeCleanup = errors.length === 1 ? 'complete' : 'failed';
+        try { state.commit(draft => { draft.endedAt = state.runtimeEndedAt!; draft.status = 'failed'; draft.error = state.runtimeError!; draft.cleanup = state.runtimeCleanup!; }); }
         catch (storage) { state.runtimeError += `; ${errorText(storage)}`; }
         state.notify();
       }
@@ -141,18 +145,24 @@ export class RunService {
     let resolve!: () => void; let reject!: (error: unknown) => void;
     state.releasePromise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     state.accepting = false;
-    state.runtimeStatus = 'stopping';
     const errors: unknown[] = [];
-    try { state.commit(draft => { draft.status = 'stopping'; }); } catch (error) { errors.push(error); }
+    if (run.status !== 'failed') {
+      state.runtimeStatus = 'stopping';
+      try { state.commit(draft => { draft.status = 'stopping'; }); } catch (error) { errors.push(error); }
+    }
     if (state.assignments) { try { state.assignments.stop('Run explicitly released'); } catch (error) { errors.push(error); } }
     void Promise.resolve().then(async () => {
       await state.initialization;
+      const alreadyFailed = run.status === 'failed';
+      const originalError = state.runtimeError ?? state.record.error;
       if (state.context) { try { await state.context[contextControl].dispose(initiator); state.runtimeCleanup = 'complete'; } catch (error) { state.runtimeCleanup = 'failed'; errors.push(error); } }
-      state.runtimeEndedAt = Date.now();
-      state.runtimeStatus = errors.length ? 'failed' : 'stopped';
-      try { state.commit(draft => { draft.endedAt = Date.now(); draft.status = errors.length ? 'failed' : 'stopped'; draft.cleanup = errors.length ? 'failed' : 'complete'; if (errors.length) draft.error = errors.map(errorText).join('; '); }); }
+      state.runtimeEndedAt ??= state.record.endedAt ?? Date.now();
+      state.runtimeStatus = alreadyFailed || errors.length ? 'failed' : 'stopped';
+      const releaseError = () => [...new Set([...(originalError === undefined ? [] : [originalError]), ...errors.map(errorText)])].join('; ');
+      if (errors.length) state.runtimeError = releaseError();
+      try { state.commit(draft => { draft.endedAt = state.runtimeEndedAt!; draft.status = state.runtimeStatus!; draft.cleanup = errors.length ? 'failed' : 'complete'; if (state.runtimeError !== undefined) draft.error = state.runtimeError; }); }
       catch (error) { errors.push(error); }
-      if (errors.length) { state.runtimeCleanup = 'failed'; state.runtimeStatus = 'failed'; state.runtimeError = errors.map(errorText).join('; '); state.notify(); throw new AggregateError(errors, 'Run release failed'); }
+      if (errors.length) { state.runtimeCleanup = 'failed'; state.runtimeStatus = 'failed'; state.runtimeError = releaseError(); state.notify(); throw new AggregateError(errors, 'Run release failed'); }
       state.notify();
     }).then(resolve, reject);
     return state.releasePromise;
