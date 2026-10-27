@@ -8,5 +8,6 @@
   "errors": [],
   "typecheck": "passed on main-based P0 worktree",
   "docsBuild": "passed; existing large-chunk warning",
-  "productTests": "not run for inventory-only P0; old behavior does not constrain reconstruction"
+  "productTests": "not run for inventory-only P0; old behavior does not constrain reconstruction",
+  "inventoryNegativeTests": "5 passed; missing contract/scenario and empty census/expectation rejected"
 }

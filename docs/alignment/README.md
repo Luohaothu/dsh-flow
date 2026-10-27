@@ -43,6 +43,7 @@
 
 ```sh
 python3 scripts/verify-alignment.py
+python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'
 ```
 
 需要再次核对私有恢复归档时，指定本机归档路径。脚本将归档解包到临时空目录，核对文件摘要和已删除路径，随后清理该临时目录。

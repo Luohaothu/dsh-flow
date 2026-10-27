@@ -35,6 +35,11 @@ if design_hash != baseline['design']['mainSha256']:
 if contracts['designSha256'] != design_hash:
     errors.append('Contract census uses a different design fingerprint')
 
+expected_contract_ids = set(baseline['contractIds'])
+actual_contract_ids = {row['id'] for row in contracts['contracts']}
+if expected_contract_ids - actual_contract_ids:
+    errors.append(f'Missing design contracts: {sorted(expected_contract_ids - actual_contract_ids)}')
+
 scenario_ids = set()
 for label, rows in [('contracts', contracts['contracts']), ('components', components['components']), ('tests', tests['tests'])]:
     ids = [row['id'] for row in rows]
@@ -46,18 +51,25 @@ for label, rows in [('contracts', contracts['contracts']), ('components', compon
         if row.get('section') and row['section'] not in headings:
             errors.append(f"{row['id']} references an unknown design heading: {row['section']}")
         if label == 'contracts':
+            if not row.get('requirement', '').strip():
+                errors.append(f"{row['id']} has no design requirement")
             if not row.get('scenarios'):
                 errors.append(f"{row['id']} has no observable test scenario")
             for scenario in row.get('scenarios', []):
                 if scenario['id'] in scenario_ids:
                     errors.append(f"Duplicate scenario ID: {scenario['id']}")
                 scenario_ids.add(scenario['id'])
-                if not scenario.get('expectation'):
+                if scenario.get('level') not in {'contract', 'integration', 'ui', 'acceptance'}:
+                    errors.append(f"{scenario['id']} has an invalid verification level")
+                if not scenario.get('expectation', '').strip():
                     errors.append(f"{scenario['id']} has no expected result")
         elif row['disposition'] not in {'rewrite', 'remove', 'evaluate'}:
             errors.append(f"{row['id']} has an invalid disposition")
         elif row['disposition'] == 'evaluate' and not row.get('section') and not row['path'].startswith('.agents/'):
             errors.append(f"{row['id']} evaluates reuse without a design responsibility")
+
+if set(baseline['scenarioIds']) - scenario_ids:
+    errors.append(f"Missing design scenarios: {sorted(set(baseline['scenarioIds']) - scenario_ids)}")
 
 main_files = set(baseline['trackedMainFiles'])
 local_files = set(baseline['files'])
