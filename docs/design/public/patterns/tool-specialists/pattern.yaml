@@ -1,0 +1,29 @@
+apiVersion: v1
+id: builtin/tool-specialists
+description: 工具专家交接可读取产物和操作证据，再由核验者检查。
+whenToUse: 需要不同工具职责，且宿主可为创建角色落实 preset、skills 与初始权限。
+parameters:
+  researchers:
+    type: integer
+    description: 负责检索和整理资料的成员数量
+roles:
+  researcher:
+    instructions: 使用可用的读取和检索工具收集材料，保留来源、观察与可读取位置，区分搜索摘要和原文事实。
+    permission: read-only
+  builder:
+    instructions: 使用本角色实际配置的工具完成指定产物，记录操作、产物位置和摘要，权限不足时如实说明。
+    permission: workspace-write
+  verifier:
+    instructions: 通过实际读取和工具检查核验产物，记录工具输出与当前验收标准的关系。
+    permission: read-only
+root:
+  instructions: |-
+    创建前核对宿主已有预设、技能和工具能力，按具体节点路径提供配置覆盖，并检查初始权限上界。不能仅凭角色名称假定工具存在。
+    向各直属专家分别交付作业，通过材料引用传递真实附件及工具产物。根据研究、制作与核验结果安排下一步，记录实际产物位置、摘要和验证证据，保留权限限制与失败事实。
+  researchers:
+    role: researcher
+    count: "{{ researchers }}"
+  builder:
+    role: builder
+  verifier:
+    role: verifier

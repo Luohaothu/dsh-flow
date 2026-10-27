@@ -1,0 +1,33 @@
+apiVersion: v1
+id: builtin/tournament-evolution
+description: 候选成对比较，按证据选择并保留多样性，再变异或重组。
+whenToUse: 候选可按同一验收规则比较，且需要记录谱系与多样性取舍。
+parameters:
+  generators:
+    type: integer
+    description: 生成候选方案的成员数量
+  comparators:
+    type: integer
+    description: 独立比较候选方案的成员数量
+roles:
+  generator:
+    instructions: 生成候选并保留稳定身份和真实来源；变异或重组时记录所采用的父候选和操作。
+    permission: read-only
+  comparator:
+    instructions: 依据当前作业的比较规则核对指定候选，提供独立证据，允许平局或无法判定，不编造分数。
+    permission: read-only
+  selector:
+    instructions: 读取候选和比较记录，按当前任务的选择与多样性要求提出保留建议并说明理由。
+    permission: read-only
+root:
+  instructions: |-
+    按当前任务决定候选数量、比较规则和多样性要求，分别向直属生成、比较和选择成员派发作业。比较任务交付明确的候选及真实证据，保留失败或无法比较的事实。
+    决定继续演化时，交付选中的真实来源并说明变异或重组目标，记录候选身份、父候选和相关作业形成谱系。人员数量由模板参数决定，种群规模、轮次和停止判断由任务及 Agent 决策确定。
+  generators:
+    role: generator
+    count: "{{ generators }}"
+  comparators:
+    role: comparator
+    count: "{{ comparators }}"
+  selector:
+    role: selector

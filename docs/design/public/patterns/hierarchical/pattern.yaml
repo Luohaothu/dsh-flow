@@ -1,0 +1,38 @@
+apiVersion: v1
+id: builtin/hierarchical
+description: 各组长的子树引用资料共享与核验模板，一次创建成员后逐层派发作业并汇总结果。
+whenToUse: 子问题仍需拆分，但各层能以明确结果和业务归属交接。
+parameters:
+  groups:
+    type: integer
+    description: 群组数量，每个研究方向对应一个群组
+    default: 1
+  membersPerGroup:
+    type: integer
+    description: 每组资料收集成员数量，核验者和审查者另行创建
+roles:
+  lead:
+    permission: read-only
+    instructions: 管理本组直属成员。根据所承接作业拆分任务，逐项制定背景、需求、验收标准和结果 schema，读取结果后决定后续安排。
+  integrator:
+    instructions: 读取组长的实际交付，核对来源作业、证据和未完成事项，形成当前作业要求的整合结果。
+    permission: read-only
+root:
+  instructions: |-
+    按任务选定组数与每组资料收集者数量，向引用的模板传参，一次建立完整多层结构。创建完成后，向直属组长派发任务，由组长分别为自己的直属成员制定子作业，并明确其上级作业。
+    跨组信息通过协调群共享。读取组长的交付后，可向直属汇总者派发整合作业。各级成员需要扩充组织时可以自行应用模板，任务和结果始终按实际作业父子关系追踪。
+  leads:
+    role: lead
+    count: "{{ groups }}"
+    use:
+      id: builtin/shared-review
+      with:
+        members: "{{ membersPerGroup }}"
+  integrator:
+    role: integrator
+groups:
+  - key: coordination
+    members:
+      - root
+      - root/leads/*
+      - root/integrator/0

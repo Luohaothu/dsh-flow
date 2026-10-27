@@ -1,0 +1,29 @@
+apiVersion: v1
+id: builtin/generate-review-revise
+description: 生成产物，经独立批评与核验后复用作者修订。
+whenToUse: 产物能按明确验收条件反复审查，且需要跟踪修订证据。
+parameters:
+  critics:
+    type: integer
+    description: 独立审查产物的成员数量
+roles:
+  author:
+    instructions: 生成或修订指定产物，对意见逐项说明处理与理由，提交实际产物及内容摘要。
+    permission: workspace-write
+  critic:
+    instructions: 独立检查缺陷、冲突和遗漏，提供可定位证据及修订意见。
+    permission: read-only
+  verifier:
+    instructions: 按当前作业的验收标准读取并核验实际产物，报告证据、未通过项及尚未验证的内容。
+    permission: read-only
+root:
+  instructions: |-
+    向作者交付需求与产物要求，将真实产物交给独立批评者和核验者。根据反馈决定是否向原作者派发修订作业，并提供相关意见及对应产物。
+    每次核验使用最新产物，不能以作者自述代替实际读取。是否继续修订由验收标准和证据决定；记录采纳的产物、核验依据及遗留问题。
+  author:
+    role: author
+  critics:
+    role: critic
+    count: "{{ critics }}"
+  verifier:
+    role: verifier

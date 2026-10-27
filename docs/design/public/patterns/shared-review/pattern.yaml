@@ -1,0 +1,37 @@
+apiVersion: v1
+id: builtin/shared-review
+description: 成员通过群消息和黑板共享资料，由核验与审查角色检查证据，正式结果通过作业交付。
+whenToUse: 多名成员需要共享资料、核对证据并汇总研究结论。
+parameters:
+  members:
+    type: integer
+    description: 资料收集成员数量，核验者和审查者另行创建
+roles:
+  contributor:
+    instructions: 收集当前作业指定的资料，保留来源及可读取位置；通过群消息交流线索，在黑板追加来源索引与摘要，按本次作业要求提交结果。
+    permission: read-only
+  verifier:
+    instructions: 读取作业提供的原始材料，核对结论及证据；通过消息澄清疑点，按作业要求提交核验结果，并说明尚未核实的内容。
+    permission: read-only
+  auditor:
+    instructions: 复查作业提供的材料、核验结果与汇总结论是否一致，指出冲突、遗漏及需要补充核验的内容。
+    permission: read-only
+root:
+  instructions: |-
+    根据当前作业向直属资料收集者派发任务，明确资料范围、来源要求、交付 schema 和验收标准。成员通过群消息讨论线索与分歧，在黑板追加来源索引和共享摘要，正式结果按各自作业提交。
+    读取实际交付结果，按任务需要将待核验内容及材料交给直属核验者，再将相关交付和核验结果交给审查者复查。根据证据决定后续分工，最终按当前作业要求汇总提交。
+    结论需要更正时，在黑板追加更正说明，并通过消息通知相关成员；根据影响决定后续沟通或新的核验作业。
+  contributors:
+    role: contributor
+    count: "{{ members }}"
+  verifier:
+    role: verifier
+  auditor:
+    role: auditor
+groups:
+  - key: discussion
+    members:
+      - root
+      - root/contributors/*
+      - root/verifier/0
+      - root/auditor/0

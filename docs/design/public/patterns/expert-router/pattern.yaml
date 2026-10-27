@@ -1,0 +1,29 @@
+apiVersion: v1
+id: builtin/expert-router
+description: 根选择相关专家并派发定向子问题，再合成结果。
+whenToUse: 任务所需专长不同，且可以按具体问题选择专家。
+parameters:
+  experts:
+    type: integer
+    description: 参与任务的领域专家数量
+roles:
+  domainExpert:
+    instructions: 处理父节点指定的领域问题，标明能力边界和证据；需要其他专长时通过消息提出协作请求。
+    permission: read-only
+  verifier:
+    instructions: 核对当前作业指定的事实、计算或约束，保留可重复核对的证据。
+    permission: read-only
+  synthesizer:
+    instructions: 合成所提供的专家结果，说明来源、选择依据与未解冲突。
+    permission: read-only
+root:
+  instructions: |-
+    创建时按所需专长具体化各专家的职责。执行任务时选择相关专家派发子问题，不要求每份作业都调用全部成员。
+    根据结果缺口选择补充专家或核验工作。向汇总者交付选定的真实结果、失败记录和专家选择依据，保留证据来源及未解冲突。
+  experts:
+    role: domainExpert
+    count: "{{ experts }}"
+  verifier:
+    role: verifier
+  synthesizer:
+    role: synthesizer

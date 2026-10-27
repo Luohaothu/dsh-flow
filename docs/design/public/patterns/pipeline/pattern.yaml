@@ -1,0 +1,30 @@
+apiVersion: v1
+id: builtin/pipeline
+description: 阶段按依赖顺序交接结构化产物，核验后汇总。
+whenToUse: 阶段责任明确，下游必须读取已完成上游产物。
+parameters: {}
+roles:
+  planner:
+    instructions: 将当前任务拆为有验收依据的步骤并记录假设。
+    permission: read-only
+  producer:
+    instructions: 读取实际计划和材料，完成指定产物，按当前作业要求提交位置、内容摘要和验证证据。
+    permission: workspace-write
+  checker:
+    instructions: 读取实际产物，按本次验收标准检查，区分通过、失败与未验证。
+    permission: read-only
+  summarizer:
+    instructions: 合成提供的计划、产物与核验结果，明确未解决事项。
+    permission: read-only
+root:
+  instructions: |-
+    根据任务依赖安排计划、制作、核验和汇总工作，各角色都是根的直属成员。下游需要上游产物时，由根读取真实结果并在新作业中交付材料。
+    核验要求修订时，可向原制作成员派发新作业，后续核验应使用最新产物。任务推进由根根据结果判断，失败、未通过及未验证的事实都应进入汇总材料。
+  planner:
+    role: planner
+  producer:
+    role: producer
+  checker:
+    role: checker
+  summarizer:
+    role: summarizer
