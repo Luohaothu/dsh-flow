@@ -37,6 +37,6 @@ export interface ContextControl {
   publish(agent: Agent, mailbox: Mailbox, sources: readonly Agent[], attach: () => void): void;
   rollback(agent: Agent, mailbox: Mailbox): void;
   terminated(agent: Agent): void;
-  trackRelease(agent: Agent, completion: Promise<void>): void;
+  trackRelease(object: Agent | Group | Mailbox, completion: Promise<void>): void;
   markReleasing(object: Agent | Group | Mailbox): void;
 }

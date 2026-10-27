@@ -69,6 +69,18 @@ interface History {
 }
 type EventBody<T = HostEvent> = T extends HostEvent ? Omit<T, 'agent' | 'timestamp'> : never;
 const summaryHeadings = ['## 目标与约束', '## 已知事实与关键决策', '## 当前进展与已有产物', '## 关键文件、资源及定位信息', '## 未完成事项与后续步骤', '## 分歧、风险与待确认信息'];
+function parseContextSummary(text: string): { source: string; body: string } {
+  const lines = text.trim().replace(/\r\n/g, '\n').split('\n');
+  const invalid = () => new Error('Summary was empty, incomplete, truncated, or violated Flow summary v1');
+  if (lines[0] !== 'Flow 上下文总结 v1') throw invalid();
+  const source = lines[1]?.match(/^来源：[ \t]*(\S[^\r\n]*)$/)?.[1]?.trim();
+  if (!source) throw invalid();
+  const sections = lines.flatMap((line, index) => /^##(?:[ \t]|$)/.test(line) ? [{ line, index }] : []);
+  if (sections.length !== summaryHeadings.length || sections.some((section, index) => section.line !== summaryHeadings[index])) throw invalid();
+  if (lines.slice(2, sections[0]!.index).some(line => line.trim())) throw invalid();
+  if (sections.some((section, index) => !lines.slice(section.index + 1, sections[index + 1]?.index).join('\n').trim())) throw invalid();
+  return { source, body: lines.slice(sections[0]!.index).join('\n') };
+}
 const summaryInstruction = `输出完整的纯文字总结。没有内容写“无”，信息不足写“未知”。不得调用工具。\nFlow 上下文总结 v1\n来源：实际 Agent 名称及 SessionID\n\n${summaryHeadings.join('\n')}`;
 const recoveryInstruction = '会话历史已恢复。Mailbox 和通信关系已重新初始化。历史消息编号在当前 Mailbox 中无效，历史协作者不保证仍然可用。请通过当前 Flow 工具确认目标；用户指令和任务输入已保留。';
 const managementWrites = new Set(['set_plugin', 'set_bundle', 'install_bundle', 'remove_bundle', 'set_version_exemption']);
@@ -108,6 +120,7 @@ export class DshHostAdaptor implements HostAdaptor {
   readonly backend = 'dsh';
   readonly capabilities = Object.freeze({ usage: true });
   private readonly owned = new Map<HostAgent, OwnedAgent>();
+  private readonly terminal = new WeakMap<HostAgent, Promise<void>>();
   private readonly reserved = new Set<string>();
   private readonly capacity: ExecutionCapacity;
   private readonly afterTurnTimeoutMs: number;
@@ -377,8 +390,7 @@ export class DshHostAdaptor implements HostAdaptor {
   }
   mergeContextSummaries(agent: HostAgent, own: string, other: string): Promise<ContextSummary> {
     const owned = this.business(agent);
-    const sources = [own, other].map(summary => summary.match(/^来源[：:]\s*(.+)$/m)?.[1]);
-    if (sources.some(source => !source)) throw new Error('Both summaries must identify their sources');
+    const sources = [own, other].map(summary => parseContextSummary(summary).source);
     return this.auxiliaryCall(owned, `${summaryInstruction}\n合并、去重并归纳以下两份总结。保留双方来源、约束、未完成事项和矛盾。无法消解的分歧列为待确认事项。\n\n${own}\n\n${other}`, sources.join('；'));
   }
   private auxiliaryCall(owned: OwnedAgent, text: string, sources: string): Promise<ContextSummary> {
@@ -394,18 +406,19 @@ export class DshHostAdaptor implements HostAdaptor {
         actual = { provider: prepared.config.provider, id: prepared.config.model };
         for await (const chunk of prepared.stream({ ...prepared.config, messages: [{ role: 'user', content: [{ type: 'text', text }] }], signal: controller.signal })) assembler.push(chunk);
         const blocks = assembler.blocks(), result = blocks.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();
-        if (assembler.finish.kind !== 'stop' || !result.startsWith('Flow 上下文总结 v1') || !/^来源[：:]\s*\S/m.test(result)
-          || blocks.some(block => block.type !== 'text' && block.type !== 'reasoning') || summaryHeadings.some((heading, index) => {
-            const section = result.split(heading)[1], next = summaryHeadings[index + 1];
-            return !section || !(next ? section.split(next)[0] ?? '' : section).trim();
-          })) throw new Error('Summary was empty, incomplete, truncated, or violated Flow summary v1');
-        return { summary: result.replace(/^来源[：:].+$/m, `来源：${sources}`), usage: usage() };
+        if (assembler.finish.kind !== 'stop' || blocks.some(block => block.type !== 'text' && block.type !== 'reasoning')) {
+          throw new Error('Summary was empty, incomplete, truncated, or violated Flow summary v1');
+        }
+        const parsed = parseContextSummary(result);
+        return { summary: `Flow 上下文总结 v1\n来源：${sources}\n\n${parsed.body}`, usage: usage() };
       } catch (error) { throw new AuxiliaryCallError(describeError(error), usage(), { cause: error }); }
       finally { this.capacity.release(call); owned.auxiliary.delete(call); }
     })();
     call.completion = promise; owned.auxiliary.add(call); return promise;
   }
   releaseAgent(agent: HostAgent, mode: ReleaseMode = 'after-turn'): Promise<void> {
+    const terminal = this.terminal.get(agent);
+    if (terminal) return terminal;
     const owned = this.record(agent);
     if (owned.close) {
       if (mode === 'immediate' && owned.close.phase === 'after-turn') { owned.close.mode = mode; this.cleanup(owned); }
@@ -443,7 +456,8 @@ export class DshHostAdaptor implements HostAdaptor {
     })().then(() => {
       if (close.phase === 'abandoned') return;
       clearTimeout(close.timer); close.phase = 'completed'; this.reserved.delete(owned.public.profile.sessionID);
-      owned.deferred.length = 0; owned.claimed.clear(); owned.completions.clear(); this.unbind(owned); close.resolve();
+      owned.deferred.length = 0; owned.claimed.clear(); owned.completions.clear(); this.unbind(owned);
+      this.terminal.set(owned.public, close.promise); this.owned.delete(owned.public); close.resolve();
     }, error => {
       if (close.phase === 'abandoned') return;
       clearTimeout(close.timer); close.phase = 'failed'; this.unbind(owned); close.reject(error);
@@ -467,7 +481,7 @@ export class DshHostAdaptor implements HostAdaptor {
   private assertOpen(): void { if (this.disposed) throw new Error('DSH adaptor is disposed'); }
   private record(agent: HostAgent): OwnedAgent {
     const owned = this.owned.get(agent);
-    if (!owned) throw new Error('HostAgent belongs to another adaptor');
+    if (!owned) throw new Error(this.terminal.has(agent) ? 'HostAgent is released' : 'HostAgent belongs to another adaptor');
     return owned;
   }
   private active(agent: HostAgent): OwnedAgent {

@@ -1,6 +1,6 @@
 {
   "phase": "P1",
-  "recordedAt": "2026-10-27T15:29:14.154488+00:00",
+  "recordedAt": "2026-10-27T15:56:54.992850+00:00",
   "baseCommit": "8ae85a2dcae0ee1aa1e198918acc1291fb3fca3d",
   "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
   "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
@@ -64,11 +64,11 @@
     {
       "command": "pnpm test",
       "result": "PASS",
-      "tests": 117,
+      "tests": 119,
       "failed": 0,
       "skipped": 0,
-      "coreTests": 77,
-      "hostTopLevelTests": 34,
+      "coreTests": 78,
+      "hostTopLevelTests": 35,
       "hostSubtests": 6
     },
     {
@@ -105,9 +105,12 @@
   "auditFixes": [
     "Failed factory release dependencies remain in Context disposal barrier, including prior and concurrent rollback failures.",
     "Reentrant running-status termination prevents input handover; filter termination prevents late Mailbox commit while retaining old messages.",
-    "Cold resume validates and reuses saved effective configuration; unknown HostExtras fields reject before native creation."
+    "Cold resume validates and reuses saved effective configuration; unknown HostExtras fields reject before native creation.",
+    "Summary and merge share strict v1 parsing, canonical source insertion is literal, and invalid merge inputs issue no model calls.",
+    "Unsubscribe assertions run outside isolated observers; a deliberately ineffective unsubscribe is detected.",
+    "Active strong resource registries drop successfully released resources; weak Promise caches preserve identity, while pending/failed dependencies preserve disposal barriers."
   ],
-  "reviewStatus": "Independent semantic audit fixes verified locally; final exact-head PR review follows this receipt.",
+  "reviewStatus": "First exact-head review found three further issues; fixes pass local checks and await exact-head re-review.",
   "limits": [
     "Runtime tests use actual Cordis, AgentLoop, ToolRuntime and JSONL services with a deterministic model adapter; external model behavior is reserved for P7.",
     "Management guard probes use actual ToolRuntime and official rc.2 tool/action names, without mutating a real plugin backend.",
@@ -122,5 +125,9 @@
     "openAcceptedFlags": 0,
     "restored": 0
   },
-  "legacyDisposition": "Old P1 tests and fixtures removed or not adopted; legacy patches and custom Typert package removed; later phase source stays outside active module exports/build."
+  "legacyDisposition": "Old P1 tests and fixtures removed or not adopted; legacy patches and custom Typert package removed; later phase source stays outside active module exports/build.",
+  "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/9",
+  "reviewTriage": {
+    "groupDissolve": "Corrected misleading member-only description. Per design, post/append require membership, while Context.release and blackboard reads have no member-only contract; no new membership authorization model added."
+  }
 }

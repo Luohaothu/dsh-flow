@@ -9,7 +9,7 @@ export class Context {
   private adaptor?: HostAdaptor;
   private objects = new Set<Managed>();
   private releasing = new Set<Managed>();
-  private releases = new Map<Managed, Promise<void>>();
+  private releases = new WeakMap<Managed, Promise<void>>();
   private releaseDependencies = new Set<Promise<void>>();
   private agents = new Map<SessionID, Agent>();
   private groups = new Map<GroupID, Group>();
@@ -44,10 +44,7 @@ export class Context {
         this.terminated.add(agent);
         for (const listener of [...this.terminationListeners]) { try { listener(agent); } catch {} }
       },
-      trackRelease: (agent, completion) => {
-        if (!this.releases.has(agent)) this.releases.set(agent, completion);
-        else if (this.releases.get(agent) !== completion) this.releaseDependencies.add(completion);
-      },
+      trackRelease: (object, completion) => this.trackRelease(object, completion),
       markReleasing: object => { if (this.objects.has(object)) this.releasing.add(object); },
     };
   }
@@ -108,7 +105,7 @@ export class Context {
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
     const result = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
-    this.releases.set(object, result);
+    this.trackRelease(object, result);
     try {
       const close = object instanceof Group ? object[groupControl].close() : object[mailboxControl].close();
       void close.then(() => { this.remove(object); resolve(); }, reject);
@@ -126,9 +123,15 @@ export class Context {
       const collect = (results: PromiseSettledResult<unknown>[]) => { for (const result of results) if (result.status === 'rejected') errors.push(result.reason); };
       const groupClosures = [...this.objects].filter((object): object is Group => object instanceof Group).map(group => this.release(group));
       const agentClosures = [...this.objects].filter((object): object is Agent => object instanceof Agent).map(agent => this.release(agent));
-      await Promise.allSettled([...groupClosures, ...agentClosures]);
+      void Promise.allSettled([...groupClosures, ...agentClosures]);
       await Promise.all([...this.creations]);
-      collect(await Promise.allSettled(new Set([...this.releases.values(), ...this.releaseDependencies])));
+      const collected = new Set<Promise<void>>();
+      for (;;) {
+        const dependencies = [...this.releaseDependencies].filter(dependency => !collected.has(dependency));
+        if (!dependencies.length) break;
+        dependencies.forEach(dependency => collected.add(dependency));
+        collect(await Promise.allSettled(dependencies));
+      }
       if (errors.length) throw new AggregateError(errors, 'Context object release failed');
       const mailboxes = [...this.objects].filter((object): object is Mailbox => object instanceof Mailbox);
       collect(await Promise.allSettled(mailboxes.map(mailbox => this.release(mailbox))));
@@ -139,6 +142,11 @@ export class Context {
     };
     void close().then(resolve, reject);
     return this.closePromise;
+  }
+  private trackRelease(object: Managed, completion: Promise<void>): void {
+    if (!this.releases.has(object)) this.releases.set(object, completion);
+    this.releaseDependencies.add(completion);
+    void completion.then(() => { this.releaseDependencies.delete(completion); }, () => {});
   }
   private assertOpen(): void { if (this.closing || this.disposed) throw new Error('Context is closing or disposed'); }
   private assertAvailable(agent: Agent): void {

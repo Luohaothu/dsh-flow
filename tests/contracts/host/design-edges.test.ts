@@ -133,14 +133,14 @@ test('C012-02: fork during an unfinished native tool imports dialogue without re
 
 test('C013-02: summaries and merge preserve v1 sections and placeholders with adaptor-authored actual source identities', async t => {
   const f = await runtime(t), ownProfile = profile('source-session-a'), otherProfile = profile('source-session-b');
-  ownProfile.name = 'Source A'; otherProfile.name = 'Source B';
+  ownProfile.name = 'Source $& A'; otherProfile.name = 'Source B';
   const own = await Agent.create(f.context, ownProfile, null), other = await Agent.create(f.context, otherProfile, null);
   const answer = validSummary.replace('## 未完成事项与后续步骤\n无', '## 未完成事项与后续步骤\n未知');
   f.model.script = () => answer;
   const left = await f.adaptor.summarizeContext(f.hostAgent(own)), right = await f.adaptor.summarizeContext(f.hostAgent(other));
   const merged = await f.adaptor.mergeContextSummaries(f.hostAgent(own), left.summary, right.summary);
-  assert.match(left.summary, /^来源：Source A source-session-a$/m); assert.match(right.summary, /^来源：Source B source-session-b$/m);
-  assert.match(merged.summary, /^来源：Source A source-session-a；Source B source-session-b$/m);
+  assert.match(left.summary, /^来源：Source \$& A source-session-a$/m); assert.match(right.summary, /^来源：Source B source-session-b$/m);
+  assert.match(merged.summary, /^来源：Source \$& A source-session-a；Source B source-session-b$/m);
   for (const result of [left, right, merged]) {
     assert.ok(result.summary.startsWith('Flow 上下文总结 v1\n'));
     for (const heading of headings) assert.match(result.summary, new RegExp(`## ${heading}\\n(?:无|未知)`));
@@ -153,21 +153,57 @@ test('C013-02: summaries and merge preserve v1 sections and placeholders with ad
 
 test('C013-02: missing identity, v1 marker, sections, section content or text-only output rejects without retry', async t => {
   const f = await runtime(t), own = await f.create('invalid-summary');
-  const cases = ['', validSummary.replace('Flow 上下文总结 v1', 'Flow 上下文总结 v2'), validSummary.replace('来源：fixture\n', ''),
+  const cases = ['', validSummary.replace('Flow 上下文总结 v1', 'Flow 上下文总结 v2'),
+    validSummary.replace('Flow 上下文总结 v1', 'Flow 上下文总结 v10'),
+    validSummary.replace('来源：fixture', '来源：  '),
+    validSummary.replace('来源：fixture', '来源：\nfixture'),
+    validSummary.replace('## 目标与约束\n无\n\n## 已知事实与关键决策\n无', '## 已知事实与关键决策\n无\n\n## 目标与约束'),
+    'Flow 上下文总结 v1\n来源：fixture\n\n' + [...headings].reverse().map(heading => `## ${heading}\n无`).join('\n\n'),
+    validSummary.replace('## 目标与约束', '## 未知章节\n无\n\n## 目标与约束'),
+    validSummary.replace('## 目标与约束\n无', '## 目标与约束 suffix\n无'),
+    validSummary.replace('## 目标与约束\n无', '## 已知事实与关键决策\n无\n\n## 目标与约束'),
+    validSummary.replace('## 目标与约束\n无', '## 目标与约束\n无\n\n## 目标与约束\n无'),
+    validSummary.replace('## 目标与约束', 'unexpected preamble\n## 目标与约束'), validSummary.replace('来源：fixture\n', ''),
     ...headings.map(heading => validSummary.replace(`## ${heading}\n无`, '')),
-    validSummary.replace('## 目标与约束\n无', '## 目标与约束\n')];
+    ...headings.map(heading => validSummary.replace(`## ${heading}\n无`, `## ${heading}\n`))];
   for (const answer of cases) {
     const before = f.model.requests.length; f.model.script = () => answer;
-    await assert.rejects(f.adaptor.summarizeContext(f.hostAgent(own)), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message));
+    await assert.rejects(f.adaptor.summarizeContext(f.hostAgent(own)), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message) && error.usage.length === 1);
     assert.equal(f.model.requests.length, before + 1);
   }
   let invoked = 0;
   registerJsonTool(f.host, 'fixture_forbidden_summary_tool', 'Must not execute from an auxiliary request', { type: 'object', properties: {} }, () => { invoked++; });
   f.model.script = () => ({ tool: 'fixture_forbidden_summary_tool', args: {} });
   const before = f.model.requests.length;
-  await assert.rejects(f.adaptor.summarizeContext(f.hostAgent(own)), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message));
+  await assert.rejects(f.adaptor.summarizeContext(f.hostAgent(own)), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message) && error.usage.length === 1);
   assert.equal(invoked, 0); assert.equal(f.model.requests.length, before + 1);
   f.model.script = () => validSummary.replace('## 分歧、风险与待确认信息\n无', '');
-  await assert.rejects(f.adaptor.mergeContextSummaries(f.hostAgent(own), validSummary, validSummary), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message));
+  await assert.rejects(f.adaptor.mergeContextSummaries(f.hostAgent(own), validSummary, validSummary), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message) && error.usage.length === 1);
   assert.equal(f.model.requests.length, before + 2);
+});
+
+test('C013-02: merge rejects malformed summaries before making any auxiliary request', async t => {
+  const f = await runtime(t), own = await f.create('invalid-merge-input');
+  f.model.script = () => validSummary;
+  for (const invalid of [validSummary.replace('v1', 'v10'), validSummary.replace('来源：fixture', '来源：'),
+    validSummary.replace('## 目标与约束\n无', '## 目标与约束')]) {
+    for (const [left, right] of [[invalid, validSummary], [validSummary, invalid]]) {
+      await assert.rejects(async () => f.adaptor.mergeContextSummaries(f.hostAgent(own), left!, right!), /summary v1/);
+      assert.equal(f.model.requests.length, 0);
+    }
+  }
+});
+
+test('C013-02: a complete-looking summary with a truncated finish fails once and retains actual usage', async t => {
+  const f = await runtime(t), own = await f.create('truncated-summary');
+  f.model.script = () => validSummary;
+  f.model.finishReason = { kind: 'max-tokens' };
+  for (const call of [() => f.adaptor.summarizeContext(f.hostAgent(own)),
+    () => f.adaptor.mergeContextSummaries(f.hostAgent(own), validSummary, validSummary)]) {
+    const before = f.model.requests.length;
+    await assert.rejects(call(), error => error instanceof AuxiliaryCallError && /summary v1/.test(error.message)
+      && error.usage[0]?.model.provider === 'fixture' && error.usage[0]?.model.id === 'model'
+      && error.usage[0]?.inputTokens === 15 && error.usage[0]?.outputTokens === 5 && error.usage[0]?.totalTokens === 20);
+    assert.equal(f.model.requests.length, before + 1);
+  }
 });

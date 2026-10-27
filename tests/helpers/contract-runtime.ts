@@ -1,7 +1,7 @@
 import { Context as DshContext } from '@deepseek-ai/cordis';
 import AgentRegistry from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
-import LlmRuntime, { LlmAdapter, ToolCallId, ReasoningEffortId, type GenerateOptions, type StreamChunk, type ContentBlock, type TokenUsage } from '@deepseek-ai/dsh-llm';
+import LlmRuntime, { LlmAdapter, ToolCallId, ReasoningEffortId, type GenerateOptions, type StreamChunk, type ContentBlock, type TokenUsage, type FinishReason } from '@deepseek-ai/dsh-llm';
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session';
 import SessionProjection from '@deepseek-ai/dsh-session-projection';
 import SessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl';
@@ -38,6 +38,7 @@ class FixtureModel extends LlmAdapter {
   script: FixtureScript = () => 'DONE';
   usage: TokenUsage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2, totalTokens: 20 };
   failAfterUsage = false;
+  finishReason?: FinishReason;
   override async listModels(provider: string) { return [{ provider, id: 'model', name: 'Fixture', reasoning: { efforts: [{ id: ReasoningEffortId('medium'), name: 'Medium' }] } }]; }
   override async resolveModel(provider: string, model: string) { return { provider, id: model, name: 'Fixture', reasoning: { efforts: [{ id: ReasoningEffortId('medium'), name: 'Medium' }] } }; }
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -52,7 +53,7 @@ class FixtureModel extends LlmAdapter {
     yield { type: 'block-end', index: 0, block };
     yield { type: 'usage', usage: this.usage };
     if (this.failAfterUsage) throw new Error('Fixture provider stream failure');
-    yield { type: 'finish', reason: { kind: typeof answer === 'string' ? 'stop' : 'tool-calls' } };
+    yield { type: 'finish', reason: this.finishReason ?? { kind: typeof answer === 'string' ? 'stop' : 'tool-calls' } };
   }
 }
 export async function runtime(t: TestContext, options: Partial<DshHostAdaptorOptions> & { persistence?: boolean; directory?: string } = {}) {

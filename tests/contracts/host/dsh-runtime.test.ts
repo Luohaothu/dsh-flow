@@ -120,9 +120,10 @@ test('C029-03 C029-04 C029-05 C032-01 C034-01 C034-02: actual input modes, order
   assert.deepEqual(usage[0]!.usage, { timestamp: usage[0]!.usage.timestamp, model: { provider: 'fixture', id: 'model' }, inputTokens: 15, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2, totalTokens: 20 });
   assert.equal(events.at(-1)?.type === 'turn-end' || events.at(-1)?.type === 'status', true);
   await f.adaptor.persist(handle); assert.equal(native.status, 'idle');
-  const stop = f.adaptor.subscribe(handle, () => assert.fail('cancelled subscription')); stop();
+  let cancelledEvents = 0;
+  const stop = f.adaptor.subscribe(handle, () => { cancelledEvents++; }); stop();
   await f.adaptor.send(handle, input('STEER'), 'steer'); await f.adaptor.whenIdle(handle);
-  assert.equal(f.model.requests.length, 2);
+  assert.equal(f.model.requests.length, 2); assert.equal(cancelledEvents, 0);
 });
 
 test('C029-03: persist refuses a runtime without durability support', async t => {
@@ -200,6 +201,8 @@ test('C010-01 C010-03: actual non-cooperative provider exceeds configured deadli
   const closing = f.adaptor.releaseAgent(handle); await assert.rejects(closing, /abandoned/);
   assert.equal(f.adaptor.releaseAgent(handle, 'immediate'), closing);
   gate.release(); await native.whenIdle();
+  assert.equal(f.adaptor.releaseAgent(handle), closing);
+  await assert.rejects(f.adaptor.dispose(), /failed to release/);
 });
 
 test('C033-01 C033-02 C034-02: summaries use three independent requests without mutating source histories', async t => {

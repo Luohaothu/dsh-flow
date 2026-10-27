@@ -49,6 +49,9 @@ test('C001-02 C027-03 C028-02 release hides objects immediately and repeats shar
   assert.equal(ctx.list().includes(a), false);
   assert.throws(() => ctx.register(a));
   gate.resolve(); await first; assert.equal(ctx.has(a.getMailbox()), false);
+  assert.equal(ctx.release(a), first);
+  const mailboxClose = ctx.release(a.getMailbox()); await mailboxClose;
+  assert.equal(ctx.release(a.getMailbox()), mailboxClose);
   assert.throws(() => a.getMailbox().put(message('after release')));
   assert.throws(() => a.getMailbox().setFilters([]));
   assert.throws(() => a.getMailbox().setSourcePriority({ kind: 'user' }, 'high'));
@@ -142,7 +145,8 @@ test('C022-02 C022-03 terminated members leave groups; dissolution preserves rec
   assert.equal(b.getStatus(), 'running'); assert.equal(c.getStatus(), 'idle');
   g1.postToBlackboard(b, message('surviving group'));
   assert.equal(g1.readBlackboard().length, 1);
-  await ctx.release(g1); await ctx.release(g1);
+  const groupClose = ctx.release(g1); assert.equal(ctx.release(g1), groupClose);
+  await groupClose; assert.equal(ctx.release(g1), groupClose);
   assert.throws(() => g1.postMessage(b, message('dissolved')));
   assert.throws(() => g1.postToBlackboard(b, message('dissolved')));
   assert.throws(() => g1.readBlackboard()); assert.throws(() => g1.hasNewMsgOnboard(0));

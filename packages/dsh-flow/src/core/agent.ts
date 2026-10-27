@@ -394,7 +394,9 @@ export class Agent {
         binding.unsubscribe?.();
         this.binding = { kind: 'released', host: binding.host };
       } else this.binding = { kind: 'released' };
-      await this.mailbox[mailboxControl].close();
+      const mailboxClose = this.mailbox[mailboxControl].close();
+      this.context[contextControl].trackRelease(this.mailbox, mailboxClose);
+      await mailboxClose;
     };
     void Promise.allSettled([finishOwn(), ...childClosures]).then(results => {
       const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
