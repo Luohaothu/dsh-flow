@@ -1,0 +1,105 @@
+{
+  "phase": "P2",
+  "recordedAt": "2026-10-27T17:01:18.828092+00:00",
+  "baseCommit": "0a0db4e795da5c89f8270f528dcb8da1c9f8c789",
+  "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
+  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "contracts": [
+    "C036",
+    "C037",
+    "C038",
+    "C039",
+    "C040",
+    "C041",
+    "C042",
+    "C043",
+    "C044",
+    "C045",
+    "C046"
+  ],
+  "scenarioCount": 28,
+  "checks": [
+    {
+      "command": "pnpm typecheck",
+      "result": "PASS"
+    },
+    {
+      "command": "pnpm test",
+      "result": "PASS",
+      "tests": 237,
+      "predecessorTests": 119,
+      "runTests": 26,
+      "assignmentAndSchemaTests": 92,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "pnpm test:schema",
+      "result": "PASS",
+      "cases": 108,
+      "mismatches": 0
+    },
+    {
+      "command": "pnpm build",
+      "result": "PASS"
+    },
+    {
+      "command": "Built ESM load and class identity probe",
+      "result": "PASS"
+    },
+    {
+      "command": "python3 scripts/verify-alignment.py",
+      "result": "PASS"
+    },
+    {
+      "command": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
+      "result": "PASS",
+      "tests": 8
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "supplementalSchemaCheck": {
+    "source": "https://github.com/json-schema-org/JSON-Schema-Test-Suite/tree/89e83a74014617ffbe79a56d83d14d054cd11417/tests/draft7",
+    "revision": "89e83a74014617ffbe79a56d83d14d054cd11417",
+    "fixtureFiles": 11,
+    "checked": 309,
+    "mismatches": 0,
+    "skippedGroups": 6,
+    "unrunInstances": 26,
+    "reason": "Groups use unsupported minLength, patternProperties, allOf or definitions; they are not counted as passes.",
+    "scope": "Local supplemental check, not full draft-07 certification or a CI check."
+  },
+  "schema": {
+    "dialect": "draft-07/flow-subset-2",
+    "implementation": "Private meta-check and Map/Set nodes with own-property interpretation and canonical JSON equality.",
+    "reason": "Ajv path violated legal JSON field semantics in properties/required/const/enum; the same 108-case census changed from 32 mismatches to zero.",
+    "metaRule": "The selected draft-07 meta-schema rules require nonempty unique enum values; the prose uses SHOULD. writeOnly boolean typing follows validation section 10.3.",
+    "dependency": "Ajv is no longer a direct runtime dependency of Flow; native SDK transitive dependencies are unchanged."
+  },
+  "auditFixes": [
+    "Release caches its completion Promise before synchronous cancellation notifications can reenter.",
+    "Schema field names and object const/enum values do not invoke prototype methods or inherit properties.",
+    "Annotation meta typing, initialization save failure status and notification outcomes were checked against new contracts."
+  ],
+  "reviewStatus": "Independent semantic re-audit PASS; final exact-head PR review follows.",
+  "auditSnapshotFingerprint": "531b8eb6ca27c426b1fa9dde3d3a9d44bf0a686b43eda524c7bfb6a744ca46d6",
+  "commentReview": {
+    "retained": 1,
+    "deleted": 0,
+    "suppressions": 0,
+    "openFlags": 0
+  },
+  "legacyDisposition": {
+    "removedOldTestsAndTypeFixtures": 7,
+    "oldLocalAssignmentImplementation": "not adopted; new run/assignments modules implement the target contracts"
+  },
+  "limits": [
+    "Run and Assignment tests use ContractHost and actual file storage; a real child process verifies archive reading, not live runtime restoration.",
+    "Trusted invocation identity and material validation are injected domain seams; P4 must validate real native keys, permissions, rendering and originating-session followup.",
+    "Historical records retain pending/interrupted facts without active bindings; explicit successor jobs create new trees.",
+    "Synchronous whole-run snapshot writes are not a scalability benchmark; abrupt power-loss and platform-matrix validation are not claimed."
+  ]
+}

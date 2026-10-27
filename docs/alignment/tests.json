@@ -195,7 +195,17 @@
       "id": "T014",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "not-adopted",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/card-rendering.test.ts",
@@ -824,7 +834,17 @@
       "id": "T049",
       "origins": [
         "local"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "not-adopted",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/server.test.ts",
@@ -868,7 +888,17 @@
       "id": "T052",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/agent-binding.test.ts",
@@ -998,7 +1028,17 @@
       "id": "T058",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/control-message-regression.test.ts",
@@ -1022,7 +1062,17 @@
       "id": "T060",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/host-profile.test.ts",
@@ -1080,7 +1130,17 @@
       "id": "T064",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/native-fixture.ts",
@@ -1204,7 +1264,17 @@
       "id": "T072",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/reader-source.test.ts",
@@ -1230,7 +1300,17 @@
       "id": "T074",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/same-member-order-regression.test.ts",
@@ -1242,7 +1322,17 @@
       "id": "T075",
       "origins": [
         "main"
-      ]
+      ],
+      "resolution": {
+        "phase": "P2",
+        "state": "removed",
+        "decision": "删除旧控制器/队列作业/固定顺序及旧类型夹具，按持续团队、作业树和结果schema合同重新建立测试。",
+        "replacement": [
+          "tests/contracts/run/",
+          "tests/contracts/assignments/"
+        ],
+        "evidence": "docs/alignment/p2-verification.json"
+      }
     },
     {
       "path": "tests/unit/session-scan.test.ts",
