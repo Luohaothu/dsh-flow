@@ -16,11 +16,13 @@ export function originKey(origin: HostOrigin): string { const trusted = verified
 
 import type { Agent } from '../core/agent.js';
 import type { Context } from '../core/context.js';
+import type { PatternCatalog } from '../patterns/catalog.js';
 import type { AssignmentService } from '../assignments/service.js';
 import type { AssignmentSnapshot } from '../assignments/types.js';
 import type { Run } from './run.js';
 import type { RunRecord, RunServiceDependencies, RunStatus } from './types.js';
 export interface RunState {
+  readonly patternCatalog: PatternCatalog;
   record: RunRecord; readonly dependencies: RunServiceDependencies;
   context?: Context; root?: Agent; assignments?: AssignmentService; accepting: boolean;
   initialization: Promise<void>; releasePromise?: Promise<void>; runtimeError?: string; runtimeStatus?: RunStatus; runtimeCleanup?: RunRecord['cleanup'];
@@ -28,5 +30,7 @@ export interface RunState {
   outcome(assignment: AssignmentSnapshot): void;
 }
 const runs = new WeakMap<Run, RunState>();
-export function bindRun(run: Run, state: RunState): void { if (runs.has(run)) throw new Error('Run is already bound'); runs.set(run, state); }
+const contextRuns = new WeakMap<Context, Run>();
+export function contextRun(context: Context): Run { const run = contextRuns.get(context); if (!run) throw new Error('Context does not belong to a Run'); return run; }
+export function bindRun(run: Run, state: RunState): void { if (runs.has(run)) throw new Error('Run is already bound'); if (!state.context || contextRuns.has(state.context)) throw new Error('Run Context is already bound'); runs.set(run, state); contextRuns.set(state.context, run); }
 export function runState(run: Run): RunState { const state = runs.get(run); if (!state) throw new Error('Invalid run handle'); return state; }

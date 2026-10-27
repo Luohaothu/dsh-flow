@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Agent } from '../core/agent.js';
+import { assertNoPendingConstruction } from '../core/construction.js';
 import { agentControl } from '../core/internals.js';
 import { trustedSystemMessage } from '../core/message.js';
 import { Run } from '../run/run.js';
@@ -135,6 +136,7 @@ export class AssignmentService {
     if (old) { if (old.digest !== digest) throw new Error('Transport key was reused with different parameters'); return structuredClone(old.receipt); }
     let changed: AssignmentSnapshot | undefined;
     const receipt = this.state.commit(draft => {
+      assertNoPendingConstruction(caller);
       const record = draft.assignments[assignment.id]!;
       let response: SubmissionReceipt;
       if (record.status !== 'pending') response = { kind: 'terminal', assignmentId: assignment.id, status: record.status };
@@ -244,8 +246,9 @@ export class AssignmentService {
   private assertCaller(caller: Agent | Run): void {
     if (caller === this.run) return;
     if (!(caller instanceof Agent) || caller[agentControl].context !== this.state.context) throw new Error('Caller does not belong to this run');
+    assertNoPendingConstruction(caller);
   }
-  private isActive(agent: Agent): boolean { return agent[agentControl].context === this.state.context && this.state.context!.has(agent) && agent.getStatus() !== 'terminated'; }
+  private isActive(agent: Agent): boolean { assertNoPendingConstruction(agent); return agent[agentControl].context === this.state.context && this.state.context!.has(agent) && agent.getStatus() !== 'terminated'; }
   private assertActive(agent: Agent): void { if (!this.isActive(agent)) throw new Error('Agent is unavailable in this run'); }
   private assertDispatch(request: AssignmentRequest): void {
     if (!this.state.accepting || this.state.record.status !== 'active') throw new Error('Run is not active');

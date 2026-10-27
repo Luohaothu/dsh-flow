@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { cp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ await build({
     'host/index': 'packages/dsh-flow/src/host/index.ts',
     'run/index': 'packages/dsh-flow/src/run/index.ts',
     'assignments/index': 'packages/dsh-flow/src/assignments/index.ts',
+    'patterns/index': 'packages/dsh-flow/src/patterns/index.ts',
   },
   outdir: 'packages/dsh-flow/lib',
   bundle: true,
@@ -30,3 +31,5 @@ await build({
   logLevel: 'info',
   absWorkingDir: root,
 });
+await rm(resolve(root, 'packages/dsh-flow/patterns'), { recursive: true, force: true });
+await cp(resolve(root, 'docs/design/public/patterns'), resolve(root, 'packages/dsh-flow/patterns'), { recursive: true });

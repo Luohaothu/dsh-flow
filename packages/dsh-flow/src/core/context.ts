@@ -2,6 +2,7 @@ import { Agent } from './agent.js';
 import { Group } from './group.js';
 import { Mailbox } from './mailbox.js';
 import { agentControl, contextControl, groupControl, mailboxControl, type ContextControl } from './internals.js';
+import { assertConstructionAccess, assertNoPendingConstruction, hasNoPendingConstruction, type ConstructionScope } from './construction.js';
 import type { ContextObject, GroupID, HostAdaptor, HostContext, SessionID } from './types.js';
 
 type Managed = Agent | Group | Mailbox;
@@ -24,7 +25,10 @@ export class Context {
   constructor() {
     this[contextControl] = {
       assertOpen: () => this.assertOpen(),
-      assertAvailable: agent => this.assertAvailable(agent),
+      assertAvailable: (agent, scope) => this.assertAvailable(agent, scope),
+      has: object => this.hasRaw(object),
+      registered: object => this.objects.has(object),
+      register: (object, scope) => this.registerRaw(object, scope),
       beginCreation: () => {
         this.assertOpen();
         let finish!: () => void;
@@ -32,11 +36,11 @@ export class Context {
         this.creations.add(pending);
         return () => { this.creations.delete(pending); finish(); };
       },
-      publish: (agent, mailbox, sources, attach) => {
+      publish: (agent, mailbox, sources, attach, scope) => {
         this.assertOpen();
-        for (const source of sources) this.assertAvailable(source);
+        for (const source of sources) this.assertAvailable(source, scope);
         this.validateRegistration(agent); this.validateRegistration(mailbox);
-        this.register(agent); this.register(mailbox); attach();
+        this.registerRaw(agent, scope); this.registerRaw(mailbox, scope); attach();
       },
       rollback: (agent, mailbox) => { this.remove(agent); this.remove(mailbox); },
       terminated: agent => {
@@ -68,6 +72,10 @@ export class Context {
   }
   getHostContext(): HostContext { return this.getHostAdaptor().host; }
   register(object: Managed): void {
+    assertNoPendingConstruction(object); this.registerRaw(object);
+  }
+  private registerRaw(object: Managed, scope?: ConstructionScope): void {
+    assertConstructionAccess(object, scope);
     this.assertOpen(); this.validateRegistration(object);
     if (this.objects.has(object)) return;
     if (object instanceof Mailbox) object[mailboxControl].bind(this);
@@ -78,7 +86,7 @@ export class Context {
   has(object: ContextObject): boolean {
     if (this.closing || this.disposed) return false;
     if (object === this.adaptor || object === this.adaptor?.host) return this.adaptor !== undefined;
-    return this.objects.has(object as Managed) && !this.releasing.has(object as Managed);
+    return hasNoPendingConstruction(object) && this.hasRaw(object as Managed);
   }
   getAgent(session: SessionID): Agent | null {
     const agent = this.agents.get(session);
@@ -89,7 +97,7 @@ export class Context {
     return group && this.has(group) ? group : null;
   }
   list(query?: (object: ContextObject) => boolean): ContextObject[] {
-    const snapshot: ContextObject[] = this.closing ? [] : [...this.objects].filter(object => !this.releasing.has(object));
+    const snapshot: ContextObject[] = this.closing ? [] : [...this.objects].filter(object => !this.releasing.has(object) && hasNoPendingConstruction(object));
     if (!this.closing && this.adaptor) {
       if (!snapshot.includes(this.adaptor)) snapshot.push(this.adaptor);
       if (!snapshot.includes(this.adaptor.host)) snapshot.push(this.adaptor.host);
@@ -149,10 +157,12 @@ export class Context {
     void completion.then(() => { this.releaseDependencies.delete(completion); }, () => {});
   }
   private assertOpen(): void { if (this.closing || this.disposed) throw new Error('Context is closing or disposed'); }
-  private assertAvailable(agent: Agent): void {
+  private hasRaw(object: Managed): boolean { return !this.closing && !this.disposed && this.objects.has(object) && !this.releasing.has(object); }
+  private assertAvailable(agent: Agent, scope?: ConstructionScope): void {
     this.assertOpen();
-    if (agent[agentControl].context !== this || !this.has(agent) || agent.getStatus() === 'terminated') throw new Error('Agent is unavailable in this Context');
-    agent[agentControl].assertAvailable();
+    assertConstructionAccess(agent, scope);
+    if (agent[agentControl].context !== this || !this.hasRaw(agent)) throw new Error('Agent is unavailable in this Context');
+    agent[agentControl].assertAvailable(scope);
   }
   private validateRegistration(object: Managed): void {
     if (!(object instanceof Agent) && !(object instanceof Group) && !(object instanceof Mailbox)) throw new TypeError('Unsupported Context object');

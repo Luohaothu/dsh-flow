@@ -279,6 +279,10 @@ importers:
         version: 2.9.1
 
   packages/dsh-flow:
+    dependencies:
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.4

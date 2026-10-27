@@ -32,3 +32,4 @@ jobs:
       - run: pnpm test
       - run: pnpm test:schema
       - run: pnpm build
+      - run: pnpm test:patterns-package

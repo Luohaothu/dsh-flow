@@ -1,11 +1,12 @@
 import type { Context } from './context.js';
 import type { Group } from './group.js';
 import { Mailbox } from './mailbox.js';
-import { agentControl, contextControl, groupControl, mailboxControl, type AgentControl } from './internals.js';
+import { agentControl, contextControl, groupControl, mailboxControl, createOwned, type AgentControl } from './internals.js';
 import { deadlineAfter, scheduleDeadline, type DeadlineTimer } from './deadline.js';
 import { AuxiliaryCallError, beginAuxiliaryUsageSettlement, settleAuxiliaryUsage } from './auxiliary-usage.js';
 import { checkPermission, snapshotProfile } from './profile.js';
 import { formatSource, isTrustedSystemMessage, markWaitCompletion, newSessionID, sameSource, snapshotMessage, snapshotSource, sourceAgent, trustedSystemMessage, waitDescription } from './message.js';
+import { assertConstructionAccess, assertConstructionParticipant, assertNoPendingConstruction, assertConstructionScope, assertConstructionSource, beginConstructionAttempt, hasNoPendingConstruction, ownConstructionResource, recordConstructionCleanupFailure, type ConstructionScope } from './construction.js';
 import { emitCore } from './observation.js';
 import type { AgentProfile, AgentStatus, ContextSummary, HostAdaptor, HostAgent, HostEvent, MailboxQuery, Message, MessageID, MessageMeta, MessageSource, SessionID, Signal, Usage, WaitResult } from './types.js';
 
@@ -34,20 +35,24 @@ export class Agent {
   private queuedEvents: Readonly<HostEvent>[] = [];
   readonly [agentControl]: AgentControl;
 
-  private constructor(private readonly context: Context, private readonly adaptor: HostAdaptor) {
+  private constructor(private readonly context: Context, private readonly adaptor: HostAdaptor, scope?: ConstructionScope) {
     const self = this;
     this[agentControl] = {
       get context() { return self.context; },
       get host() { return self.host(); },
-      assertAvailable: () => this.assertAvailable(),
+      get status() { return self.status; },
+      assertAvailable: owner => this.assertAvailable(owner),
+      join: (group, owner) => this.associateGroup(group, owner),
+      leave: group => { this.groups.delete(group); },
       release: signal => this.terminate(signal),
     };
     this.mailbox[mailboxControl].bind(context);
+    if (scope) { ownConstructionResource(scope, this, 'agent'); ownConstructionResource(scope, this.mailbox, 'mailbox'); }
     this.mailbox[mailboxControl].onRead(message => emitCore(context, { type: 'message-read', timestamp: Date.now(), agent: this, message }));
   }
   getProfile(): Readonly<AgentProfile> { return this.host().profile; }
-  getParent(): Agent | null { return this.parent; }
-  getChildren(): Agent[] { return [...this.children]; }
+  getParent(): Agent | null { return hasNoPendingConstruction(this) && (!this.parent || hasNoPendingConstruction(this.parent)) ? this.parent : null; }
+  getChildren(): Agent[] { return hasNoPendingConstruction(this) ? [...this.children].filter(hasNoPendingConstruction) : []; }
   getStatus(): AgentStatus { return this.status; }
   hasPendingWait(): boolean { return this.pendingWait !== undefined; }
   getMailbox(): Mailbox { return this.mailbox; }
@@ -55,39 +60,48 @@ export class Agent {
   static create(ctx: Context, p: AgentProfile, parent: Agent | null, initmsg?: Message, history?: string): Promise<Agent> {
     return Agent.createFrom(ctx, p, parent, initmsg, history, parent ? [parent] : [], 'create');
   }
-  private static createFrom(ctx: Context, profile: AgentProfile, parent: Agent | null, initmsg: Message | undefined, history: string | undefined, sources: Agent[], origin: 'create' | 'fork' | 'herb'): Promise<Agent> {
+  static [createOwned](scope: ConstructionScope, profile: AgentProfile, parent: Agent): Promise<Agent> {
+    try {
+      assertConstructionParticipant(scope, parent);
+      return Agent.createFrom(scope.context, profile, parent, undefined, undefined, [parent], 'create', scope);
+    } catch (error) { return Promise.reject(error); }
+  }
+  private static createFrom(ctx: Context, profile: AgentProfile, parent: Agent | null, initmsg: Message | undefined, history: string | undefined, sources: Agent[], origin: 'create' | 'fork' | 'herb', scope?: ConstructionScope): Promise<Agent> {
     let p: Readonly<AgentProfile>;
     let input: Message | undefined;
     try {
       ctx[contextControl].assertOpen();
-      if (parent) ctx[contextControl].assertAvailable(parent);
-      for (const source of sources) ctx[contextControl].assertAvailable(source);
+      if (parent) ctx[contextControl].assertAvailable(parent, scope);
+      for (const source of sources) ctx[contextControl].assertAvailable(source, scope);
       p = snapshotProfile(profile);
       checkPermission(p, parent?.getProfile() ?? null);
       input = initmsg === undefined ? undefined : snapshotMessage(initmsg);
+      if (input) assertConstructionSource(input.source);
     } catch (error) { return Promise.reject(error); }
-    return Agent.assemble(ctx, parent, agent => agent.adaptor.createAgent(agent, p, history), sources, origin, input);
+    return Agent.assemble(ctx, parent, agent => agent.adaptor.createAgent(agent, p, history), sources, origin, input, scope);
   }
   static resume(ctx: Context, parent: Agent | null, session: SessionID): Promise<Agent> {
     return Agent.assemble(ctx, parent, agent => agent.adaptor.resumeAgent(agent, session), parent ? [parent] : [], 'resume');
   }
-  private static async assemble(ctx: Context, parent: Agent | null, initialize: (agent: Agent) => Promise<HostAgent>, sources: Agent[], origin: 'create' | 'resume' | 'fork' | 'herb', input?: Message): Promise<Agent> {
+  private static async assemble(ctx: Context, parent: Agent | null, initialize: (agent: Agent) => Promise<HostAgent>, sources: Agent[], origin: 'create' | 'resume' | 'fork' | 'herb', input?: Message, scope?: ConstructionScope): Promise<Agent> {
     ctx[contextControl].assertOpen();
-    if (parent) ctx[contextControl].assertAvailable(parent);
-    for (const source of sources) ctx[contextControl].assertAvailable(source);
+    if (parent) ctx[contextControl].assertAvailable(parent, scope);
+    for (const source of sources) ctx[contextControl].assertAvailable(source, scope);
     const adaptor = ctx.getHostAdaptor();
     const finishCreation = ctx[contextControl].beginCreation();
-    const agent = new Agent(ctx, adaptor);
+    const finishOwned = scope ? beginConstructionAttempt(scope) : undefined;
+    const agent = new Agent(ctx, adaptor, scope);
     try {
       const host = await initialize(agent);
       if (agent.closing) {
         agent.binding = { kind: 'released', host };
         const release = Promise.resolve().then(() => adaptor.releaseAgent(host, 'immediate'));
         ctx[contextControl].trackRelease(agent, release);
-        await release;
+        try { await release; } catch (error) { recordConstructionCleanupFailure(scope, agent, error); throw error; }
         throw new Error('Agent terminated during initialization');
       }
       agent.binding = { kind: 'bound', host };
+      if (scope) assertConstructionScope(scope, ctx);
       snapshotProfile(host.profile);
       checkPermission(host.profile, parent?.getProfile() ?? null);
       agent.nativeRound = adaptor.getStatus(host) === 'running';
@@ -97,28 +111,29 @@ export class Agent {
         agent.parent = parent;
         parent?.children.add(agent);
         agent.published = true;
-      });
+      }, scope);
       emitCore(ctx, { type: 'agent-created', timestamp: Date.now(), agent, parent, origin, sources: sources.slice() });
       for (const event of agent.queuedEvents.splice(0)) agent.onHostEvent(event);
-      agent.assertAvailable();
-      for (const source of sources) ctx[contextControl].assertAvailable(source);
+      agent.assertAvailable(scope);
+      for (const source of sources) ctx[contextControl].assertAvailable(source, scope);
       if (input) {
         agent.nativeRound = true;
         agent.setStatus('running');
-        agent.assertAvailable();
+        agent.assertAvailable(scope);
+        assertConstructionSource(input.source);
         await adaptor.send(host, input, 'followup', 'input');
-        agent.assertAvailable();
+        agent.assertAvailable(scope);
       } else agent.syncStatus();
       return agent;
     } catch (error) {
       const cleanup: unknown[] = [];
-      try { await agent.terminate('SIGKILL'); } catch (failure) { cleanup.push(failure); }
+      try { await agent.terminate('SIGKILL'); } catch (failure) { cleanup.push(failure); recordConstructionCleanupFailure(scope, agent, failure); }
       agent.parent?.children.delete(agent);
       agent.parent = null;
       ctx[contextControl].rollback(agent, agent.mailbox);
       if (cleanup.length) throw new AggregateError([error, ...cleanup], 'Agent initialization and rollback failed');
       throw error;
-    } finally { finishCreation(); }
+    } finally { finishOwned?.(); finishCreation(); }
   }
   async fork(): Promise<Agent> {
     this.assertAvailable();
@@ -161,7 +176,7 @@ export class Agent {
     }
   }
   kill(agent: Agent): Promise<void> {
-    this.assertAvailable();
+    this.assertLive();
     if (agent.parent !== this || !this.children.has(agent)) return Promise.reject(new Error('Target is not a direct child'));
     return agent.recvSignal('SIGTERM');
   }
@@ -175,13 +190,15 @@ export class Agent {
     this.children.delete(child); adopt.children.add(child); child.parent = adopt;
     emitCore(this.context, { type: 'agent-parent', timestamp: Date.now(), agent: child, previous: this, parent: adopt });
   }
-  joinGroup(group: Group): void {
-    this.assertAvailable();
+  joinGroup(group: Group): void { this.associateGroup(group); }
+  private associateGroup(group: Group, scope?: ConstructionScope): void {
+    this.assertAvailable(scope);
+    assertConstructionAccess(group, scope);
     if (group[groupControl].context !== this.context || !group[groupControl].members().includes(this)) throw new Error('Invalid Group association');
     this.groups.add(group);
   }
   quitGroup(group: Group): void {
-    if (!this.groups.delete(group)) return;
+    assertNoPendingConstruction(this); assertNoPendingConstruction(group);
     group[groupControl].leave(this);
   }
   recvSignal(signal: Signal): Promise<void> {
@@ -190,6 +207,7 @@ export class Agent {
   }
   recvMessage(message: Message): void {
     this.assertAvailable();
+    assertConstructionSource(message.source);
     const id = this.mailbox.put(message);
     if (id === null) return;
     this.assertAvailable();
@@ -349,8 +367,11 @@ export class Agent {
     if (this.binding.kind === 'initializing' || !this.binding.host) throw new Error('Agent HostAgent is not initialized');
     return this.binding.host;
   }
-  private assertAvailable(): void {
-    if (this.closing || !this.published || !this.context.has(this) || this.binding.kind !== 'bound') throw new Error('Agent is not available');
+  private assertAvailable(scope?: ConstructionScope): void {
+    assertConstructionAccess(this, scope); this.assertLive();
+  }
+  private assertLive(): void {
+    if (this.closing || !this.published || !this.context[contextControl].has(this) || this.binding.kind !== 'bound') throw new Error('Agent is not available');
   }
   private syncStatus(): void {
     if (this.closing) return;
@@ -382,7 +403,7 @@ export class Agent {
     this.context[contextControl].markReleasing(this);
     this.context[contextControl].markReleasing(this.mailbox);
     this.pending.clear();
-    for (const group of [...this.groups]) this.quitGroup(group);
+    for (const group of [...this.groups]) group[groupControl].leave(this);
     const children = [...this.children];
     const childClosures = children.map(child => child.recvSignal(this.strongestSignal));
     this.context[contextControl].terminated(this);

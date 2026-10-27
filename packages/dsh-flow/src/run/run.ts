@@ -5,6 +5,7 @@ import { Context } from '../core/context.js';
 import { AssignmentService } from '../assignments/service.js';
 import { assertJson, digestJson } from '../assignments/schema.js';
 import type { Assignment, AssignmentArchiveReadResult, AssignmentOutcome, AssignmentSnapshot, AssignmentSpec } from '../assignments/types.js';
+import { catalogControl } from '../patterns/internal.js';
 import { bindRun, originKey, runState, verifiedOrigin, type RunState } from './internal.js';
 import type { HostOrigin, RunDefaults, RunRecord, RunServiceDependencies, RunSnapshot, RunStatus } from './types.js';
 
@@ -39,6 +40,7 @@ export class RunService {
     if (previous) { if (previous.digest !== digest) throw new Error('requestId was reused with different parameters'); return previous.run; }
     const inherited = defaultsSnapshot(this.dependencies.getOriginDefaults(source));
     const effective = defaultsSnapshot({ ...inherited, ...overrides });
+    const patternCatalog = this.dependencies.patternCatalog[catalogControl].snapshot();
     const run = new Run(randomUUID());
     const record: RunRecord = {
       id: run.id, runId: run.id, epoch: this.epoch, revision: 0, status: 'starting', origin: structuredClone(source),
@@ -47,7 +49,7 @@ export class RunService {
     };
     this.dependencies.store.write(record);
     const state: RunState = {
-      record, dependencies: this.dependencies, context: new Context(), accepting: false, initialization: Promise.resolve(),
+      record, patternCatalog, dependencies: this.dependencies, context: new Context(), accepting: false, initialization: Promise.resolve(),
       commit: change => {
         this.dependencies.store.assertWritable(run.id);
         const draft = structuredClone(state.record);
