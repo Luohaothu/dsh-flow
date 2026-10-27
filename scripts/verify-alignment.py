@@ -104,6 +104,17 @@ for row in patches:
 
 if [row['id'] for row in phases['phases']] != [f'P{i}' for i in range(8)]:
     errors.append('Phase ledger must contain P0 through P7 in order')
+phase_rows = {row['id']: row for row in phases['phases']}
+for index, row in enumerate(phases['phases']):
+    dependencies = [] if index == 0 else [f'P{index - 1}']
+    if row['dependsOn'] != dependencies:
+        errors.append(f"{row['id']} has an invalid phase dependency")
+    if row['status'] not in {'pending', 'in-progress', 'reviewing', 'merged'}:
+        errors.append(f"{row['id']} has an invalid phase status")
+    if row['status'] != 'pending' and any(phase_rows[dependency]['status'] != 'merged' for dependency in dependencies):
+        errors.append(f"{row['id']} starts before its dependency is merged")
+    if row['status'] == 'merged' and not all(row.get(key) for key in ('pullRequest', 'review', 'mergeCommit')):
+        errors.append(f"{row['id']} is merged without review and merge evidence")
 
 restored = None
 if args.archive:
