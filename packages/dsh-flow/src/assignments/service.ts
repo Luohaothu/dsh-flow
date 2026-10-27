@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Agent } from '../core/agent.js';
 import { assertNoPendingConstruction } from '../core/construction.js';
+import { getAgentInstanceId } from '../core/observation.js';
 import { agentControl } from '../core/internals.js';
 import { trustedSystemMessage } from '../core/message.js';
 import { Run } from '../run/run.js';
@@ -13,7 +14,7 @@ interface Binding { handle: Assignment; sender: Agent | Run; recipient: Agent }
 function text(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function nonempty(value: unknown, name: string): asserts value is string { if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${name} must be nonempty`); }
 function actorOf(actor: Agent | Run): AssignmentActor {
-  return actor instanceof Run ? { kind: 'run', runId: actor.id } : { kind: 'agent', sessionID: actor.getProfile().sessionID };
+  return actor instanceof Run ? { kind: 'run', runId: actor.id } : { kind: 'agent', sessionID: actor.getProfile().sessionID, instanceId: getAgentInstanceId(actor) };
 }
 function outcome(record: AssignmentSnapshot): AssignmentOutcome { return { assignmentId: record.id, status: record.status, ...(record.reason === undefined ? {} : { reason: record.reason }) }; }
 
@@ -26,8 +27,18 @@ export class AssignmentService {
     this.state = runState(run);
     if (this.state.assignments) throw new Error('Run already has an AssignmentService');
     if (!this.state.context || !this.state.root) throw new Error('Run has no initialized Context and root');
+    const terminal = new Set<string>();
+    this.state.afterCommit = record => {
+      for (const assignment of Object.values(record.assignments)) {
+        if (assignment.status === 'pending' || terminal.has(assignment.id)) continue;
+        const binding = this.bindings.get(assignment.id);
+        if (!binding) continue;
+        terminal.add(assignment.id);
+        binding.recipient[agentControl].recordAssignmentOutcome(assignment.status);
+      }
+    };
     this.state.context.onAgentTerminated(agent => {
-      try { this.terminate(agent); } catch (error) { this.state.accepting = false; this.state.runtimeError = text(error); }
+      try { this.terminate(agent); } catch (error) { this.state.accepting = false; this.state.runtimeError = text(error); this.state.notify(); }
     });
     for (const agent of this.state.context.list()) if (agent instanceof Agent && agent.getStatus() === 'terminated') this.terminate(agent);
     for (const binding of this.bindings.values()) if (binding.recipient.getStatus() === 'terminated') this.terminate(binding.recipient);
@@ -46,7 +57,7 @@ export class AssignmentService {
     const spec = this.spec(request.spec);
     const schema = compileSchema(spec.resultSchema);
     const key = JSON.stringify([actorOf(request.sender), requestId]);
-    const digest = digestJson({ sender: actorOf(request.sender), recipientSessionID: request.recipient.getProfile().sessionID, parentAssignmentId: parent, spec });
+    const digest = digestJson({ sender: actorOf(request.sender), recipientSessionID: request.recipient.getProfile().sessionID, recipientInstanceId: getAgentInstanceId(request.recipient), parentAssignmentId: parent, spec });
     const existing = this.existing(key, digest);
     if (existing) return existing;
     this.assertDispatch(request);
@@ -66,16 +77,20 @@ export class AssignmentService {
       this.assertDispatch(request);
       const id = randomUUID();
       const snapshot: AssignmentSnapshot = {
-        id, runId: this.run.id, spec, sender: actorOf(request.sender), recipientSessionID: request.recipient.getProfile().sessionID,
+        id, runId: this.run.id, spec, sender: actorOf(request.sender), recipientSessionID: request.recipient.getProfile().sessionID, recipientInstanceId: getAgentInstanceId(request.recipient),
         parentAssignmentId: parent, status: 'pending', submissions: [], submissionCount: 0, schemaFailures: 0,
         schemaDialect: schema.dialect, schemaDigest: schema.digest, continuingChildren: [],
       };
       draft.assignments[id] = snapshot;
       draft.prepareKeys[key] = { digest, assignmentId: id };
       created = new Assignment(id, this.run.id);
-    });
+    }, false);
     if (!created) throw new Error('Assignment was not prepared');
-    if (!this.bindings.has(created.id)) this.bindings.set(created.id, { handle: created, sender: request.sender, recipient: request.recipient });
+    if (!this.bindings.has(created.id)) {
+      this.bindings.set(created.id, { handle: created, sender: request.sender, recipient: request.recipient });
+      request.recipient[agentControl].recordAssignmentOutcome('pending');
+    }
+    this.state.notify();
     if (request.recipient.getStatus() === 'terminated') this.terminate(request.recipient);
     return created;
   }
@@ -130,7 +145,7 @@ export class AssignmentService {
       seen.add(child.handle.id); return { assignmentId: child.handle.id, reason: entry.reason };
     });
     const input = structuredClone({ result: submission.result, continuingChildren: children });
-    const key = JSON.stringify([caller.getProfile().sessionID, call.transportKey]);
+    const key = JSON.stringify([getAgentInstanceId(caller), call.transportKey]);
     const digest = digestJson({ assignmentId: assignment.id, submission: input });
     const old = this.state.record.receipts[key];
     if (old) { if (old.digest !== digest) throw new Error('Transport key was reused with different parameters'); return structuredClone(old.receipt); }
@@ -205,10 +220,10 @@ export class AssignmentService {
     }
   }
   private terminate(agent: Agent): void {
-    if (!Object.values(this.state.record.assignments).some(record => record.recipientSessionID === agent.getProfile().sessionID && record.status === 'pending')) return;
+    if (!Object.values(this.state.record.assignments).some(record => record.recipientInstanceId === getAgentInstanceId(agent) && record.status === 'pending')) return;
     const changed = this.state.commit(draft => {
       const records: AssignmentSnapshot[] = [];
-      for (const record of Object.values(draft.assignments)) if (record.recipientSessionID === agent.getProfile().sessionID && record.status === 'pending') {
+      for (const record of Object.values(draft.assignments)) if (record.recipientInstanceId === getAgentInstanceId(agent) && record.status === 'pending') {
         record.status = 'failed'; record.reason = 'Recipient logically terminated'; records.push(structuredClone(record));
       }
       return records;
@@ -221,14 +236,14 @@ export class AssignmentService {
     if (binding.sender === this.run) { this.state.outcome(record); return; }
     if (binding.sender instanceof Agent && this.isActive(binding.sender)) {
       try { binding.sender.recvMessage(trustedSystemMessage('作业状态更新', { runId: this.run.id, assignmentId: record.id, status: record.status, query: 'flow_assignment_read' })); }
-      catch (error) { this.state.runtimeError = text(error); }
+      catch (error) { this.state.runtimeError = text(error); this.state.notify(); }
     }
   }
   private notifyCancelled(record: AssignmentSnapshot): void {
     const binding = this.bindings.get(record.id);
     if (binding && this.isActive(binding.recipient)) {
       try { binding.recipient.recvMessage(trustedSystemMessage('作业已取消', { runId: this.run.id, assignmentId: record.id, reason: record.reason, instruction: 'Stop work on this assignment' })); }
-      catch (error) { this.state.runtimeError = text(error); }
+      catch (error) { this.state.runtimeError = text(error); this.state.notify(); }
     }
   }
   private existing(key: string, digest: string): Assignment | undefined {

@@ -6,7 +6,7 @@ import { assertJson } from '../assignments/schema.js';
 import type { HostOrigin, RunDefaults, RunRecord } from './types.js';
 
 const runIdPattern = /^[a-zA-Z0-9_-]+$/;
-const recordVersion = 1;
+const recordVersion = 2;
 interface PersistedRunRecord { format: 'dsh-flow-run'; version: typeof recordVersion; record: RunRecord }
 function isObject(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function hasStrings(value: Record<string, unknown>, keys: readonly string[]): boolean { return keys.every(key => typeof value[key] === 'string'); }
@@ -17,13 +17,19 @@ function isChildren(value: unknown): boolean {
   return Array.isArray(value) && value.every(child => isObject(child) && hasStrings(child, ['assignmentId', 'reason']));
 }
 function isReceipt(value: unknown): boolean {
-  return isObject(value) && typeof value.kind === 'string' && ['accepted', 'missing-children', 'invalid-result', 'terminal'].includes(value.kind)
-    && typeof value.assignmentId === 'string' && isStatus(value.status)
-    && optional(value, 'missingChildren', children => Array.isArray(children) && children.every(isString))
-    && optional(value, 'errors', errors => Array.isArray(errors) && errors.every(error => isObject(error) && hasStrings(error, ['path', 'message'])));
+  if (!isObject(value) || !isUUID(value.assignmentId) || !isStatus(value.status)) return false;
+  if (!optional(value, 'missingChildren', children => Array.isArray(children) && children.every(isUUID))
+    || !optional(value, 'errors', errors => Array.isArray(errors) && errors.every(error => isObject(error) && hasStrings(error, ['path', 'message'])))) return false;
+  switch (value.kind) {
+    case 'accepted': return value.status === 'submitted';
+    case 'missing-children': return value.status === 'pending' && Array.isArray(value.missingChildren);
+    case 'invalid-result': return (value.status === 'pending' || value.status === 'failed') && Array.isArray(value.errors);
+    case 'terminal': return value.status !== 'pending';
+    default: return false;
+  }
 }
 function isSubmission(value: unknown): boolean {
-  return isObject(value) && typeof value.transportKey === 'string' && typeof value.timestamp === 'number'
+  return isObject(value) && typeof value.transportKey === 'string' && isNumber(value.timestamp) && value.timestamp >= 0
     && isObject(value.submission) && Object.hasOwn(value.submission, 'result') && isChildren(value.submission.continuingChildren)
     && isReceipt(value.receipt);
 }
@@ -35,16 +41,18 @@ function isSpec(value: unknown): boolean {
       isObject(ref) && hasStrings(ref, ['id', 'sourceId', 'digest', 'location', 'mediaType'])));
 }
 function isAssignment(value: unknown, id: string, runId: string): value is AssignmentSnapshot {
-  if (!isObject(value) || value.id !== id || value.runId !== runId || !isSpec(value.spec) || !isObject(value.sender)) return false;
+  if (!isObject(value) || !isUUID(value.id) || value.id !== id || value.runId !== runId || !isSpec(value.spec) || !isObject(value.sender)) return false;
   const sender = value.sender;
-  return ((sender.kind === 'run' && sender.runId === runId) || (sender.kind === 'agent' && typeof sender.sessionID === 'string'))
-    && typeof value.recipientSessionID === 'string' && (value.parentAssignmentId === null || typeof value.parentAssignmentId === 'string')
+  return ((sender.kind === 'run' && sender.runId === runId) || (sender.kind === 'agent' && typeof sender.sessionID === 'string' && isUUID(sender.instanceId)))
+    && typeof value.recipientSessionID === 'string' && isUUID(value.recipientInstanceId) && (value.parentAssignmentId === null || typeof value.parentAssignmentId === 'string')
     && isStatus(value.status) && Array.isArray(value.submissions) && value.submissions.every(isSubmission)
-    && typeof value.submissionCount === 'number' && typeof value.schemaFailures === 'number'
+    && isCount(value.submissionCount) && value.submissionCount === value.submissions.length && isCount(value.schemaFailures) && value.schemaFailures <= 3
     && hasStrings(value, ['schemaDialect', 'schemaDigest']) && isChildren(value.continuingChildren)
     && (value.status !== 'submitted' || Object.hasOwn(value, 'result')) && optional(value, 'reason', isString);
 }
-function isNumber(value: unknown): value is number { return typeof value === 'number'; }
+function isNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
+function isCount(value: unknown): value is number { return isNumber(value) && Number.isSafeInteger(value) && value >= 0; }
+function isUUID(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function isRunDefaults(value: unknown): value is RunDefaults {
   return isObject(value)
     && optional(value, 'model', model => isObject(model) && hasStrings(model, ['provider', 'id']))
@@ -55,8 +63,8 @@ function isRunDefaults(value: unknown): value is RunDefaults {
     && optional(value, 'skills', skills => Array.isArray(skills) && skills.every(isString));
 }
 function isRunRecord(value: unknown, runId: string): value is RunRecord {
-  return isObject(value) && typeof value.id === 'string' && runIdPattern.test(value.id) && value.id === runId && value.runId === runId
-    && typeof value.epoch === 'string' && typeof value.revision === 'number'
+  return isObject(value) && isUUID(value.id) && value.id === runId && value.runId === runId
+    && isUUID(value.epoch) && isCount(value.revision) && isNumber(value.startedAt) && value.startedAt >= 0 && optional(value, 'endedAt', end => isNumber(end) && end >= Number(value.startedAt))
     && typeof value.status === 'string' && ['starting', 'active', 'stopping', 'stopped', 'failed'].includes(value.status)
     && isObject(value.origin) && hasStrings(value.origin, ['backend', 'callerSessionId'])
     && isRunDefaults(value.defaults) && isRunDefaults(value.overrides)
@@ -65,7 +73,35 @@ function isRunRecord(value: unknown, runId: string): value is RunRecord {
     && isObject(value.assignments) && Object.entries(value.assignments).every(([id, assignment]) => isAssignment(assignment, id, runId))
     && isObject(value.prepareKeys) && Object.values(value.prepareKeys).every(entry => isObject(entry) && hasStrings(entry, ['digest', 'assignmentId']))
     && isObject(value.receipts) && Object.values(value.receipts).every(entry => isObject(entry) && typeof entry.digest === 'string' && isReceipt(entry.receipt))
-    && hasStrings(value, ['createRequestId', 'createDigest']);
+    && hasStrings(value, ['createRequestId', 'createDigest']) && crossReferences(value);
+}
+
+function crossReferences(record: Record<string, unknown>): boolean {
+  if (!isObject(record.assignments) || !isObject(record.prepareKeys) || !isObject(record.receipts)) return false;
+  const assignments = record.assignments;
+  for (const value of Object.values(assignments)) {
+    if (!isObject(value)) return false;
+    if (value.parentAssignmentId !== null && (typeof value.parentAssignmentId !== 'string' || !Object.hasOwn(assignments, value.parentAssignmentId))) return false;
+    if (!isObject(value.sender)) return false;
+    if (value.parentAssignmentId === null) { if (value.sender.kind !== 'run') return false; }
+    else { const parent = assignments[String(value.parentAssignmentId)]; if (!isObject(parent) || value.sender.kind !== 'agent' || value.sender.instanceId !== parent.recipientInstanceId || value.sender.sessionID !== parent.recipientSessionID) return false; }
+    if (!Array.isArray(value.continuingChildren) || !value.continuingChildren.every(child => { if (!isObject(child) || typeof child.assignmentId !== 'string') return false; const entry = assignments[child.assignmentId]; return isObject(entry) && entry.parentAssignmentId === value.id; })) return false;
+    if (!Array.isArray(value.submissions) || !value.submissions.every(attempt => {
+      if (!isObject(attempt) || !isObject(attempt.receipt) || attempt.receipt.assignmentId !== value.id || !isObject(attempt.submission) || !Array.isArray(attempt.submission.continuingChildren)) return false;
+      return attempt.submission.continuingChildren.every(child => { if (!isObject(child) || typeof child.assignmentId !== 'string') return false; const entry = assignments[child.assignmentId]; return isObject(entry) && entry.parentAssignmentId === value.id; });
+    })) return false;
+    const visited = new Set<unknown>([value.id]);
+    let parent: unknown = value.parentAssignmentId;
+    while (parent !== null) {
+      if (typeof parent !== 'string' || visited.has(parent)) return false;
+      visited.add(parent);
+      const entry = assignments[parent];
+      if (!isObject(entry)) return false;
+      parent = entry.parentAssignmentId;
+    }
+  }
+  return Object.values(record.prepareKeys).every(entry => isObject(entry) && typeof entry.assignmentId === 'string' && Object.hasOwn(assignments, entry.assignmentId))
+    && Object.values(record.receipts).every(entry => isObject(entry) && isObject(entry.receipt) && typeof entry.receipt.assignmentId === 'string' && Object.hasOwn(assignments, entry.receipt.assignmentId));
 }
 
 export type StoreStage = 'write' | 'file-sync' | 'rename' | 'directory-sync';

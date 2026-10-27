@@ -99,7 +99,7 @@
       "src/types.ts and existing UI/protocol imports are not adopted by the new entry."
     ]
   },
-  "reviewStatus": "Native boundary repair and locked-artifact verification pass 553 contracts, types and self-built package checks; updated-head review pending.",
+  "reviewStatus": "PASS at exact head 669b62b94aa3f4ddfc6e52bb08a4d64bf745e503; independent gpt-6-astra Native boundary verification and inherited source-hash audit, all open review threads resolved and current-head contracts/inventory CI successful before merge.",
   "limits": [
     "rc.2 AgentLoop executes through stable llm/tools/systemPrompt services. Isolated incompatible preset service replacements are rejected during preflight rather than claimed as supported.",
     "Materials whose actual SDK projection is not readable in the recipient execution world are rejected before assignment saving; normal supported file and image paths are exercised.",
@@ -119,5 +119,8 @@
     "primaryTypeSha256": "6b7f5b81f6b680b1bf33346950f43e1cb760182f14d54cb71f5f0c1f2ce20352",
     "newPendingTests": 24,
     "replayEnvelope": "Metadata of successful finish/assistant source, not a ReasoningBlock field."
-  }
+  },
+  "reviewedHead": "669b62b94aa3f4ddfc6e52bb08a4d64bf745e503",
+  "mergeCommit": "fe0e5ea9dec805e84b6135dbebde612e615c6606",
+  "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/12"
 }

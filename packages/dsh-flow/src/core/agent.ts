@@ -1,13 +1,13 @@
 import type { Context } from './context.js';
 import type { Group } from './group.js';
 import { Mailbox } from './mailbox.js';
-import { agentControl, contextControl, groupControl, mailboxControl, createOwned, type AgentControl } from './internals.js';
+import { agentControl, contextControl, groupControl, mailboxControl, createOwned, type AgentControl, type TerminationInitiator } from './internals.js';
 import { deadlineAfter, scheduleDeadline, type DeadlineTimer } from './deadline.js';
 import { AuxiliaryCallError, beginAuxiliaryUsageSettlement, settleAuxiliaryUsage } from './auxiliary-usage.js';
 import { checkPermission, snapshotProfile } from './profile.js';
 import { formatSource, isTrustedSystemMessage, markWaitCompletion, newSessionID, sameSource, snapshotMessage, snapshotSource, sourceAgent, trustedSystemMessage, waitDescription } from './message.js';
 import { assertConstructionAccess, assertConstructionParticipant, assertNoPendingConstruction, assertConstructionScope, assertConstructionSource, beginConstructionAttempt, hasNoPendingConstruction, ownConstructionResource, recordConstructionCleanupFailure, type ConstructionScope } from './construction.js';
-import { emitCore } from './observation.js';
+import { emitCore, getAgentInstanceId, setAgentAppearance, findRetrySource, recordAgentTermination, type AgentOutcome } from './observation.js';
 import type { AgentProfile, AgentStatus, ContextSummary, HostAdaptor, HostAgent, HostEvent, MailboxQuery, Message, MessageID, MessageMeta, MessageSource, SessionID, Signal, Usage, WaitResult } from './types.js';
 
 type Binding = { kind: 'initializing' } | { kind: 'bound'; host: HostAgent; unsubscribe?: () => void } | { kind: 'released'; host?: HostAgent };
@@ -32,10 +32,14 @@ export class Agent {
   private submitting = new Set<MessageID>();
   private prompted: MessageSource[] = [];
   private prompting: MessageSource[] = [];
+  private lastResult: AgentOutcome | undefined;
+  private roundError = false;
+  private lastAssignmentResult: AgentOutcome | undefined;
   private queuedEvents: Readonly<HostEvent>[] = [];
   readonly [agentControl]: AgentControl;
 
   private constructor(private readonly context: Context, private readonly adaptor: HostAdaptor, scope?: ConstructionScope) {
+    getAgentInstanceId(this);
     const self = this;
     this[agentControl] = {
       get context() { return self.context; },
@@ -44,7 +48,16 @@ export class Agent {
       assertAvailable: owner => this.assertAvailable(owner),
       join: (group, owner) => this.associateGroup(group, owner),
       leave: group => { this.groups.delete(group); },
-      release: signal => this.terminate(signal),
+      release: (signal, initiator = 'context', propagated = false) => this.terminate(signal, initiator, propagated),
+      kill: (child, initiator) => this.killWithInitiator(child, initiator),
+      getRetrySource: retryOf => { this.assertAvailable(); return findRetrySource(this.context, getAgentInstanceId(this), retryOf); },
+      retry: (profile, retryOf, initmsg, history) => {
+        try {
+          this.assertAvailable(); const source = findRetrySource(this.context, getAgentInstanceId(this), retryOf);
+          return Agent.createFrom(this.context, profile, this, initmsg, history, [this], 'retry', undefined, [source.id]);
+        } catch (error) { return Promise.reject(error); }
+      },
+      recordAssignmentOutcome: status => { this.lastAssignmentResult = status === 'pending' ? undefined : status === 'submitted' ? 'completed' : status === 'failed' ? 'failed' : 'stopped'; },
     };
     this.mailbox[mailboxControl].bind(context);
     if (scope) { ownConstructionResource(scope, this, 'agent'); ownConstructionResource(scope, this.mailbox, 'mailbox'); }
@@ -66,7 +79,7 @@ export class Agent {
       return Agent.createFrom(scope.context, profile, parent, undefined, undefined, [parent], 'create', scope);
     } catch (error) { return Promise.reject(error); }
   }
-  private static createFrom(ctx: Context, profile: AgentProfile, parent: Agent | null, initmsg: Message | undefined, history: string | undefined, sources: Agent[], origin: 'create' | 'fork' | 'herb', scope?: ConstructionScope): Promise<Agent> {
+  private static createFrom(ctx: Context, profile: AgentProfile, parent: Agent | null, initmsg: Message | undefined, history: string | undefined, sources: Agent[], origin: 'create' | 'fork' | 'herb' | 'retry', scope?: ConstructionScope, sourceIds?: readonly string[]): Promise<Agent> {
     let p: Readonly<AgentProfile>;
     let input: Message | undefined;
     try {
@@ -78,12 +91,12 @@ export class Agent {
       input = initmsg === undefined ? undefined : snapshotMessage(initmsg);
       if (input) assertConstructionSource(input.source);
     } catch (error) { return Promise.reject(error); }
-    return Agent.assemble(ctx, parent, agent => agent.adaptor.createAgent(agent, p, history), sources, origin, input, scope);
+    return Agent.assemble(ctx, parent, agent => agent.adaptor.createAgent(agent, p, history), sources, origin, input, scope, undefined, sourceIds);
   }
   static resume(ctx: Context, parent: Agent | null, session: SessionID): Promise<Agent> {
-    return Agent.assemble(ctx, parent, agent => agent.adaptor.resumeAgent(agent, session), parent ? [parent] : [], 'resume');
+    return Agent.assemble(ctx, parent, agent => agent.adaptor.resumeAgent(agent, session), parent ? [parent] : [], 'resume', undefined, undefined, session);
   }
-  private static async assemble(ctx: Context, parent: Agent | null, initialize: (agent: Agent) => Promise<HostAgent>, sources: Agent[], origin: 'create' | 'resume' | 'fork' | 'herb', input?: Message, scope?: ConstructionScope): Promise<Agent> {
+  private static async assemble(ctx: Context, parent: Agent | null, initialize: (agent: Agent) => Promise<HostAgent>, sources: Agent[], origin: 'create' | 'resume' | 'fork' | 'herb' | 'retry', input?: Message, scope?: ConstructionScope, resumeSessionID?: string, sourceIds?: readonly string[]): Promise<Agent> {
     ctx[contextControl].assertOpen();
     if (parent) ctx[contextControl].assertAvailable(parent, scope);
     for (const source of sources) ctx[contextControl].assertAvailable(source, scope);
@@ -91,6 +104,7 @@ export class Agent {
     const finishCreation = ctx[contextControl].beginCreation();
     const finishOwned = scope ? beginConstructionAttempt(scope) : undefined;
     const agent = new Agent(ctx, adaptor, scope);
+    const createdAt = Date.now();
     try {
       const host = await initialize(agent);
       if (agent.closing) {
@@ -111,8 +125,9 @@ export class Agent {
         agent.parent = parent;
         parent?.children.add(agent);
         agent.published = true;
+        setAgentAppearance(agent, host.profile, parent, origin, sources, createdAt, resumeSessionID, !scope, sourceIds);
       }, scope);
-      emitCore(ctx, { type: 'agent-created', timestamp: Date.now(), agent, parent, origin, sources: sources.slice() });
+      emitCore(ctx, { type: 'agent-created', timestamp: Date.now(), agent, parent, origin, sources: origin === 'retry' ? [] : sources.slice(), sourceIds: sourceIds ? [...sourceIds] : sources.map(getAgentInstanceId) });
       for (const event of agent.queuedEvents.splice(0)) agent.onHostEvent(event);
       agent.assertAvailable(scope);
       for (const source of sources) ctx[contextControl].assertAvailable(source, scope);
@@ -127,7 +142,8 @@ export class Agent {
       return agent;
     } catch (error) {
       const cleanup: unknown[] = [];
-      try { await agent.terminate('SIGKILL'); } catch (failure) { cleanup.push(failure); recordConstructionCleanupFailure(scope, agent, failure); }
+      agent.lastResult = 'failed';
+      try { await agent.terminate('SIGKILL', 'self'); } catch (failure) { cleanup.push(failure); recordConstructionCleanupFailure(scope, agent, failure); }
       agent.parent?.children.delete(agent);
       agent.parent = null;
       ctx[contextControl].rollback(agent, agent.mailbox);
@@ -175,10 +191,11 @@ export class Agent {
       finally { finishUsage(); }
     }
   }
-  kill(agent: Agent): Promise<void> {
+  kill(agent: Agent): Promise<void> { return this.killWithInitiator(agent, 'parent'); }
+  private killWithInitiator(agent: Agent, initiator: TerminationInitiator): Promise<void> {
     this.assertLive();
     if (agent.parent !== this || !this.children.has(agent)) return Promise.reject(new Error('Target is not a direct child'));
-    return agent.recvSignal('SIGTERM');
+    return agent.terminate('SIGTERM', initiator);
   }
   transfer(child: Agent, adopt: Agent): void {
     this.context[contextControl].assertAvailable(this);
@@ -208,6 +225,9 @@ export class Agent {
   recvMessage(message: Message): void {
     this.assertAvailable();
     assertConstructionSource(message.source);
+    const sender = sourceAgent(message.source);
+    if (sender && sender[agentControl].context !== this.context) throw new Error('Message source belongs to another Context');
+    if ('g' in message.source && message.source.g[groupControl].context !== this.context) throw new Error('Message Group belongs to another Context');
     const id = this.mailbox.put(message);
     if (id === null) return;
     this.assertAvailable();
@@ -240,6 +260,7 @@ export class Agent {
       record.evaluating = false; record.registered = true;
       record.startedAt = Date.now(); record.deadline = deadlineAfter(timeout, record.startedAt);
       record.timer = scheduleDeadline(record.deadline, () => this.timeoutWait(record));
+      emitCore(this.context, { type: 'agent-wait', timestamp: record.startedAt, agent: this, waiting: { target: waitDescription(condition) ?? 'unknown', startedAt: record.startedAt, deadline: record.deadline } });
       this.temporaryRun = false; this.setStatus('waiting');
       return { kind: 'registered' };
     } catch (error) {
@@ -280,6 +301,7 @@ export class Agent {
   private clearWait(record: WaitRecord): void {
     if (this.pendingWait !== record) return;
     record.timer?.cancel(); this.pendingWait = undefined; this.temporaryRun = false;
+    if (record.registered) emitCore(this.context, { type: 'agent-wait', timestamp: Date.now(), agent: this, waiting: null });
   }
   private timeoutWait(record: WaitRecord): void {
     if (this.pendingWait !== record || this.closing) return;
@@ -331,6 +353,7 @@ export class Agent {
       for (const entry of batch.entries) this.submitting.delete(entry.id);
       this.prompting = this.prompting.filter(source => !batch.prompted.includes(source));
     };
+    if (!this.nativeRound) this.roundError = false;
     this.nativeRound = true;
     if (this.pendingWait) this.temporaryRun = true;
     this.setStatus('running');
@@ -352,6 +375,9 @@ export class Agent {
   private onHostEvent(event: Readonly<HostEvent>): void {
     if (!this.published) { this.queuedEvents.push(event); return; }
     if (event.agent !== this.host()) return;
+    if (event.type === 'error') { this.roundError = true; this.lastResult = 'failed'; }
+    if (event.type === 'turn-end') { this.lastResult = event.reason === 'failed' || this.roundError ? 'failed' : event.reason === 'completed' ? 'completed' : 'stopped'; this.roundError = false; }
+    if (event.type === 'status' && event.status === 'running' && !this.nativeRound) this.roundError = false;
     if (!this.closing) {
       if (event.type === 'status') {
         if (event.status === 'running') this.nativeRound = true;
@@ -384,20 +410,29 @@ export class Agent {
   }
   private reportError(error: unknown): void {
     if (!this.published) return;
+    this.roundError = true; this.lastResult = 'failed';
     const event: HostEvent = { agent: this.host(), timestamp: Date.now(), type: 'error', message: error instanceof Error ? error.message : String(error) };
     emitCore(this.context, { type: 'host-event', timestamp: event.timestamp, agent: this, event });
   }
-  private terminate(signal: Signal): Promise<void> {
+  private terminationOutcome(): AgentOutcome {
+    if (this.lastResult === 'failed' || this.roundError || this.lastAssignmentResult === 'failed') return 'failed';
+    if (this.lastResult === 'completed' || this.lastAssignmentResult === 'completed') return 'completed';
+    return 'stopped';
+  }
+  private terminate(signal: Signal, initiator: 'user' | 'parent' | 'context' | 'self' = 'user', propagated = false): Promise<void> {
     if (signal === 'SIGKILL') this.strongestSignal = signal;
     if (this.closePromise) {
       if (this.binding.kind === 'bound') void this.adaptor.releaseAgent(this.binding.host, this.strongestSignal === 'SIGKILL' ? 'immediate' : 'after-turn').catch(() => {});
-      for (const child of [...this.children]) void child.recvSignal(this.strongestSignal).catch(() => {});
+      for (const child of [...this.children]) void child.terminate(this.strongestSignal, initiator, true).catch(() => {});
       return this.closePromise;
     }
     let resolve!: () => void; let reject!: (error: unknown) => void;
     this.closePromise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     this.context[contextControl].trackRelease(this, this.closePromise);
     this.closing = true; this.status = 'terminated';
+    const terminatedAt = Date.now();
+    const outcome = initiator === 'user' || initiator === 'parent' || initiator === 'context' ? 'stopped' : this.terminationOutcome();
+    recordAgentTermination(this.context, this, this.parent ? getAgentInstanceId(this.parent) : null, outcome, terminatedAt);
     this.mailbox[mailboxControl].stopReceiving();
     if (this.pendingWait) this.clearWait(this.pendingWait);
     this.context[contextControl].markReleasing(this);
@@ -405,9 +440,9 @@ export class Agent {
     this.pending.clear();
     for (const group of [...this.groups]) group[groupControl].leave(this);
     const children = [...this.children];
-    const childClosures = children.map(child => child.recvSignal(this.strongestSignal));
+    const childClosures = children.map(child => child.terminate(this.strongestSignal, initiator, true));
     this.context[contextControl].terminated(this);
-    if (this.published) emitCore(this.context, { type: 'agent-terminated', timestamp: Date.now(), agent: this, signal: this.strongestSignal });
+    if (this.published) emitCore(this.context, { type: 'agent-terminated', timestamp: terminatedAt, agent: this, signal: this.strongestSignal, outcome, initiator, mode: this.strongestSignal === 'SIGKILL' ? 'immediate' : 'after-turn', propagated });
     const finishOwn = async () => {
       if (this.binding.kind === 'bound') {
         const binding = this.binding;

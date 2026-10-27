@@ -35,6 +35,18 @@
     "./patterns": {
       "types": "./lib/types/patterns/index.d.ts",
       "default": "./lib/patterns/index.js"
+    },
+    "./dashboard": {
+      "types": "./lib/types/dashboard/index.d.ts",
+      "default": "./lib/dashboard/index.js"
+    },
+    "./dashboard/client": {
+      "types": "./lib/types/dashboard/client.d.ts",
+      "default": "./lib/dashboard/client.js"
+    },
+    "./dashboard/protocol": {
+      "types": "./lib/types/dashboard/protocol.d.ts",
+      "default": "./lib/dashboard/protocol.js"
     }
   },
   "files": [

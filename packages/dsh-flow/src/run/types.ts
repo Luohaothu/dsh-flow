@@ -12,6 +12,7 @@ export interface HostOrigin { readonly backend: string; readonly callerSessionId
 export type RunDefaults = Partial<Pick<AgentProfile, 'model' | 'params' | 'permission' | 'hostExtras'>> & { preset?: string; skills?: string[] };
 export interface RunSnapshot {
   id: string; runId: string; epoch: string; revision: number; status: RunStatus; origin: HostOrigin;
+  startedAt: number; endedAt?: number;
   defaults: RunDefaults; overrides: RunDefaults; rootSessionID?: string; pendingAssignments: number;
   error?: string; storageError?: string; cleanup: 'pending' | 'complete' | 'failed';
 }

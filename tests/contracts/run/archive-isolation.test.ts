@@ -9,7 +9,7 @@ test('C038-02 the versioned persisted envelope decodes to the unchanged Run reco
   const run = await f.createActive();
   const persisted = JSON.parse(await readFile(join(f.directory, `${run.id}.json`), 'utf8'));
   assert.equal(persisted.format, 'dsh-flow-run');
-  assert.equal(persisted.version, 1);
+  assert.equal(persisted.version, 2);
   assert.equal(persisted.record.id, run.id);
   assert.deepEqual(f.store.read(run.id), persisted.record);
   assert.equal(Object.hasOwn(f.store.read(run.id)!, 'version'), false);
@@ -88,7 +88,7 @@ for (const [name, patch] of [
   ['missing format identity', { format: undefined }],
   ['unsupported format identity', { format: 'another-format' }],
   ['missing format version', { version: undefined }],
-  ['unsupported format version', { version: 2 }],
+  ['unsupported format version', { version: 1 }],
 ] as const) {
   test(`C038-02 ${name} is an unreadable archive record`, async t => {
     const f = await runFixture(t);

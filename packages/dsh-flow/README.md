@@ -13,10 +13,16 @@ Flow 提供持续存在的 Agent 团队、正式作业、模板目录及 DSH 原
 | `maxConcurrentAgents` | 服务级共享执行容量，默认 4；`ctx.flow.configure()` 更新后续准入，已执行成员继续完成。 |
 | `cleanup` | `gracefulTimeoutMs`、`immediateTimeoutMs`，分别默认 120000、10000 毫秒，进入新运行快照。 |
 | `stateDirectory` | 运行记录和原生资源配方的状态目录，默认 `.dsh-flow`。 |
-| `connection` | 端口、静态目录、允许来源与价格表配置。P4 进行校验；服务连接和界面在 P5/P6 接入。 |
+| `connection` | 本机 HTTP/SSE 的端口、静态目录、允许来源与价格表。修改后需重启服务生效。 |
 
 `ctx.flow.configure(config)` 接收完整配置，立即更新新运行默认值、模式目录及后续执行容量，并返回需要重载的 `stateDirectory`、`connection` 字段。`getConfiguration()` 返回当前实际生效值，`getRequestedConfiguration()` 返回期望配置；状态目录与连接字段在重启前继续显示当前实际值。插件卸载停止命令和普通会话工具安装，移除仍活会话中的局部工具，并释放本插件的团队资源；宿主服务继续由宿主管理，清理失败向调用方报告。
 
-包同时导出 `Agent`、`Context`、`Mailbox`、`Group`、`RunService`、`AssignmentService` 和 `PatternCatalog`。子路径 `core`、`host`、`run`、`assignments`、`patterns` 提供对应模块。模板包与 `skills/` 随包发布。
+包同时导出 `Agent`、`Context`、`Mailbox`、`Group`、`RunService`、`AssignmentService` 和 `PatternCatalog`。子路径 `core`、`host`、`run`、`assignments`、`patterns` 提供对应模块。`dashboard` 导出投影、HTTP 服务与客户端；浏览器使用 `dashboard/client` 和 `dashboard/protocol`。模板包与 `skills/` 随包发布。
 
 在工作区根目录运行 `pnpm typecheck`、`pnpm test` 和 `pnpm build`，分别检查类型、合同及构建产物。原生合同测试采用实际 DSH rc.2 服务与确定性本地模型适配器，不调用外部模型。设计依据见[设计文档](../../docs/design/design.md)，阶段范围见[实施记录](../../docs/alignment/README.md)。
+
+安装插件后，`ctx.flow.dashboardAddress` 提供实际绑定的本机地址，默认由操作系统选择端口。看板客户端使用同一份展示协议；服务提供查询、fetch SSE 和停止接口。访问先以明确允许的 Origin 换取短期 token，后续请求携带 Bearer；同源页面换取 token 时可使用同源 Referer 与 Sec-Fetch-Site。服务只绑定 loopback 并校验完整 Host。`connection.allowedOrigins` 声明额外的精确页面来源，`dsh-app://app` 和服务自身来源默认允许。
+
+`connection.prices` 是模型价格数组，各项为 `{ model: { provider, id }, currency, input, output, cacheRead?, cacheWrite? }`，费率单位为每百万 token。用量保留实际模型，缺失用量或价格时展示不可用，不按零计费。
+
+看板实例 ID 与 SessionID 分开；冷恢复创建新实例，旧卡片保留。列表和每个 Run 维护独立游标，快照与续订共享同步屏障；持久写入失败时保留真实展示状态、断开增量流，恢复后从包含完整状态的新持久段建立基线，原日志继续保留。

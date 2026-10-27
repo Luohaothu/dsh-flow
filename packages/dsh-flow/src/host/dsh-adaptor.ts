@@ -1,5 +1,5 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
-import type { Agent as NativeAgent, AgentHandle, InboxTarget } from '@deepseek-ai/dsh-agent';
+import type { Agent as NativeAgent, AgentHandle, AssistantStreamFrame, InboxTarget } from '@deepseek-ai/dsh-agent';
 import { BlockAssembler, createUserMessage, lastAssistantStreamChunk,
   type LlmCallConfig, type RequestMessage, type TokenUsage, type UserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId, SessionLogOffset, SessionSeq, buildForkSeed, snapshotSessionEvent, type SessionEvent } from '@deepseek-ai/dsh-session';
@@ -16,6 +16,7 @@ import { isAbsolute, resolve } from 'node:path';
 import type { Agent, AgentProfile, Context, ContextSummary, HostAdaptor, HostAgent, HostEvent,
   Message, ReleaseMode, SendMode, SendPurpose, SessionID, Usage } from '../core/index.js';
 import { assertNoPendingConstruction } from '../core/construction.js';
+import { emitCore } from '../core/observation.js';
 import { snapshotProfile } from '../core/profile.js';
 import { isWaitCompletion, sessionID } from '../core/message.js';
 import { decodeModelConfiguration } from './configuration.js';
@@ -47,6 +48,8 @@ interface CloseOperation {
   reject(error: unknown): void;
   timer?: ReturnType<typeof setTimeout>;
   persistenceError?: unknown;
+  deadline?: number;
+  reason?: string;
 }
 interface OwnedAgent {
   public: HostAgent;
@@ -67,6 +70,10 @@ interface OwnedAgent {
   capacityHeld: boolean;
   close?: CloseOperation;
   persistTail: Promise<void>;
+  attempts: Map<string, { callId: string; model?: { provider: string; id: string }; latest?: Usage }>;
+  settlements: Map<number, { usage?: TokenUsage; model?: { provider: string; id: string }; timestamp: number }>;
+  settledSeqs: Set<number>;
+  approvals: Map<string, { toolName: string; reason?: string; automatic: boolean }>;
   auxiliary: Set<{ controller: AbortController; completion: Promise<unknown> }>;
 }
 interface SavedAgent {
@@ -306,7 +313,7 @@ export class DshHostAdaptor implements HostAdaptor {
     const { profile, cwd: workspaceRoot } = plan;
     const config = structuredClone(plan.config);
     const owned: OwnedAgent = { public: Object.freeze({ profile }), native, flow, config, workspaceRoot, recipe: plan.recipe, commit: () => { throw new Error('Native installation is incomplete'); }, listeners: new Set(), bindings: [releaseBinding],
-      deferred: [], claimed: new Map(), completions: new Map(), capacityHeld: false, persistTail: Promise.resolve(), auxiliary: new Set() };
+      deferred: [], claimed: new Map(), completions: new Map(), capacityHeld: false, persistTail: Promise.resolve(), auxiliary: new Set(), attempts: new Map(), settlements: new Map(), settledSeqs: new Set(), approvals: new Map() };
     const installation = await this.preparation.install(scope, native, plan);
     owned.commit = installation.commit;
     const mode = profile.permission === 'full-access' ? 'danger-full-access' : profile.permission;
@@ -346,6 +353,7 @@ export class DshHostAdaptor implements HostAdaptor {
         return { ...decision, messages };
       }),
       scope.on('agent/status', ({ status }) => this.emit(owned, { type: 'status', status })),
+      scope.on('agent/assistant-stream', ({ frame }) => this.observeStream(owned, frame)),
       scope.on('agent/error', ({ error }) => this.emit(owned, { type: 'error', message: describeError(error) })),
       scope.on('session/event', (session, event) => { if (session === native.session) this.observe(owned, event); }),
       scope.tools.guard(execution => {
@@ -379,18 +387,26 @@ export class DshHostAdaptor implements HostAdaptor {
   private releaseCapacity(owned: OwnedAgent): void { owned.capacityHeld = false; this.capacity.release(owned); }
   private observe(owned: OwnedAgent, event: SessionEvent): void {
     if (event.type === 'user/message') owned.claimed.delete(event.data.id);
+    else if (event.type === 'approval/asked') owned.approvals.set(event.data.id, { toolName: event.data.toolName,
+      ...(event.data.reason === undefined ? {} : { reason: event.data.reason }), automatic: this.host.approval.overrideOf(owned.native.session) === 'never' });
+    else if (event.type === 'approval/decided') {
+      const request = owned.approvals.get(event.data.id); owned.approvals.delete(event.data.id);
+      if (request?.automatic && event.data.outcome === 'rejected') this.emit(owned,
+        { type: 'auto-reject', message: `${request.toolName}: ${request.reason ?? 'Approval policy never rejected this request'}` }, event.time);
+    }
     else if (event.type === 'turn/start') owned.turn = event.data.turn;
     else if (event.type === 'assistant/message') {
       const text = event.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('');
       if (text && !event.data.interrupted) this.emit(owned, { type: 'output', text }, event.time);
-      if (event.data.usage) this.emit(owned, { type: 'usage', usage: normalizeUsage(event.data.usage,
-        { provider: event.data.message.source.provider, id: event.data.message.source.model }, event.time) }, event.time);
+      this.observeSettlement(owned, event);
     } else if (event.type === 'assistant/attempt') {
-      const usage = lastAssistantStreamChunk(event.data.stream, 'usage');
-      const route = owned.native.session.requestContext();
-      if (usage && route) this.emit(owned, { type: 'usage', usage: normalizeUsage(usage.usage, { provider: route.provider, id: route.model }, event.time) }, event.time);
+      this.observeSettlement(owned, event);
     } else if (event.type === 'compaction/summary') {
-      if (event.data.usage) this.emit(owned, { type: 'usage', usage: normalizeUsage(event.data.usage, { provider: event.data.provider, id: event.data.model }, event.time) }, event.time);
+      if (event.data.usage && !owned.settledSeqs.has(event.seq)) {
+        owned.settledSeqs.add(event.seq);
+        this.emit(owned, { type: 'usage', usage: { ...normalizeUsage(event.data.usage,
+          { provider: event.data.provider, id: event.data.model }, event.time), callId: `compaction:${event.seq}`, kind: 'compaction' } }, event.time);
+      }
     } else if (event.type === 'turn/end') {
       this.releaseCapacity(owned); owned.turn = undefined; owned.admittedTurn = undefined;
       const reason = event.data.reason.kind;
@@ -398,6 +414,50 @@ export class DshHostAdaptor implements HostAdaptor {
         this.emit(owned, { type: 'turn-end', reason: reason === 'error' || reason === 'max-tokens' ? 'failed' : reason === 'aborted' ? 'cancelled' : 'completed' }, event.time);
         if (owned.close?.phase === 'after-turn') this.cleanup(owned);
       });
+    }
+  }
+  /** rc.2 commits assistant settlement before its end frame; keep the seq until that correlation arrives. */
+  private observeSettlement(owned: OwnedAgent, event: Extract<SessionEvent, { type: 'assistant/message' | 'assistant/attempt' }>): void {
+    if (owned.settledSeqs.has(event.seq)) return;
+    const route = event.type === 'assistant/message'
+      ? { provider: event.data.message.source.provider, id: event.data.message.source.model }
+      : owned.native.session.requestContext();
+    const usage = event.type === 'assistant/message' ? event.data.usage : lastAssistantStreamChunk(event.data.stream, 'usage')?.usage;
+    const model = route && { provider: route.provider, id: 'id' in route ? route.id : route.model };
+    owned.settlements.set(event.seq, { ...(usage ? { usage } : {}), ...(model ? { model } : {}), timestamp: event.time });
+    // Imported history is not observed; non-stream native producers still get a stable durable call identity.
+    if (!owned.attempts.size) this.settleUsage(owned, event.seq, `main:seq:${event.seq}`);
+  }
+  private settleUsage(owned: OwnedAgent, seq: number, callId: string, latest?: Usage): void {
+    const settled = owned.settlements.get(seq);
+    if (!settled) return;
+    owned.settlements.delete(seq); owned.settledSeqs.add(seq);
+    if (!settled.usage || !settled.model) return;
+    const usage: Usage = { ...normalizeUsage(settled.usage, settled.model, settled.timestamp), callId, kind: 'main' };
+    if (!latest || !this.sameUsage(latest, usage)) this.emit(owned, { type: 'usage', usage }, settled.timestamp);
+  }
+  private sameUsage(a: Usage, b: Usage): boolean {
+    return a.model.provider === b.model.provider && a.model.id === b.model.id
+      && a.inputTokens === b.inputTokens && a.outputTokens === b.outputTokens && a.totalTokens === b.totalTokens
+      && a.cacheReadTokens === b.cacheReadTokens && a.cacheWriteTokens === b.cacheWriteTokens;
+  }
+  private observeStream(owned: OwnedAgent, frame: AssistantStreamFrame): void {
+    if (frame.type === 'start') {
+      const route = owned.native.session.requestContext();
+      owned.attempts.set(frame.attemptId, { callId: `main:${frame.attemptId}`,
+        ...(route ? { model: { provider: route.provider, id: route.model } } : {}) });
+      return;
+    }
+    const attempt = owned.attempts.get(frame.attemptId);
+    if (!attempt) return;
+    if (frame.type === 'chunk' && frame.chunk.type === 'usage' && attempt.model) {
+      const usage: Usage = { ...normalizeUsage(frame.chunk.usage, attempt.model, frame.time), callId: attempt.callId, kind: 'main' };
+      if (!attempt.latest || !this.sameUsage(attempt.latest, usage)) {
+        attempt.latest = usage; this.emit(owned, { type: 'usage', usage }, frame.time);
+      }
+    } else if (frame.type === 'end') {
+      if (frame.outcome.kind === 'committed') this.settleUsage(owned, frame.outcome.seq, attempt.callId, attempt.latest);
+      owned.attempts.delete(frame.attemptId);
     }
   }
   async send(agent: HostAgent, message: Message, mode: SendMode = 'followup', purpose: SendPurpose = 'input'): Promise<void> {
@@ -476,12 +536,12 @@ export class DshHostAdaptor implements HostAdaptor {
     return this.auxiliaryCall(owned, `${summaryInstruction}\n合并、去重并归纳以下两份总结。保留双方来源、约束、未完成事项和矛盾。无法消解的分歧列为待确认事项。\n\n${own}\n\n${other}`, sources.join('；'));
   }
   private auxiliaryCall(owned: OwnedAgent, text: string, sources: string): Promise<ContextSummary> {
-    const controller = new AbortController();
+    const controller = new AbortController(), callId = `aux:${randomUUID()}`;
     const call = { controller, completion: Promise.resolve() as Promise<unknown> };
     const promise = (async () => {
       const assembler = new BlockAssembler();
       let actual: { provider: string; id: string } | undefined;
-      const usage = () => assembler.usage && actual ? [normalizeUsage(assembler.usage, actual)] : [];
+      const usage = () => assembler.usage && actual ? [{ ...normalizeUsage(assembler.usage, actual), callId, kind: 'auxiliary' as const }] : [];
       try {
         await this.capacity.acquire(call, controller.signal);
         const prepared = await nativeService(this.host, owned.native.ctx, 'llm').prepareCall(owned.config, controller.signal);
@@ -503,15 +563,18 @@ export class DshHostAdaptor implements HostAdaptor {
     if (terminal) return terminal;
     const owned = this.record(agent);
     if (owned.close) {
-      if (mode === 'immediate' && owned.close.phase === 'after-turn') { owned.close.mode = mode; this.cleanup(owned); }
+      if (mode === 'immediate' && owned.close.phase === 'after-turn') { owned.close.mode = mode; owned.close.reason = 'immediate-request'; this.cleanup(owned); }
       return owned.close.promise;
     }
     let resolveClose!: () => void, rejectClose!: (error: unknown) => void;
     const promise = new Promise<void>((resolve, reject) => { resolveClose = resolve; rejectClose = reject; });
     const close: CloseOperation = { phase: 'after-turn', mode, turn: owned.turn, promise, resolve: resolveClose, reject: rejectClose };
     owned.close = close;
+    this.observeCleanup(owned, 'pending', mode === 'immediate' ? 'immediate-request' : 'release-request');
     if (mode === 'after-turn' && close.turn !== undefined && owned.admittedTurn === close.turn && owned.native.status === 'running') {
-      close.timer = setTimeout(() => { close.mode = 'immediate'; this.cleanup(owned); }, this.afterTurnTimeoutMs);
+      close.deadline = Date.now() + this.afterTurnTimeoutMs;
+      this.observeCleanup(owned, 'waiting', 'after-turn');
+      close.timer = setTimeout(() => { close.mode = 'immediate'; close.reason = 'after-turn-timeout'; this.cleanup(owned); }, this.afterTurnTimeoutMs);
     } else this.cleanup(owned);
     return promise;
   }
@@ -519,9 +582,12 @@ export class DshHostAdaptor implements HostAdaptor {
     const close = owned.close!;
     if (close.phase !== 'after-turn') return;
     clearTimeout(close.timer); close.phase = 'cleaning';
+    close.deadline = Date.now() + this.immediateTimeoutMs;
+    this.observeCleanup(owned, 'releasing', close.reason ?? (close.mode === 'immediate' ? 'immediate-request' : 'turn-completed'));
     close.timer = setTimeout(() => {
       if (close.phase !== 'cleaning') return;
       close.phase = 'abandoned';
+      this.observeCleanup(owned, 'abandoned', 'immediate-cleanup-timeout');
       const error = new Error('Native cleanup abandoned: the immediate cleanup deadline elapsed; DSH cannot forcibly destroy in-process execution', { cause: close.persistenceError });
       this.emit(owned, { type: 'error', message: error.message }); this.unbind(owned); close.reject(error);
     }, this.immediateTimeoutMs);
@@ -531,19 +597,25 @@ export class DshHostAdaptor implements HostAdaptor {
       await owned.native.whenIdle(); this.releaseCapacity(owned);
       await Promise.allSettled([...owned.auxiliary].map(call => call.completion));
       if (this.host.get('sessionPersistence')) await this.persistOwned(owned).catch(error => {
-        close.persistenceError = error; this.emit(owned, { type: 'error', message: `Persistence failed during close: ${describeError(error)}` });
+        close.persistenceError = error; this.observeCleanup(owned, 'releasing', 'persistence-failed'); this.emit(owned, { type: 'error', message: `Persistence failed during close: ${describeError(error)}` });
       });
       await awaitAuxiliaryUsageSettlements(this, owned.public);
       await owned.handle!.dispose();
     })().then(() => {
       if (close.phase === 'abandoned') return;
-      clearTimeout(close.timer); close.phase = 'completed'; this.reserved.delete(owned.public.profile.sessionID);
+      clearTimeout(close.timer); close.phase = 'completed'; this.observeCleanup(owned, 'complete', 'resources-released'); this.reserved.delete(owned.public.profile.sessionID);
       owned.deferred.length = 0; owned.claimed.clear(); owned.completions.clear(); this.unbind(owned);
       this.terminal.set(owned.public, close.promise); this.owned.delete(owned.public); close.resolve();
     }, error => {
       if (close.phase === 'abandoned') return;
-      clearTimeout(close.timer); close.phase = 'failed'; this.unbind(owned); close.reject(error);
+      clearTimeout(close.timer); close.phase = 'failed'; this.observeCleanup(owned, 'failed', describeError(error)); this.unbind(owned); close.reject(error);
     });
+  }
+  private observeCleanup(owned: OwnedAgent, phase: 'pending' | 'waiting' | 'releasing' | 'complete' | 'failed' | 'abandoned', reason: string): void {
+    const close = owned.close!;
+    emitCore(this.context, { type: 'host-cleanup', agent: owned.flow, timestamp: Date.now(), phase, reason,
+      ...(close.deadline === undefined ? {} : { deadline: close.deadline }),
+      ...(close.persistenceError === undefined ? {} : { persistenceError: describeError(close.persistenceError) }) });
   }
   private unbind(owned: OwnedAgent): void {
     if (owned.native.status === 'idle') this.releaseCapacity(owned);

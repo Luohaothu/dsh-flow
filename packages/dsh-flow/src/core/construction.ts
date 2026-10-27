@@ -3,7 +3,7 @@ import type { Context } from './context.js';
 import type { Group } from './group.js';
 import type { Mailbox } from './mailbox.js';
 import { agentControl, contextControl, groupControl, mailboxControl } from './internals.js';
-import type { CoreObservation } from './observation.js';
+import { commitAgentAppearance, type CoreObservation } from './observation.js';
 import type { MessageSource } from './types.js';
 
 type Resource = Agent | Group | Mailbox;
@@ -104,7 +104,7 @@ export function beginConstruction(context: Context, root: Agent): ConstructionSc
       assertConstructionScope(scope, context);
       for (const object of state.objects.keys()) if (!context[contextControl].has(object)) throw new Error('Construction resource is no longer available');
       state.phase = 'committed';
-      for (const object of state.objects.keys()) owners.delete(object);
+      for (const [object, kind] of state.objects) { if (kind === 'agent') commitAgentAppearance(object as Agent); owners.delete(object); }
       state.unsubscribe();
       const events = state.events.splice(0);
       let flushed = false;

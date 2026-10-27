@@ -1,3 +1,4 @@
+import { getAgentInstanceId } from '../../../packages/dsh-flow/src/core/observation.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { Agent } from '../../../packages/dsh-flow/src/core/index.js';
@@ -31,7 +32,7 @@ test('C039-01 C041-01 prepare saves a complete immutable spec and sender-scoped 
   assert.deepEqual(snapshot.spec, expected);
   assert.equal(snapshot.runId, run.id);
   assert.equal(snapshot.parentAssignmentId, assignments.read(root, top).id);
-  assert.deepEqual(snapshot.sender, { kind: 'agent', sessionID: root.getProfile().sessionID });
+  assert.deepEqual(snapshot.sender, { kind: 'agent', sessionID: root.getProfile().sessionID, instanceId: getAgentInstanceId(root) });
   assert.equal(snapshot.recipientSessionID, child.getProfile().sessionID);
   assert.equal(snapshot.status, 'pending');
   assert.equal(snapshot.submissionCount, 0);
@@ -382,7 +383,7 @@ test('C046-02 C046-03 archive retains interrupted history and explicit resumed j
   assert.equal(nextTop.spec.resumesAssignmentId, oldTop.id); assert.equal(nextChild.spec.resumesAssignmentId, oldChild.id);
   assert.equal(nextTop.parentAssignmentId, null); assert.equal(nextChild.parentAssignmentId, nextTop.id);
   assert.equal(nextChild.runId, freshRun.id);
-  assert.deepEqual(nextChild.sender, { kind: 'agent', sessionID: fresh.root.getProfile().sessionID });
+  assert.deepEqual(nextChild.sender, { kind: 'agent', sessionID: fresh.root.getProfile().sessionID, instanceId: getAgentInstanceId(fresh.root) });
   assert.equal(nextChild.recipientSessionID, resumed.getProfile().sessionID);
   assert.equal(second.service.readArchive(oldChild.id).kind, 'found');
 });

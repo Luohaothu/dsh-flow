@@ -1,7 +1,8 @@
+import { emitCore } from './observation.js';
 import { Agent } from './agent.js';
 import { Group } from './group.js';
 import { Mailbox } from './mailbox.js';
-import { agentControl, contextControl, groupControl, mailboxControl, type ContextControl } from './internals.js';
+import { agentControl, contextControl, groupControl, mailboxControl, type ContextControl, type TerminationInitiator } from './internals.js';
 import { assertConstructionAccess, assertNoPendingConstruction, hasNoPendingConstruction, type ConstructionScope } from './construction.js';
 import type { ContextObject, GroupID, HostAdaptor, HostContext, SessionID } from './types.js';
 
@@ -24,6 +25,7 @@ export class Context {
 
   constructor() {
     this[contextControl] = {
+      dispose: initiator => this.disposeWithInitiator(initiator),
       assertOpen: () => this.assertOpen(),
       assertAvailable: (agent, scope) => this.assertAvailable(agent, scope),
       has: object => this.hasRaw(object),
@@ -104,12 +106,13 @@ export class Context {
     }
     return snapshot.filter(object => !query || query(object)).filter(object => this.has(object));
   }
-  release(object: Managed): Promise<void> {
+  release(object: Managed): Promise<void> { return this.releaseWithInitiator(object, 'context'); }
+  private releaseWithInitiator(object: Managed, initiator: TerminationInitiator): Promise<void> {
     const existing = this.releases.get(object);
     if (existing) return existing;
     if (!this.objects.has(object)) return Promise.reject(new Error('Object is not managed by this Context'));
     this.releasing.add(object);
-    if (object instanceof Agent) return object[agentControl].release('SIGTERM');
+    if (object instanceof Agent) return object[agentControl].release('SIGTERM', initiator);
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
     const result = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
@@ -120,17 +123,19 @@ export class Context {
     } catch (error) { reject(error); }
     return result;
   }
-  dispose(): Promise<void> {
+  dispose(): Promise<void> { return this.disposeWithInitiator('context'); }
+  private disposeWithInitiator(initiator: TerminationInitiator): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
     this.closePromise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    emitCore(this, { type: 'context-release', timestamp: Date.now(), phase: 'started' });
     const close = async () => {
       const errors: unknown[] = [];
       const collect = (results: PromiseSettledResult<unknown>[]) => { for (const result of results) if (result.status === 'rejected') errors.push(result.reason); };
       const groupClosures = [...this.objects].filter((object): object is Group => object instanceof Group).map(group => this.release(group));
-      const agentClosures = [...this.objects].filter((object): object is Agent => object instanceof Agent).map(agent => this.release(agent));
+      const agentClosures = [...this.objects].filter((object): object is Agent => object instanceof Agent).map(agent => this.releaseWithInitiator(agent, initiator));
       void Promise.allSettled([...groupClosures, ...agentClosures]);
       await Promise.all([...this.creations]);
       const collected = new Set<Promise<void>>();
@@ -148,7 +153,7 @@ export class Context {
       this.terminationListeners.clear();
       if (errors.length) throw new AggregateError(errors, 'Context disposal failed');
     };
-    void close().then(resolve, reject);
+    void close().then(() => { emitCore(this, { type: 'context-release', timestamp: Date.now(), phase: 'complete' }); resolve(); }, error => { emitCore(this, { type: 'context-release', timestamp: Date.now(), phase: 'failed', error: error instanceof Error ? error.message : String(error) }); reject(error); });
     return this.closePromise;
   }
   private trackRelease(object: Managed, completion: Promise<void>): void {

@@ -116,8 +116,8 @@ test('C029-03 C029-04 C029-05 C032-01 C034-01 C034-02: actual input modes, order
   assert.ok(messages.every(event => event.data.source.kind === 'flow' && event.data.source.purpose === 'input' && event.data.source.priority === 'normal'));
   assert.ok(events.every(event => event.agent === handle && Number.isFinite(event.timestamp)));
   assert.equal(events.filter(event => event.type === 'output').length, 1);
-  const usage = events.filter(event => event.type === 'usage'); assert.equal(usage.length, 1);
-  assert.deepEqual(usage[0]!.usage, { timestamp: usage[0]!.usage.timestamp, model: { provider: 'fixture', id: 'model' }, inputTokens: 15, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2, totalTokens: 20 });
+  const usage = events.filter(event => event.type === 'usage'); assert.equal(usage.length, 1); assert.ok(usage[0]!.usage.callId);
+  assert.deepEqual(usage[0]!.usage, { timestamp: usage[0]!.usage.timestamp, callId: usage[0]!.usage.callId, kind: 'main', model: { provider: 'fixture', id: 'model' }, inputTokens: 15, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2, totalTokens: 20 });
   assert.equal(events.at(-1)?.type === 'turn-end' || events.at(-1)?.type === 'status', true);
   await f.adaptor.persist(handle); assert.equal(native.status, 'idle');
   let cancelledEvents = 0;

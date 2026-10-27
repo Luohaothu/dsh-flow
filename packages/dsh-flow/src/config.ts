@@ -2,9 +2,10 @@ import Schema from '@deepseek-ai/schemastery';
 import { resolve } from 'node:path';
 import { assertJson } from './assignments/schema.js';
 import type { RunDefaults } from './run/types.js';
+import type { PriceTable } from './dashboard/protocol.js';
 
 export interface CleanupConfig { gracefulTimeoutMs: number; immediateTimeoutMs: number }
-export interface ConnectionConfig { port?: number; staticDirectory?: string; allowedOrigins?: string[]; prices?: Record<string, number> }
+export interface ConnectionConfig { port?: number; staticDirectory?: string; allowedOrigins?: string[]; prices?: PriceTable }
 export interface Config {
   stateDirectory?: string;
   defaults?: RunDefaults;
@@ -34,8 +35,12 @@ export const Config: Schema<Config> = Schema.object({
   patternSources: Schema.array(Schema.string()).default([]),
   maxConcurrentAgents: Schema.number().step(1).min(1).default(4),
   cleanup: Schema.object({ gracefulTimeoutMs: cleanupTimeout.default(120_000), immediateTimeoutMs: cleanupTimeout.default(10_000) }).default({}),
-  connection: Schema.object({ port: Schema.number().step(1).min(1).max(65535), staticDirectory: Schema.string(),
-    allowedOrigins: Schema.array(Schema.string()), prices: Schema.dict(Schema.number().min(0)) }).default({}),
+  connection: Schema.object({ port: Schema.number().step(1).min(0).max(65535), staticDirectory: Schema.string(),
+    allowedOrigins: Schema.array(Schema.string()), prices: Schema.array(Schema.object({
+      model: Schema.object({ provider: Schema.string().required(), id: Schema.string().required() }).required(),
+      currency: Schema.string().required(), input: Schema.number().min(0).required(), output: Schema.number().min(0).required(),
+      cacheRead: Schema.number().min(0), cacheWrite: Schema.number().min(0),
+    })) }).default({}),
 });
 function object(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${path} must be an object`);
@@ -83,7 +88,24 @@ export function resolveConfig(input: Config = {}): ResolvedConfig {
   const connection = structuredClone(parsed.connection ?? {});
   if (connection.staticDirectory !== undefined) { text(connection.staticDirectory, 'connection.staticDirectory'); connection.staticDirectory = resolve(connection.staticDirectory); }
   if (connection.allowedOrigins) strings(connection.allowedOrigins, 'connection.allowedOrigins');
-  if (connection.prices) for (const [key, value] of Object.entries(connection.prices)) { text(key, 'connection.prices key'); numeric(value, `connection.prices.${key}`); if (value < 0) throw new TypeError('Price must be nonnegative'); }
+  if (connection.prices !== undefined) {
+    if (!Array.isArray(connection.prices)) throw new TypeError('connection.prices must be an array');
+    const models = new Set<string>();
+    for (const [index, price] of connection.prices.entries()) {
+      const path = `connection.prices[${index}]`;
+      keys(object(price, path), ['model', 'currency', 'input', 'output', 'cacheRead', 'cacheWrite'], path);
+      const model = object(price.model, `${path}.model`); keys(model, ['provider', 'id'], `${path}.model`);
+      text(model.provider, `${path}.model.provider`); text(model.id, `${path}.model.id`); text(price.currency, `${path}.currency`);
+      const identity = JSON.stringify([model.provider, model.id]);
+      if (models.has(identity)) throw new TypeError('Model prices must be unique');
+      models.add(identity);
+      for (const field of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) {
+        if ((field === 'cacheRead' || field === 'cacheWrite') && price[field] === undefined) continue;
+        const value = price[field]; numeric(value, `${path}.${field}`);
+        if (typeof value !== 'number' || value < 0) throw new TypeError('Price must be nonnegative');
+      }
+    }
+  }
   return { stateDirectory: resolve(parsed.stateDirectory ?? '.dsh-flow'), defaults,
     ...(parsed.cwd === undefined ? {} : { cwd: resolve(parsed.cwd) }), ...(parsed.rootRole === undefined ? {} : { rootRole: parsed.rootRole }),
     patternSources: (parsed.patternSources ?? []).map(path => resolve(path)), maxConcurrentAgents: parsed.maxConcurrentAgents ?? 4, cleanup, connection };

@@ -18,6 +18,7 @@ await build({
     'run/index': 'packages/dsh-flow/src/run/index.ts',
     'assignments/index': 'packages/dsh-flow/src/assignments/index.ts',
     'patterns/index': 'packages/dsh-flow/src/patterns/index.ts',
+    'dashboard/index': 'packages/dsh-flow/src/dashboard/index.ts',
   },
   outdir: 'packages/dsh-flow/lib',
   bundle: true,
@@ -30,6 +31,11 @@ await build({
   legalComments: 'none',
   logLevel: 'info',
   absWorkingDir: root,
+});
+await build({
+  entryPoints: { 'dashboard/client': 'packages/dsh-flow/src/dashboard/client.ts', 'dashboard/protocol': 'packages/dsh-flow/src/dashboard/protocol.ts' },
+  outdir: 'packages/dsh-flow/lib', bundle: true, format: 'esm', platform: 'browser', target: 'es2022',
+  packages: 'external', sourcemap: true, legalComments: 'none', logLevel: 'info', absWorkingDir: root,
 });
 await rm(resolve(root, 'packages/dsh-flow/patterns'), { recursive: true, force: true });
 await cp(resolve(root, 'docs/design/public/patterns'), resolve(root, 'packages/dsh-flow/patterns'), { recursive: true });

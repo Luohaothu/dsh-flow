@@ -47,6 +47,8 @@ export type HostContext = object;
 export interface HostCapabilities { usage?: boolean; uiPanel?: boolean }
 export interface HostAgent { readonly profile: Readonly<AgentProfile> }
 export interface Usage {
+  callId?: string;
+  kind?: 'main' | 'auxiliary' | 'compaction';
   timestamp: Timestamp;
   model: Model;
   inputTokens?: number;
@@ -61,6 +63,7 @@ export type HostEvent = { agent: HostAgent; timestamp: Timestamp } & (
   | { type: 'output'; text: string }
   | { type: 'turn-end'; reason: 'completed' | 'cancelled' | 'failed' }
   | { type: 'error'; message: string }
+  | { type: 'auto-reject'; message: string }
   | { type: 'usage'; usage: Usage }
 );
 export interface HostAdaptor {

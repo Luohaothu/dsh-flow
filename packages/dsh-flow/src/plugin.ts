@@ -10,6 +10,8 @@ import { RunService } from './run/run.js';
 import { RunStore } from './run/store.js';
 import type { RunServiceDependencies } from './run/types.js';
 import { loadAgentTeamSource, loadTeamStrategySource } from './skills.js';
+import { DashboardProjector } from './dashboard/projector.js';
+import { DashboardServer } from './dashboard/server.js';
 
 export { Config, resolveConfig } from './config.js';
 export type { ResolvedConfig, CleanupConfig, ConnectionConfig } from './config.js';
@@ -25,6 +27,10 @@ export class FlowPlugin {
   readonly capacity: ExecutionCapacity;
   readonly runs: RunService;
   readonly bridge: DshNativeBridge;
+  private projection?: DashboardProjector;
+  get projector(): DashboardProjector { if (!this.projection) throw new Error('Dashboard is unavailable'); return this.projection; }
+  private dashboard?: DashboardServer;
+  get dashboardAddress(): string { if (!this.dashboard) throw new Error('Dashboard is unavailable'); return this.dashboard.address; }
   private configuration: ResolvedConfig;
   private requestedConfiguration: ResolvedConfig;
   private readonly dependencies: RunServiceDependencies;
@@ -54,6 +60,10 @@ export class FlowPlugin {
     const [agentTeamSkill, strategy] = await Promise.all([loadAgentTeamSource(), loadTeamStrategySource()]);
     const runtime = new FlowPlugin(host, configuration, agentTeamSkill);
     try {
+      runtime.projection = new DashboardProjector(runtime.runs, { directory: join(configuration.stateDirectory, 'events'),
+        ...(configuration.connection.prices === undefined ? {} : { prices: configuration.connection.prices }) });
+      runtime.dashboard = await DashboardServer.create({ projector: runtime.projector, service: runtime.runs,
+        ...configuration.connection });
       runtime.bridge.attachRunService(runtime.runs);
       runtime.stopCommand = registerAgentTeamCommand(host, runtime.bridge, `${renderSkillContent(agentTeamSkill)}\n\n${renderSkillContent({ ...strategy, provider: strategy.provider ?? 'dsh-flow' })}`);
       return runtime;
@@ -86,7 +96,9 @@ export class FlowPlugin {
     this.stopping = Promise.resolve().then(async () => {
       const errors: unknown[] = [];
       try { this.stopCommand(); } catch (error) { errors.push(error); }
+      try { await this.dashboard?.dispose(); } catch (error) { errors.push(error); }
       try { await this.bridge.dispose(); } catch (error) { errors.push(error); }
+      try { this.projection?.dispose(); } catch (error) { errors.push(error); }
       if (errors.length) throw new AggregateError(errors, 'Flow plugin cleanup failed');
     });
     return this.stopping;

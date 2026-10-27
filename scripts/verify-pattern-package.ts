@@ -41,6 +41,12 @@ try {
   const probe = `
 import assert from 'node:assert/strict';
 import { PatternCatalog } from 'dsh-flow/patterns';
+import { DashboardClient } from 'dsh-flow/dashboard/client';
+import { PROTOCOL_VERSION } from 'dsh-flow/dashboard/protocol';
+const client = new DashboardClient({ baseUrl: 'http://127.0.0.1:1' });
+assert.equal(client.getState().connection, 'idle');
+assert.equal(PROTOCOL_VERSION.major, 1);
+client.dispose();
 const catalog = new PatternCatalog();
 const listed = catalog.list();
 assert.equal(listed.ok, true, JSON.stringify(listed));
@@ -50,7 +56,7 @@ for (const pattern of listed.patterns) {
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.ok(Object.isFrozen(result.definition));
 }
-console.log(JSON.stringify({ packages: listed.patterns.length, installed: true }));
+console.log(JSON.stringify({ packages: listed.patterns.length, installed: true, browserClient: true }));
 `;
   writeFileSync(join(runner, 'probe.mjs'), probe);
   const result: unknown = JSON.parse(execFileSync(process.execPath, ['probe.mjs'], { cwd: runner, encoding: 'utf8' }));
