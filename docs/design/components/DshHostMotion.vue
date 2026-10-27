@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, useId } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue'
 import { useData } from 'vitepress'
 import { renderNavigationScene } from './dshNavigationDesign.mjs'
 import { renderPanelScene } from './dshPanelsDesign.mjs'
@@ -58,6 +58,7 @@ const outcome = ref<'success' | 'error' | 'conflict'>('success')
 const expanded = ref(false)
 const dialog = ref<HTMLDialogElement>()
 const expandButton = ref<HTMLButtonElement>()
+const closeButton = ref<HTMLButtonElement>()
 let frame = 0
 let previousTime = 0
 let started = false
@@ -87,7 +88,12 @@ function play() {
 function replay() { pause(); started = false; play() }
 function seek(value: number) { pause(); started = true; elapsed.value = value }
 function scrub(event: Event) { seek(Number((event.target as HTMLInputElement).value)) }
-function openLarge() { expanded.value = true; dialog.value?.showModal() }
+async function openLarge() {
+  expanded.value = true
+  await nextTick()
+  dialog.value?.showModal()
+  closeButton.value?.focus()
+}
 function closeLarge() { dialog.value?.close(); expanded.value = false; expandButton.value?.focus() }
 function updateMotionPreference() { reducedMotion.value = media?.matches ?? false; if (reducedMotion.value) pause() }
 onMounted(() => { media = window.matchMedia('(prefers-reduced-motion: reduce)'); updateMotionPreference(); media.addEventListener('change', updateMotionPreference) })
@@ -118,7 +124,7 @@ onUnmounted(() => { pause(); media?.removeEventListener('change', updateMotionPr
     </div>
     <dialog ref="dialog" class="dsh-motion__dialog" :aria-label="`${current.label}动效大图`" @close="expanded = false" @cancel="pause">
       <template v-if="expanded">
-        <header class="dsh-motion__header"><span>{{ current.label }} · {{ activeStage.name }}</span><button type="button" @click="closeLarge" aria-label="关闭动效大图">关闭 ×</button></header>
+        <header class="dsh-motion__header"><span>{{ current.label }} · {{ activeStage.name }}</span><button ref="closeButton" type="button" @click="closeLarge" aria-label="关闭动效大图">关闭 ×</button></header>
         <div class="dsh-motion__canvas" v-html="enlargedMarkup" />
         <div class="dsh-motion__controls">
           <div class="dsh-motion__transport"><button type="button" class="dsh-motion__primary" @click="play">{{ playing ? 'Ⅱ 暂停' : '▶ 播放' }}</button><button type="button" @click="replay">重播</button><span>{{ activeStage.detail }}</span></div>

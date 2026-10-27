@@ -14,6 +14,17 @@ Flow 为智能体提供树状团队、消息协作、结构化作业和实时看
 - [看板与宿主界面](docs/design/dashboard.md)：团队观察、成员会话与停止操作。
 - [接口索引](docs/design/api.md)和[验证方法](docs/design/validation.md)：查找完整契约并建立验证证据。
 
+## 使用当前插件
+
+当前包面向 DSH `0.2.0-rc.2`。在仓库根目录安装依赖并构建，再将 `packages/dsh-flow` 安装到对应的 DSH profile：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+插件配置包括 `dataDir`、`workspace`、`preset` 和 `maxConcurrentAgents`，默认执行容量为 `4`。从 DSH 主会话使用 `/agent-team` 创建协作空间，再通过 `flow_task.profile` 配置和委派成员。现有包的功能与配置说明见[插件使用说明](packages/dsh-flow/README.md)。
+
 ## 预览文档
 
 需要 Node.js `^22.19.0 || >=24.0.0` 和项目声明的 pnpm 版本。在仓库根目录运行：

@@ -58,6 +58,7 @@ function updateLayout(svg, id, attributes) {
   if (!tag.test(svg)) throw new Error(`Missing layout anchor: ${id}`)
   return svg.replace(tag, original => Object.entries(attributes).reduce((updated, [name, value]) => {
     const attribute = new RegExp(` ${name}="[^"]*"`)
+    if (!attribute.test(updated)) throw new Error(`Missing attribute "${name}" on layout anchor: ${id}`)
     return updated.replace(attribute, ` ${name}="${value}"`)
   }, original))
 }

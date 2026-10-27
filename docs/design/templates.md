@@ -106,7 +106,7 @@ groups:
 | [builtin/hierarchical](/patterns/hierarchical/pattern.yaml) | 多层管理 | 为各组长引用资料共享与核验模板并传参，一次创建完整子树，随后逐层派发作业。 |
 | [builtin/mixture-of-agents](/patterns/mixture-of-agents/pattern.yaml) | 分层合成 | 建立提议、提炼和汇总成员；信息处理层次由根组织，不改变作业只能向直属成员派发的关系。 |
 | [builtin/generate-review-revise](/patterns/generate-review-revise/pattern.yaml) | 生成、审查与修订 | 保留作者及独立审查、核验成员，根根据反馈继续派发修订任务。 |
-| [builtin/tool-specialists](/patterns/tool-specialists/pattern.yaml) | 工具专家 | 角色声明职责、预设、技能和初始权限，通过作业交接材料及真实工具产物。 |
+| [builtin/tool-specialists](/patterns/tool-specialists/pattern.yaml) | 工具专家 | 模板声明职责和初始权限，根按需通过节点路径覆盖补充预设与附加技能；通过作业交接材料及真实工具产物。 |
 | [builtin/search-swarm](/patterns/search-swarm/pattern.yaml) | 分组搜索 | 创建各搜索组及组长，以局部群共享线索，由各级父节点按先到结果调整工作。 |
 | [builtin/workflow-search](/patterns/workflow-search/pattern.yaml) | 组织方案搜索 | 创建模板设计和评估成员，根根据真实创建与作业结果选择后续方案。 |
 | [builtin/sparse-routing](/patterns/sparse-routing/pattern.yaml) | 稀疏通信 | 创建观察、路由建议和处理角色，跨分支信息通过定向消息或局部群转交。 |
