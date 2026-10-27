@@ -1,0 +1,24 @@
+apiVersion: v1
+id: builtin/independent-vote
+description: 独立求解后按显式规则投票或交给 judge 排序。
+whenToUse: 问题允许独立求解，答案可以归一化并核验证据。
+parameters:
+  solvers:
+    type: integer
+    description: 独立求解者数量
+roles:
+  solver:
+    instructions: 独立求解自己的作业。初答前不索取同伴答案，按本次交付格式给出结论、可核对证据及不确定性。
+    permission: read-only
+  judge:
+    instructions: 按作业说明的规则归一化答案并计票，核对原始证据，记录失败作业的弃权和冲突。多数票本身不替代事实核验。
+    permission: read-only
+root:
+  instructions: |-
+    根据任务选择独立求解者数量。分别派发同一问题的独立求解作业，并明确答案格式、证据和验收标准。初答前不向求解者转述同伴答案；这种协作约定不提供文件或网络隔离。
+    读取求解结果及失败、取消记录，向评审者交付真实材料和本次计票规则。失败与取消作为弃权，不能编造缺席答案。多数票仍需证据核验；平票或证据不足时，自主决定补充工作。
+  solvers:
+    role: solver
+    count: "{{ solvers }}"
+  judge:
+    role: judge

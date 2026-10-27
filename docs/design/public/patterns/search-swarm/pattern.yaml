@@ -1,0 +1,45 @@
+apiVersion: v1
+id: builtin/search-swarm
+description: 创建多个搜索组，由各组长管理探索成员，结合局部线索与外部核验调整方向。
+whenToUse: 搜索方向可以并发探索，候选有外部验收依据。
+parameters:
+  groups:
+    type: integer
+    description: 群组数量，每个研究方向对应一个群组
+    default: 1
+  scoutsPerGroup:
+    type: integer
+    description: 每个搜索组中的探索成员数量
+roles:
+  searchLead:
+    permission: read-only
+    instructions: 管理本组探索成员，为每项子作业指定上级作业、方向和交付要求，利用局部群交换线索并向父节点汇报。
+  scout:
+    instructions: 探索父节点指定方向，提交有证据的候选和可继续方向，通过本组群交流线索。
+    permission: read-only
+  summarizer:
+    instructions: 读取选定候选，整理可跨组转交的摘要，保留路线身份、证据和冲突。
+    permission: read-only
+  validator:
+    instructions: 使用候选自述以外的检查依据核验路线，按当前作业要求报告外部证据与判断。
+    permission: read-only
+root:
+  instructions: |-
+    向直属搜索组长分配方向，由组长拆分探索作业并在局部群管理线索。根据先到结果，可以继续向相关组长派发新作业，不必等待所有方向同时结束。
+    将选定候选和实际来源交给直属汇总者及核验者，只有获得外部证据支持的路线才作为可采纳结果。跨组摘要通过消息或作业材料交接，按任务决定保留、补查或取消哪些工作。
+  leads:
+    role: searchLead
+    count: "{{ groups }}"
+    scouts:
+      role: scout
+      count: "{{ scoutsPerGroup }}"
+  summarizer:
+    role: summarizer
+  validator:
+    role: validator
+groups:
+  - key: local-search
+    forEach: root/leads/*
+    members:
+      - .
+      - ./scouts/*

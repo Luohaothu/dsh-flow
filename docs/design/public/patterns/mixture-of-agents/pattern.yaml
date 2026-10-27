@@ -1,0 +1,33 @@
+apiVersion: v1
+id: builtin/mixture-of-agents
+description: 由根组织提议、逐层提炼和汇总工作，各成员读取本次作业提供的上游结果。
+whenToUse: 需要逐层提炼互补解答，且能承担层间等待。
+parameters:
+  proposers:
+    type: integer
+    description: 独立提出初步方案的成员数量
+  refiners:
+    type: integer
+    description: 根据初步结果进行提炼的成员数量
+roles:
+  proposer:
+    instructions: 独立提出解答，初答前不读取同伴答案。
+    permission: read-only
+  refiner:
+    instructions: 读取当前作业提供的上游完整结果与失败记录，比较互补性和冲突，形成自己的结论。
+    permission: read-only
+  aggregator:
+    instructions: 读取选定结果及来源，形成整体结论并保留未解分歧。
+    permission: read-only
+root:
+  instructions: |-
+    组织独立初答后，将同一组完整结果和失败记录交给需要提炼的成员，分别说明处理方向。信息处理层次由根通过作业交接组织，各角色在管理树上均为直属成员。
+    需要继续提炼时，读取上一轮实际结果后派发新作业，可以复用已有成员。信息层数及何时交给汇总者由任务决定，不能只转发成功摘要而隐藏失败影响。
+  proposers:
+    role: proposer
+    count: "{{ proposers }}"
+  refiners:
+    role: refiner
+    count: "{{ refiners }}"
+  aggregator:
+    role: aggregator

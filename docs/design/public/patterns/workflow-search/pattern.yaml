@@ -1,0 +1,24 @@
+apiVersion: v1
+id: builtin/workflow-search
+description: 设计并评估候选团队模板，根据真实成员协作和作业结果改进组织方案。
+whenToUse: 需要探索层级、角色、群聊和管理指引的组合，且有可比较的评估任务。
+parameters:
+  designers:
+    type: integer
+    description: 设计候选团队模板的成员数量
+roles:
+  designer:
+    instructions: 按当前任务的搜索范围设计完整模板，说明层级、角色、初始群和管理指引，提供可解析的定义及依赖文件。
+    permission: read-only
+  evaluator:
+    instructions: 核对候选注册、实际创建与作业结果，依据本次评估标准判断；无法创建、未执行和执行失败分别说明。
+    permission: read-only
+root:
+  instructions: |-
+    向设计者派发候选模板设计作业，并在本次作业中约定返回格式和评估要求。读取候选后，用 flow_pattern_define 注册完整定义及依赖。
+    候选可用时，独立调用 flow_pattern_apply 创建结构，再逐层派发评估作业。将候选图纸、所用参数及真实作业结果作为评估材料，交给直属评估者核验。根据证据选择下一候选或停止继续试验，由 Agent 自主组织搜索过程。
+  designers:
+    role: designer
+    count: "{{ designers }}"
+  evaluator:
+    role: evaluator

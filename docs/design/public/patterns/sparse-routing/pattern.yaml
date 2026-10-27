@@ -1,0 +1,33 @@
+apiVersion: v1
+id: builtin/sparse-routing
+description: 根据局部结果只向选定接收者转发相关证据，再核对路由结果。
+whenToUse: 协作者只需要部分消息，且转发选择可以说明理由。
+parameters:
+  observers:
+    type: integer
+    description: 观察和发现信息的成员数量
+  recipients:
+    type: integer
+    description: 接收并处理定向信息的成员数量
+roles:
+  observer:
+    instructions: 收集指定主题证据，通过消息提出需要协作的对象和理由，避免无差别广播全部上下文。
+    permission: read-only
+  router:
+    instructions: 根据当前作业要求选择必要证据及建议接收者，记录选择依据与未转发内容。
+    permission: read-only
+  recipient:
+    instructions: 处理父节点交付的任务和材料，需要额外信息时通过消息请求协作。
+    permission: read-only
+root:
+  instructions: |-
+    向观察者派发主题任务，读取证据后交给路由建议成员选择需要共享的内容和接收者。根根据建议向自己的直属成员派发正式任务；跨分支交流使用普通消息或局部群。
+    只转交所需证据并保留来源。需要新的讨论范围时建立固定成员的新群，群关系不改变逻辑父子关系。根据新信息自主决定补充观察或重新分配工作。
+  observers:
+    role: observer
+    count: "{{ observers }}"
+  router:
+    role: router
+  recipients:
+    role: recipient
+    count: "{{ recipients }}"

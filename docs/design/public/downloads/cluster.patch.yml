@@ -1,7 +1,0 @@
-# 在已安装 dsh-flow 的标准 DSH profile 中加载。
-# 模型、工具、sandbox 和审批继续使用宿主配置。
-- id: dsh-flow
-  config:
-    dataDir: !!js process.env.FLOW_DATA_DIR ?? '.dsh-flow-native'
-    workspace: !!js process.env.FLOW_WORKSPACE ?? process.cwd()
-    maxConcurrentAgents: 4

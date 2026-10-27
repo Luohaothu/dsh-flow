@@ -1,0 +1,30 @@
+apiVersion: v1
+id: builtin/debate
+description: 独立初答后交换论点、反驳与修订，再由 judge 判断。
+whenToUse: 答案存在可讨论分歧，且有可核对的结束依据。
+parameters:
+  debaters:
+    type: integer
+    description: 参与独立分析和辩论的成员数量
+roles:
+  debater:
+    instructions: 独立形成初答；交流时针对具体结论和证据提出异议。修订时回应反驳，明确保留或撤回的结论。
+    permission: read-only
+  judge:
+    instructions: 按当前作业的验收标准核对证据和未解分歧，记录来源作业，说明继续讨论或采纳结论的依据。
+    permission: read-only
+root:
+  instructions: |-
+    先向辩论者分别派发独立分析作业，初答前不在讨论群转述同伴答案。取得初答后，根据实际分歧组织讨论、交叉质疑或修订，为后续作业交付对应结论和证据。
+    向评审者说明本次判断依据，读取真实评审结果后自主决定补充讨论还是交付结论。群聊用于交流，正式作业按各自 schema 提交；轮次和角色复用由当前任务决定。
+  debaters:
+    role: debater
+    count: "{{ debaters }}"
+  judge:
+    role: judge
+groups:
+  - key: debate
+    members:
+      - root
+      - root/debaters/*
+      - root/judge/0

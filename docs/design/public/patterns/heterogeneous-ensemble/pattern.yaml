@@ -1,0 +1,24 @@
+apiVersion: v1
+id: builtin/heterogeneous-ensemble
+description: 调用方为独立求解成员选择不同模型，再按显式权重汇总。
+whenToUse: 模型差异能带来互补结果，且调用方能提供宿主支持的模型与权重。
+parameters:
+  solvers:
+    type: integer
+    description: 独立求解者数量
+roles:
+  solver:
+    instructions: 独立求解当前作业，提交结论、证据与局限，初答前不读取同伴答案。
+    permission: read-only
+  aggregator:
+    instructions: 核对作业材料中的实际模型、结果及权重依据，保留来源作业和失败影响，按本次要求汇总。
+    permission: read-only
+root:
+  instructions: |-
+    创建前为不同求解者路径指定宿主支持的 model 覆盖，必要时同时指定推理参数，确认实际模型配置具有所需差异。模板不固定具体厂商或型号。
+    创建后分别派发独立求解作业。将实际模型身份、真实结果、失败记录和本次权重依据交给汇总者，依据任务决定采用哪些结论或继续补充。未成功创建或未返回结果的模型不能被计作已贡献答案。
+  solvers:
+    role: solver
+    count: "{{ solvers }}"
+  aggregator:
+    role: aggregator

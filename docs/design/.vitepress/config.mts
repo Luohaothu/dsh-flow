@@ -5,104 +5,58 @@ const base = process.env.DOCS_BASE ?? '/';
 export default defineConfig({
   lang: 'zh-CN',
   title: 'dsh-flow',
-  description: '层次化智能体集群的使用指南、系统设计与开发文档。',
+  base,
   cleanUrls: true,
   lastUpdated: true,
-  // Keep local viewing at / while allowing static hosting below a path prefix.
-  base,
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}favicon.svg` }]],
-  // Markdown source links must remain navigable files, including short pages.
   vite: { build: { assetsInlineLimit: 0 } },
+  description: '树状 Agent 团队、结构化作业与协作运行时',
   themeConfig: {
-    siteTitle: '<span class="flow-lockup">dsh-flow<span class="flow-tag">智能体集群</span></span>',
+    siteTitle: '<span class="flow-lockup">dsh-flow<span class="flow-tag">智能体团队</span></span>',
+    socialLinks: [{ icon: 'github', link: 'https://github.com/Luohaothu/dsh-flow' }],
+    editLink: { pattern: 'https://github.com/Luohaothu/dsh-flow/edit/main/docs/design/:path', text: '在 GitHub 上编辑此页' },
+    lastUpdated: { text: '最后更新' },
+    skipToContentLabel: '跳至内容',
     nav: [
-      { text: '入门', link: '/quick-start', activeMatch: '^/(quick-start|advanced|agents|hierarchy|dispatch|communication)' },
-      { text: '开发', link: '/development/', activeMatch: '^/development/(?!api|action-catalog|compatibility)' },
-      { text: '参考', link: '/configuration/agents', activeMatch: '^/(configuration|development/(api|action-catalog|compatibility))' },
+      { text: '指南', link: '/quick-start' },
+      { text: '模板', link: '/templates' },
+      { text: '接口', link: '/api' },
+      { text: '完整设计', link: '/design' },
     ],
     sidebar: [
-      {
-        text: '入门',
-        items: [
-          { text: '欢迎', link: '/' },
-          { text: '快速上手', link: '/quick-start' },
-          { text: '高级使用', link: '/advanced' },
-        ],
-      },
-      {
-        text: '智能体系统',
-        items: [
-          { text: '智能体分类', link: '/agents' },
-          { text: '任务关系', link: '/hierarchy' },
-          { text: '任务派发', link: '/dispatch' },
-          { text: '智能体通信', link: '/communication' },
-        ],
-      },
-      {
-        text: '配置参数',
-        items: [
-          { text: 'Agent 配置', link: '/configuration/agents' },
-          { text: 'Flow 配置', link: '/configuration/cluster' },
-        ],
-      },
-      {
-        text: '开发文档',
-        collapsed: false,
-        items: [
-          { text: '开发概览', link: '/development/' },
-          { text: '开发环境搭建', link: '/development/setup' },
-          { text: '代码结构', link: '/development/code-structure' },
-          { text: '主会话与团队界面', link: '/development/interface' },
-          { text: '宿主接口与补丁', link: '/development/provider-interfaces' },
-          { text: '验证方法', link: '/development/validation' },
-          {
-            text: '核心组件',
-            collapsed: false,
-            items: [
-              { text: '控制平面与调度', link: '/development/components/control-plane' },
-              { text: '任务、结果与接受', link: '/development/components/transactions' },
-              { text: '智能体运行时', link: '/development/components/runtime' },
-              { text: '持久化与恢复', link: '/development/components/persistence' },
-              { text: '消息路由', link: '/development/components/communication' },
-              { text: '查询与可观测性', link: '/development/components/observability' },
-            ],
-          },
-          { text: 'API 手册', link: '/development/api' },
-          { text: '动作索引', link: '/development/action-catalog' },
-          { text: 'dsh 兼容性', link: '/development/compatibility' },
-        ],
-      },
+      { text: '开始使用', items: [
+        { text: 'Flow 智能体团队', link: '/' },
+        { text: 'Agent 与组织关系', link: '/agents' },
+        { text: '团队使用流程', link: '/quick-start' },
+      ] },
+      { text: '团队协作', items: [
+        { text: '团队与运行', link: '/teams' },
+        { text: '团队模板', link: '/templates' },
+        { text: '作业与交付', link: '/assignments' },
+        { text: '消息与协作', link: '/communication' },
+      ] },
+      { text: '运行与界面', items: [
+        { text: '运行时与宿主适配', link: '/runtime' },
+        { text: '配置与权限', link: '/configuration' },
+        { text: '看板与宿主界面', link: '/dashboard' },
+      ] },
+      { text: '参考', items: [
+        { text: '接口索引', link: '/api' },
+        { text: '验证方法', link: '/validation' },
+        { text: '完整设计文档', link: '/design' },
+      ] },
     ],
-    socialLinks: [{ icon: 'github', link: 'https://github.com/Luohaothu/dsh-flow' }],
     outline: { level: [2, 3], label: '本页目录' },
     docFooter: { prev: '上一页', next: '下一页' },
-    lastUpdated: { text: '最后更新' },
+    sidebarMenuLabel: '文档目录',
+    returnToTopLabel: '返回顶部',
     darkModeSwitchLabel: '外观',
     lightModeSwitchTitle: '切换到浅色模式',
     darkModeSwitchTitle: '切换到深色模式',
-    sidebarMenuLabel: '目录',
-    returnToTopLabel: '返回顶部',
-    skipToContentLabel: '跳至内容',
-    editLink: { pattern: 'https://github.com/Luohaothu/dsh-flow/edit/main/docs/design/:path', text: '在 GitHub 上编辑此页' },
-    search: {
-      provider: 'local',
-      options: {
-        locales: {
-          root: {
-            translations: {
-              button: { buttonText: '搜索文档', buttonAriaLabel: '搜索文档' },
-              modal: {
-                displayDetails: '显示详情',
-                resetButtonTitle: '清除查询',
-                backButtonTitle: '关闭搜索',
-                noResultsText: '没有找到相关内容',
-                footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' },
-              },
-            },
-          },
-        },
-      },
-    },
+    search: { provider: 'local', options: { translations: {
+      button: { buttonText: '搜索文档', buttonAriaLabel: '搜索文档' },
+      modal: { displayDetails: '显示详情', resetButtonTitle: '清除搜索', backButtonTitle: '返回', noResultsText: '没有找到相关内容', footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' } },
+    } } },
   },
   markdown: {
     config(md) {
