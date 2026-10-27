@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AssignmentArchiveReadResult } from '../assignments/types.js';
+import type { AssignmentArchiveReadResult, AssignmentSnapshot } from '../assignments/types.js';
 import { assertJson } from '../assignments/schema.js';
 import type { RunRecord } from './types.js';
 
@@ -9,6 +9,41 @@ const runIdPattern = /^[a-zA-Z0-9_-]+$/;
 const recordVersion = 1;
 interface PersistedRunRecord { format: 'dsh-flow-run'; version: typeof recordVersion; record: RunRecord }
 function isObject(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function hasStrings(value: Record<string, unknown>, keys: readonly string[]): boolean { return keys.every(key => typeof value[key] === 'string'); }
+function optional(value: Record<string, unknown>, key: string, check: (entry: unknown) => boolean): boolean { return !Object.hasOwn(value, key) || check(value[key]); }
+function isString(value: unknown): value is string { return typeof value === 'string'; }
+function isStatus(value: unknown): boolean { return typeof value === 'string' && ['pending', 'submitted', 'failed', 'cancelled'].includes(value); }
+function isChildren(value: unknown): boolean {
+  return Array.isArray(value) && value.every(child => isObject(child) && hasStrings(child, ['assignmentId', 'reason']));
+}
+function isReceipt(value: unknown): boolean {
+  return isObject(value) && typeof value.kind === 'string' && ['accepted', 'missing-children', 'invalid-result', 'terminal'].includes(value.kind)
+    && typeof value.assignmentId === 'string' && isStatus(value.status)
+    && optional(value, 'missingChildren', children => Array.isArray(children) && children.every(isString))
+    && optional(value, 'errors', errors => Array.isArray(errors) && errors.every(error => isObject(error) && hasStrings(error, ['path', 'message'])));
+}
+function isSubmission(value: unknown): boolean {
+  return isObject(value) && typeof value.transportKey === 'string' && typeof value.timestamp === 'number'
+    && isObject(value.submission) && Object.hasOwn(value.submission, 'result') && isChildren(value.submission.continuingChildren)
+    && isReceipt(value.receipt);
+}
+function isSpec(value: unknown): boolean {
+  return isObject(value) && hasStrings(value, ['name', 'type', 'background', 'requirements', 'acceptanceCriteria'])
+    && (typeof value.resultSchema === 'boolean' || isObject(value.resultSchema))
+    && optional(value, 'resumesAssignmentId', isString)
+    && optional(value, 'materials', materials => Array.isArray(materials) && materials.every(ref =>
+      isObject(ref) && hasStrings(ref, ['id', 'sourceId', 'digest', 'location', 'mediaType'])));
+}
+function isAssignment(value: unknown, id: string, runId: string): value is AssignmentSnapshot {
+  if (!isObject(value) || value.id !== id || value.runId !== runId || !isSpec(value.spec) || !isObject(value.sender)) return false;
+  const sender = value.sender;
+  return ((sender.kind === 'run' && sender.runId === runId) || (sender.kind === 'agent' && typeof sender.sessionID === 'string'))
+    && typeof value.recipientSessionID === 'string' && (value.parentAssignmentId === null || typeof value.parentAssignmentId === 'string')
+    && isStatus(value.status) && Array.isArray(value.submissions) && value.submissions.every(isSubmission)
+    && typeof value.submissionCount === 'number' && typeof value.schemaFailures === 'number'
+    && hasStrings(value, ['schemaDialect', 'schemaDigest']) && isChildren(value.continuingChildren)
+    && (value.status !== 'submitted' || Object.hasOwn(value, 'result')) && optional(value, 'reason', isString);
+}
 
 export type StoreStage = 'write' | 'file-sync' | 'rename' | 'directory-sync';
 export class RunStore {
@@ -51,9 +86,9 @@ export class RunStore {
       assertJson(persisted);
       if (!isObject(persisted) || persisted.format !== 'dsh-flow-run' || persisted.version !== recordVersion) throw new TypeError('Invalid persisted run record format or version');
       const record = persisted.record;
-      if (!isObject(record) || record.id !== runId || typeof record.epoch !== 'string' || !isObject(record.assignments)) throw new TypeError('Invalid persisted run record');
+      if (!isObject(record) || record.id !== runId || record.runId !== runId || typeof record.epoch !== 'string' || !isObject(record.assignments)) throw new TypeError('Invalid persisted run record');
       for (const [id, assignment] of Object.entries(record.assignments)) {
-        if (!isObject(assignment) || assignment.id !== id || typeof assignment.status !== 'string' || !['pending', 'submitted', 'failed', 'cancelled'].includes(assignment.status)) throw new TypeError('Invalid persisted run record');
+        if (!isAssignment(assignment, id, runId)) throw new TypeError('Invalid persisted run record');
       }
       return record as unknown as RunRecord;
     } catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null; throw error; }
