@@ -3,20 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Development workspace for the dsh-flow standard native Agent collaboration plugin.",
+  "description": "Flow orchestration runtime and DSH integration.",
   "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
     "build": "tsx scripts/build.ts",
-    "typecheck": "tsx scripts/build.ts --typecheck-only",
-    "test": "node --import tsx --test tests/unit/*.test.ts",
-    "accept": "node --import tsx tests/acceptance/native-live.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test tests/contracts/core/*.test.ts tests/contracts/host/*.test.ts",
+    "test:inventory": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
     "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
     "docs:build": "vitepress build docs/design",
-    "docs:preview": "vitepress preview docs/design",
-    "test:native": "node --import tsx --test --test-concurrency=1 tests/integration/*.test.ts"
+    "docs:preview": "vitepress preview docs/design"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -25,26 +24,18 @@
     "@deepseek-ai/dsh-agent-default-model": "0.2.0-rc.2",
     "@deepseek-ai/dsh-api-gateway": "0.2.0-rc.2",
     "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-browser-use": "0.2.0-rc.2",
     "@deepseek-ai/dsh-client-ui-chat": "0.2.0-rc.2",
     "@deepseek-ai/dsh-client-ui-conversation": "0.2.0-rc.2",
     "@deepseek-ai/dsh-commands": "0.2.0-rc.2",
     "@deepseek-ai/dsh-compaction": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-experimental-browser-use-runtime": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session-format": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session-format-v3-to-v4": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session-persistence": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
     "@deepseek-ai/dsh-skill": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-typert-generator": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
-    "@total-typescript/shoehorn": "^0.1.2",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "^18.3.7",
@@ -59,7 +50,11 @@
     "vitepress": "1.6.4",
     "vue": "3.5.43",
     "yaml": "2.9.1",
-    "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-sandbox-policy": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-loop": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.0-rc.2"
   },
   "packageManager": "pnpm@12.9.1"
 }

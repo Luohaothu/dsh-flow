@@ -158,7 +158,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。"
+      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/README.md",
@@ -170,7 +175,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "团队运行模型",
-      "rationale": "将安装、公开入口和示例改为持续团队、模板展开及多份作业；对应 P4 新工具与 P6 面板，不沿用一次性任务或旧控制面说明。"
+      "rationale": "将安装、公开入口和示例改为持续团队、模板展开及多份作业；对应 P4 新工具与 P6 面板，不沿用一次性任务或旧控制面说明。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/cordis.patch.yml",
@@ -249,7 +259,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。"
+      "rationale": "按最终模块重建脚本、公开导出、安装资源和依赖；涵盖模板包、team-strategy、agent-team、原生浏览器模块与独立 Web 资源。React 对齐 18.3.1，外部共享依赖仅采用设计清单；删除旧 command/web/Remote 模型入口及无用依赖，测试发现规则覆盖新测试目录。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/skills/agent-team/SKILL.md",
@@ -507,7 +522,17 @@
       "disposition": "remove",
       "phase": "P1",
       "section": "输入与主动等待",
-      "rationale": "删除主干按 Job 驱动的 AgentQueue 及旧调度责任；执行准入归适配器服务级容量，通知/等待归 Agent，不能保留一套旧队列决定团队生命周期。"
+      "rationale": "删除主干按 Job 驱动的 AgentQueue 及旧调度责任；执行准入归适配器服务级容量，通知/等待归 Agent，不能保留一套旧队列决定团队生命周期。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/agent.ts",
@@ -519,7 +544,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "Agent 智能体",
-      "rationale": "主干 FlowAgent 依赖 FlowSystem 和旧持久化任务控制面，不采用；本地 Agent 已具有 Context/HostAdaptor、通知、等待与派生职责，但 create 的 initial 必填且存在 notifyAssignment。P1 逐合同核验空闲创建、原子发布、恢复、通知及清理，仅可采用吻合的独立片段，删除作业专用通知；生命周期骨架若妨碍分责则重写，不以旧测试通过作复用依据。"
+      "rationale": "主干 FlowAgent 依赖 FlowSystem 和旧持久化任务控制面，不采用；本地 Agent 已具有 Context/HostAdaptor、通知、等待与派生职责，但 create 的 initial 必填且存在 notifyAssignment。P1 逐合同核验空闲创建、原子发布、恢复、通知及清理，仅可采用吻合的独立片段，删除作业专用通知；生命周期骨架若妨碍分责则重写，不以旧测试通过作复用依据。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/collaboration.ts",
@@ -530,7 +565,12 @@
       "disposition": "remove",
       "phase": "P2",
       "section": "团队运行模型",
-      "rationale": "删除主干 FlowCollaboration 的团队/任务/结果/评审混合控制面；持续 Run、AssignmentService 与模板目录各自拥有生命周期和状态，不迁移旧数据库模型。"
+      "rationale": "删除主干 FlowCollaboration 的团队/任务/结果/评审混合控制面；持续 Run、AssignmentService 与模板目录各自拥有生命周期和状态，不迁移旧数据库模型。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "旧 Core 的协作、成员工具和存储依赖失效抽象，在基础层重写时一并删除；P2/P4 直接实现目标职责。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/context.ts",
@@ -541,7 +581,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "上下文",
-      "rationale": "本地 Context 对象登记、原子发布、直属关系和异步释放与目标对象职责对应。P1 核验关闭资格、释放 Promise 合并、借用宿主引用及终止同步通知；仅采用必要的登记/清理片段，重整为看板服务的额外发布状态，不默认保留内部缓存与事件排队。"
+      "rationale": "本地 Context 对象登记、原子发布、直属关系和异步释放与目标对象职责对应。P1 核验关闭资格、释放 Promise 合并、借用宿主引用及终止同步通知；仅采用必要的登记/清理片段，重整为看板服务的额外发布状态，不默认保留内部缓存与事件排队。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/controller.ts",
@@ -552,7 +602,17 @@
       "disposition": "remove",
       "phase": "P1",
       "section": "宿主适配器",
-      "rationale": "删除主干 FlowController 的转发层与 FlowSystem/Store 装配，工具直接绑定 Flow 对象、团队入口调用新 RunService，不设置无独立设计责任的总控制器。"
+      "rationale": "删除主干 FlowController 的转发层与 FlowSystem/Store 装配，工具直接绑定 Flow 对象、团队入口调用新 RunService，不设置无独立设计责任的总控制器。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/deadline.ts",
@@ -563,7 +623,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "生命周期模型",
-      "rationale": "有限清理时限和主动等待截止时间需要可靠计时，这是设计未命名的最小内部设施。P1 仅在取消/长时限处理可由合同证明且与适配器共用同一时限配置时采用，不保留双层重复关闭计时或额外状态。"
+      "rationale": "有限清理时限和主动等待截止时间需要可靠计时，这是设计未命名的最小内部设施。P1 仅在取消/长时限处理可由合同证明且与适配器共用同一时限配置时采用，不保留双层重复关闭计时或额外状态。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/group.ts",
@@ -574,7 +644,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "群聊",
-      "rationale": "本地 Group 已有构造时成员、群消息、共享黑板及退出/释放职责。P1 核验独占追加、消息隔离、时间顺序与成员生命周期，只采用符合合同的独立片段；黑板写入活动须由实际调用边界提供给 P5，不能仅以现有 group-blackboard 完成事件代替。"
+      "rationale": "本地 Group 已有构造时成员、群消息、共享黑板及退出/释放职责。P1 核验独占追加、消息隔离、时间顺序与成员生命周期，只采用符合合同的独立片段；黑板写入活动须由实际调用边界提供给 P5，不能仅以现有 group-blackboard 完成事件代替。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/index.ts",
@@ -585,7 +665,17 @@
       "disposition": "rewrite",
       "phase": "P1",
       "section": "Agent 编排系统",
-      "rationale": "仅导出设计规定的对象、类型和必需程序接口；移除作业专用通知、内部状态及无设计依据的辅助导出，不为旧调用者保留别名。"
+      "rationale": "仅导出设计规定的对象、类型和必需程序接口；移除作业专用通知、内部状态及无设计依据的辅助导出，不为旧调用者保留别名。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/mailbox.ts",
@@ -596,7 +686,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "收件箱",
-      "rationale": "本地 Mailbox 的入箱、来源评级、过滤、快照与读取职责对应设计。P1 按原子选择/已读更新、迭代边界、冷恢复新 ID 与 System 编排普通通知逐项验证，仅通过目标合同的独立实现可采用，否则重写；旧测试数量不构成依据。"
+      "rationale": "本地 Mailbox 的入箱、来源评级、过滤、快照与读取职责对应设计。P1 按原子选择/已读更新、迭代边界、冷恢复新 ID 与 System 编排普通通知逐项验证，仅通过目标合同的独立实现可采用，否则重写；旧测试数量不构成依据。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/member-tools.ts",
@@ -607,7 +707,12 @@
       "disposition": "remove",
       "phase": "P4",
       "section": "实例创建与工具绑定",
-      "rationale": "删除主干旧 task/result/review/control 工具注册；适配器根据真实调用上下文绑定新的 Agent/Mailbox/Group、模板和作业工具，不保留旧工具别名。"
+      "rationale": "删除主干旧 task/result/review/control 工具注册；适配器根据真实调用上下文绑定新的 Agent/Mailbox/Group、模板和作业工具，不保留旧工具别名。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "旧 Core 的协作、成员工具和存储依赖失效抽象，在基础层重写时一并删除；P2/P4 直接实现目标职责。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/message-queue.ts",
@@ -618,7 +723,17 @@
       "disposition": "remove",
       "phase": "P1",
       "section": "执行模型",
-      "rationale": "删除主干 MessageQueue 的持久配送、重试与旧消息模型；收件归 Mailbox、通知调度归所属 Agent、宿主接管归 HostAdaptor，不能保留另一套消息拥有者。"
+      "rationale": "删除主干 MessageQueue 的持久配送、重试与旧消息模型；收件归 Mailbox、通知调度归所属 Agent、宿主接管归 HostAdaptor，不能保留另一套消息拥有者。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/message.ts",
@@ -629,7 +744,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "消息",
-      "rationale": "本地消息与来源快照、业务 ID 和 System 编排标记对应设计隔离与普通通知。P1 验证对象引用保持、正文快照、来源组合和冷恢复后旧编号失效，只采用必要片段；作业终态必须走普通 System 消息，不沿用特殊 steer 路径。"
+      "rationale": "本地消息与来源快照、业务 ID 和 System 编排标记对应设计隔离与普通通知。P1 验证对象引用保持、正文快照、来源组合和冷恢复后旧编号失效，只采用必要片段；作业终态必须走普通 System 消息，不沿用特殊 steer 路径。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/profile.ts",
@@ -641,7 +766,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "身份信息",
-      "rationale": "主干 composeMemberProfile 与旧宿主配置耦合，不采用该模型；本地 Profile 快照和权限等级检查可对应只读身份及初始权限合同。P1 仅在完整参数校验、hostExtras 隔离及父级初始权限边界满足时采用独立片段，不复用旧角色定义。"
+      "rationale": "主干 composeMemberProfile 与旧宿主配置耦合，不采用该模型；本地 Profile 快照和权限等级检查可对应只读身份及初始权限合同。P1 仅在完整参数校验、hostExtras 隔离及父级初始权限边界满足时采用独立片段，不复用旧角色定义。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/runtime.ts",
@@ -652,7 +787,17 @@
       "disposition": "remove",
       "phase": "P1",
       "section": "DSH 后端适配",
-      "rationale": "删除主干 NativeMember 工厂及 FlowSystem 使用的宿主包装；原生 create/resume、模型权限、工具、恢复及资源归属统一按 HostAdaptor 重整，不保留平行运行时。"
+      "rationale": "删除主干 NativeMember 工厂及 FlowSystem 使用的宿主包装；原生 create/resume、模型权限、工具、恢复及资源归属统一按 HostAdaptor 重整，不保留平行运行时。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/snapshot-data.ts",
@@ -663,7 +808,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "消息",
-      "rationale": "消息正文与 Profile 附加配置必须隔离，有限数据快照是必要的最小内部设施。P1 核验支持类型、引用隔离及 owner-defined hostExtras 快照责任，只有服务该合同的实现可采用，不扩张成通用序列化/兼容层。"
+      "rationale": "消息正文与 Profile 附加配置必须隔离，有限数据快照是必要的最小内部设施。P1 核验支持类型、引用隔离及 owner-defined hostExtras 快照责任，只有服务该合同的实现可采用，不扩张成通用序列化/兼容层。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/store.ts",
@@ -674,7 +829,12 @@
       "disposition": "remove",
       "phase": "P2",
       "section": "取消、通知与历史记录",
-      "rationale": "删除主干 SQLite teams/tasks/results/reviews/messages 表与旧 schema/version 模型；新作业历史由 AssignmentService 记录，目标持久化和显式后继仍需实现，但不迁移旧数据格式或自动重绑。"
+      "rationale": "删除主干 SQLite teams/tasks/results/reviews/messages 表与旧 schema/version 模型；新作业历史由 AssignmentService 记录，目标持久化和显式后继仍需实现，但不迁移旧数据格式或自动重绑。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "旧 Core 的协作、成员工具和存储依赖失效抽象，在基础层重写时一并删除；P2/P4 直接实现目标职责。"
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/system.ts",
@@ -685,7 +845,17 @@
       "disposition": "remove",
       "phase": "P1",
       "section": "上下文",
-      "rationale": "删除主干 FlowSystem 总拥有者及其 agent/job/message 队列；对象由 Context 管理、执行由 HostAdaptor 适配、团队及作业由各自服务负责，不复用旧生命周期骨架。"
+      "rationale": "删除主干 FlowSystem 总拥有者及其 agent/job/message 队列；对象由 Context 管理、执行由 HostAdaptor 适配、团队及作业由各自服务负责，不复用旧生命周期骨架。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/core/types.ts",
@@ -696,7 +866,17 @@
       "disposition": "rewrite",
       "phase": "P1",
       "section": "宿主适配器",
-      "rationale": "按设计对象接口重整类型与事件边界，补足可选 initmsg 和流式实际调用身份；清理作业专用 Core 通知及无独立职责扩展字段，保持对象引用与宿主无关合同。"
+      "rationale": "按设计对象接口重整类型与事件边界，补足可选 initmsg 和流式实际调用身份；清理作业专用 Core 通知及无独立职责扩展字段，保持对象引用与宿主无关合同。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/dashboard/protocol.ts",
@@ -751,7 +931,17 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "插件设置",
-      "rationale": "服务级 maxConcurrentAgents 默认 4，保存影响后续执行准入而不中断在执行成员。P1 验证公平准入不是额外产品合同、等待者释放配额及动态容量生效，只采用满足准入要求的最小独立实现；P6 验证设置呈现，不因现有类可运行而保留包装。"
+      "rationale": "服务级 maxConcurrentAgents 默认 4，保存影响后续执行准入而不中断在执行成员。P1 验证公平准入不是额外产品合同、等待者释放配额及动态容量生效，只采用满足准入要求的最小独立实现；P6 验证设置呈现，不因现有类可运行而保留包装。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/host/dsh-adaptor.ts",
@@ -762,7 +952,17 @@
       "disposition": "rewrite",
       "phase": "P1",
       "section": "DSH 后端适配",
-      "rationale": "按 HostAdaptor 全面重整 756 行适配实现的实例、输入、权限、冷恢复、用量与清理边界；核验可达权限写工具并 guard，取消重复关闭状态及旧材料/固定模板耦合。实际调用身份与累计用量由 P5 联调，原生公开能力优先，不将旧适配器整体划为保留区。"
+      "rationale": "按 HostAdaptor 全面重整 756 行适配实现的实例、输入、权限、冷恢复、用量与清理边界；核验可达权限写工具并 guard，取消重复关闭状态及旧材料/固定模板耦合。实际调用身份与累计用量由 P5 联调，原生公开能力优先，不将旧适配器整体划为保留区。",
+      "resolution": {
+        "phase": "P1",
+        "state": "implemented",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:packages/dsh-flow/src/host/index.ts",
@@ -973,7 +1173,13 @@
       "disposition": "evaluate",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "第三方许可为工程必要元数据，不纳入无产品职责即删除的范围。P7 核查最终分发内容；只要仍分发该依赖或其代码就保留相应许可，不能随旧 RPC 代码无条件删去版权声明。"
+      "rationale": "第三方许可为工程必要元数据，不纳入无产品职责即删除的范围。P7 核查最终分发内容；只要仍分发该依赖或其代码就保留相应许可，不能随旧 RPC 代码无条件删去版权声明。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:packages/typert-protocol/README.md",
@@ -984,7 +1190,13 @@
       "disposition": "remove",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:packages/typert-protocol/package.json",
@@ -995,7 +1207,13 @@
       "disposition": "remove",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:packages/typert-protocol/src/index.ts",
@@ -1006,7 +1224,13 @@
       "disposition": "remove",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:packages/typert-protocol/src/types.ts",
@@ -1017,7 +1241,13 @@
       "disposition": "remove",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:packages/typert-protocol/tsconfig.host.json",
@@ -1028,7 +1258,13 @@
       "disposition": "remove",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。"
+      "rationale": "该私有 Typert face 包仅使旧 Remote 生成器识别声明来源；目标客户端使用本机 HTTP/事件协议，旧 web.ts/Remote 入口已列删除，没有独立生成职责。移除本文件及无用工作区声明/依赖；第三方许可证另行按最终分发内容核查，不因移除旧 RPC 代码自动删除许可。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
@@ -1039,7 +1275,13 @@
       "disposition": "evaluate",
       "phase": "P6",
       "section": "宿主数据与连接",
-      "rationale": "旧补丁同时改 commands submissionId 编码与 observationOnly 读取编码。P1/P4 核验真实提交来源与新幂等入口，P6 核验观察传输；仅宿主公开接口确缺目标能力时采用最小编码改动，否则删除，不保留旧命令意图链。"
+      "rationale": "旧补丁同时改 commands submissionId 编码与 observationOnly 读取编码。P1/P4 核验真实提交来源与新幂等入口，P6 核验观察传输；仅宿主公开接口确缺目标能力时采用最小编码改动，否则删除，不保留旧命令意图链。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
@@ -1050,7 +1292,13 @@
       "disposition": "evaluate",
       "phase": "P1",
       "section": "实例创建与工具绑定",
-      "rationale": "旧补丁混合 SessionDriver 执行所有权、观察不激活、会话分类、读取引用与分页错误，以及命令调用签名/预设错误处理。P1 先验证独立原生实例及公开所有权接口，P6 再验证观察与分类；只采用实际缺少目标能力的最小改动，删除旧 legacy 分类和无设计职责修补，不能整包沿用。"
+      "rationale": "旧补丁混合 SessionDriver 执行所有权、观察不激活、会话分类、读取引用与分页错误，以及命令调用签名/预设错误处理。P1 先验证独立原生实例及公开所有权接口，P6 再验证观察与分类；只采用实际缺少目标能力的最小改动，删除旧 legacy 分类和无设计职责修补，不能整包沿用。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P1"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
@@ -1061,7 +1309,13 @@
       "disposition": "evaluate",
       "phase": "P6",
       "section": "成员原生会话观察",
-      "rationale": "旧补丁提供 readOnly 动作抑制/初始跟随，同时加入 communication 节点与视图激活行为。P6 仅在原生阅读器完整历史、增量和只读观察确需时采用最小子集；没有目标责任的旧通信呈现扩展删除，不将整包聊天补丁带入。"
+      "rationale": "旧补丁提供 readOnly 动作抑制/初始跟随，同时加入 communication 节点与视图激活行为。P6 仅在原生阅读器完整历史、增量和只读观察确需时采用最小子集；没有目标责任的旧通信呈现扩展删除，不将整包聊天补丁带入。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
@@ -1072,7 +1326,13 @@
       "disposition": "remove",
       "phase": "P6",
       "section": "插件入口与会话导航",
-      "rationale": "删除主干保留 agent-team 命令名、sessionStorage 意图键、插件缺失模态框和跳转等旧命令 UX。目标 /agent-team 由新技能工作流提供；原生提交来源及重放需求由 P4 新调用上下文闭合，不保留该旧前端协议。"
+      "rationale": "删除主干保留 agent-team 命令名、sessionStorage 意图键、插件缺失模态框和跳转等旧命令 UX。目标 /agent-team 由新技能工作流提供；原生提交来源及重放需求由 P4 新调用上下文闭合，不保留该旧前端协议。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
@@ -1083,7 +1343,13 @@
       "disposition": "evaluate",
       "phase": "P6",
       "section": "会话内智能体页签",
-      "rationale": "旧补丁混合 contained/readOnly 呈现、availableSessions、当前页签/返回导航及阅读器嵌入。P6 按目标会话页签和只读观察核验公开 slot 能力，只采用必要最小布局/读取子集，其余旧可见性与隐藏输入行为删除。"
+      "rationale": "旧补丁混合 contained/readOnly 呈现、availableSessions、当前页签/返回导航及阅读器嵌入。P6 按目标会话页签和只读观察核验公开 slot 能力，只采用必要最小布局/读取子集，其余旧可见性与隐藏输入行为删除。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
@@ -1094,7 +1360,13 @@
       "disposition": "remove",
       "phase": "P6",
       "section": "节点详情",
-      "rationale": "allowTabDrag 补丁仅服务旧 ProviderPanels DockSurface；目标详情/观察共用右栏可由共享界面布局实现，无需修改宿主通用 dock 行为。"
+      "rationale": "allowTabDrag 补丁仅服务旧 ProviderPanels DockSurface；目标详情/观察共用右栏可由共享界面布局实现，无需修改宿主通用 dock 行为。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
@@ -1105,7 +1377,13 @@
       "disposition": "remove",
       "phase": "P6",
       "section": "插件设置",
-      "rationale": "旧 navigationGuards/requestNavigation 提供通用离开拦截；设计要求保留编辑与比较后保存，没有要求修改全宿主导航或增加确认流程，删除无目标职责的宿主导航补丁。"
+      "rationale": "旧 navigationGuards/requestNavigation 提供通用离开拦截；设计要求保留编辑与比较后保存，没有要求修改全宿主导航或增加确认流程，删除无目标职责的宿主导航补丁。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
@@ -1116,7 +1394,13 @@
       "disposition": "remove",
       "phase": "P4",
       "section": "实例创建与工具绑定",
-      "rationale": "补丁仅使原生 /plan off 适应旧 commands.execute 新增参数，是旧命令签名连带修改；目标 Flow 无 plan 工具职责，随旧签名链移除。"
+      "rationale": "补丁仅使原生 /plan off 适应旧 commands.execute 新增参数，是旧命令签名连带修改；目标 Flow 无 plan 工具职责，随旧签名链移除。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P4"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
@@ -1127,7 +1411,13 @@
       "disposition": "remove",
       "phase": "P6",
       "section": "插件设置",
-      "rationale": "旧补丁将插件详情切换接入全局 requestNavigation 守卫，非目标设置保存/revision 合同所必需；删除通用离开拦截，设置草稿及冲突反馈在新表单中实现。"
+      "rationale": "旧补丁将插件详情切换接入全局 requestNavigation 守卫，非目标设置保存/revision 合同所必需；删除通用离开拦截，设置草稿及冲突反馈在新表单中实现。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
@@ -1138,7 +1428,13 @@
       "disposition": "evaluate",
       "phase": "P6",
       "section": "成员原生会话观察",
-      "rationale": "旧补丁以 session generation 区分渲染工厂祖先，服务同页嵌入另一成员的原生阅读器。P6 仅在公开阅读器复用确实触发误报递归且可最小复现时采用作用域修正，否则删除。"
+      "rationale": "旧补丁以 session generation 区分渲染工厂祖先，服务同页嵌入另一成员的原生阅读器。P6 仅在公开阅读器复用确实触发误报递归且可最小复现时采用作用域修正，否则删除。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
@@ -1149,7 +1445,13 @@
       "disposition": "remove",
       "phase": "P6",
       "section": "成员原生会话观察",
-      "rationale": "补丁改变原生 subagent 视图选择与 locale，服务旧成员导航；目标 Flow 逻辑父子树不登记原生 parentAgent，成员从 Flow 侧栏按独立读取引用观察，无需改变原生 subagent 选择器。"
+      "rationale": "补丁改变原生 subagent 视图选择与 locale，服务旧成员导航；目标 Flow 逻辑父子树不登记原生 parentAgent，成员从 Flow 侧栏按独立读取引用观察，无需改变原生 subagent 选择器。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
@@ -1160,7 +1462,13 @@
       "disposition": "evaluate",
       "phase": "P6",
       "section": "宿主数据与连接",
-      "rationale": "旧补丁同时加入全局导航守卫与 openSession 的 allowUnlisted/observationOnly 参数。P6 核验目标返回发起会话和只读成员观察是否确需最小导航参数扩展；只可采用必要读取能力，删除通用守卫及旧主视图观察链。"
+      "rationale": "旧补丁同时加入全局导航守卫与 openSession 的 allowUnlisted/observationOnly 参数。P6 核验目标返回发起会话和只读成员观察是否确需最小导航参数扩展；只可采用必要读取能力，删除通用守卫及旧主视图观察链。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P6"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
@@ -1171,7 +1479,13 @@
       "disposition": "evaluate",
       "phase": "P4",
       "section": "宿主数据与连接",
-      "rationale": "旧补丁把 submissionId 接入命令服务及编解码声明。目标确需真实 submissionId/sourceMessageId 关联与同次操作重放，但 P4 须先核验实际公开上下文；仅确缺来源字段时采用最小传递路径，否则删除，不保留旧 StartIntents。"
+      "rationale": "旧补丁把 submissionId 接入命令服务及编解码声明。目标确需真实 submissionId/sourceMessageId 关联与同次操作重放，但 P4 须先核验实际公开上下文；仅确缺来源字段时采用最小传递路径，否则删除，不保留旧 StartIntents。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P4"
+      }
     },
     {
       "id": "file:patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
@@ -1182,7 +1496,13 @@
       "disposition": "remove",
       "phase": "P4",
       "section": "宿主数据与连接",
-      "rationale": "旧补丁为非 surface 事件增加 ignorable 元数据，服务旧插件意图/日志协议；目标未要求向原生 Session 追加该日志，删除补丁，不建立旧记录兼容链。"
+      "rationale": "旧补丁为非 surface 事件增加 ignorable 元数据，服务旧插件意图/日志协议；目标未要求向原生 Session 追加该日志，删除补丁，不建立旧记录兼容链。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P4"
+      }
     },
     {
       "id": "file:patches/README.md",
@@ -1193,7 +1513,13 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按 P1/P6 最终采用的最小宿主能力及安装方式重写说明；若补丁全不需要则删除失效说明和安装入口，不将历史 pnpm 补丁与 host-extensions 两套机制同时作为保留要求。"
+      "rationale": "按 P1/P6 最终采用的最小宿主能力及安装方式重写说明；若补丁全不需要则删除失效说明和安装入口，不将历史 pnpm 补丁与 host-extensions 两套机制同时作为保留要求。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "P1 使用未打补丁的原生 API，删除旧补丁及自有 Typert 基础设施；P5/P6 按目标协议和实际能力缺口独立实现。",
+        "followupPhase": "P7"
+      }
     },
     {
       "id": "file:pnpm-lock.yaml",
@@ -1217,7 +1543,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按最终工作区及宿主能力裁决更新 package globs、patchedDependencies 和必要构建脚本许可；移除未采用补丁及无用生成器注册，保留新安装所必需的包管理能力。"
+      "rationale": "按最终工作区及宿主能力裁决更新 package globs、patchedDependencies 和必要构建脚本许可；移除未采用补丁及无用生成器注册，保留新安装所必需的包管理能力。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:scripts/boot.ts",
@@ -1240,7 +1571,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新源码、声明、模板/技能资源及双客户端重建产物入口；删除旧 Typert 生成和已移除模块编译，验证最终包干净构建。"
+      "rationale": "按新源码、声明、模板/技能资源及双客户端重建产物入口；删除旧 Typert 生成和已移除模块编译，验证最终包干净构建。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:scripts/client-build.ts",
@@ -1284,7 +1620,17 @@
       "disposition": "rewrite",
       "phase": "P1",
       "section": "DSH 后端适配",
-      "rationale": "以实际依赖公开入口重建 Agent/HostAdaptor 合同 smoke，验证可选初始输入、权限/never、等待、恢复和清理；旧内部钩子或顺序不约束新实现。"
+      "rationale": "以实际依赖公开入口重建 Agent/HostAdaptor 合同 smoke，验证可选初始输入、权限/never、等待、恢复和清理；旧内部钩子或顺序不约束新实现。",
+      "resolution": {
+        "phase": "P1",
+        "state": "not-adopted",
+        "decision": "按设计对象和宿主合同重建；旧控制器、队列和脚本不进入新产物。",
+        "evidence": [
+          "tests/contracts/core/",
+          "tests/contracts/host/",
+          "docs/alignment/p1-verification.json"
+        ]
+      }
     },
     {
       "id": "file:scripts/initialize-omlx-profile.ts",
@@ -1438,7 +1784,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:tsconfig.base.json",
@@ -1449,7 +1800,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:tsconfig.build.json",
@@ -1460,7 +1816,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:tsconfig.client.json",
@@ -1472,7 +1833,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:tsconfig.host.json",
@@ -1483,7 +1849,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "removed",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     },
     {
       "id": "file:tsconfig.json",
@@ -1495,7 +1866,12 @@
       "disposition": "rewrite",
       "phase": "P7",
       "section": "客户端注册与打包",
-      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。"
+      "rationale": "按新 Core、运行服务、协议及双客户端的最终入口重建类型检查与声明产物范围；删除旧 Remote/Controller 导出和已删除源码的编译引用。工程检查能力保留，不保留旧目录及生成器配置约束。",
+      "resolution": {
+        "phase": "P1",
+        "state": "replaced-for-active-modules",
+        "decision": "构建和类型检查仅覆盖当前已实现的 Core/Host 模块；P4/P5/P6 接入后扩展，P7 验证完整安装产物。"
+      }
     }
   ],
   "hostExtensions": [
@@ -1506,7 +1882,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1515,7 +1897,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1524,7 +1912,13 @@
       "phase": "P1",
       "disposition": "evaluate",
       "section": "实例创建与工具绑定",
-      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。"
+      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1533,7 +1927,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1542,7 +1942,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1551,7 +1957,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1560,7 +1972,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1569,7 +1987,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1578,7 +2002,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1587,7 +2017,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1596,7 +2032,13 @@
       "phase": "P1",
       "disposition": "evaluate",
       "section": "实例创建与工具绑定",
-      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P1 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。执行实例仍由稳定宿主 Context 与 HostAdaptor 管理；P6 再验证只读观察及分类，旧 legacy 会话分类/自动重绑不作为需求。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-api-session-controller",
@@ -1605,7 +2047,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-chat",
@@ -1614,7 +2062,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-chat",
@@ -1623,7 +2077,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-conversation",
@@ -1632,7 +2092,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "会话内智能体页签",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-conversation",
@@ -1641,7 +2107,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-conversation",
@@ -1650,7 +2122,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "会话内智能体页签",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-conversation",
@@ -1659,7 +2137,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "会话内智能体页签",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。声明与编解码只能随已确认必要的实现子集一同采用，不能独立形成保留理由。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     },
     {
       "package": "@deepseek-ai/dsh-client-ui-renderer",
@@ -1668,7 +2152,13 @@
       "phase": "P6",
       "disposition": "evaluate",
       "section": "成员原生会话观察",
-      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。只有跨会话嵌入原生阅读器确实误报递归时才需要该最小内部修正，不以复用阅读器为由保留整包宿主扩展。"
+      "rationale": "P6 核对实际依赖 rc.2 的公开能力并以目标行为复现；仅缺少本项设计必需能力时采用最小改动，否则删除。本清单记录能力，不以修改后哈希或旧测试通过证明补丁必要。只有跨会话嵌入原生阅读器确实误报递归时才需要该最小内部修正，不以复用阅读器为由保留整包宿主扩展。",
+      "resolution": {
+        "phase": "P1",
+        "state": "old-patch-not-adopted",
+        "decision": "已移除旧文件补丁。P1 创建、作用域工具、输入、事件和关闭使用原生公开 API；原生观察、导航及 API 所有权保护在 P6 按独立缺口重建。",
+        "followupPhase": "P6"
+      }
     }
   ]
 }

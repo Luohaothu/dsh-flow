@@ -1,14 +1,9 @@
 # dsh-flow
 
-本页描述现有包的使用入口；目标架构与接口约定见[设计文档](../../docs/design/design.md)。
+Flow 按[设计文档](../../docs/design/design.md)分阶段重建。当前包提供 `Agent`、`Context`、`Mailbox`、`Group` 和 DSH 宿主适配器；团队、作业、模板、入口工具与界面在后续阶段接入。
 
-为 DeepSeek Harness 标准 Agent 提供任务委派、结果交付、接受记录和成员消息。DSH 负责 Agent 的完整执行，包括原生 preset、业务工具、模型、压缩、sandbox、审批和会话历史。
+`dsh-flow` 和 `dsh-flow/core` 导出编排对象及合同类型，`dsh-flow/host` 导出 DSH 适配器与执行容量。当前构建产物用于基础模块验证，完整插件入口和安装验收在后续阶段完成。
 
-使用 `/agent-team` 创建协作空间，主会话承担协调者角色。通过 `flow_task.profile` 按需声明成员名称、角色、职责、原生 preset、模型和 skills；协调者和执行者均由标准 DSH Agent 实现。界面可查看任务和原生会话、发送输入及取消当前活动。
+在工作区根目录运行 `pnpm typecheck`、`pnpm test` 和 `pnpm build`，分别检查类型、Core/真实 DSH runtime 合同及模块产物。宿主测试使用实际 rc.2 服务和确定性模型适配器，不访问外部模型服务。
 
-插件级配置为 `dataDir`、`workspace`、`preset` 和 `maxConcurrentAgents`。默认容量为 4；模型和工具从宿主配置取得。升级到新的数据契约时使用新数据目录，旧数据库会被明确拒绝并保留。
-
-- [使用文档](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/index.md)
-- [职责与术语](https://github.com/Luohaothu/dsh-flow/blob/main/GLOSSARY.md)
-- [当前方案](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/design.md)
-- [验证方法](https://github.com/Luohaothu/dsh-flow/blob/main/docs/design/validation.md)
+阶段记录及验证范围见[实施记录](../../docs/alignment/README.md)。

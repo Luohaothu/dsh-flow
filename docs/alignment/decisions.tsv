@@ -5,3 +5,7 @@ ts	phase	decision	why	evidence	result
 2026-10-27T14:06:38.723584+00:00	P0	固定基线合同及场景ID并增加清单缺失的负向测试	独立评审证明空合同数组仍可通过原校验，覆盖检查必须拒绝合同或场景丢失	scripts/verify-alignment.py;tests/alignment/test_verifier.py	5项校验器测试通过，归档和清单再次通过
 2026-10-27T14:13:01.319255+00:00	P0	固定外部Action版本并核验阶段依赖与合并证据	采纳自动评审的最小CI固定版本修正；阶段推进须符合用户逐PR合并的要求	 .github/workflows/alignment.yml;scripts/verify-alignment.py;tests/alignment/test_verifier.py	7项校验器测试通过；历史P0回执与当前清单分别说明
 2026-10-27T14:15:56.610747+00:00	P0	将阶段负向测试改为自足夹具并增加合法推进正向用例	复评证明依赖实时阶段状态的测试会在P0合并后错误失败，测试输入必须显式构成所需状态	tests/alignment/test_verifier.py	8项测试通过，合法阶段推进可通过
+2026-10-27T14:18:52.703102+00:00	P1	P0通过精确提交独立评审与CI后合并，开始P1	用户要求每阶段以PR评审合并后再推进下一阶段	https://github.com/Luohaothu/dsh-flow/pull/7;8ae85a2dcae0ee1aa1e198918acc1291fb3fca3d	P0 merged；P1进行中
+2026-10-27T14:32:41.799145+00:00	P1	采用对象自有状态和适配器唯一关闭记录，移植初始化联合类型及辅助用量失败协议	两个候选及独立裁决一致选择职责就近的形状，避免复活总控制器和第二套宿主关闭状态	docs/design/design.md;docs/alignment/contracts.json	架构明确，开始Core与Host实现及独立合同测试
+2026-10-27T15:18:18.159865+00:00	P1	删除旧 Core、全部旧补丁及自有 Typert 包，当前只构建 Core/Host；按设计新建合同测试	原生公开 API 已满足基础实例/工具/输入/关闭能力，P5/P6 从目标缺口重建；不以旧产品入口可运行约束重写	docs/alignment/components.json;package.json;pnpm-workspace.yaml;README.md	P1 模块入口与 CI 已接入；运行时审计修复后进入整体验证
+2026-10-27T15:30:09.880741+00:00	P1	基础层五项独立审计问题修复，并补齐六个场景的实际边界断言	清理成功、逻辑终止优先、冷恢复配置与宿主字段校验必须按设计完成；已有测试通过不能代替这些交错证据	docs/alignment/p1-verification.json;tests/contracts/;https://github.com/Luohaothu/dsh-flow/issues/8	117项新合同测试、8项清单测试、类型、模块与文档构建及ESM加载通过；进入精确提交PR评审

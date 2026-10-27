@@ -55,3 +55,11 @@ python3 scripts/verify-alignment.py --archive /absolute/path/pre-p0-worktree.tar
 ```
 
 PR 的评审记录对应确定的提交。产生新提交后重新评审受影响内容，合并时再次核对远程头提交、检查结果和评审结论。合并完成以远程 PR 状态确认。
+
+## P1 验证范围
+
+[P1 验证记录](p1-verification.json)对应 C001–C035 的 Core 与 DSH 基础合同。新测试共 117 项：Core 77 项，真实 Host runtime 34 项顶层测试及 6 项子测试；另有 8 项清单校验器测试。真实 Host 测试使用未打补丁的 rc.2 服务、AgentLoop、ToolRuntime 和 JSONL，模型输出由确定性适配器提供。
+
+当前构建导出 Core/Host ESM 模块和声明文件。完整插件入口、团队与作业服务、协议、界面及安装验收随 P2–P7 接入。原生观察和 API 所有权保护在 P6 按宿主缺口实现。总结格式与请求约束已检验，真实模型的语义保留效果在 P7 验证。管理工具拒绝使用实际 ToolRuntime 的同名动作探针，未修改真实插件配置；120 秒与 10 秒默认值经静态核验，状态转换使用短时限运行测试。
+
+基础层审计曾发现工厂回滚释放屏障、观察回调重入终止、过滤后错误入箱、冷恢复配置漂移及未知宿主字段五项问题，均已补回归并修复。后续阶段与 PR 进度在[跟踪 Issue](https://github.com/Luohaothu/dsh-flow/issues/8)记录。
