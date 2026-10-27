@@ -1,6 +1,6 @@
 {
   "phase": "P2",
-  "recordedAt": "2026-10-27T17:52:56.304482+00:00",
+  "recordedAt": "2026-10-27T18:08:31.852855+00:00",
   "baseCommit": "0a0db4e795da5c89f8270f528dcb8da1c9f8c789",
   "trackingIssue": "https://github.com/Luohaothu/dsh-flow/issues/8",
   "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
@@ -26,9 +26,9 @@
     {
       "command": "pnpm test",
       "result": "PASS",
-      "tests": 318,
+      "tests": 402,
       "predecessorTests": 119,
-      "runTests": 107,
+      "runTests": 191,
       "assignmentAndSchemaTests": 92,
       "failed": 0,
       "skipped": 0
@@ -84,9 +84,10 @@
     "Schema field names and object const/enum values do not invoke prototype methods or inherit properties.",
     "Annotation meta typing, initialization save failure status and notification outcomes were checked against new contracts.",
     "Archive scans isolate unrelated unreadable records, preserve damaged bytes, and report unavailable rather than not-found when absence cannot be established.",
-    "Current archive decoding validates required AssignmentSnapshot DTO structure and owned submitted result; malformed records cannot become resumes sources while null/false/zero remain valid."
+    "Current archive decoding validates required AssignmentSnapshot DTO structure and owned submitted result; malformed records cannot become resumes sources while null/false/zero remain valid.",
+    "RunRecord and nested defaults, origin, receipt and idempotency table fields share one complete read/write type predicate; invalid persisted input is never asserted to the complete type."
   ],
-  "reviewStatus": "Archive DTO red-green fix passes 318 contracts and awaits updated-head review.",
+  "reviewStatus": "Complete RunRecord boundary red-green fix passes 402 contracts and awaits updated-head independent review.",
   "commentReview": {
     "retained": 1,
     "deleted": 0,

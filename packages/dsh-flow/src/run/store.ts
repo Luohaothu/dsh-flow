@@ -3,7 +3,7 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, r
 import { join } from 'node:path';
 import type { AssignmentArchiveReadResult, AssignmentSnapshot } from '../assignments/types.js';
 import { assertJson } from '../assignments/schema.js';
-import type { RunRecord } from './types.js';
+import type { RunDefaults, RunRecord } from './types.js';
 
 const runIdPattern = /^[a-zA-Z0-9_-]+$/;
 const recordVersion = 1;
@@ -44,6 +44,29 @@ function isAssignment(value: unknown, id: string, runId: string): value is Assig
     && hasStrings(value, ['schemaDialect', 'schemaDigest']) && isChildren(value.continuingChildren)
     && (value.status !== 'submitted' || Object.hasOwn(value, 'result')) && optional(value, 'reason', isString);
 }
+function isNumber(value: unknown): value is number { return typeof value === 'number'; }
+function isRunDefaults(value: unknown): value is RunDefaults {
+  return isObject(value)
+    && optional(value, 'model', model => isObject(model) && hasStrings(model, ['provider', 'id']))
+    && optional(value, 'params', params => isObject(params) && params.version === 1
+      && optional(params, 'temperature', isNumber) && optional(params, 'reasoningEffort', isString) && optional(params, 'maxTokens', isNumber))
+    && optional(value, 'permission', permission => typeof permission === 'string' && ['read-only', 'workspace-write', 'full-access'].includes(permission))
+    && optional(value, 'hostExtras', isObject) && optional(value, 'preset', isString)
+    && optional(value, 'skills', skills => Array.isArray(skills) && skills.every(isString));
+}
+function isRunRecord(value: unknown, runId: string): value is RunRecord {
+  return isObject(value) && typeof value.id === 'string' && runIdPattern.test(value.id) && value.id === runId && value.runId === runId
+    && typeof value.epoch === 'string' && typeof value.revision === 'number'
+    && typeof value.status === 'string' && ['starting', 'active', 'stopping', 'stopped', 'failed'].includes(value.status)
+    && isObject(value.origin) && hasStrings(value.origin, ['backend', 'callerSessionId'])
+    && isRunDefaults(value.defaults) && isRunDefaults(value.overrides)
+    && optional(value, 'rootSessionID', isString) && optional(value, 'error', isString)
+    && typeof value.cleanup === 'string' && ['pending', 'complete', 'failed'].includes(value.cleanup)
+    && isObject(value.assignments) && Object.entries(value.assignments).every(([id, assignment]) => isAssignment(assignment, id, runId))
+    && isObject(value.prepareKeys) && Object.values(value.prepareKeys).every(entry => isObject(entry) && hasStrings(entry, ['digest', 'assignmentId']))
+    && isObject(value.receipts) && Object.values(value.receipts).every(entry => isObject(entry) && typeof entry.digest === 'string' && isReceipt(entry.receipt))
+    && hasStrings(value, ['createRequestId', 'createDigest']);
+}
 
 export type StoreStage = 'write' | 'file-sync' | 'rename' | 'directory-sync';
 export class RunStore {
@@ -57,6 +80,7 @@ export class RunStore {
     try {
       const persisted: PersistedRunRecord = { format: 'dsh-flow-run', version: recordVersion, record };
       assertJson(persisted);
+      if (!isRunRecord(record, record.id)) throw new TypeError('Invalid persisted run record');
       const payload = JSON.stringify(persisted);
       this.options.fault?.('write', record.id);
       file = openSync(temporary, 'wx', 0o600);
@@ -86,11 +110,8 @@ export class RunStore {
       assertJson(persisted);
       if (!isObject(persisted) || persisted.format !== 'dsh-flow-run' || persisted.version !== recordVersion) throw new TypeError('Invalid persisted run record format or version');
       const record = persisted.record;
-      if (!isObject(record) || record.id !== runId || record.runId !== runId || typeof record.epoch !== 'string' || !isObject(record.assignments)) throw new TypeError('Invalid persisted run record');
-      for (const [id, assignment] of Object.entries(record.assignments)) {
-        if (!isAssignment(assignment, id, runId)) throw new TypeError('Invalid persisted run record');
-      }
-      return record as unknown as RunRecord;
+      if (!isRunRecord(record, runId)) throw new TypeError('Invalid persisted run record');
+      return record;
     } catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null; throw error; }
   }
   records(): RunRecord[] {

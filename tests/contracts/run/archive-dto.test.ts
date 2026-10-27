@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { JsonValue } from '../../../packages/dsh-flow/src/assignments/types.js';
+import { RunStore } from '../../../packages/dsh-flow/src/run/store.js';
 import { runFixture } from '../../helpers/contract-run.js';
 
 type JsonRecord = { [key: string]: any };
@@ -136,4 +137,99 @@ test('C046-02 damaged assignment DTOs do not hide a valid archive in another run
   assert.throws(() => f.store.records(), AggregateError);
   assert.equal((await f.service.assign(f.origin(), valid, f.spec({ resumesAssignmentId: saved.id }), 'resume')).status, 'pending');
   assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+const runFields: [path: string, invalid: JsonValue, required: boolean][] = [
+  ['id', 1, true], ['runId', 1, true], ['epoch', 1, true], ['revision', '1', true], ['status', 'unknown', true],
+  ['origin', null, true], ['origin.backend', 1, true], ['origin.callerSessionId', 1, true],
+  ['defaults', [], true], ['overrides', [], true], ['cleanup', 'unknown', true],
+  ['rootSessionID', false, false], ['error', false, false],
+  ['assignments', [], true], ['prepareKeys', [], true], ['receipts', [], true],
+  ['createRequestId', false, true], ['createDigest', false, true],
+  ['prepareKeys.$entry', null, false], ['prepareKeys.$entry.digest', 1, true], ['prepareKeys.$entry.assignmentId', 1, true],
+  ['receipts.$entry', null, false], ['receipts.$entry.digest', 1, true], ['receipts.$entry.receipt', null, true],
+  ['receipts.$entry.receipt.kind', 'unknown', true], ['receipts.$entry.receipt.assignmentId', 1, true],
+  ['receipts.$entry.receipt.status', 'unknown', true], ['receipts.$entry.receipt.missingChildren', [1], false],
+  ['receipts.$entry.receipt.errors', [{ path: '', message: 1 }], false],
+  ...['defaults', 'overrides'].flatMap(prefix => [
+    [`${prefix}.model`, [], false], [`${prefix}.model.provider`, 1, true], [`${prefix}.model.id`, 1, true],
+    [`${prefix}.params`, [], false], [`${prefix}.params.version`, 2, true],
+    [`${prefix}.params.temperature`, 'warm', false], [`${prefix}.params.reasoningEffort`, 1, false], [`${prefix}.params.maxTokens`, 'many', false],
+    [`${prefix}.permission`, 'administrator', false], [`${prefix}.hostExtras`, [], false],
+    [`${prefix}.preset`, false, false], [`${prefix}.skills`, [1], false],
+  ] satisfies [string, JsonValue, boolean][]),
+];
+const runCorruptions: [string, (record: JsonRecord) => void][] = runFields.flatMap(([path, invalid, required]) => {
+  const patch = (record: JsonRecord, remove: boolean) => {
+    const parts = path.split('.');
+    let parent = record;
+    for (const key of parts.slice(0, -1)) parent = parent[key === '$entry' ? Object.keys(parent)[0]! : key];
+    const leaf = parts.at(-1)!;
+    const key = leaf === '$entry' ? Object.keys(parent)[0]! : leaf;
+    if (remove) delete parent[key];
+    else parent[key] = invalid;
+  };
+  return [
+    ...(required ? [[`missing ${path}`, (record: JsonRecord) => patch(record, true)] as [string, (record: JsonRecord) => void]] : []),
+    [`invalid ${path}`, (record: JsonRecord) => patch(record, false)] as [string, (record: JsonRecord) => void],
+  ];
+});
+const completeDefaults = {
+  model: { provider: 'contract-provider', id: 'contract-model' },
+  params: { version: 1 as const, temperature: 0.3, reasoningEffort: 'custom-effort', maxTokens: 500 },
+  permission: 'workspace-write' as const, hostExtras: { custom: { value: null } }, preset: 'contract-preset', skills: ['contract-skill'],
+};
+
+for (const [name, corrupt] of runCorruptions) {
+  test(`C038-02 persisted RunRecord rejects ${name} without changing archive bytes`, async t => {
+    const f = await runFixture(t);
+    const run = await f.createActive(completeDefaults);
+    const saved = await f.service.assign(f.origin(), run, f.spec(), 'saved');
+    await f.submit(run, f.binding(run).root, run.assignments!.resolve(saved.id), { answer: 'saved' });
+    const path = join(f.directory, `${run.id}.json`);
+    const persisted = JSON.parse(await readFile(path, 'utf8'));
+    corrupt(persisted.record);
+    const bytes = JSON.stringify(persisted);
+    await writeFile(path, bytes);
+
+    assert.throws(() => f.store.read(run.id), /invalid persisted run record/i);
+    assert.throws(() => f.service.readArchive(saved.id), AggregateError);
+    assert.throws(() => f.store.records(), AggregateError);
+    const successor = await f.createActive();
+    await assert.rejects(f.service.assign(f.origin(), successor, f.spec({ resumesAssignmentId: saved.id }), 'resume'), AggregateError);
+    assert.equal(await readFile(path, 'utf8'), bytes);
+  });
+}
+
+test('C038-02 Store writes reject every unreadable RunRecord shape before replacing saved bytes', async t => {
+  const f = await runFixture(t);
+  const run = await f.createActive(completeDefaults);
+  const saved = await f.service.assign(f.origin(), run, f.spec(), 'saved');
+  await f.submit(run, f.binding(run).root, run.assignments!.resolve(saved.id), { answer: 'saved' });
+  const path = join(f.directory, `${run.id}.json`);
+  const bytes = await readFile(path, 'utf8');
+
+  for (const [name, corrupt] of [...runCorruptions, ...corruptions.map(([name, corrupt]) => [name, (record: JsonRecord) => corrupt(record, saved.id)] as [string, (record: JsonRecord) => void])]) {
+    const record = JSON.parse(bytes).record;
+    corrupt(record);
+    const writer = new RunStore(f.directory);
+    assert.throws(() => writer.write(record), /Run storage failed/, name);
+    assert.equal(await readFile(path, 'utf8'), bytes, name);
+  }
+});
+
+test('C038-02 RunRecord accepts empty defaults and preserves unknown JSON fields without replaying historical rules', async t => {
+  const f = await runFixture(t);
+  const run = await f.createActive();
+  const original = f.store.read(run.id)!;
+  const variants = [
+    { ...original, defaults: {}, overrides: {} },
+    { ...original, defaults: { ...completeDefaults, params: { version: 1 as const } }, overrides: {} },
+    { ...original, error: '', defaults: { ...completeDefaults, extra: { allowed: true }, model: { provider: 'any-provider', id: '', extra: false }, params: { version: 1 as const, temperature: -1, reasoningEffort: '', maxTokens: 0.5, extra: null } }, extra: [null, false, 0] },
+  ];
+
+  for (const record of variants) {
+    f.store.write(record);
+    assert.deepEqual(f.store.read(run.id), record);
+  }
 });
