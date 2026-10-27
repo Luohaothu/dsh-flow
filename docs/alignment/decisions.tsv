@@ -4,3 +4,4 @@ ts	phase	decision	why	evidence	result
 2026-10-27T14:02:26.297163+00:00	P0	采纳合同清单最终复读增加的4个场景，场景总数改为234	清单交付后最终复核补齐边界场景；先前230为暂存版本	docs/alignment/contracts.json;docs/alignment/p0-verification.json	进入独立提交评审
 2026-10-27T14:06:38.723584+00:00	P0	固定基线合同及场景ID并增加清单缺失的负向测试	独立评审证明空合同数组仍可通过原校验，覆盖检查必须拒绝合同或场景丢失	scripts/verify-alignment.py;tests/alignment/test_verifier.py	5项校验器测试通过，归档和清单再次通过
 2026-10-27T14:13:01.319255+00:00	P0	固定外部Action版本并核验阶段依赖与合并证据	采纳自动评审的最小CI固定版本修正；阶段推进须符合用户逐PR合并的要求	 .github/workflows/alignment.yml;scripts/verify-alignment.py;tests/alignment/test_verifier.py	7项校验器测试通过；历史P0回执与当前清单分别说明
+2026-10-27T14:15:56.610747+00:00	P0	将阶段负向测试改为自足夹具并增加合法推进正向用例	复评证明依赖实时阶段状态的测试会在P0合并后错误失败，测试输入必须显式构成所需状态	tests/alignment/test_verifier.py	8项测试通过，合法阶段推进可通过

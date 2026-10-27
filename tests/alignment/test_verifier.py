@@ -41,14 +41,23 @@ class InventoryVerification(unittest.TestCase):
         self.assertNotEqual(self.verify(lambda data: data['contracts'][0]['scenarios'][0].update(expectation=' ')).returncode, 0)
 
     def test_phase_cannot_start_before_dependency_merges(self):
-        result = self.verify(lambda data: data['phases'][1].update(status='in-progress'), 'phases.json')
+        result = self.verify(lambda data: (data['phases'][0].update(status='in-progress'), data['phases'][1].update(status='in-progress')), 'phases.json')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('starts before its dependency is merged', result.stdout)
 
     def test_merged_phase_requires_review_and_merge_evidence(self):
-        result = self.verify(lambda data: data['phases'][0].update(status='merged'), 'phases.json')
+        result = self.verify(lambda data: data['phases'][0].update(status='merged', pullRequest=None, review=None, mergeCommit=None), 'phases.json')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('without review and merge evidence', result.stdout)
+
+    def test_legal_phase_progression_passes(self):
+        def advance(data):
+            for row in data['phases']:
+                row['status'] = 'pending'
+            data['phases'][0].update(status='merged', pullRequest='https://github.com/example/repo/pull/1', review={'verdict': 'PASS'}, mergeCommit='a' * 40)
+            data['phases'][1]['status'] = 'in-progress'
+
+        self.assertEqual(self.verify(advance, 'phases.json').returncode, 0)
 
 
 if __name__ == '__main__':

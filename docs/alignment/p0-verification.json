@@ -9,6 +9,6 @@
   "typecheck": "passed on main-based P0 worktree",
   "docsBuild": "passed; existing large-chunk warning",
   "productTests": "not run for inventory-only P0; old behavior does not constrain reconstruction",
-  "inventoryNegativeTests": "7 passed; missing design records and invalid phase progression rejected",
+  "inventoryNegativeTests": "8 passed; corruption cases are independent of the live phase ledger; legal phase progression accepted",
   "recordScope": "Historical P0 execution receipt; live inventory may grow after P0. Archive verification was performed locally, not asserted by archive-free CI."
 }
