@@ -1,3 +1,4 @@
 ts	phase	decision	why	evidence	result
 2026-10-27T13:56:19.444096+00:00	P0	实施从主干独立工作区开始，保留本地未提交实现的恢复归档	用户要求按设计重写及逐阶段评审合并，不能把现有实现作为保留约束	docs/alignment/baseline.json;docs/alignment/README.md	恢复归档逐文件校验通过
 2026-10-27T14:01:20.537308+00:00	P0	登记85项设计合同和230个场景、134个组件、79个旧测试及夹具	阶段实施必须逐项对应设计，删除旧行为测试而不继承旧预期	docs/alignment/contracts.json;docs/alignment/components.json;docs/alignment/tests.json;docs/alignment/p0-verification.json	清单覆盖与归档恢复检查通过，类型和文档构建通过
+2026-10-27T14:02:26.297163+00:00	P0	采纳合同清单最终复读增加的4个场景，场景总数改为234	清单交付后最终复核补齐边界场景；先前230为暂存版本	docs/alignment/contracts.json;docs/alignment/p0-verification.json	进入独立提交评审

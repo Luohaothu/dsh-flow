@@ -644,6 +644,11 @@
           "id": "C029-04",
           "expectation": "subscribe 不重放历史，按原生顺序交付同一 HostAgent 的 status/output/turn-end/error，监听异常不改执行结果，释放自动退订，日志边界用 SessionID 替代引用。",
           "level": "contract"
+        },
+        {
+          "id": "C029-05",
+          "expectation": "事件包含同一 agent、timestamp、type；status 为 idle/running，output 仅已完成文本，turn-end reason 为 completed/cancelled/failed，error 有 message；send 不主动读取 Mailbox，subscribe 无历史重放。",
+          "level": "contract"
         }
       ]
     },
@@ -1153,7 +1158,7 @@
       "scenarios": [
         {
           "id": "C053-01",
-          "expectation": "实际注册 flow_team_create/teams/team_get/team_assign/team_assignment_read/team_assignment_cancel/team_release，和 pattern、assign/read/list/submit/cancel、材料工具；不由模型传 sender/root 冒充。",
+          "expectation": "实际注册 flow_team_create、flow_teams、flow_team_get、flow_team_assign、flow_team_assignment_read、flow_team_assignment_cancel、flow_team_release，以及 flow_patterns、flow_pattern_define、flow_pattern_apply、flow_assign、flow_assignment_read、flow_assignments、flow_submit、flow_assignment_cancel、flow_material_read；模板根与发送方来自绑定调用者。",
           "level": "integration"
         },
         {
@@ -1164,6 +1169,11 @@
         {
           "id": "C053-03",
           "expectation": "origin.callerSessionId 来自真实执行上下文，submissionId/sourceMessageId 关联原生提交与来源消息，同次提交可复用运行身份及定位材料。",
+          "level": "integration"
+        },
+        {
+          "id": "C053-04",
+          "expectation": "flow_team_read 通过 Agent、Context、Group 查询汇总当前成员关系及群信息；消息 ID 仅从当前调用者 Mailbox 解析，不由历史编号解析其他实例。",
           "level": "integration"
         }
       ]
@@ -1256,6 +1266,16 @@
           "id": "C057-03",
           "expectation": "统计含所有展开、折叠、已终止实例的数量、running/waiting、总 token 与次要金额，数字等宽，图标悬停/聚焦/无障碍说明齐全。",
           "level": "ui"
+        },
+        {
+          "id": "C057-04",
+          "expectation": "视口提供缩小、当前比例、放大、适应视口、展开全部，图标有完整操作名称，空白区平移、滚动和触控浏览；运行状态 starting/active/stopping/stopped/failed 分别显示创建中/活跃/解散中/已解散/失败。",
+          "level": "ui"
+        },
+        {
+          "id": "C057-05",
+          "expectation": "每个宿主提供独立 Web 面板，声明 GUI 扩展能力的宿主另提供原生面板，两者共用本机协议、展示数据、组件、事件顺序和交互规则。",
+          "level": "ui"
         }
       ]
     },
@@ -1307,7 +1327,7 @@
         },
         {
           "id": "C059-04",
-          "expectation": "底部次行由事件时间或折叠入口触发，高20px上距6px；事件时间带时钟；徽标移模型行时行高18px，静态图与动效共用同尺寸比例。",
+          "expectation": "底部次行由事件时间或折叠入口触发，高20px上距6px；事件时间以历史时钟搭配10:25:14形式呈现；徽标移模型行时行高18px，静态图与动效共用同尺寸比例。",
           "level": "ui"
         }
       ]
@@ -1408,7 +1428,7 @@
         },
         {
           "id": "C063-04",
-          "expectation": "新消息到顶部，阅读旧消息时保持位置并提示查看N条新消息，空态暂无收到的消息；浅/深未读与已读三组底色逐项使用本节色表。",
+          "expectation": "新消息到顶部，阅读旧消息时保持位置并提示查看N条新消息，空态暂无收到的消息；high/normal/low浅色未读依次#fff0f0/#eef9f0/#eef5ff，浅已读#f3eeee/#eef2ef/#eef0f3，深未读#3a2528/#22372a/#233248，深已读#2d292b/#282e2a/#292d33。",
           "level": "ui"
         }
       ]
@@ -1528,7 +1548,7 @@
         },
         {
           "id": "C068-03",
-          "expectation": "黑板活动开始显示卡右上外28px浅黄圆气泡及正在写入群GroupID黑板标签，200ms进入/写时呼吸/180ms退出，结束更新黑板；写入结束或终止清活动。",
+          "expectation": "黑板活动开始显示卡右上外28px浅黄圆气泡及正在写入群GroupID黑板标签，黑板Emoji含绿板、木框、白色粉笔；200ms进入/写时呼吸/180ms退出，避开标题徽标，结束更新黑板；写入结束或终止清活动。",
           "level": "ui"
         },
         {
@@ -1863,7 +1883,7 @@
         },
         {
           "id": "C083-02",
-          "expectation": "单个生产浏览器脚本含样式；external仅设计列出的react/react-jsx-runtime/react-dom/client等React项与cordis、dsh-client-store/ui-slots/ui-primitives/ui-dockkit；zod和react-virtual等其余运行依赖随包。",
+          "expectation": "生产单浏览器脚本含样式；共享 external 为 react、react/jsx-runtime、react-dom、react-dom/client、@deepseek-ai/cordis、@deepseek-ai/dsh-client-store、@deepseek-ai/dsh-client-ui-slots、@deepseek-ai/dsh-client-ui-primitives、@deepseek-ai/dsh-client-ui-dockkit，其余运行依赖随包，包含 zod 与 @tanstack/react-virtual。",
           "level": "integration"
         },
         {
@@ -1882,7 +1902,7 @@
       "scenarios": [
         {
           "id": "C084-01",
-          "expectation": "新空状态安装启动后，14模板、team-strategy和/agent-team可用，原生注册入口及独立Web资源加载，必要适配具可恢复安装和重复执行结果。",
+          "expectation": "新空状态安装启动后，14模板、team-strategy和/agent-team可用，原生注册入口及独立Web资源加载；若采用设计所需的宿主适配，验证干净安装、重复执行及实际能力。",
           "level": "acceptance"
         },
         {
