@@ -64,12 +64,12 @@ test('C041-01 prepare request keys are scoped by the actual sender', async t => 
 test('C041-01 C041-02 materials finish validation before save and complete trusted delivery bypasses recipient filters once', async t => {
   const validation = deferred();
   const observed: unknown[] = [];
-  const { f, run, root, host, assignments, top } = await setup(t, { validateMaterials: async (recipient, refs) => { observed.push({ recipient, refs }); await validation.promise; } });
+  const { f, run, root, host, assignments, top } = await setup(t, { validateMaterials: async (request) => { observed.push(request); await validation.promise; } });
   const child = await f.child(run);
   const spec = f.spec({ materials: [{ id: 'material', sourceId: 'source', digest: 'sha256:input', location: '/input/report', mediaType: 'text/plain' }] });
   const preparing = assignments.prepare({ sender: root, recipient: child, parentAssignment: top, spec }, 'material');
   await flush();
-  assert.deepEqual(observed, [{ recipient: child, refs: spec.materials }]);
+  assert.deepEqual(observed, [{ sender: root, recipient: child, parentAssignment: top, materials: spec.materials }]);
   assert.equal(assignments.list(root).length, 1);
   assert.equal(host.sent.length, 0);
   validation.resolve();

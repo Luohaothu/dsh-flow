@@ -1,3 +1,4 @@
+/** Frozen legacy UI/protocol DTOs. Not imported or exported by the P4 plugin; removed with P5/P6. */
 /** Collaboration facts. Native execution, permissions and tools belong to DSH. */
 export type FlowJsonValue = string | number | boolean | null | FlowJsonValue[] | { [key: string]: FlowJsonValue };
 export interface FlowModelSelection { provider?: string; model?: string; reasoningEffort?: string }

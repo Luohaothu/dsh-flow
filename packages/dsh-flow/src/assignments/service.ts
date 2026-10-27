@@ -53,7 +53,7 @@ export class AssignmentService {
     if (spec.materials?.length) {
       const validator = this.state.dependencies.validateMaterials;
       if (!validator) throw new Error('Material validation and model presentation capability are unavailable');
-      await validator(request.recipient, structuredClone(spec.materials));
+      await validator({ sender: request.sender, recipient: request.recipient, parentAssignment: request.parentAssignment, materials: structuredClone(spec.materials) });
     }
     let created: Assignment | undefined;
     this.state.commit(draft => {
@@ -114,7 +114,7 @@ export class AssignmentService {
     if ('parentAssignment' in query) parent = query.parentAssignment === null ? null : this.binding(query.parentAssignment!).handle.id;
     return Object.values(this.state.record.assignments).filter(record => (parent === undefined || record.parentAssignmentId === parent) && (query.status === undefined || record.status === query.status)).map(record => structuredClone(record));
   }
-  readArchive(id: AssignmentID): AssignmentArchiveReadResult { return this.state.dependencies.store.readArchive(id, this.state.record.epoch); }
+  readArchive(id: AssignmentID): AssignmentArchiveReadResult { return this.state.dependencies.store.readArchive(id, this.state.record.epoch, this.state.record.origin); }
   async submit(caller: Agent, assignment: Assignment, submission: AssignmentSubmission): Promise<SubmissionReceipt> {
     this.assertCaller(caller);
     const binding = this.binding(assignment);

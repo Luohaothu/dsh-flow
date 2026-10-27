@@ -11,6 +11,13 @@ const sourceSchema: JsonSchemaNode = { type: 'object', properties: { kind: { typ
 const querySchema: JsonSchemaNode = { type: 'object', properties: { source: sourceSchema, after: number, before: number,
   read: { type: 'boolean' }, summaryIncludes: string, priority: { type: 'string', enum: ['high', 'normal', 'low'] } }, additionalProperties: false };
 const schema = (properties: Record<string, JsonSchemaNode>, required: string[] = []): JsonSchemaNode => ({ type: 'object', properties, required, additionalProperties: false });
+/** A failed installer unwinds only the exact registrations it owns. */
+export function rollbackTools(disposers: (() => void)[], error: unknown): never {
+  const failures: unknown[] = [error];
+  for (const dispose of disposers.splice(0).reverse()) try { dispose(); } catch (cleanup) { failures.push(cleanup); }
+  if (failures.length > 1) throw new AggregateError(failures, 'Tool installation and rollback failed');
+  throw error;
+}
 export function registerJsonTool(host: DshContext, name: string, description: string, parameters: JsonSchemaNode,
   run: (args: Record<string, unknown>, execution: ToolRunContext) => unknown | Promise<unknown>): () => void {
   assertObjectJsonSchema(parameters);
@@ -69,43 +76,45 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
     disposers.push(registerJsonTool(host, name, description, parameters, (args, execution) => { assertCaller(execution); return run(args, execution); }));
   }
   const messageFields = { summary: string, payload: {} };
-  tool('flow_self', 'Read your profile, state and direct logical relations.', schema({}), () => info(caller));
-  tool('flow_agents', 'List active Agents in your Flow Context.', schema({}), () => context.list(value => value instanceof Agent).map(value => info(value as Agent)));
-  tool('flow_send', 'Send a message; the receiver chooses its priority.', schema({ sessionID: string, ...messageFields }, ['sessionID', 'summary', 'payload']), args => agent(args.sessionID).recvMessage(outgoing(args)));
-  tool('flow_wait', 'Register a mailbox condition and end this turn immediately, or return an existing match. timeout is milliseconds.',
-    schema({ query: querySchema, timeout: number }, ['timeout']), (args, execution) => {
-      const result = caller.wait(query(args.query), args.timeout as number);
-      if (result.kind === 'registered') { yieldCapacity(); execution.concludeTurn(); return result; }
-      return { kind: 'matched', message: serializeMeta(result.message) };
+  try {
+    tool('flow_self', 'Read your profile, state and direct logical relations.', schema({}), () => info(caller));
+    tool('flow_agents', 'List active Agents in your Flow Context.', schema({}), () => context.list(value => value instanceof Agent).map(value => info(value as Agent)));
+    tool('flow_send', 'Send a message; the receiver chooses its priority.', schema({ sessionID: string, ...messageFields }, ['sessionID', 'summary', 'payload']), args => agent(args.sessionID).recvMessage(outgoing(args)));
+    tool('flow_wait', 'Register a mailbox condition and end this turn immediately, or return an existing match. timeout is milliseconds.',
+      schema({ query: querySchema, timeout: number }, ['timeout']), (args, execution) => {
+        const result = caller.wait(query(args.query), args.timeout as number);
+        if (result.kind === 'registered') { yieldCapacity(); execution.concludeTurn(); return result; }
+        return { kind: 'matched', message: serializeMeta(result.message) };
+      });
+    tool('flow_mailbox', 'Query your own mailbox; get reads payloads, peak only reads metadata.', schema({ query: querySchema, mode: { type: 'string', enum: ['get', 'peak'] } }), args =>
+      args.mode === 'get' ? mailbox.query(query(args.query), 'get').map(serializeMessage) : mailbox.query(query(args.query), 'peak').map(serializeMeta));
+    tool('flow_read', 'Read your own message by ID.', schema({ messageID: string }, ['messageID']), args => { const value = mailbox.get(messageID(args.messageID as string)); return value ? serializeMessage(value) : null; });
+    tool('flow_peak', 'Read your own message metadata by ID.', schema({ messageID: string }, ['messageID']), args => { const value = mailbox.peak(messageID(args.messageID as string)); return value ? serializeMeta(value) : null; });
+    tool('flow_last_unread', 'Read the latest unread message.', schema({}), () => { const value = mailbox.getLastUnread(); return value ? serializeMessage(value) : null; });
+    tool('flow_unread', 'Read all unread messages.', schema({}), () => [...mailbox.getUnread()].map(serializeMessage));
+    tool('flow_count', 'Count matching messages.', schema({ query: querySchema }), args => ({ count: mailbox.count(query(args.query)) }));
+    tool('flow_set_filters', 'Replace future-message drop filters.', schema({ rules: { type: 'array', items: querySchema } }, ['rules']), args => {
+      const next = structuredClone(args.rules) as Record<string, unknown>[]; mailbox.setFilters(next.map(query)); filters = next;
     });
-  tool('flow_mailbox', 'Query your own mailbox; get reads payloads, peak only reads metadata.', schema({ query: querySchema, mode: { type: 'string', enum: ['get', 'peak'] } }), args =>
-    args.mode === 'get' ? mailbox.query(query(args.query), 'get').map(serializeMessage) : mailbox.query(query(args.query), 'peak').map(serializeMeta));
-  tool('flow_read', 'Read your own message by ID.', schema({ messageID: string }, ['messageID']), args => { const value = mailbox.get(messageID(args.messageID as string)); return value ? serializeMessage(value) : null; });
-  tool('flow_peak', 'Read your own message metadata by ID.', schema({ messageID: string }, ['messageID']), args => { const value = mailbox.peak(messageID(args.messageID as string)); return value ? serializeMeta(value) : null; });
-  tool('flow_last_unread', 'Read the latest unread message.', schema({}), () => { const value = mailbox.getLastUnread(); return value ? serializeMessage(value) : null; });
-  tool('flow_unread', 'Read all unread messages.', schema({}), () => [...mailbox.getUnread()].map(serializeMessage));
-  tool('flow_count', 'Count matching messages.', schema({ query: querySchema }), args => ({ count: mailbox.count(query(args.query)) }));
-  tool('flow_set_filters', 'Replace future-message drop filters.', schema({ rules: { type: 'array', items: querySchema } }, ['rules']), args => {
-    const next = structuredClone(args.rules) as Record<string, unknown>[]; mailbox.setFilters(next.map(query)); filters = next;
-  });
-  tool('flow_get_filters', 'Read filters installed through this tool.', schema({}), () => ({ rules: structuredClone(filters), totalCount: mailbox.getFilters().length }));
-  tool('flow_set_source_priority', 'Rate the priority of future messages from a source.', schema({ source: sourceSchema, priority: { type: 'string', enum: ['high', 'normal', 'low'] } }, ['source', 'priority']), args => mailbox.setSourcePriority(source(args.source), args.priority as 'high' | 'normal' | 'low'));
-  tool('flow_get_source_priority', 'Read your current rating for a source.', schema({ source: sourceSchema }, ['source']), args => ({ priority: mailbox.getSourcePriority(source(args.source)) }));
-  tool('flow_fork', 'Create your direct child from an independent history snapshot.', schema({}), async () => info(await caller.fork()));
-  tool('flow_herb', 'Summarize and merge two contexts into your direct child.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); return info(await caller.herb(agent(args.sessionID))); });
-  tool('flow_create', 'Create your direct child with an explicit profile and initial input.', schema({ profile: { type: 'object' }, ...messageFields, history: string }, ['profile', 'summary', 'payload']), async args => {
-    const profile = snapshotProfile({ ...(args.profile as AgentProfile), sessionID: newSessionID() });
-    return info(await Agent.create(context, profile, caller, outgoing(args), args.history as string | undefined));
-  });
-  tool('flow_resume', 'Cold-resume a persisted session as your direct child.', schema({ sessionID: string }, ['sessionID']), async args => info(await Agent.resume(context, caller, sessionID(args.sessionID as string))));
-  tool('flow_kill', 'Release your direct child after its current turn.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); await caller.kill(agent(args.sessionID)); });
-  tool('flow_signal', 'Signal your lifecycle: SIGTERM lets this turn finish, SIGKILL cancels it.', schema({ signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL'] } }, ['signal']), args => { void caller.recvSignal(args.signal as 'SIGTERM' | 'SIGKILL').catch(() => {}); return { accepted: true }; });
-  tool('flow_transfer', 'Transfer your direct child to another active Agent.', schema({ childSessionID: string, adoptSessionID: string }, ['childSessionID', 'adoptSessionID']), args => caller.transfer(agent(args.childSessionID), agent(args.adoptSessionID)));
-  tool('flow_group_create', 'Create a Group with fixed membership.', schema({ sessionIDs: { type: 'array', items: string } }, ['sessionIDs']), args => ({ groupID: new Group(context, (args.sessionIDs as string[]).map(agent)).getID() }));
-  tool('flow_group_post', 'Post to a Group you belong to.', schema({ groupID: string, ...messageFields }, ['groupID', 'summary', 'payload']), args => group(args.groupID).postMessage(caller, outgoing(args)));
-  tool('flow_group_dissolve', 'Dissolve an active Group in the current Context.', schema({ groupID: string }, ['groupID']), args => context.release(group(args.groupID)));
-  tool('flow_blackboard_post', 'Append to your Group blackboard.', schema({ groupID: string, ...messageFields }, ['groupID', 'summary', 'payload']), args => group(args.groupID).postToBlackboard(caller, outgoing(args)));
-  tool('flow_blackboard_read', 'Read a Group blackboard snapshot.', schema({ groupID: string, after: number }, ['groupID']), args => group(args.groupID).readBlackboard(args.after as number | undefined).map(serializeMessage));
-  tool('flow_blackboard_has_new', 'Check for newer Group blackboard entries.', schema({ groupID: string, after: number }, ['groupID', 'after']), args => ({ hasNew: group(args.groupID).hasNewMsgOnboard(args.after as number) }));
-  return disposers;
+    tool('flow_get_filters', 'Read filters installed through this tool.', schema({}), () => ({ rules: structuredClone(filters), totalCount: mailbox.getFilters().length }));
+    tool('flow_set_source_priority', 'Rate the priority of future messages from a source.', schema({ source: sourceSchema, priority: { type: 'string', enum: ['high', 'normal', 'low'] } }, ['source', 'priority']), args => mailbox.setSourcePriority(source(args.source), args.priority as 'high' | 'normal' | 'low'));
+    tool('flow_get_source_priority', 'Read your current rating for a source.', schema({ source: sourceSchema }, ['source']), args => ({ priority: mailbox.getSourcePriority(source(args.source)) }));
+    tool('flow_fork', 'Create your direct child from an independent history snapshot.', schema({}), async () => info(await caller.fork()));
+    tool('flow_herb', 'Summarize and merge two contexts into your direct child.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); return info(await caller.herb(agent(args.sessionID))); });
+    tool('flow_create', 'Create an idle direct child with an explicit profile; optional initmsg supplies its first input.', schema({ profile: { type: 'object' }, initmsg: schema(messageFields, ['summary', 'payload']), history: string }, ['profile']), async args => {
+      const profile = snapshotProfile({ ...(args.profile as AgentProfile), sessionID: newSessionID() });
+      return info(await Agent.create(context, profile, caller, args.initmsg === undefined ? undefined : outgoing(args.initmsg as Record<string, unknown>), args.history as string | undefined));
+    });
+    tool('flow_resume', 'Cold-resume a persisted session as your direct child.', schema({ sessionID: string }, ['sessionID']), async args => info(await Agent.resume(context, caller, sessionID(args.sessionID as string))));
+    tool('flow_kill', 'Release your direct child after its current turn.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); await caller.kill(agent(args.sessionID)); });
+    tool('flow_signal', 'Signal your lifecycle: SIGTERM lets this turn finish, SIGKILL cancels it.', schema({ signal: { type: 'string', enum: ['SIGTERM', 'SIGKILL'] } }, ['signal']), args => { void caller.recvSignal(args.signal as 'SIGTERM' | 'SIGKILL').catch(() => {}); return { accepted: true }; });
+    tool('flow_transfer', 'Transfer your direct child to another active Agent.', schema({ childSessionID: string, adoptSessionID: string }, ['childSessionID', 'adoptSessionID']), args => caller.transfer(agent(args.childSessionID), agent(args.adoptSessionID)));
+    tool('flow_group_create', 'Create a Group with fixed membership.', schema({ sessionIDs: { type: 'array', items: string } }, ['sessionIDs']), args => ({ groupID: new Group(context, (args.sessionIDs as string[]).map(agent)).getID() }));
+    tool('flow_group_post', 'Post to a Group you belong to.', schema({ groupID: string, ...messageFields }, ['groupID', 'summary', 'payload']), args => group(args.groupID).postMessage(caller, outgoing(args)));
+    tool('flow_group_dissolve', 'Dissolve an active Group in the current Context.', schema({ groupID: string }, ['groupID']), args => context.release(group(args.groupID)));
+    tool('flow_blackboard_post', 'Append to your Group blackboard.', schema({ groupID: string, ...messageFields }, ['groupID', 'summary', 'payload']), args => group(args.groupID).postToBlackboard(caller, outgoing(args)));
+    tool('flow_blackboard_read', 'Read a Group blackboard snapshot.', schema({ groupID: string, after: number }, ['groupID']), args => group(args.groupID).readBlackboard(args.after as number | undefined).map(serializeMessage));
+    tool('flow_blackboard_has_new', 'Check for newer Group blackboard entries.', schema({ groupID: string, after: number }, ['groupID', 'after']), args => ({ hasNew: group(args.groupID).hasNewMsgOnboard(args.after as number) }));
+    return disposers;
+  } catch (error) { rollbackTools(disposers, error); }
 }

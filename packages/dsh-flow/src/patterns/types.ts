@@ -1,4 +1,5 @@
 import type { AgentProfile } from '../core/types.js';
+import type { Agent } from '../core/agent.js';
 import type { JsonObject, JsonValue } from '../assignments/types.js';
 export type { JsonValue, JsonObject } from '../assignments/types.js';
 
@@ -29,7 +30,8 @@ export interface RoleOverride {
 }
 export interface PatternApplyRequest { readonly definition: PatternDefinition; readonly parameters?: JsonObject; readonly overrides?: Readonly<Record<string, RoleOverride>> }
 export interface PatternRoleRequirements { readonly preset?: string; readonly skills?: readonly string[] }
-export interface PatternRoleValidator { validate(profile: Readonly<AgentProfile>, requirements: PatternRoleRequirements): Promise<void> }
+export interface PreparedPatternRole { reserve(): { dispose(): void } }
+export interface PatternRoleProvisioner { prepare(root: Agent, profile: Readonly<AgentProfile>, requirements: PatternRoleRequirements): Promise<PreparedPatternRole> }
 export type PatternNodeConfig = Omit<AgentProfile, 'sessionID'>;
 export interface PatternExpandedNode { readonly path: string; readonly parent: string; readonly config: Readonly<PatternNodeConfig>; readonly requirements: PatternRoleRequirements }
 export interface PatternExpandedGroup { readonly key: string; readonly members: readonly string[] }

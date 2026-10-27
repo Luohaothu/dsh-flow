@@ -3,35 +3,44 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import Loader from '@deepseek-ai/cordis-plugin-loader';
+import Presets from '@deepseek-ai/dsh-agent-preset-registry';
+import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { Agent } from '../../../packages/dsh-flow/src/core/agent.js';
 import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
 import { DshHostAdaptor } from '../../../packages/dsh-flow/src/host/dsh-adaptor.js';
-import { DshConfigurationResolver } from '../../../packages/dsh-flow/src/host/configuration.js';
+import { NativePreparation } from '../../../packages/dsh-flow/src/host/provisioning.js';
+import { agentControl } from '../../../packages/dsh-flow/src/core/internals.js';
+import type { Context } from '../../../packages/dsh-flow/src/core/context.js';
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
 import { catalogControl } from '../../../packages/dsh-flow/src/patterns/internal.js';
 import { applyPattern, PatternApplyError } from '../../../packages/dsh-flow/src/patterns/apply.js';
 import { RunService } from '../../../packages/dsh-flow/src/run/run.js';
 import { issueHostOrigin, runState } from '../../../packages/dsh-flow/src/run/internal.js';
 import { RunStore } from '../../../packages/dsh-flow/src/run/store.js';
-import { profile, runtime } from '../../helpers/contract-runtime.js';
+import { input, profile, runtime } from '../../helpers/contract-runtime.js';
 import type { JsonObject, RoleOverride } from '../../../packages/dsh-flow/src/patterns/types.js';
 
 const builtinDirectory = fileURLToPath(new URL('../../../docs/design/public/patterns', import.meta.url));
 
 async function nativeFixture(t: Parameters<typeof runtime>[0], source: PatternCatalog) {
-  const f = await runtime(t), resolver = new DshConfigurationResolver(f.host.llm);
+  const f = await runtime(t), preparations = new WeakMap<Context, NativePreparation>();
   const defaults = profile('defaults');
   const origin = issueHostOrigin({ backend: 'native-pattern', callerSessionId: 'test' });
   const service = new RunService({
-    store: new RunStore(join(f.directory, 'runs')), patternCatalog: source, patternRoleValidator: resolver,
+    store: new RunStore(join(f.directory, 'runs')), patternCatalog: source, patternRoleProvisioner: { prepare: async (root, profile, requirements) => {
+      const preparation = preparations.get(root[agentControl].context); assert.ok(preparation);
+      const plan = await preparation.prepare(profile, requirements); return { reserve: () => preparation.reserve(plan) };
+    } },
     getOriginDefaults: () => ({ model: defaults.model, params: defaults.params, permission: defaults.permission }),
     initialize: async (run, effective, context) => {
-      context.registerHostAdaptor(new DshHostAdaptor(f.host, context, { workspaceRoot: f.directory, stateDirectory: join(f.directory, run.id) }, resolver));
+      const preparation = new NativePreparation(f.host, context, { cwd: f.directory }); preparations.set(context, preparation);
+      context.registerHostAdaptor(new DshHostAdaptor(f.host, context, { workspaceRoot: f.directory, stateDirectory: join(f.directory, run.id), preparation }));
       return Agent.create(context, { role: 'native root', name: 'native root', sessionID: newSessionID(), model: effective.model!, params: effective.params!, permission: effective.permission! }, null);
     },
   });
   const active = async () => { const run = service.create(origin, {}, newSessionID()); await runState(run).initialization; assert.equal(run.status, 'active'); assert.ok(run.root); return run; };
-  return { ...f, resolver, service, origin, active };
+  return { ...f, service, origin, active };
 }
 
 function resolved(source: PatternCatalog, id: string) { const result = source.resolve(id); assert.equal(result.ok, true); if (!result.ok) throw new Error(id); return result.definition; }
@@ -89,9 +98,8 @@ test('native preflight rejects unsupported capabilities and actual model/extras 
   const source = new PatternCatalog({ builtinDirectory }), f = await nativeFixture(t, source), run = await f.active();
   const create = t.mock.method(f.host.agents, 'create'), send = t.mock.method(DshHostAdaptor.prototype, 'send');
   const cases: { override: RoleOverride; error: RegExp }[] = [
-    { override: { preset: 'researcher' }, error: /preset installation is unsupported/ },
-    { override: { skills: ['research'] }, error: /skill installation is unsupported/ },
-    { override: { skills: [] }, error: /skill installation is unsupported/ },
+    { override: { preset: 'researcher' }, error: /agentPresets.*required/ },
+    { override: { skills: ['research'] }, error: /skill research is unavailable/ },
     { override: { model: { provider: 'unregistered-native-provider', id: 'absent' } }, error: /provider|adapter/i },
     { override: { params: { version: 1, reasoningEffort: 'not-supported' } }, error: /does not support reasoning/ },
     { override: { hostExtras: { dsh: { seed: 5 } } }, error: /Unsupported DSH model parameter seed/ },
@@ -105,4 +113,27 @@ test('native preflight rejects unsupported capabilities and actual model/extras 
       assert.equal(run.root!.getChildren().length, 0); assert.equal(f.model.requests.length, 0);
     }
   } finally { await f.service.release(f.origin, run); }
+});
+
+test('template preset and skill overrides install real resources before the first native request; empty skills keeps strategy', async t => {
+  const source = new PatternCatalog({ builtinDirectory }), f = await nativeFixture(t, source);
+  await f.host.plugin(Loader); await f.host.plugin(Presets, { default: 'researcher' });
+  const unregister = await f.host.agentPresets.register({ id: 'researcher', plugins: [] });
+  const remove = f.host.skills.register({ name: 'research', description: 'Research', content: 'TEMPLATE RESEARCH BODY', source: 'runtime' });
+  const run = await f.active();
+  try {
+    const result = await applyPattern(run.root!, { definition: resolved(source, 'builtin/shared-review'), parameters: { members: 2 }, overrides: {
+      'root/contributors/0': { preset: 'researcher', skills: ['research'], instructions: 'TEMPLATE ROLE BODY' },
+      'root/contributors/1': { skills: [] },
+    } }, 'native-resources');
+    const configured = result.agents['root/contributors/0']!, empty = result.agents['root/contributors/1']!;
+    const native = f.native(configured), emptyNative = f.native(empty);
+    assert.equal(f.host.agentPresets.composedPreset(native.ctx), 'researcher');
+    assert.ok(await f.host.skills.get('team-strategy', { scope: scopeOf(emptyNative.ctx), cwd: f.directory }));
+    assert.equal(configured.getStatus(), 'idle'); assert.equal(empty.getStatus(), 'idle'); assert.equal(f.model.requests.length, 0);
+    const context = configured[agentControl].context;
+    await context.getHostAdaptor().send(configured[agentControl].host, input('EXECUTE')); await native.whenIdle();
+    const prompt = JSON.stringify(f.model.requests[0]?.messages);
+    assert.match(prompt, /TEMPLATE ROLE BODY/); assert.match(prompt, /TEMPLATE RESEARCH BODY/); assert.match(prompt, /team-strategy/);
+  } finally { await f.service.release(f.origin, run); remove(); await unregister(); }
 });

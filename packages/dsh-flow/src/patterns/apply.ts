@@ -10,7 +10,7 @@ import { contextRun, runState, type RunState } from '../run/internal.js';
 import type { Run } from '../run/run.js';
 import { expandPattern } from './expand.js';
 import { catalogControl, definitionDigest, PatternError } from './internal.js';
-import type { PatternApplyRequest } from './types.js';
+import type { PatternApplyRequest, PreparedPatternRole } from './types.js';
 
 export interface PatternApplyResult {
   readonly agents: Record<string, Agent>;
@@ -69,19 +69,21 @@ export function applyPattern(root: Agent, request: PatternApplyRequest, requestI
     const prior = queues.get(run) ?? Promise.resolve();
     const operation = prior.then(async () => {
       const agents: Record<string, Agent> = Object.create(null), groups: Record<string, Group> = Object.create(null);
+      const reservationCleanupErrors: unknown[] = [];
       let path = 'root', scope: ReturnType<typeof beginConstruction> | undefined;
       try {
         assertReady(state, root);
         state.patternCatalog[catalogControl].assertVisible(definition);
         const plan = expandPattern(definition, snapshot.parameters, snapshot.overrides, state.record.defaults, root.getProfile());
         const profiles = new Map<string, Readonly<AgentProfile>>([['root', root.getProfile()]]);
+        const preparations = new Map<string, PreparedPatternRole>();
         for (const node of plan.nodes) {
           path = node.path;
           const parent = profiles.get(node.parent);
           if (!parent) throw new Error(`Unknown planned parent ${node.parent}`);
           const profile = snapshotProfile({ ...node.config, sessionID: newSessionID() });
           checkPermission(profile, parent); profiles.set(node.path, profile);
-          await state.dependencies.patternRoleValidator.validate(profile, node.requirements);
+          preparations.set(node.path, await state.dependencies.patternRoleProvisioner.prepare(root, profile, node.requirements));
           assertReady(state, root);
         }
         assertReady(state, root);
@@ -91,8 +93,17 @@ export function applyPattern(root: Agent, request: PatternApplyRequest, requestI
           path = node.path;
           const parent = agents[node.parent];
           if (!parent) throw new Error(`Unknown created parent ${node.parent}`);
-          const agent = await Agent[createOwned](scope, profiles.get(node.path)!, parent);
-          agents[node.path] = agent;
+          const reservation = preparations.get(node.path)!.reserve();
+          let failed = false, creationError: unknown;
+          try { agents[node.path] = await Agent[createOwned](scope, profiles.get(node.path)!, parent); }
+          catch (error) { failed = true; creationError = error; }
+          try { reservation.dispose(); }
+          catch (error) {
+            reservationCleanupErrors.push(error);
+            if (!failed) { failed = true; creationError = error; }
+          }
+          if (failed) throw creationError;
+          const agent = agents[node.path]!;
           assertReady(state, root);
           if (agent.getStatus() !== 'idle') throw new Error('New pattern member must be idle');
         }
@@ -112,7 +123,7 @@ export function applyPattern(root: Agent, request: PatternApplyRequest, requestI
         resolve(result);
         try { flush(); } catch {  }
       } catch (error) {
-        const cleanup: unknown[] = [];
+        const cleanup: unknown[] = [...reservationCleanupErrors];
         if (scope) { try { await scope.abort(); } catch (failure) { cleanup.push(...(failure instanceof AggregateError ? failure.errors : [failure])); } }
         reject(new PatternApplyError(error instanceof PatternError ? error.path : path, error, { agents, groups }, cleanup));
       }

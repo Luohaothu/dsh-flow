@@ -71,7 +71,7 @@ export class RunService {
     this.runs.set(run.id, run); this.createKeys.set(key, { digest, run });
     state.initialization = Promise.resolve().then(async () => {
       try {
-        const root = await this.dependencies.initialize(run, structuredClone(effective), state.context!);
+        const root = await this.dependencies.initialize(run, structuredClone(effective), state.context!, source);
         if (!(root instanceof Agent) || root[agentControl].context !== state.context || !state.context!.has(root) || root.getStatus() === 'terminated' || root.getParent() !== null) throw new Error('Initializer must return an active root in its Context');
         state.root = root;
         state.assignments = new AssignmentService(run);

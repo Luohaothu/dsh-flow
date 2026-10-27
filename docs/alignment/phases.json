@@ -45,17 +45,21 @@
       "dependsOn": [
         "P2"
       ],
-      "status": "reviewing",
+      "status": "merged",
       "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/11",
-      "review": null,
-      "mergeCommit": null
+      "review": {
+        "verdict": "PASS",
+        "head": "ee76c054709e39fd8173951591c9c97259f9bacd",
+        "model": "gpt-6-astra"
+      },
+      "mergeCommit": "84009e7ef1736c87710744199ea8e07c40e5146c"
     },
     {
       "id": "P4",
       "dependsOn": [
         "P3"
       ],
-      "status": "pending",
+      "status": "in-progress",
       "pullRequest": null,
       "review": null,
       "mergeCommit": null

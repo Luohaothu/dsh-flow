@@ -6,10 +6,10 @@ import { catalogControl } from '../../../packages/dsh-flow/src/patterns/internal
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
 import { applyPattern, PatternApplyError } from '../../../packages/dsh-flow/src/patterns/apply.js';
 import { runState } from '../../../packages/dsh-flow/src/run/internal.js';
-import { ContractPatternRoleValidator } from '../../helpers/contract-patterns.js';
+import { ContractPatternRoleProvisioner } from '../../helpers/contract-patterns.js';
 import { deferred, flush } from '../../helpers/contract-host.js';
 import { runFixture } from '../../helpers/contract-run.js';
-import type { PatternRoleValidator } from '../../../packages/dsh-flow/src/patterns/types.js';
+import type { PatternRoleProvisioner } from '../../../packages/dsh-flow/src/patterns/types.js';
 
 const document = `apiVersion: v1
 id: test/team
@@ -53,11 +53,11 @@ test('application creates idle members and fixed groups without altering its roo
 });
 
 test('concurrent identical keys share Promise/result and snapshot parameters before validation yields', async t => {
-  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleValidator();
+  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleProvisioner();
   let validations = 0;
-  const validator: PatternRoleValidator = { validate: async (profile, requirements) => { await strict.validate(profile, requirements); validations++; entered.resolve(); await gate.promise; } };
+  const validator: PatternRoleProvisioner = { prepare: async (root, profile, requirements) => { const prepared = await strict.prepare(root, profile, requirements); validations++; entered.resolve(); await gate.promise; return prepared; } };
   t.after(() => gate.resolve());
-  const f = await runFixture(t, { patternCatalog: source, patternRoleValidator: validator });
+  const f = await runFixture(t, { patternCatalog: source, patternRoleProvisioner: validator });
   const run = await f.createActive(), { root, host } = f.binding(run);
   const request = { definition: definition(source), parameters: { size: 2 } };
   const first = applyPattern(root, request, 'same');
@@ -86,11 +86,11 @@ test('every role is preflighted before creation and failed keys replay the origi
 });
 
 test('applications queue per Run and queued work rechecks root liveness before creating', async t => {
-  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleValidator();
+  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleProvisioner();
   let checks = 0;
-  const validator: PatternRoleValidator = { validate: async (profile, requirements) => { await strict.validate(profile, requirements); checks++; entered.resolve(); await gate.promise; } };
+  const validator: PatternRoleProvisioner = { prepare: async (root, profile, requirements) => { const prepared = await strict.prepare(root, profile, requirements); checks++; entered.resolve(); await gate.promise; return prepared; } };
   t.after(() => gate.resolve());
-  const f = await runFixture(t, { patternCatalog: source, patternRoleValidator: validator });
+  const f = await runFixture(t, { patternCatalog: source, patternRoleProvisioner: validator });
   const run = await f.createActive(), { root, host } = f.binding(run), request = { definition: definition(source) };
   const first = applyPattern(root, request, 'one'), second = applyPattern(root, request, 'two');
   const firstFailure = assert.rejects(first), secondFailure = assert.rejects(second);
@@ -182,10 +182,10 @@ test('failed construction reports established paths and each cleanup failure wit
 });
 
 test('storage freezing during validation blocks all member creation and preserves failed replay', async t => {
-  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleValidator();
+  const source = catalog(), gate = deferred(), entered = deferred(), strict = new ContractPatternRoleProvisioner();
   t.after(() => gate.resolve());
-  const f = await runFixture(t, { patternCatalog: source, patternRoleValidator: { validate: async (profile, requirements) => {
-    await strict.validate(profile, requirements); entered.resolve(); await gate.promise;
+  const f = await runFixture(t, { patternCatalog: source, patternRoleProvisioner: { prepare: async (root, profile, requirements) => {
+    const prepared = await strict.prepare(root, profile, requirements); entered.resolve(); await gate.promise; return prepared;
   } } });
   const run = await f.createActive(), { root, host } = f.binding(run), request = { definition: definition(source) };
   const applying = applyPattern(root, request, 'frozen'), rejected = assert.rejects(applying, /storage failed/i);
@@ -207,4 +207,42 @@ test('candidate definitions are visible only in their owning Run', async t => {
   await applyPattern(one.root!, { definition: candidate.definition }, 'local');
   await assert.rejects(applyPattern(two.root!, { definition: candidate.definition }, 'foreign'), /not visible/);
   assert.equal(f.binding(two).host.created.length, 1);
+});
+
+test('role preparations all precede reservations and every creation releases its reservation', async t => {
+  const source = catalog(), strict = new ContractPatternRoleProvisioner(), events: string[] = [];
+  const provisioner: PatternRoleProvisioner = { prepare: async (root, profile, requirements) => {
+    events.push('prepare');
+    const prepared = await strict.prepare(root, profile, requirements);
+    return { reserve: () => {
+      events.push('reserve'); const lease = prepared.reserve();
+      return { dispose: () => { events.push('dispose'); lease.dispose(); } };
+    } };
+  } };
+  const f = await runFixture(t, { patternCatalog: source, patternRoleProvisioner: provisioner });
+  const run = await f.createActive(), { root, host } = f.binding(run);
+  host.createHook = () => { events.push('create'); assert.equal(strict.reservations.size, 1); };
+  await applyPattern(root, { definition: definition(source), parameters: { size: 2 } }, 'leases');
+  assert.deepEqual(events, ['prepare', 'prepare', 'reserve', 'create', 'dispose', 'reserve', 'create', 'dispose']);
+  assert.equal(strict.reservations.size, 0);
+});
+
+test('reservation cleanup failures preserve the creation error and settle owned resources', async t => {
+  const source = catalog(), strict = new ContractPatternRoleProvisioner();
+  const creation = new Error('native creation failed'), cleanup = new Error('reservation cleanup failed');
+  const provisioner: PatternRoleProvisioner = { prepare: async (root, profile, requirements) => {
+    const prepared = await strict.prepare(root, profile, requirements);
+    return { reserve: () => { const lease = prepared.reserve(); return { dispose: () => { lease.dispose(); throw cleanup; } }; } };
+  } };
+  const f = await runFixture(t, { patternCatalog: source, patternRoleProvisioner: provisioner });
+  const run = await f.createActive(), { root, host, context } = f.binding(run), old = await f.child(run);
+  host.createHook = () => { throw creation; };
+  await assert.rejects(applyPattern(root, { definition: definition(source) }, 'failed-lease'), error => {
+    assert.ok(error instanceof PatternApplyError);
+    assert.equal(error.cause, creation); assert.deepEqual(error.cleanupErrors, [cleanup]);
+    return true;
+  });
+  assert.equal(strict.reservations.size, 0);
+  assert.equal(context.has(root), true); assert.equal(context.has(old), true);
+  assert.deepEqual(root.getChildren(), [old]);
 });

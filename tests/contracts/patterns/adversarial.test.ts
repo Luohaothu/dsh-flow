@@ -10,7 +10,7 @@ import { expandPattern } from '../../../packages/dsh-flow/src/patterns/expand.js
 import { applyPattern } from '../../../packages/dsh-flow/src/patterns/apply.js';
 import { catalogControl } from '../../../packages/dsh-flow/src/patterns/internal.js';
 import type { JsonObject, JsonValue, PatternCompileResult, PatternDefinition, PatternSource, RoleOverride } from '../../../packages/dsh-flow/src/patterns/types.js';
-import { ContractPatternRoleValidator } from '../../helpers/contract-patterns.js';
+import { ContractPatternRoleProvisioner } from '../../helpers/contract-patterns.js';
 import { deferred, message, profile } from '../../helpers/contract-host.js';
 import { runFixture } from '../../helpers/contract-run.js';
 
@@ -154,8 +154,8 @@ test('zero count prunes invalid dynamic callee count while nonrepresentable coun
     root: { workers: { role: 'worker', count: '{{ enabled }}', use: { id: 'test/count-inner', with: { n: '{{ n }}' } } } },
   }))] });
   const definition = result(cat.resolve('test/count-outer')); let validations = 0;
-  const strict = new ContractPatternRoleValidator();
-  const f = await runFixture(t, { patternCatalog: cat, patternRoleValidator: { validate: async (p, r) => { validations++; await strict.validate(p, r); } } });
+  const strict = new ContractPatternRoleProvisioner();
+  const f = await runFixture(t, { patternCatalog: cat, patternRoleProvisioner: { prepare: async (root, p, r) => { validations++; return strict.prepare(root, p, r); } } });
   const run = await f.createActive(), { root, host } = f.binding(run), old = await f.child(run), original = root.getProfile();
   const pruned = await applyPattern(root, { definition, parameters: { enabled: 0, n: 0.5 } }, 'pruned');
   assert.deepEqual(Object.keys(pruned.agents), ['root']);
@@ -235,8 +235,8 @@ test('uncommitted references cannot prepare or read Assignments, inject sources 
 
 test('a request snapshots overrides before asynchronous validation and keeps failure replay stable after inputs mutate', async t => {
   const cat = new PatternCatalog({ includeBuiltins: false, sources: [source(document('test/snapshot'))] });
-  const gate = deferred(), entered = deferred(), strict = new ContractPatternRoleValidator(); t.after(() => gate.resolve());
-  const f = await runFixture(t, { patternCatalog: cat, patternRoleValidator: { validate: async (p, r) => { entered.resolve(); await gate.promise; await strict.validate(p, r); } } });
+  const gate = deferred(), entered = deferred(), strict = new ContractPatternRoleProvisioner(); t.after(() => gate.resolve());
+  const f = await runFixture(t, { patternCatalog: cat, patternRoleProvisioner: { prepare: async (root, p, r) => { entered.resolve(); await gate.promise; return strict.prepare(root, p, r); } } });
   const run = await f.createActive(), { root, host } = f.binding(run);
   const overrides = { 'root/workers/0': { model: { provider: 'contract', id: 'unknown' } } };
   const request = { definition: result(cat.resolve('test/snapshot')), overrides };

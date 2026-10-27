@@ -1,0 +1,93 @@
+import type { Context as DshContext } from '@deepseek-ai/cordis';
+import type { JsonSchemaNode, ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { Agent } from '../core/agent.js';
+import { Group } from '../core/group.js';
+import { agentControl, groupControl } from '../core/internals.js';
+import { sessionID } from '../core/message.js';
+import { contextRun, runState } from '../run/internal.js';
+import { applyPattern } from '../patterns/apply.js';
+import { catalogControl } from '../patterns/internal.js';
+import type { PatternAssets, PatternDocument, PatternApplyRequest } from '../patterns/types.js';
+import type { AssignmentSpec, JsonValue } from '../assignments/types.js';
+import { withTrustedCall } from '../assignments/internal.js';
+import type { NativeFlowBinding, NativeFlowBindings } from './native-bindings.js';
+import { NativeMaterials, renderMaterial, type MaterialValue } from './materials.js';
+import { installFlowTools, registerJsonTool, rollbackTools } from './tools.js';
+
+export const stringSchema: JsonSchemaNode = { type: 'string' };
+export const objectSchema = (properties: Record<string, JsonSchemaNode>, required: string[] = []): JsonSchemaNode => ({ type: 'object', properties, required, additionalProperties: false });
+export function teamRead(caller: Agent) {
+  const context = caller[agentControl].context;
+  return { agents: context.list(value => value instanceof Agent).map(value => {
+    const agent = value as Agent;
+    return { sessionID: agent.getProfile().sessionID, profile: agent.getProfile(), status: agent.getStatus(), parentSessionID: agent.getParent()?.getProfile().sessionID ?? null, children: agent.getChildren().map(child => child.getProfile().sessionID) };
+  }), groups: context.list(value => value instanceof Group).map(value => {
+    const group = value as Group;
+    return { groupID: group.getID(), sessionIDs: group[groupControl].members().map(agent => agent.getProfile().sessionID) };
+  }) };
+}
+export function installMemberTools(scope: DshContext, binding: NativeFlowBinding, bindings: NativeFlowBindings, materials: NativeMaterials,
+  guard: (execution: ToolRunContext) => void, yieldCapacity: () => void): (() => void)[] {
+  const caller = binding.flow, context = caller[agentControl].context;
+  const disposers: (() => void)[] = [];
+  const run = () => contextRun(context);
+  const assignments = () => { const service = run().assignments; if (!service) throw new Error('Run assignments are not ready'); return service; };
+  const assignment = (id: unknown) => assignments().resolve(id as string);
+  const tool = (name: string, description: string, parameters: JsonSchemaNode, execute: (args: Record<string, unknown>, execution: ToolRunContext) => unknown) => {
+    disposers.push(registerJsonTool(scope, name, description, parameters, (args, execution) => { guard(execution); return execute(args, execution); }));
+  };
+  try {
+    disposers.push(...installFlowTools(scope, context, caller, guard, yieldCapacity));
+    tool('flow_team_read', 'Read your Run members, groups and your available material references.', objectSchema({}), async () => ({ ...teamRead(caller), materials: await materials.available(caller) }));
+    tool('flow_patterns', 'Read this Run template catalog.', objectSchema({}), () => runState(run()).patternCatalog.list());
+    tool('flow_pattern_define', 'Compile and register a candidate template in this Run.', objectSchema({ document: { oneOf: [{ type: 'string' }, { type: 'object' }] }, assets: { type: 'object' } }, ['document']), args => {
+      const catalog = runState(run()).patternCatalog;
+      const compiled = catalog.compile(args.document as PatternDocument, (args.assets ?? {}) as PatternAssets);
+      if (!compiled.ok) return compiled;
+      catalog[catalogControl].register(compiled.definition);
+      return { ok: true, patternId: compiled.definition.id };
+    });
+    tool('flow_pattern_apply', 'Create members and groups from a Run template, rooted at yourself.', objectSchema({ patternId: stringSchema, parameters: { type: 'object' }, overrides: { type: 'object' }, requestId: stringSchema }, ['patternId', 'requestId']), async args => {
+      const resolved = runState(run()).patternCatalog.resolve(args.patternId as string);
+      if (!resolved.ok) return resolved;
+      yieldCapacity();
+      const created = await applyPattern(caller, { definition: resolved.definition,
+        ...(args.parameters === undefined ? {} : { parameters: args.parameters as NonNullable<PatternApplyRequest['parameters']> }),
+        ...(args.overrides === undefined ? {} : { overrides: args.overrides as NonNullable<PatternApplyRequest['overrides']> }) }, args.requestId as string);
+      return { agents: Object.fromEntries(Object.entries(created.agents).map(([key, agent]) => [key, agent.getProfile().sessionID])),
+        groups: Object.fromEntries(Object.entries(created.groups).map(([key, group]) => [key, group.getID()])), instructions: created.instructions };
+    });
+    tool('flow_assign', 'Prepare and deliver a formal assignment to your direct child.', objectSchema({ recipientSessionID: stringSchema, parentAssignmentId: stringSchema, spec: { type: 'object' }, requestId: stringSchema }, ['recipientSessionID', 'parentAssignmentId', 'spec', 'requestId']), async args => {
+      const recipient = context.getAgent(sessionID(args.recipientSessionID as string));
+      if (!recipient) throw new Error('Recipient is not active in this Run');
+      await materials.admitSession(binding.native);
+      const service = assignments();
+      const handle = await service.prepare({ sender: caller, recipient, parentAssignment: assignment(args.parentAssignmentId), spec: args.spec as AssignmentSpec }, args.requestId as string);
+      const snapshot = service.read(caller, handle);
+      if (snapshot.status === 'pending') service.deliver(handle);
+      return service.read(caller, handle);
+    });
+    tool('flow_assignment_read', 'Read an assignment in your Run.', objectSchema({ assignmentId: stringSchema }, ['assignmentId']), args => assignments().read(caller, assignment(args.assignmentId)));
+    tool('flow_assignments', 'Query assignments in your Run.', objectSchema({ parentAssignmentId: { oneOf: [stringSchema, { type: 'null' }] }, status: { type: 'string', enum: ['pending', 'submitted', 'failed', 'cancelled'] } }), args => assignments().list(caller, args));
+    tool('flow_assignment_archive_read', 'Read an archived formal assignment.', objectSchema({ assignmentId: stringSchema }, ['assignmentId']), args => assignments().readArchive(args.assignmentId as string));
+    tool('flow_submit', 'Submit the result and the reasons for continuing child assignments.', objectSchema({ assignmentId: stringSchema, result: {}, continuingChildren: { type: 'array', items: objectSchema({ assignmentId: stringSchema, reason: stringSchema }, ['assignmentId', 'reason']) } }, ['assignmentId', 'result', 'continuingChildren']), (args, execution) => {
+      const transportKey = bindings.transportKey(binding, execution);
+      return withTrustedCall({ actor: caller, transportKey }, () => assignments().submit(caller, assignment(args.assignmentId), {
+        result: args.result as JsonValue, continuingChildren: (args.continuingChildren as { assignmentId: string; reason: string }[]).map(child => ({ assignment: assignment(child.assignmentId), reason: child.reason })),
+      }));
+    });
+    tool('flow_assignment_cancel', 'Cancel assignments you dispatched, including their descendants.', objectSchema({ assignmentIds: { type: 'array', items: stringSchema }, reason: stringSchema }, ['assignmentIds', 'reason']), async args => {
+      const outcomes = [];
+      for (const id of args.assignmentIds as string[]) outcomes.push(...await assignments().cancel(caller, assignment(id), args.reason as string));
+      return outcomes;
+    });
+    disposers.push(scope.tools.register({ name: 'flow_material_read', description: 'Read received material through your native execution permissions.', parameters: objectSchema({ materialId: stringSchema }, ['materialId']) as never,
+      output: { schema: { type: 'object' }, render: (_args, value) => renderMaterial(value as unknown as MaterialValue) },
+      async execute(args, execution) {
+        guard(execution);
+        if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length !== 1 || typeof (args as Record<string, unknown>).materialId !== 'string') throw new TypeError('materialId is required');
+        return await materials.read(caller, (args as Record<string, string>).materialId!, execution.signal) as never;
+      } }));
+    return disposers;
+  } catch (error) { rollbackTools(disposers, error); }
+}
