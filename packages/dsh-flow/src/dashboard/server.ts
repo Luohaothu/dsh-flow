@@ -84,14 +84,14 @@ export class DashboardServer {
     if (known) {
       this.authenticate(request);
       if (path === '/api/runs' && request.method === 'GET') { this.json(response, 200, this.options.projector.registry()); return; }
-      if (path === '/api/events' && request.method === 'GET') { this.sse(request, response, listener => this.options.projector.subscribeRegistry(this.cursor(url), this.epoch(url), listener)); return; }
+      if (path === '/api/events' && request.method === 'GET') { const after = this.cursor(url); this.sse(request, response, after, listener => this.options.projector.subscribeRegistry(after, this.epoch(url), listener)); return; }
       if (runMatch) {
         let id: string;
         try { id = decodeURIComponent(runMatch[1]!); } catch { throw new HttpError(400, 'invalid-request', 'Invalid Run ID'); }
         if (!id || id.includes('/')) throw new HttpError(400, 'invalid-request', 'Invalid Run ID');
         const action = runMatch[2];
         if (!action && request.method === 'GET') { this.json(response, 200, this.options.projector.snapshot(id)); return; }
-        if (action === 'events' && request.method === 'GET') { this.sse(request, response, listener => this.options.projector.subscribeRun(id, this.cursor(url), this.epoch(url), listener), id); return; }
+        if (action === 'events' && request.method === 'GET') { const after = this.cursor(url); this.sse(request, response, after, listener => this.options.projector.subscribeRun(id, after, this.epoch(url), listener), id); return; }
         if (action === 'stop' && request.method === 'POST') {
           if (!origin) throw new HttpError(403, 'forbidden-origin', 'Origin is required for stop');
           if (header(request, 'content-type')?.split(';')[0]?.trim() !== 'application/json') throw new HttpError(415, 'invalid-request', 'Expected application/json');
@@ -116,16 +116,17 @@ export class DashboardServer {
   }
   private cursor(url: URL): number { const value = url.searchParams.get('after'); if (value === null || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new JournalCursorError('Invalid event cursor'); return Number(value); }
   private epoch(url: URL): string { const epoch = url.searchParams.get('epoch'); if (!epoch) throw new JournalCursorError('Epoch is required'); return epoch; }
-  private sse<T extends RegistryEvent | RunEvent>(request: IncomingMessage, response: ServerResponse, subscribe: (listener: (event: T) => void) => () => void, runId?: string): void {
+  private sse<T extends RegistryEvent | RunEvent>(request: IncomingMessage, response: ServerResponse, after: number, subscribe: (listener: (event: T) => void) => () => void, runId?: string): void {
     const max = this.options.maxSseBytes ?? 128 * 1024;
-    let ready = false; let closed = false; let pending: string[] = []; let bytes = 0;
+    let ready = false; let closed = false; let pending: string[] = []; let bytes = 0; let replayThrough = after;
     const send = (payload: string) => { if (closed) return; if (response.writableLength + Buffer.byteLength(payload) > max) { response.destroy(); return; } response.write(payload); };
     const unsubscribe = subscribe(event => {
       const payload = `id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`;
-      if (ready) send(payload); else { bytes += Buffer.byteLength(payload); if (bytes > max) throw new HttpError(409, 'reset-required', 'Event replay exceeds the connection byte bound'); pending.push(payload); }
+      if (ready) send(payload); else { replayThrough = event.seq; bytes += Buffer.byteLength(payload); if (bytes > max) throw new HttpError(409, 'reset-required', 'Event replay exceeds the connection byte bound'); pending.push(payload); }
     });
     if (bytes > max) { unsubscribe(); throw new HttpError(409, 'reset-required', 'Event replay exceeds the connection byte bound'); }
-    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no',
+      'X-Flow-Replay-Through': String(replayThrough), 'Access-Control-Expose-Headers': 'X-Flow-Replay-Through' });
     this.streams.add(response); this.streamRuns.set(response, runId); ready = true; send(': connected\n\n'); for (const payload of pending) send(payload); pending = [];
     const timer = setInterval(() => send(': heartbeat\n\n'), 15_000); timer.unref();
     response.on('close', () => { closed = true; clearInterval(timer); unsubscribe(); this.streams.delete(response); this.streamRuns.delete(response); });

@@ -28,12 +28,14 @@ import { NativePreparation } from './provisioning.js';
 import type { NativeRunSeed } from './native-types.js';
 import { NativeCallAuthority, NativeFlowBindings, isFlowNative } from './native-bindings.js';
 import { NativeMaterials } from './materials.js';
+import type { NativeHistory } from '../native/history.js';
 import { installMainTools } from './main-tools.js';
 import { installMemberTools } from './member-tools.js';
 
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'flow-outcome': { kind: 'flow-outcome'; runId: string; assignmentId: string } } }
 export interface NativeBridgeConfiguration { defaults?: RunDefaults; cwd?: string; rootRole?: string; cleanup?: { gracefulTimeoutMs: number; immediateTimeoutMs: number } }
 export interface DshNativeBridgeOptions {
+  history?: NativeHistory;
   stateDirectory: string;
   catalog: PatternCatalog;
   capacity?: ExecutionCapacity;
@@ -113,6 +115,7 @@ export class DshNativeBridge {
     this.preparations.set(context, runPreparation);
     const adaptor = new DshHostAdaptor(this.host, context, { workspaceRoot: seed.native.cwd, stateDirectory: join(this.options.stateDirectory, 'agents'),
       capacity: this.capacity, preparation: runPreparation, bindings: this.bindings,
+      ...(this.options.history ? { history: this.options.history, runId: run.id } : {}),
       ...(seed.cleanup ? { afterTurnTimeoutMs: seed.cleanup.gracefulTimeoutMs, immediateTimeoutMs: seed.cleanup.immediateTimeoutMs } : {}) });
     context.registerHostAdaptor(adaptor);
     return Agent.create(context, profile, null);

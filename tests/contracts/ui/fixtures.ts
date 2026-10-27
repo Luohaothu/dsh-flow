@@ -1,0 +1,7 @@
+import type { AgentCard, GroupView, RunInfo, RunSnapshot } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
+import { PROTOCOL_VERSION } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
+export const model = { provider: 'deepseek', id: 'deepseek-chat' };
+export function card(id: string, parentId: string | null = null, overrides: Partial<AgentCard> = {}): AgentCard { return { id, parentId, sessionID: `session-${id}`, name: `成员 ${id}`, role: '研究', model, permission: 'read-only', task: `任务 ${id}`, status: 'idle', source: { kind: 'create', sourceIds: [] }, waiting: null, outcome: null, termination: null, cleanup: null, markers: [], usage: [], createdAt: 100, terminatedAt: null, messages: [], blackboardWrites: [], assignmentIds: [], groups: [], outputs: [], errors: [], ...overrides }; }
+export function run(id = 'run', overrides: Partial<RunInfo> = {}): RunInfo { return { id, epoch: 'epoch', name: `团队 ${id}`, entry: { backend: 'dsh', callerSessionId: 'caller' }, rootSummary: null, status: 'active', startedAt: 100, pendingAssignmentCount: 0, ...overrides }; }
+export function snapshot(nodes = [card('root')], overrides: Partial<RunSnapshot> = {}): RunSnapshot { return { version: PROTOCOL_VERSION, seq: 0, run: run(), nodes, groups: [], assignments: [], prices: [], operations: [], ...overrides }; }
+export function group(id: string, members: string[]): GroupView { return { id, members, dissolved: false, blackboard: [] }; }

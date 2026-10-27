@@ -7,7 +7,7 @@ import { createUserMessage, ReasoningEffortId, type GenerateOptions } from '@dee
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { FlowPlugin } from '../../../packages/dsh-flow/src/plugin.js';
 import * as Flow from '../../../packages/dsh-flow/src/index.js';
-import { Config, resolveConfig } from '../../../packages/dsh-flow/src/config.js';
+import { PlainConfigSchema, resolveConfig } from '../../../packages/dsh-flow/src/config.js';
 import { loadAgentTeamSource, loadTeamStrategySource } from '../../../packages/dsh-flow/src/skills.js';
 import { runtime, until } from '../../helpers/contract-runtime.js';
 import { enablePluginHost } from '../../helpers/contract-plugin.js';
@@ -192,11 +192,11 @@ test('P4 changed pattern directories apply to new Run catalogs, retain diagnosti
 test('P4 cleanup timeout schema and resolver reject zero and preserve Native finite positive values', async t => {
   for (const key of ['gracefulTimeoutMs', 'immediateTimeoutMs'] as const) {
     for (const value of [0, -1, Infinity, NaN]) {
-      assert.throws(() => Config({ cleanup: { [key]: value } }), /positive|number|NaN/i);
+      assert.throws(() => PlainConfigSchema({ cleanup: { [key]: value } }), /positive|number|NaN/i);
       assert.throws(() => resolveConfig({ cleanup: { [key]: value } }), /positive|number|NaN/i);
     }
     for (const value of [Number.MIN_VALUE, 0.25, 1, 120_000]) {
-      assert.equal(Config({ cleanup: { [key]: value } }).cleanup?.[key], value);
+      assert.equal(PlainConfigSchema({ cleanup: { [key]: value } }).cleanup?.[key], value);
       assert.equal(resolveConfig({ cleanup: { [key]: value } }).cleanup[key], value);
     }
   }

@@ -1,0 +1,51 @@
+diff --git a/lib/index.js b/lib/index.js
+index 99e544a..5100a94 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -53,6 +53,13 @@ function retryableWriteError(error) {
+ * @param warn - sink for skipped-patch diagnostics (printf-style, `%C` = code).
+ * @returns a detached entry list with every applicable patch applied.
+ */
++function mergeProfileConfig(under, over) {
++	const plain = value => value !== null && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
++	if (!plain(over)) return structuredClone(over);
++	const result = plain(under) ? { ...under } : {};
++	for (const [key, value] of Object.entries(over)) Object.defineProperty(result, key, { value: mergeProfileConfig(Object.hasOwn(result, key) ? result[key] : undefined, value), enumerable: true, writable: true, configurable: true });
++	return result;
++}
+ function applyEntryPatches(data, patches, warn) {
+ 	if (!patches?.length) return [...data];
+ 	data = structuredClone(data);
+@@ -65,7 +72,7 @@ function applyEntryPatches(data, patches, warn) {
+ 	};
+ 	buildMap(data);
+ 	for (const patch of patches) {
+-		const { id, insert, name, ...overrides } = patch;
++		const { id, insert, name, configMerge, ...overrides } = patch;
+ 		if (insert) {
+ 			if (id) {
+ 				const target = entryMap.get(id);
+@@ -100,6 +107,10 @@ function applyEntryPatches(data, patches, warn) {
+ 			if (key === "id") continue;
+ 			target[key] = value;
+ 		}
++		if (configMerge !== undefined) {
++			if (configMerge === null || typeof configMerge !== "object" || Array.isArray(configMerge)) throw new TypeError("configMerge must be an object");
++			target.config = mergeProfileConfig(target.config, configMerge);
++		}
+ 	}
+ 	return data;
+ }
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+index 87a4d2d..c67c371 100644
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -29,6 +29,8 @@ export interface PatchOptions {
+     insert?: EntryOptions[];
+     name?: string;
+     config?: any;
++    /** Explicit sparse config overrides; own object keys merge, arrays/null replace. Omitted keys inherit. */
++    configMerge?: Record<string, unknown>;
+     group?: boolean | null;
+     disabled?: boolean | null;
+     inject?: any;

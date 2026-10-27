@@ -2,7 +2,7 @@
 
 Flow 提供持续存在的 Agent 团队、正式作业、模板目录及 DSH 原生适配。团队创建和任务派发分别执行；作业结束后，成员继续空闲并可复用。
 
-包入口同时导出 Cordis 插件的 `name`、`inject`、`Config` 和 `apply`，可通过 `ctx.plugin(Flow)` 安装，后端服务为 `ctx.flow`。主会话的 `/agent-team` 注入技能、任务与已接纳附件，由会话 Agent 查询、创建或复用团队，再独立派发作业。团队释放工具只安装到真实普通主会话的局部作用域。Flow 成员安装 `team-strategy`、角色正文、编排工具、模板及作业工具；主会话始终位于团队树外。
+包入口同时导出 Cordis 插件的 `name`、`inject`、`Config` 和 `apply`，通过 DSH Loader/profile 安装并接收宿主的 volatile 配置引用，后端服务为 `ctx.flow`。程序直接构造后端时使用 `FlowPlugin.create(host, plainConfig)`。主会话的 `/agent-team` 注入技能、任务与已接纳附件，由会话 Agent 查询、创建或复用团队，再独立派发作业。团队释放工具只安装到真实普通主会话的局部作用域。Flow 成员安装 `team-strategy`、角色正文、编排工具、模板及作业工具；主会话始终位于团队树外。
 
 配置使用以下字段：
 
@@ -26,3 +26,7 @@ Flow 提供持续存在的 Agent 团队、正式作业、模板目录及 DSH 原
 `connection.prices` 是模型价格数组，各项为 `{ model: { provider, id }, currency, input, output, cacheRead?, cacheWrite? }`，费率单位为每百万 token。用量保留实际模型，缺失用量或价格时展示不可用，不按零计费。
 
 看板实例 ID 与 SessionID 分开；冷恢复创建新实例，旧卡片保留。列表和每个 Run 维护独立游标，快照与续订共享同步屏障；持久写入失败时保留真实展示状态、断开增量流，恢复后从包含完整状态的新持久段建立基线，原日志继续保留。
+
+共享 React 界面同时用于独立 Web 页面与 DSH 原生面板。原生入口为全局“智能体”面板、主会话内页签及团队导航；成员观察使用宿主只读会话引用读取完整原生记录，关闭观察仅释放读取引用。设置通过宿主 profile 的修订号保存，区分继承、本地覆盖、保存成功、运行态应用失败及需重启字段。
+
+当前宿主目标是锁定的 DSH `0.2.0-rc.2`。仓库 `pnpm-workspace.yaml` 声明八项必要 SDK 适配：四项用于只读会话引用、阅读器与会话内导航，四项用于稀疏 profile 继承及真实配置持久化。`pnpm install --frozen-lockfile` 应用这些工件；Native 功能须运行于这份适配后的宿主。普通 Flow tarball 不会修改已安装的桌面 App。

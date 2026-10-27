@@ -8,3 +8,13 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: true
+
+patchedDependencies:
+  '@deepseek-ai/dsh-api-session-controller@0.2.0-rc.2': patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch
+  '@deepseek-ai/dsh-client-ui-session@0.2.0-rc.2': patches/@deepseek-ai+dsh-client-ui-session@0.2.0-rc.2.patch
+  '@deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2': patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch
+  '@deepseek-ai/dsh-client-ui-chat@0.2.0-rc.2': patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch
+  '@deepseek-ai/cordis-plugin-include@1.0.9': patches/@deepseek-ai+cordis-plugin-include@1.0.9.patch
+  '@deepseek-ai/dsh-config-editor@0.2.0-rc.2': patches/@deepseek-ai+dsh-config-editor@0.2.0-rc.2.patch
+  '@deepseek-ai/dsh-settings@0.2.0-rc.2': patches/@deepseek-ai+dsh-settings@0.2.0-rc.2.patch
+  '@deepseek-ai/dsh-app-boot@0.2.0-rc.2': patches/@deepseek-ai+dsh-app-boot@0.2.0-rc.2.patch

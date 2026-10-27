@@ -28,7 +28,9 @@ jobs:
           node-version: '24'
       - run: npm install --global pnpm@12.9.1
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:schema
       - run: pnpm test:patterns-package
+      - run: pnpm test:native-api

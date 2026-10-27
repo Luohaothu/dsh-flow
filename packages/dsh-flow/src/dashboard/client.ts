@@ -2,7 +2,9 @@ import type { OperationAccepted, ProtocolVersion, RegistrySnapshot, RunSnapshot,
 import { IncompatibleProtocol, decodeToken, decodeRegistry, decodeSnapshot, decodeRegistryEvent, decodeRunEvent } from './decoder.js';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error' | 'disposed';
+export interface DashboardUpdate { kind: 'state' | 'snapshot' | 'replay' | 'live'; generation: number; seq?: number; eventType?: string }
 export interface DashboardClientState {
+  update: DashboardUpdate;
   connection: ConnectionStatus;
   registryConnection: ConnectionStatus;
   runConnection: ConnectionStatus;
@@ -19,6 +21,12 @@ export class DashboardRequestError extends Error {
   constructor(readonly status: number, readonly code: string | undefined, message: string) { super(message); this.name = 'DashboardRequestError'; }
 }
 class ResetRequired extends Error {}
+function replayWatermark(response: Response, after: number): number {
+  const value = response.headers.get('X-Flow-Replay-Through');
+  const cursor = value !== null && /^(0|[1-9]\d*)$/.test(value) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(cursor) || cursor < after) { void response.body?.cancel().catch(() => {}); throw new ResetRequired('Invalid replay watermark'); }
+  return cursor;
+}
 async function responseError(response: Response): Promise<DashboardRequestError> {
   let code: string | undefined, detail = `Dashboard request failed (${response.status})`;
   try {
@@ -68,7 +76,7 @@ export class DashboardClient {
   private readonly fetcher: typeof fetch;
   private readonly base: string;
   private readonly listeners = new Set<(state: DashboardClientState) => void>();
-  private state: DashboardClientState = { connection: 'idle', registryConnection: 'idle', runConnection: 'idle', version: null, epoch: null,
+  private state: DashboardClientState = { update: { kind: 'state', generation: 0 }, connection: 'idle', registryConnection: 'idle', runConnection: 'idle', version: null, epoch: null,
     registry: null, selectedRunId: null, snapshot: null, updatedAt: null, error: null };
   private token = '';
   private disposed = false;
@@ -87,7 +95,7 @@ export class DashboardClient {
   subscribe(listener: (state: DashboardClientState) => void): () => void { this.listeners.add(listener); listener(this.getState()); return () => { this.listeners.delete(listener); }; }
   private publish(patch: Partial<DashboardClientState>): void {
     if (this.disposed) return;
-    this.state = { ...this.state, ...patch };
+    this.state = { ...this.state, ...patch, update: patch.update ?? { kind: 'state', generation: this.runGeneration } };
     for (const listener of [...this.listeners]) { try { listener(this.getState()); } catch {} }
   }
   private headers(auth = true): Headers { const headers = new Headers(); if (auth) headers.set('Authorization', `Bearer ${this.token}`); if (this.options.origin) headers.set('Origin', this.options.origin); return headers; }
@@ -207,7 +215,7 @@ export class DashboardClient {
     const response = await this.request(`/api/runs/${encodeURIComponent(runId)}`, signal), value = decodeSnapshot(await response.json(), runId);
     signal.throwIfAborted(); if (generation !== this.runGeneration) return;
     if (value.run.epoch !== this.state.epoch) { await this.authenticate(); throw new ResetRequired('Run epoch changed'); }
-    this.publish({ snapshot: value, updatedAt: Date.now() });
+    this.publish({ snapshot: value, updatedAt: Date.now(), update: { kind: 'snapshot', generation, seq: value.seq } });
   }
   private async runLoop(runId: string, generation: number, controller: AbortController, baseline = false): Promise<void> {
     while (!controller.signal.aborted && generation === this.runGeneration && !this.disposed) {
@@ -221,8 +229,9 @@ export class DashboardClient {
         const snapshot = this.state.snapshot!;
         const response = await this.request(`/api/runs/${encodeURIComponent(runId)}/events?after=${snapshot.seq}&epoch=${encodeURIComponent(snapshot.run.epoch)}`, controller.signal);
         if (generation !== this.runGeneration || controller.signal.aborted) { await response.body?.cancel(); return; }
+        const replayThrough = replayWatermark(response, snapshot.seq);
         this.publish({ runConnection: 'connected', error: null });
-        await consumeSse(response, controller.signal, raw => { if (generation === this.runGeneration) this.applyRun(raw, runId); });
+        await consumeSse(response, controller.signal, raw => { if (generation === this.runGeneration) this.applyRun(raw, runId, generation, replayThrough); });
         throw new Error('Dashboard run stream disconnected');
       } catch (error) {
         if (controller.signal.aborted || generation !== this.runGeneration || this.disposed) return;
@@ -233,7 +242,7 @@ export class DashboardClient {
       }
     }
   }
-  private applyRun(raw: unknown, runId: string): void {
+  private applyRun(raw: unknown, runId: string, generation: number, replayThrough: number): void {
     let event: ReturnType<typeof decodeRunEvent>;
     try { event = decodeRunEvent(raw); } catch (error) { throw new ResetRequired(message(error)); }
     if (event.runId !== runId) throw new ResetRequired('Invalid run event');
@@ -250,7 +259,7 @@ export class DashboardClient {
       if (event.run.id !== runId || event.run.epoch !== current.run.epoch) throw new ResetRequired('Invalid run record');
       next.run = event.run;
     }
-    this.publish({ snapshot: next, updatedAt: Date.now() });
+    this.publish({ snapshot: next, updatedAt: Date.now(), update: { kind: event.seq <= replayThrough ? 'replay' : 'live', generation, seq: event.seq, eventType: event.type } });
   }
   async stop(runId: string, request: StopRequest): Promise<OperationAccepted> {
     if (this.disposed) throw new Error('Dashboard client is disposed');

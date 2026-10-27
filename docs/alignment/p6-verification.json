@@ -1,0 +1,185 @@
+{
+  "phase": "P6",
+  "design": {
+    "path": "docs/design/design.md",
+    "sha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6"
+  },
+  "contractIds": [
+    "C057",
+    "C058",
+    "C059",
+    "C060",
+    "C061",
+    "C062",
+    "C063",
+    "C064",
+    "C065",
+    "C066",
+    "C067",
+    "C068",
+    "C069",
+    "C077",
+    "C078",
+    "C079",
+    "C080",
+    "C081",
+    "C082",
+    "C083"
+  ],
+  "implementation": {
+    "sharedUi": "Shared React UI consumes the same DashboardClient/DTO for Web, global and session Native views; view state includes scope, epoch and Run identity.",
+    "nativeReader": "True Controller managed readonly references; complete native history and incremental source owned by Flow, no Agent resume or execution lifetime ownership.",
+    "settings": "Real profile persistence and revisions; own-key inheritance, compare conflicts, requested/effective/application failure/restart feedback.",
+    "protocol": "Replay watermark header separates replay from live facts without changing event order; initial/reconnect history remains static.",
+    "packaging": "Production ModuleLoader CJS, exactly the allowed nine external module IDs, self-contained Web, shared React 18.3.1 and bundled icon license.",
+    "apiGeneration": "Official Typert generator with reproducible --check and explicit --write."
+  },
+  "validation": {
+    "contracts": {
+      "passed": 679,
+      "failed": 0,
+      "skipped": 0
+    },
+    "types": "Node and Client programs passed separately",
+    "inventoryTests": 8,
+    "baselineInventory": {
+      "contracts": 85,
+      "scenarios": 234,
+      "components": 134,
+      "oldTestsAndFixtures": 79,
+      "oldHostFilePatches": 19
+    },
+    "schemaCensus": "passed; supported subset, not full JSON Schema certification",
+    "package": "Self-build, tarball extraction, isolated consumer install, 14 patterns/2 skills, Native registration and allowed externals, Web assets and icon license passed",
+    "generator": "fresh official generator --check passed",
+    "webProduction": {
+      "runtime": "real Core/HTTP/SSE fixture and headed Chrome; no production API mocking",
+      "bundleSha256": "6e81e0734f52bfa79461326b3012a63053ac8c208f555eb4e0f9b0c742ba698a",
+      "behaviors": [
+        "actual geometry and focus",
+        "touch pan/pinch and 559/560 layouts",
+        "scope/Run view restoration",
+        "real message/blackboard/wait/transfer/failure",
+        "actual stop accepted/completed",
+        "same-server replay watermark with zero backlog animation and one subsequent live animation",
+        "deep tree, themes and reduced motion"
+      ],
+      "pageErrors": 0
+    },
+    "nativeProduction": {
+      "host": "isolated SDK 0.2.0-rc.2 CLI Web host, real production ModuleLoader and packaged Flow",
+      "proved": [
+        "global panel and Run selection",
+        "true readonly Native transcript with input/reasoning/tool call/assistant",
+        "close observation and return to real ordinary caller",
+        "header two-Run count and member focus into session panel",
+        "real profile save, two-page revision conflict comparison, explicit retry and unset inheritance",
+        "actual host model catalog"
+      ],
+      "pageAndConsoleErrors": 0,
+      "model": "deterministic acceptance adapter; external model acceptance belongs to P7"
+    },
+    "sdk": {
+      "packages": 8,
+      "modifiedInstalledFiles": 18,
+      "allInstalledHashesMatched": true
+    }
+  },
+  "sdkPatches": [
+    {
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "patch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "sha256": "345bbc3be04c9219abc8c7fe28f0279108773b1d0d49b75326731a555db6f236",
+      "purpose": "Controller拥有的只读会话源、引用、身份和写入口拒绝",
+      "modifiedFiles": [
+        "lib/client.js",
+        "lib/types/client/contract/sessions.d.ts",
+        "lib/types/client/index.d.ts",
+        "lib/types/client/sessions/service.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "patch": "patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "sha256": "aaf061806afb64f376728f8264563eacf9d46a0e0f4b90c19dd45c3f112a8605",
+      "purpose": "原生transcript只读装配，排除输入及执行控件",
+      "modifiedFiles": [
+        "lib/client.js",
+        "lib/types/client/contract/slots.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "patch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "sha256": "607b513ca749df74102a130ba51cb29dd477c5e2e340d8a7f23891101e0e9b7a",
+      "purpose": "主会话内导航、完整只读贡献和同SID的真实引用路由",
+      "modifiedFiles": [
+        "lib/client.js",
+        "lib/types/client/contract/input.d.ts",
+        "lib/types/client/contract/slots.d.ts",
+        "lib/types/client/conversation/assembly.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-client-ui-session",
+      "patch": "patches/@deepseek-ai+dsh-client-ui-session@0.2.0-rc.2.patch",
+      "sha256": "1744eb16a0674d40c4b18197d03e3e3ffeab48fc76a81268c84b596b21ad26bf",
+      "purpose": "只读能力可在真实session scope中物化",
+      "modifiedFiles": [
+        "lib/client.js"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/cordis-plugin-include",
+      "patch": "patches/@deepseek-ai+cordis-plugin-include@1.0.9.patch",
+      "sha256": "fdfdd009c6bf8b729625fbf6a6b1fc94ae268adcc6b3e45f25a979773d559c6f",
+      "purpose": "稀疏configMerge的纯对象继承语义",
+      "modifiedFiles": [
+        "lib/index.js",
+        "lib/types/index.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-config-editor",
+      "patch": "patches/@deepseek-ai+dsh-config-editor@0.2.0-rc.2.patch",
+      "sha256": "6c72327b278a6669a27ec6b09f3a898925379bf74304517e4e6da676c0cdaa98",
+      "purpose": "锁和修订号内持久保存原始覆盖，按有效值验证",
+      "modifiedFiles": [
+        "lib/index.js",
+        "lib/types/index.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-settings",
+      "patch": "patches/@deepseek-ai+dsh-settings@0.2.0-rc.2.patch",
+      "sha256": "35259b2fbfa77e88aedf027a0d83ab906b6e4ccaa3723187caff8dc49e74c4b1",
+      "purpose": "按拥有fiber显式启用稀疏profile继承",
+      "modifiedFiles": [
+        "lib/index.js",
+        "lib/types/index.d.ts"
+      ]
+    },
+    {
+      "package": "@deepseek-ai/dsh-app-boot",
+      "patch": "patches/@deepseek-ai+dsh-app-boot@0.2.0-rc.2.patch",
+      "sha256": "be57a0f2487eaafd33510cebff8f16c432a318bdedfa6cc11eb73857277785f6",
+      "purpose": "实际bootstrap使用同一configMerge并保持Include身份",
+      "modifiedFiles": [
+        "lib/index.js"
+      ]
+    }
+  ],
+  "review": {
+    "model": "gpt-6-astra",
+    "incrementalVerdict": "PASS",
+    "exactCommitAndPullRequestChecks": "pending"
+  },
+  "remainingP7Acceptance": [
+    "Clean installation of the final eight necessary SDK adaptations and repeated installation",
+    "Matching 0.2.0-rc.2 Desktop product shell/runtime, not the installed unmatched 0.2.1 App",
+    "Real model complete scenarios, restoration and final inventory dispositions"
+  ],
+  "observedLimits": [
+    "Synchronous blackboard append start/end has no sustained browser frame; records and state transitions are verified without adding artificial delay."
+  ]
+}

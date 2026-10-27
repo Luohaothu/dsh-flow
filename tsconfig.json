@@ -18,7 +18,13 @@
       "ES2023",
       "DOM",
       "ESNext.Disposable"
-    ]
+    ],
+    "jsx": "react-jsx",
+    "paths": {
+      "dsh-flow/native/protocol": [
+        "./packages/dsh-flow/src/native/protocol.ts"
+      ]
+    }
   },
   "include": [
     "packages/dsh-flow/src/index.ts",
@@ -32,6 +38,12 @@
     "scripts/verify-result-schema.ts",
     "packages/dsh-flow/src/patterns/**/*.ts",
     "scripts/verify-pattern-package.ts",
-    "packages/dsh-flow/src/dashboard/**/*.ts"
+    "packages/dsh-flow/src/dashboard/**/*.ts",
+    "packages/dsh-flow/src/native/**/*.ts",
+    "tests/helpers/dashboard-fixture.ts"
+  ],
+  "exclude": [
+    "tests/contracts/ui/**",
+    "tests/contracts/native-client/**"
   ]
 }

@@ -47,13 +47,31 @@
     "./dashboard/protocol": {
       "types": "./lib/types/dashboard/protocol.d.ts",
       "default": "./lib/dashboard/protocol.js"
+    },
+    "./native": {
+      "types": "./lib/types/native/index.d.ts",
+      "default": "./lib/native/index.js"
+    },
+    "./native/protocol": {
+      "types": "./lib/types/native/protocol.d.ts",
+      "default": "./lib/native/protocol.js"
+    },
+    "./ui": {
+      "types": "./lib/types/ui/index.d.ts",
+      "default": "./lib/ui/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/native/client.d.ts",
+      "default": "./lib/client.js"
     }
   },
   "files": [
     "lib",
     "README.md",
     "patterns",
-    "skills"
+    "skills",
+    "web",
+    "cordis.patch.yml"
   ],
   "scripts": {
     "prepack": "pnpm --dir ../.. run build"
@@ -78,7 +96,27 @@
     "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
     "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.2",
     "@deepseek-ai/dsh-skill": "0.2.0-rc.2",
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/schemastery": "3.18.4",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-query": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-chat": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.5",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-theme": "0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -100,9 +138,54 @@
     "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
     "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.2",
     "@deepseek-ai/dsh-skill": "0.2.0-rc.2",
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/schemastery": "3.18.4",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-query": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-chat": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.5",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-theme": "0.2.0-rc.2"
   },
   "dependencies": {
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-typert-registry",
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

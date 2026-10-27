@@ -7,7 +7,7 @@ import { until } from '../../helpers/contract-runtime.js';
 
 const registry = { version: PROTOCOL_VERSION, epoch: 'epoch', seq: 0, runs: [] };
 const token = { version: PROTOCOL_VERSION, epoch: 'epoch', token: 'token' };
-function stream() { return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(': ready\n\n')); } }), { headers: { 'Content-Type': 'text/event-stream' } }); }
+function stream() { return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(': ready\n\n')); } }), { headers: { 'Content-Type': 'text/event-stream', 'X-Flow-Replay-Through': '0' } }); }
 
 test('real HTTP initial 503 and consecutive failures release the same-instance connect slot for a successful retry', async () => {
   let tokens = 0, reads = 0, subscriptions = 0;
@@ -15,7 +15,7 @@ test('real HTTP initial 503 and consecutive failures release the same-instance c
     const json = (status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
     if (request.url === '/api/token') { tokens++; json(200, token); return; }
     if (request.url === '/api/runs') { reads++; json(reads <= 2 ? 503 : 200, reads <= 2 ? { error: 'temporary' } : registry); return; }
-    subscriptions++; response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write(': ready\n\n');
+    subscriptions++; response.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Flow-Replay-Through': '0' }); response.write(': ready\n\n');
   });
   server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');

@@ -1,0 +1,22 @@
+diff --git a/lib/client.js b/lib/client.js
+index 295898b..bfb0043 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -204,7 +204,7 @@ window.__ModuleLoader__.load({
+ 				if (!this.active) return this.absent;
+ 				if (reference === void 0) return this.absent;
+ 				const owner = reference.binding;
+-				if (this.sessions.binding(reference.sessionId) !== owner) throw new Error("ui-session: Session reference is not active in this Controller");
++				if (!this.sessions.ownsReference(reference)) throw new Error("ui-session: Session reference is not active in this Controller");
+ 				return this.sourceFor(owner);
+ 			}
+ 			/**
+@@ -388,7 +388,7 @@ window.__ModuleLoader__.load({
+ 					copyDeclared("prop", props, descriptor.props, contribution.props, finalProps);
+ 				}
+ 				return {
+-					key: binding.sessionId,
++					key: binding.scopeKey,
+ 					ctx: binding.ctx,
+ 					hooks,
+ 					keyedHooks,

@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.client.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "packages/dsh-flow/src",
+    "outDir": "packages/dsh-flow/lib/types"
+  },
+  "include": [
+    "packages/dsh-flow/src/ui/**/*.ts",
+    "packages/dsh-flow/src/ui/**/*.tsx",
+    "packages/dsh-flow/src/native/**/*.tsx",
+    "packages/dsh-flow/src/native/protocol.ts",
+    "packages/dsh-flow/src/native/typert.remote-client.d.ts"
+  ],
+  "exclude": []
+}

@@ -1,0 +1,144 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import Loader from '@deepseek-ai/cordis-plugin-loader';
+import { composeEntries, loadProfileDirectory, mountRootInclude, readProfilePatches, reconcileProfilePatches, type ProfileContext } from '@deepseek-ai/dsh-app-boot';
+import { applyEntryPatches } from '@deepseek-ai/cordis-plugin-include';
+import ConfigEditor from '@deepseek-ai/dsh-config-editor';
+import Settings from '@deepseek-ai/dsh-settings';
+import SettingsController from '@deepseek-ai/dsh-api-settings-controller';
+import { TYPERT as SETTINGS_HOST } from '@deepseek-ai/dsh-api-settings-controller/typert';
+import Gateway from '@deepseek-ai/dsh-api-gateway';
+import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
+import type { SettingsDescribeValue, SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-settings/types';
+import { SessionId } from '@deepseek-ai/dsh-session';
+import * as Native from '../../../packages/dsh-flow/src/native/index.js';
+import type { FlowConnection } from '../../../packages/dsh-flow/src/native/protocol.js';
+import type { FlowNativeFrame, FlowNativePageValue } from '../../../packages/dsh-flow/src/native/protocol.js';
+import { getAgentInstanceId } from '../../../packages/dsh-flow/src/core/observation.js';
+import { runtime, until } from '../../helpers/contract-runtime.js';
+import { enablePluginHost } from '../../helpers/contract-plugin.js';
+
+test('P6 actual Settings Remote → ConfigEditor → profile disk → Loader updates one Native volatile ref without replacing Run resources', async t => {
+  const f = await runtime(t); await enablePluginHost(f.host, f.directory);
+  const profileDir = join(f.directory, 'profile'), bundle = join(profileDir, 'node_modules/p6-native-bundle');
+  await mkdir(bundle, { recursive: true });
+  await writeFile(join(profileDir, 'package.json'), JSON.stringify({ name: 'p6-profile', dsh: { profile: { bundles: ['p6-native-bundle'] } } }));
+  await writeFile(join(bundle, 'package.json'), JSON.stringify({ name: 'p6-native-bundle', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }));
+  const stateDirectory = join(f.directory, 'native-flow');
+  await writeFile(join(bundle, 'cordis.patch.yml'), JSON.stringify([{ insert: [{ id: 'actual-flow-entry', name: 'cordis:p6-native', config: { stateDirectory, maxConcurrentAgents: 3, defaults: { permission: 'workspace-write' }, patternSources: ['base-one', 'base-two'] } }] }]));
+  const configPath = join(profileDir, 'cordis.yml'), patchPath = join(profileDir, 'cordis.patch.yml');
+  await writeFile(configPath, '[]\n'); await writeFile(patchPath, '[]\n');
+  const profile: ProfileContext = { name: 'p6-native', dir: profileDir, patchPath, installAnchor: join(profileDir, 'package.json'), cwd: f.directory, home: join(f.directory, 'home'), startedBundles: ['p6-native-bundle'], overlays: [], telemetryDisabledEnv: undefined };
+  f.host.provide('profileContext', profile);
+  await f.host.plugin(Loader); f.host.loader.builtins['p6-native'] = Native;
+  const loaded = loadProfileDirectory('dsh', profileDir, profile.installAnchor); assert.equal(loaded.skippedBundles.length, 0);
+  await mountRootInclude(f.host, configPath, readProfilePatches('dsh', profile)); await f.host.loader.await();
+  const entry = [...f.host.loader.entries()].find(row => row.options.id === 'actual-flow-entry')!;
+  assert.ok(entry?.fiber); await entry.fiber.await(); assert.ok(f.host.get('flow'));
+  await f.host.plugin(ConfigEditor); await f.host.plugin(Settings); await f.host.plugin(SettingsController); await f.host.plugin(Gateway);
+  f.host.typert.register(SETTINGS_HOST as TypertContribution);
+  const invoke = async <T>(method: string, args: Record<string, unknown> = {}, namespace = 'settings'): Promise<T> => f.host.typertGateway.invoke({ namespace, method, args }) as Promise<T>;
+  const connection = () => invoke<FlowConnection>('connection', {}, 'flowDashboard');
+  const describe = () => invoke<SettingsDescribeValue>('describe');
+  const view = async () => { const result = (await describe()).namespaces.find(row => row.ns === 'actual-flow-entry'); assert.ok(result); return result; };
+  const save = (ops: SettingsPathOpView[], expectedRevision: number) => invoke<SettingsNamespaceView>('mutate', { ns: 'actual-flow-entry', ops, expectedRevision });
+  const before = await connection(), firstView = await view();
+  assert.equal(before.configuration.entryId, entry.options.id);
+  const fiber = entry.fiber, ref = fiber.config, plugin = f.host.flow;
+  const main = await f.host.agents.create({ sessionId: SessionId(randomUUID()), meta: { cwd: f.directory }, agentOptions: { provider: 'fixture', model: 'model' } });
+  const origin = plugin.bridge.createOrigin(main.agent), run = plugin.runs.create(origin, {}, 'stable-run');
+  await until(() => run.status !== 'starting'); assert.equal(run.status, 'active');
+  const root = run.root!, rootProfile = root.getProfile(), native = f.host.agents.get(SessionId(rootProfile.sessionID));
+  const sourceController = new AbortController();
+  const target = { runId: run.id, instanceId: getAgentInstanceId(root), sessionId: native!.session.id };
+  const source = await f.host.typertGateway.stream({ namespace: 'flowDashboard', method: 'followNativeSession', args: { input: { target, request: { assistantStream: true } } }, signal: sourceController.signal });
+  const sourceIterator = source[Symbol.asyncIterator]();
+  const sourceFrame = (await sourceIterator.next()).value as FlowNativeFrame;
+  assert.ok(sourceFrame.kind === 'journal' && sourceFrame.frame.type === 'snapshot');
+  const sourcePage = await invoke<FlowNativePageValue>('pageNativeSession', { input: { target, epoch: sourceFrame.epoch, request: { throughSeq: sourceFrame.frame.cursor } } }, 'flowDashboard');
+  assert.deepEqual(sourcePage.records, sourceFrame.frame.records);
+  assert.equal(((await sourceIterator.next()).value as FlowNativeFrame).kind, 'state');
+  sourceController.abort(); await sourceIterator.return?.();
+  assert.equal(plugin.nativeHistory.diagnostics().followers, 0); assert.equal(plugin.nativeHistory.diagnostics().leases, 0);
+  const saved = await save([
+    { op: 'set', path: ['maxConcurrentAgents'], value: 1 },
+    { op: 'set', path: ['defaults', 'permission'], value: 'read-only' },
+    { op: 'set', path: ['cleanup', 'immediateTimeoutMs'], value: 2300 },
+    { op: 'set', path: ['connection', 'port'], value: 43111 },
+  ], firstView.revision);
+  const after = await connection();
+  assert.equal(entry.fiber, fiber); assert.equal(fiber.config, ref); assert.equal(f.host.flow, plugin);
+  assert.equal(run.root, root); assert.deepEqual(root.getProfile(), rootProfile); assert.equal(f.host.agents.get(SessionId(rootProfile.sessionID)), native);
+  assert.equal(after.address, before.address); assert.equal(after.configuration.application.revision, 1);
+  assert.equal(after.configuration.effective.maxConcurrentAgents, 1); assert.equal(after.configuration.effective.connection.port, undefined);
+  assert.equal(after.configuration.requested.connection.port, 43111); assert.deepEqual(after.configuration.restartRequired, ['connection']);
+  const disk = await readFile(patchPath, 'utf8'); assert.match(disk, /maxConcurrentAgents: 1/); assert.match(disk, /43111/);
+  const newerOrigin = plugin.bridge.createOrigin(main.agent), newer = plugin.runs.create(newerOrigin, {}, 'new-default');
+  await until(() => newer.status !== 'starting'); assert.equal(newer.root!.getProfile().permission, 'read-only');
+  assert.equal(run.root!.getProfile().permission, 'workspace-write');
+  const badDisk = await readFile(patchPath, 'utf8');
+  await assert.rejects(save([{ op: 'set', path: ['cleanup', 'immediateTimeoutMs'], value: 0 }], saved.revision), /positive/);
+  assert.equal(await readFile(patchPath, 'utf8'), badDisk); assert.equal((await connection()).configuration.application.revision, 1);
+  await assert.rejects(save([{ op: 'set', path: ['maxConcurrentAgents'], value: 2 }], firstView.revision), /changed since|revision/);
+  const inherited = await save([{ op: 'unset', path: ['maxConcurrentAgents'] }], saved.revision);
+  assert.equal((await connection()).configuration.effective.maxConcurrentAgents, 3); assert.equal((await connection()).configuration.application.revision, 2);
+  assert.equal((inherited.user as Record<string, unknown>).maxConcurrentAgents, undefined);
+  const equalBase = await save([{ op: 'set', path: ['defaults', 'permission'], value: 'workspace-write' }], inherited.revision);
+  assert.equal((equalBase.user as { defaults: { permission: string } }).defaults.permission, 'workspace-write');
+  const bundlePath = join(bundle, 'cordis.patch.yml');
+  const base = JSON.parse(await readFile(bundlePath, 'utf8'));
+  base[0].insert[0].config.maxConcurrentAgents = 5; base[0].insert[0].config.defaults.permission = 'read-only';
+  await writeFile(bundlePath, JSON.stringify(base));
+  await reconcileProfilePatches(f.host, readProfilePatches('dsh', profile), 'dsh');
+  const changedBase = await connection();
+  assert.equal(changedBase.configuration.effective.maxConcurrentAgents, 5);
+  assert.equal(changedBase.configuration.effective.defaults.permission, 'workspace-write');
+  assert.equal((await view()).user && Object.hasOwn((await view()).user as object, 'maxConcurrentAgents'), false);
+  assert.equal(entry.fiber, fiber); assert.equal(fiber.config, ref);
+  const arrayOverride = await save([{ op: 'unset', path: ['patternSources', '0'] }], (await view()).revision);
+  assert.deepEqual((arrayOverride.user as { patternSources: string[] }).patternSources, ['base-two']);
+  const arraySet = await save([{ op: 'set', path: ['patternSources', '0'], value: 'own-only' }], arrayOverride.revision);
+  assert.deepEqual((arraySet.user as { patternSources: string[] }).patternSources, ['own-only']);
+  const arrayInherited = await save([{ op: 'unset', path: ['patternSources'] }], arraySet.revision);
+  assert.equal(Object.hasOwn(arrayInherited.user as object, 'patternSources'), false);
+  assert.deepEqual((await connection()).configuration.effective.patternSources.map(path => path.split('/').at(-1)), ['base-one', 'base-two']);
+  const applicationFailure = t.mock.method(plugin, 'configure', () => { throw new Error('runtime application refusal'); });
+  const failureSave = await save([{ op: 'set', path: ['maxConcurrentAgents'], value: 6 }], (await view()).revision);
+  const failed = await connection();
+  assert.equal(failed.configuration.application.status, 'failed'); assert.match(failed.configuration.application.error!.message, /application refusal/);
+  assert.equal(failed.configuration.effective.maxConcurrentAgents, 5); assert.equal(failed.configuration.requested.maxConcurrentAgents, 6);
+  assert.match(await readFile(patchPath, 'utf8'), /maxConcurrentAgents: 6/);
+  applicationFailure.mock.restore();
+  await save([{ op: 'set', path: ['maxConcurrentAgents'], value: 7 }], failureSave.revision);
+  assert.equal((await connection()).configuration.application.status, 'applied');
+  assert.equal((await connection()).configuration.effective.maxConcurrentAgents, 7);
+  const finalRevision = (await connection()).configuration.application.revision, finalView = await view(), finalDisk = await readFile(patchPath, 'utf8');
+  await rm(patchPath); await mkdir(patchPath);
+  await assert.rejects(save([{ op: 'set', path: ['maxConcurrentAgents'], value: 2 }], finalView.revision));
+  assert.equal((await connection()).configuration.application.revision, finalRevision); assert.equal(entry.fiber, fiber);
+  await rm(patchPath, { recursive: true }); await writeFile(patchPath, finalDisk);
+  let disposing: Promise<void> | undefined;
+  const stopBeforeApply = fiber.ctx.on('loader/volatile-update', () => { disposing = plugin.dispose(); }, { prepend: true });
+  try {
+    await save([{ op: 'set', path: ['maxConcurrentAgents'], value: 8 }], (await view()).revision);
+    const stopping = await connection();
+    assert.equal(stopping.configuration.application.status, 'failed'); assert.match(stopping.configuration.application.error!.message, /stopping/);
+    assert.equal(stopping.configuration.requested.maxConcurrentAgents, 8); assert.equal(stopping.configuration.effective.maxConcurrentAgents, 7);
+    assert.match(await readFile(patchPath, 'utf8'), /maxConcurrentAgents: 8/);
+  } finally { stopBeforeApply(); await disposing; }
+});
+
+test('P6 opt-in profile merge preserves stock replacement, arrays/null and own keys in standalone and packaged Include', () => {
+  const base = [{ id: 'plugin', name: 'example', config: { object: { first: 1, second: 2 }, list: [1, 2], nullable: 'base' } }];
+  const overlay = JSON.parse('{"id":"plugin","configMerge":{"object":{"second":3},"list":[9],"nullable":null,"__proto__":{"p6Polluted":true}}}');
+  for (const compose of [() => applyEntryPatches(base, [overlay], () => {}), () => composeEntries([[{ insert: base }], [overlay]])]) {
+    const result = compose()[0]!.config;
+    assert.deepEqual(result.object, { first: 1, second: 3 }); assert.deepEqual(result.list, [9]); assert.equal(result.nullable, null);
+    assert.equal(Object.hasOwn(result, '__proto__'), true); assert.equal(({} as Record<string, unknown>).p6Polluted, undefined);
+  }
+  assert.deepEqual(applyEntryPatches(base, [{ id: 'plugin', config: { only: true } }], () => {})[0]!.config, { only: true });
+  assert.throws(() => applyEntryPatches(base, [{ id: 'plugin', configMerge: [] as never }], () => {}), /object/);
+});

@@ -22,7 +22,13 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "rootDir": "packages/dsh-flow/src",
-    "outDir": "packages/dsh-flow/lib/types"
+    "outDir": "packages/dsh-flow/lib/types",
+    "jsx": "react-jsx",
+    "paths": {
+      "dsh-flow/native/protocol": [
+        "./packages/dsh-flow/src/native/protocol.ts"
+      ]
+    }
   },
   "include": [
     "packages/dsh-flow/src/index.ts",
@@ -31,6 +37,7 @@
     "packages/dsh-flow/src/run/**/*.ts",
     "packages/dsh-flow/src/assignments/**/*.ts",
     "packages/dsh-flow/src/patterns/**/*.ts",
-    "packages/dsh-flow/src/dashboard/**/*.ts"
+    "packages/dsh-flow/src/dashboard/**/*.ts",
+    "packages/dsh-flow/src/native/**/*.ts"
   ]
 }

@@ -3,7 +3,7 @@ import type { AgentPermission, AgentStatus, Model, Usage } from '../core/types.j
 import type { AgentOrigin, AgentOutcome } from '../core/observation.js';
 import type { HostOrigin, RunStatus } from '../run/types.js';
 
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 0 });
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 1 });
 export interface ProtocolVersion { major: number; minor: number }
 export interface ModelPrice { model: Model; currency: string; input: number; output: number; cacheRead?: number; cacheWrite?: number }
 export type PriceTable = ModelPrice[];

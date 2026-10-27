@@ -1,0 +1,197 @@
+diff --git a/lib/client.js b/lib/client.js
+index 7f3f791..a61125b 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -3080,7 +3080,7 @@ window.__ModuleLoader__.load({
+ 				const sessionId = typeof source === "string" ? source : source.sessionId;
+ 				const owner = typeof source === "string" ? this.sessions.binding(source) : source;
+ 				if (owner === void 0) throw new Error(`uiConversation.binding: unknown session "${sessionId}"`);
+-				if (this.sessions.binding(sessionId) !== owner) throw new Error(`uiConversation.binding: inactive session "${sessionId}"`);
++				if (!this.sessions.ownsBinding(owner)) throw new Error(`uiConversation.binding: inactive session "${sessionId}"`);
+ 				const current = this.bindings.get(owner);
+ 				if (current !== void 0) return current.binding;
+ 				const binding = new BoundConversation(owner.eventSource, new ConversationNodeAssembler(this.events, this.views, this.groups));
+@@ -3105,7 +3105,32 @@ window.__ModuleLoader__.load({
+ 			* @param attachment - Durable image reference from a session event.
+ 			* @returns browser URL valid until the Session binding is released.
+ 			*/
++
++            managedImages = new WeakMap();
++            readonlyImage(binding, attachment, peek) {
++                if (!this.sessions.ownsBinding(binding)) throw new Error("Image binding is not owned by this Controller");
++                let cache = this.managedImages.get(binding);
++                if (!cache) {
++                    cache = new Map(); this.managedImages.set(binding, cache);
++                    binding.ctx.effect(() => () => { for (const item of cache.values()) if (item.url) URL.revokeObjectURL(item.url); cache.clear(); }, "ui-conversation: readonly images");
++                }
++                const key = attachment.attachmentId;
++                let item = cache.get(key);
++                if (peek) return item?.url;
++                if (!item) {
++                    item = {};
++                    item.promise = binding.session.readAttachment(key).then(result => {
++                        if (!result.ok) throw result.error;
++                        if (!this.sessions.ownsBinding(binding)) throw new Error("Image source was released");
++                        item.url = URL.createObjectURL(new Blob([result.value.data], { type: result.value.attachment.mimeType ?? result.value.attachment.mediaType ?? 'application/octet-stream' }));
++                        return item.url;
++                    }).catch(error => { cache.delete(key); throw error; });
++                    cache.set(key, item);
++                }
++                return item.promise;
++            }
+ 			imageUrl(sessionId, attachment) {
++				if (typeof sessionId !== "string") return this.readonlyImage(sessionId, attachment, false);
+ 				return this.images.resolve(sessionId, attachment);
+ 			}
+ 			/**
+@@ -3115,6 +3140,7 @@ window.__ModuleLoader__.load({
+ 			* @returns current preview or canonical URL, if cached.
+ 			*/
+ 			peekImageUrl(sessionId, attachment) {
++				if (typeof sessionId !== "string") return this.readonlyImage(sessionId, attachment, true);
+ 				return this.images.peek(sessionId, attachment);
+ 			}
+ 			/**
+@@ -3673,10 +3699,9 @@ window.__ModuleLoader__.load({
+ 			}
+ 			/** Resolve the caller scope's session face or throw on root contexts. */
+ 			scopedSession(op) {
+-				const id = this.scopeId(op);
+-				const binding = this.requireSessions().binding(id);
+-				if (binding === void 0) throw new Error(`conversation.${op}: session "${id}" resolved no binding`);
+-				return binding.session;
++				const session = this.requireSessions().sessionOf(this.ctx);
++                if (session === undefined) throw new Error(`conversation.${op} requires a retained Session scope`);
++                return session;
+ 			}
+ 			/** Read the caller's session scope tag via the sessions service; root contexts fail loud. */
+ 			scopeId(op) {
+@@ -14214,6 +14239,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the shell.
+ 			*/
+ 			shellFor(binding) {
++                if (binding.readOnly) throw new Error("session/read-only: observation has no input capability");
+ 				const existing = this.shells.get(binding);
+ 				if (existing !== void 0) return existing;
+ 				const { session, ctx: actx } = binding;
+@@ -16453,7 +16479,7 @@ window.__ModuleLoader__.load({
+ 		* @param props - Strict Session store, view ledger, navigation, render, and locale shares.
+ 		* @returns Session navigation controls, with title and tabs after conversation starts.
+ 		*/
+-		function ConversationSessionHeader({ sessionId, hideChrome, useSessions, useConversationViews, useStore, renderSlot, open, selectView, t }) {
++		function ConversationSessionHeader({ sessionId, hideChrome, useSessions, useConversationViews, useStore, renderSlot, open, selectView, openView, t }) {
+ 			const tabs = useConversationViews((value) => value);
+ 			const active = resolveActiveView(tabs, useStore((s) => s.view));
+ 			const ancestry = useSessions((s) => deriveAncestry(s, sessionId), equalBreadcrumbs);
+@@ -16499,7 +16525,7 @@ window.__ModuleLoader__.load({
+ 						})]
+ 					}), (0, react_jsx_runtime.jsx)("div", {
+ 						className: ConversationRoot_module_css_default.headerActions,
+-						children: renderSlot("conversation.session.header.actions", {})
++						children: renderSlot("conversation.session.header.actions", { openView })
+ 					})]
+ 				}), (0, react_jsx_runtime.jsx)("div", {
+ 					className: ConversationRoot_module_css_default.headerUtilities,
+@@ -17897,6 +17923,18 @@ window.__ModuleLoader__.load({
+ 		];
+ 		/** Validated Conversation runtime configuration. */
+ 		const Config = Schema.object({ maxConcurrentFileUploads: Schema.natural().min(1).default(2) });
++
++        const READONLY_INPUT_SOURCE = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(undefined);
++        const denyReadonlyInput = () => { throw new Error("session/read-only: observation has no input capability"); };
++        const READONLY_INPUT_ACTIONS = Object.freeze({
++            captureInsertion: denyReadonlyInput,
++            insertText: denyReadonlyInput,
++            setDraft: denyReadonlyInput,
++            addAttachments: denyReadonlyInput,
++            removeAttachment: denyReadonlyInput,
++            pruneAttachments: denyReadonlyInput,
++            submit: denyReadonlyInput
++        });
+ 		const ABSENT_NOTICES = {
+ 			getSnapshot: () => null,
+ 			subscribe: () => () => {}
+@@ -18127,6 +18165,7 @@ window.__ModuleLoader__.load({
+ 				hooks: ["conversation", "input"],
+ 				props: ["inputActions"],
+ 				resolve: (binding) => {
++					if (binding.readOnly) return { hooks: { conversation: uiConversation.binding(binding).snapshot, input: READONLY_INPUT_SOURCE }, props: { inputActions: READONLY_INPUT_ACTIONS } };
+ 					trackBinding(binding);
+ 					const shell = inputHub.shellFor(binding);
+ 					const conversation = uiConversation.binding(binding);
+@@ -18287,7 +18326,12 @@ window.__ModuleLoader__.load({
+ 					selectView: (view) => {
+ 						activateView(sessionId, view);
+ 						actions.setView(view);
+-					}
++					},
++                    openView: (view, focus) => {
++                        if (!viewTabs().some(tab => tab.id === view)) return;
++                        activateView(sessionId, view);
++                        actions.openView(view, focus);
++                    }
+ 				})
+ 			}, ConversationSessionHeader);
+ 			const registerComposerBar = () => slots.register({
+diff --git a/lib/types/client/contract/input.d.ts b/lib/types/client/contract/input.d.ts
+index 5a6d5ca..5adc169 100644
+--- a/lib/types/client/contract/input.d.ts
++++ b/lib/types/client/contract/input.d.ts
+@@ -203,6 +203,7 @@ export interface SessionInputResolver {
+  * useStore+actions convention. Command-style handles (arbitrate/space/
+  * paste/…) stay InputBar-private and never ride this face.
+  */
++/** On a readonly managed Session this stable face rejects every operation; no editor is installed. */
+ export interface InputActions {
+     /** @returns a revision-guarded copy of the current editor selection. */
+     captureInsertion(): TokenSpan;
+diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
+index 74f5846..64faa26 100644
+--- a/lib/types/client/contract/slots.d.ts
++++ b/lib/types/client/contract/slots.d.ts
+@@ -333,7 +333,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+         /** Selector hook over target-neutral Conversation assembly. */
+         useConversation: UseConversation;
+         /** Selector hook over the Session input machine. */
+-        useInput: SnapshotSelectorHook<InputState>;
++        useInput: SnapshotSelectorHook<InputState | undefined>;
+         /** Stable public input actions for this Session. */
+         inputActions: InputActions;
+     }
+@@ -353,6 +353,7 @@ export interface HeroAgentPresetOwnerProps {
+ }
+ /** Header actions derive their state from standard Session props. */
+ export interface ConversationHeaderActionOwnerProps {
++    openView: (view: string, focus: string) => void;
+     /** Marker field: entries receive no owner-specific values. */
+     children?: never;
+ }
+@@ -416,6 +417,7 @@ export interface ConversationSessionInjected {
+ }
+ /** Business callbacks injected into the strict Session header. */
+ export interface ConversationSessionHeaderInjected {
++    openView: (view: string, focus: string) => void;
+     /** Package-owned View roster source bound only for the Conversation header. */
+     readonly hooks: {
+         readonly conversationViews: ObservableSnapshot<readonly ViewTab[]>;
+diff --git a/lib/types/client/conversation/assembly.d.ts b/lib/types/client/conversation/assembly.d.ts
+index 9a81a8a..b3a64cd 100644
+--- a/lib/types/client/conversation/assembly.d.ts
++++ b/lib/types/client/conversation/assembly.d.ts
+@@ -63,14 +63,14 @@ export declare class UiConversation extends Service {
+      * @param attachment - Durable image reference from a session event.
+      * @returns browser URL valid until the Session binding is released.
+      */
+-    imageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): Promise<string>;
++    imageUrl(sessionId: SessionId | import('@deepseek-ai/dsh-api-session-controller/client').SessionBinding, attachment: ImageAttachmentRef): Promise<string>;
+     /**
+      * Read a cached durable image URL synchronously when one is available.
+      * @param sessionId - Session authorization and lifetime scope.
+      * @param attachment - Durable image reference from a session event.
+      * @returns current preview or canonical URL, if cached.
+      */
+-    peekImageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): string | undefined;
++    peekImageUrl(sessionId: SessionId | import('@deepseek-ai/dsh-api-session-controller/client').SessionBinding, attachment: ImageAttachmentRef): string | undefined;
+     /**
+      * Adopt an already-displayable URL for one durable reference (see
+      * HistoricalImageCache.seed): the transcript node then renders it without a
