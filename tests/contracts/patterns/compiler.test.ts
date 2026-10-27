@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { Document } from 'yaml';
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
 import { expandPattern } from '../../../packages/dsh-flow/src/patterns/expand.js';
 import { catalogControl, definitionDigest } from '../../../packages/dsh-flow/src/patterns/internal.js';
@@ -84,8 +85,33 @@ test('static validation rejects unknown roles, fields, missing assets, reference
 
 test('YAML duplicate keys, non JSON values and cyclic aliases are rejected', () => {
   const cat = catalog(); assert.equal(cat.compile('apiVersion: v1\nid: test/a\nid: test/b').ok, false);
-  assert.equal(cat.compile('apiVersion: v1\nid: test/a\ndescription: d\nwhenToUse: w\nroles: {}\nroot: &root\n  children: *root').ok, false);
+  const cyclic = cat.compile('apiVersion: v1\nid: test/a\ndescription: d\nwhenToUse: w\nroles: {}\nroot: &root\n  children: *root');
+  assert.equal(cyclic.ok, false); if (!cyclic.ok) assert.match(cyclic.diagnostics[0]!.message, /YAML aliases are not supported/);
   assert.equal(cat.compile({ kind: 'object', value: value({ parameters: { n: { type: 'number', description: 'n', default: Infinity } } }) }).ok, false);
+  assert.equal(cat.compile('apiVersion: v1\nid: test/a\ndescription: !unsupported text\nwhenToUse: w\nroles: {}\nroot: {}').ok, false);
+  assert.equal(cat.compile('apiVersion: v1\nid: test/a\ndescription: d\nwhenToUse: w\nparameters:\n  number:\n    type: number\n    description: n\n    default: .inf\nroles: {}\nroot: {}').ok, false);
+});
+
+test('finite YAML aliases are explicitly rejected while unused anchors remain valid', () => {
+  const prefix = 'apiVersion: v1\nid: test/alias\ndescription: &description description\n';
+  const alias = catalog().compile(`${prefix}whenToUse: *description\nroles: {}\nroot: {}`);
+  assert.equal(alias.ok, false); if (!alias.ok) assert.match(alias.diagnostics[0]!.message, /YAML aliases are not supported/);
+  assert.equal(catalog().compile(`${prefix}whenToUse: when\nroles: {}\nroot: {}`).ok, true);
+});
+
+test('YAML alias chains fail before any toJS conversion', t => {
+  const lines = ['apiVersion: v1', 'id: test/alias-chain', 'description: d', 'whenToUse: w', 'roles: {}', 'root: {}', 'parameters:', '  payload:', '    type: object', '    description: payload', '    default:', '      level0: &level0 [leaf]'];
+  for (let depth = 1; depth <= 20; depth++) lines.push(`      level${depth}: &level${depth} [*level${depth - 1}, *level${depth - 1}]`);
+  const conversion = t.mock.method(Document.prototype, 'toJS', () => { throw new Error('Alias-chain conversion must never run'); });
+  const result = catalog().compile(lines.join('\n'));
+  assert.equal(conversion.mock.callCount(), 0);
+  assert.equal(result.ok, false); if (!result.ok) assert.match(result.diagnostics[0]!.message, /YAML aliases are not supported/);
+});
+
+test('deep YAML without aliases still compiles and expands', () => {
+  const lines = ['apiVersion: v1', 'id: test/deep-yaml', 'description: d', 'whenToUse: w', 'roles:', '  worker:', '    instructions: work', '    permission: read-only', 'root:'];
+  for (let depth = 0; depth < 300; depth++) { const indent = '  '.repeat(depth + 1); lines.push(`${indent}level${depth}:`, `${indent}  role: worker`); }
+  assert.equal(expand(definition(catalog().compile(lines.join('\n')))).nodes.length, 300);
 });
 
 test('Unicode node names are supported and structural names fail', () => {

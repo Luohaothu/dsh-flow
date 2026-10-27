@@ -16,6 +16,7 @@ function files(directory: string): string[] {
   }).sort();
 }
 try {
+  execFileSync('pnpm', ['build'], { cwd: root, stdio: 'pipe' });
   execFileSync('pnpm', ['--config.ignore-scripts=true', '--dir', join(root, 'packages/dsh-flow'), 'pack', '--pack-destination', scratch], { stdio: 'pipe' });
   const archives = readdirSync(scratch).filter(name => name.endsWith('.tgz'));
   assert.equal(archives.length, 1);
@@ -51,7 +52,7 @@ console.log(JSON.stringify({ packages: listed.patterns.length, installed: true }
 `;
   writeFileSync(join(runner, 'probe.mjs'), probe);
   const result: unknown = JSON.parse(execFileSync(process.execPath, ['probe.mjs'], { cwd: runner, encoding: 'utf8' }));
-  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, runtimeDependencyOnly: true }));
+  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, runtimeDependencyOnly: true, builtFromSource: true }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

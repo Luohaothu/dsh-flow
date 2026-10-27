@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import { copyPatternData, freezePatternData, stringifyPatternData } from './data.js';
 import { bindDefinition, compiledPattern, PatternError } from './internal.js';
 import type { PatternAst, PatternNode, PatternGroup } from './internal.js';
@@ -49,13 +49,15 @@ function parse(document: PatternDocument): { value: Record<string, unknown>; pat
     const stack: unknown[] = [doc.contents];
     while (stack.length) {
       const node = stack.pop();
+      if (isAlias(node)) fail(path, 'YAML aliases are not supported');
       if (isMap(node)) for (const pair of node.items) {
+        if (isAlias(pair.key)) fail(path, 'YAML aliases are not supported');
         if (!isScalar(pair.key) || typeof pair.key.value !== 'string') fail(path, 'YAML mapping keys must be strings');
         stack.push(pair.value);
       }
       else if (isSeq(node)) stack.push(...node.items);
     }
-    try { value = doc.toJS({ maxAliasCount: -1 }); } catch (error) { fail(path, String(error)); }
+    try { value = doc.toJS(); } catch (error) { fail(path, String(error)); }
   }
   json(value, path); object(value, path);
   return { value: copyPatternData(value), path };
