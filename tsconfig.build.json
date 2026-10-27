@@ -29,6 +29,7 @@
     "packages/dsh-flow/src/core/**/*.ts",
     "packages/dsh-flow/src/host/**/*.ts",
     "packages/dsh-flow/src/run/**/*.ts",
-    "packages/dsh-flow/src/assignments/**/*.ts"
+    "packages/dsh-flow/src/assignments/**/*.ts",
+    "packages/dsh-flow/src/patterns/**/*.ts"
   ]
 }

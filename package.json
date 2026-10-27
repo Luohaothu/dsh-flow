@@ -16,7 +16,8 @@
     "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
     "docs:build": "vitepress build docs/design",
     "docs:preview": "vitepress preview docs/design",
-    "test:schema": "tsx scripts/verify-result-schema.ts"
+    "test:schema": "tsx scripts/verify-result-schema.ts",
+    "test:patterns-package": "tsx scripts/verify-pattern-package.ts"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",

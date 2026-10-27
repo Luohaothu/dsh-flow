@@ -1,3 +1,4 @@
+import { bufferConstructionObservation } from './construction.js';
 import type { Agent } from './agent.js';
 import type { Context } from './context.js';
 import type { Group } from './group.js';
@@ -23,7 +24,10 @@ export function observeCore(context: Context, listener: (event: Readonly<CoreObs
   return () => { set.delete(listener); };
 }
 export function emitCore(context: Context, event: CoreObservation): void {
-  for (const listener of [...(listeners.get(context) ?? [])]) {
-    try { listener(event); } catch {}
-  }
+  const dispatch = () => {
+    for (const listener of [...(listeners.get(context) ?? [])]) {
+      try { listener(event); } catch {}
+    }
+  };
+  if (!bufferConstructionObservation(event, dispatch)) dispatch();
 }

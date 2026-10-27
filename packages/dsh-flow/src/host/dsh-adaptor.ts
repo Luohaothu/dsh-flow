@@ -1,6 +1,6 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
 import type { Agent as NativeAgent, AgentHandle, InboxTarget } from '@deepseek-ai/dsh-agent';
-import { BlockAssembler, ReasoningEffortId, createUserMessage, freezeMessage, lastAssistantStreamChunk,
+import { BlockAssembler, createUserMessage, freezeMessage, lastAssistantStreamChunk,
   type LlmCallConfig, type RequestMessage, type TokenUsage, type UserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId, SessionLogOffset, buildForkSeed, snapshotSessionEvent, type SessionEvent } from '@deepseek-ai/dsh-session';
 import '@deepseek-ai/dsh-session-persistence';
@@ -15,10 +15,12 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import type { Agent, AgentProfile, Context, ContextSummary, HostAdaptor, HostAgent, HostEvent,
   Message, ReleaseMode, SendMode, SendPurpose, SessionID, Usage } from '../core/index.js';
+import { assertNoPendingConstruction } from '../core/construction.js';
 import { snapshotProfile } from '../core/profile.js';
 import { isWaitCompletion } from '../core/message.js';
 import { AuxiliaryCallError, registerAuxiliaryUsageSink, awaitAuxiliaryUsageSettlements } from '../core/auxiliary-usage.js';
 import { ExecutionCapacity } from './capacity.js';
+import { DshConfigurationResolver } from './configuration.js';
 import { installFlowTools } from './tools.js';
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -130,7 +132,8 @@ export class DshHostAdaptor implements HostAdaptor {
   private readonly removeUsageSink: () => void;
   private disposed = false;
   private disposal?: Promise<void>;
-  constructor(readonly host: DshContext, private readonly context: Context, options: DshHostAdaptorOptions) {
+  constructor(readonly host: DshContext, private readonly context: Context, options: DshHostAdaptorOptions,
+    private readonly configurationResolver = new DshConfigurationResolver(host.llm)) {
     this.workspaceRoot = resolve(options.workspaceRoot); this.stateDirectory = resolve(options.stateDirectory);
     this.capacity = options.capacity ?? new ExecutionCapacity();
     this.afterTurnTimeoutMs = timeout(options.afterTurnTimeoutMs, 120_000); this.immediateTimeoutMs = timeout(options.immediateTimeoutMs, 10_000);
@@ -145,7 +148,7 @@ export class DshHostAdaptor implements HostAdaptor {
   async createAgent(flow: Agent, input: AgentProfile, history?: string): Promise<HostAgent> {
     this.assertOpen();
     const profile = snapshotProfile(input);
-    const config = await this.configuration(profile);
+    const config = await this.configurationResolver.configuration(profile);
     this.reserve(profile.sessionID);
     let owned: OwnedAgent | undefined;
     try {
@@ -174,7 +177,7 @@ export class DshHostAdaptor implements HostAdaptor {
     try {
       const saved = await this.readMetadata(id);
       const profile = snapshotProfile(saved.profile);
-      const config = await this.configuration(profile, saved.config);
+      const config = await this.configurationResolver.configuration(profile, saved.config);
       const handle = await this.host.agents.resume({ resumeSessionId: SessionId(id), agentOptions: config,
         setup: (scope, native) => {
           if (resolve(native.session.header.cwd ?? '') !== saved.workspaceRoot) throw new Error('Persisted workspace differs from the saved permission boundary');
@@ -199,37 +202,6 @@ export class DshHostAdaptor implements HostAdaptor {
   private reserve(id: string): void {
     if (this.reserved.has(id) || this.host.agents.get(SessionId(id))) throw new Error('Session already has an active Agent');
     this.reserved.add(id);
-  }
-  private async configuration(profile: Readonly<AgentProfile>, saved?: LlmCallConfig): Promise<LlmCallConfig> {
-    for (const key of Object.keys(profile.hostExtras ?? {})) if (key !== 'dsh') throw new TypeError(`Unsupported HostExtras field ${key}`);
-    const extras = profile.hostExtras?.dsh;
-    if (extras !== undefined && (typeof extras !== 'object' || extras === null || Array.isArray(extras))) throw new TypeError('DSH extras must be an object');
-    const dsh = (extras ?? {}) as Record<string, unknown>;
-    for (const key of Object.keys(dsh)) if (key !== 'stop') throw new TypeError(`Unsupported DSH model parameter ${key}`);
-    if (dsh.stop !== undefined && (!Array.isArray(dsh.stop) || dsh.stop.some(item => typeof item !== 'string'))) throw new TypeError('DSH stop must be a string array');
-    const declared: LlmCallConfig = { provider: profile.model.provider, model: profile.model.id,
-      ...(profile.params.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(profile.params.reasoningEffort) }),
-      ...(profile.params.temperature === undefined ? {} : { temperature: profile.params.temperature }),
-      ...(profile.params.maxTokens === undefined ? {} : { maxTokens: profile.params.maxTokens }),
-      ...(dsh.stop === undefined ? {} : { stop: [...dsh.stop as string[]] }) };
-    const fields = ['provider', 'model', 'reasoningEffort', 'temperature', 'maxTokens', 'stop'] as const;
-    if (saved !== undefined) {
-      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new TypeError('Invalid persisted model configuration');
-      for (const key of Object.keys(saved)) if (!fields.some(field => field === key)) throw new TypeError(`Unsupported persisted model parameter ${key}`);
-      if (saved.temperature !== undefined && !Number.isFinite(saved.temperature)) throw new TypeError('Invalid persisted temperature');
-      if (saved.maxTokens !== undefined && (!Number.isSafeInteger(saved.maxTokens) || saved.maxTokens <= 0)) throw new TypeError('Invalid persisted maxTokens');
-      if (saved.reasoningEffort !== undefined && (typeof saved.reasoningEffort !== 'string' || !saved.reasoningEffort.trim())) throw new TypeError('Invalid persisted reasoningEffort');
-      if (saved.stop !== undefined && (!Array.isArray(saved.stop) || saved.stop.some(item => typeof item !== 'string'))) throw new TypeError('Invalid persisted stop');
-      for (const key of fields) {
-        if (declared[key] !== undefined && JSON.stringify(saved[key]) !== JSON.stringify(declared[key])) throw new Error(`Persisted ${key} differs from Profile`);
-      }
-    }
-    const config = saved === undefined ? declared : structuredClone(saved);
-    const resolved = await this.host.llm.resolveCallConfig(config);
-    for (const key of fields) {
-      if ((saved !== undefined || config[key] !== undefined) && JSON.stringify(config[key]) !== JSON.stringify(resolved[key])) throw new Error(`DSH cannot honor ${key}`);
-    }
-    return saved === undefined ? resolved : config;
   }
   private bind(scope: DshContext, native: NativeAgent, flow: Agent, profile: Readonly<AgentProfile>, config: LlmCallConfig, workspaceRoot: string): OwnedAgent {
     const owned: OwnedAgent = { public: Object.freeze({ profile }), native, flow, config, workspaceRoot, listeners: new Set(), bindings: [],
@@ -289,6 +261,7 @@ export class DshHostAdaptor implements HostAdaptor {
     return owned;
   }
   private assertCaller(owned: OwnedAgent, execution: ToolRunContext): void {
+    assertNoPendingConstruction(owned.flow);
     if (execution.agent !== owned.native) throw new Error('Tool caller does not match the bound native Agent');
     if (owned.close) {
       if (owned.close.phase === 'after-turn' && owned.close.turn !== undefined && owned.close.turn === owned.turn) return;

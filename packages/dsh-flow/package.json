@@ -31,11 +31,16 @@
     "./assignments": {
       "types": "./lib/types/assignments/index.d.ts",
       "default": "./lib/assignments/index.js"
+    },
+    "./patterns": {
+      "types": "./lib/types/patterns/index.d.ts",
+      "default": "./lib/patterns/index.js"
     }
   },
   "files": [
     "lib",
-    "README.md"
+    "README.md",
+    "patterns"
   ],
   "scripts": {
     "prepack": "pnpm --dir ../.. run build"
@@ -65,5 +70,8 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-sandbox-policy": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
   }
 }

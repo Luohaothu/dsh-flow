@@ -3,6 +3,8 @@ import type { Context } from '../core/context.js';
 import type { AgentProfile } from '../core/types.js';
 import type { AssignmentArchiveReadResult, AssignmentSnapshot, AssignmentSpec, MaterialRef, SubmissionReceipt } from '../assignments/types.js';
 import type { Run } from './run.js';
+import type { PatternCatalog } from '../patterns/catalog.js';
+import type { PatternRoleValidator } from '../patterns/types.js';
 import type { RunStore } from './store.js';
 
 export type RunStatus = 'starting' | 'active' | 'stopping' | 'stopped' | 'failed';
@@ -22,6 +24,8 @@ export interface RunRecord extends Omit<RunSnapshot, 'pendingAssignments' | 'sto
 export type RunHandle = Run;
 export interface RunServiceDependencies {
   store: RunStore;
+  patternCatalog: PatternCatalog;
+  patternRoleValidator: PatternRoleValidator;
   getOriginDefaults(origin: HostOrigin): RunDefaults;
   initialize(run: Run, defaults: RunDefaults, context: Context): Promise<Agent>;
   validateMaterials?(recipient: Agent, refs: readonly MaterialRef[]): Promise<void>;

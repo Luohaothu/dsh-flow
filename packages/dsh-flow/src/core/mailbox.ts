@@ -1,4 +1,5 @@
 import type { Context } from './context.js';
+import { assertNoPendingConstruction, assertConstructionSource } from './construction.js';
 import { mailboxControl, type MailboxControl } from './internals.js';
 import { isTrustedSystemMessage, newMessageID, sameSource, snapshotMessage, snapshotMeta, snapshotSource } from './message.js';
 import type { MailboxQuery, Message, MessageFilter, MessageID, MessageMeta, MessagePriority, MessageSource } from './types.js';
@@ -23,7 +24,7 @@ export class Mailbox {
     get context() { return self.owner; },
     get closed() { return self.closed; },
     bind: context => {
-      this.assertOpen();
+      if (this.closed) throw new Error('Mailbox is released');
       if (this.owner && this.owner !== context) throw new Error('Mailbox belongs to another Context');
       this.owner = context;
     },
@@ -38,13 +39,14 @@ export class Mailbox {
     onRead: listener => { this.readListener = listener; },
     };
   }
-  private assertOpen(): void { if (this.closed) throw new Error('Mailbox is released'); }
+  private assertOpen(): void { assertNoPendingConstruction(this); if (this.closed) throw new Error('Mailbox is released'); }
   private assertReceiving(): void {
     this.assertOpen();
     if (!this.receiving) throw new Error('Mailbox is not receiving messages');
   }
   put(message: Message): MessageID | null {
     this.assertReceiving();
+    assertConstructionSource(message.source);
     const saved = snapshotMessage(message);
     const trusted = isTrustedSystemMessage(saved);
     saved.priority = trusted ? 'normal' : this.getSourcePriority(saved.source) ?? 'normal';
@@ -57,7 +59,7 @@ export class Mailbox {
         if (drop) return null;
       }
     }
-    this.assertReceiving();
+    this.assertReceiving(); assertConstructionSource(saved.source);
     const entry: Entry = { id: newMessageID(), message: saved as Entry['message'], order: this.order++ };
     this.records.push(entry);
     this.records.sort((a, b) => a.message.timestamp - b.message.timestamp || a.order - b.order);
@@ -102,16 +104,18 @@ export class Mailbox {
   setFilters(rules: MessageFilter[]): void {
     this.assertOpen();
     if (!rules.every(rule => typeof rule === 'function')) throw new TypeError('Filters must be functions');
-    this.filters = rules.slice();
+    this.assertOpen(); this.filters = rules.slice();
   }
   getFilters(): MessageFilter[] { this.assertOpen(); return this.filters.slice(); }
   getSourcePriority(source: MessageSource): MessagePriority | null {
-    this.assertOpen(); return this.ratings.find(rating => sameSource(rating.source, source))?.priority ?? null;
+    this.assertOpen(); assertConstructionSource(source); return this.ratings.find(rating => sameSource(rating.source, source))?.priority ?? null;
   }
   setSourcePriority(source: MessageSource, priority: MessagePriority): void {
     this.assertOpen();
     if (!['high', 'normal', 'low'].includes(priority)) throw new TypeError('Unknown source priority');
+    assertConstructionSource(source);
     const saved = snapshotSource(source);
+    this.assertOpen(); assertConstructionSource(saved);
     const rating = this.ratings.find(rating => sameSource(rating.source, saved));
     if (rating) rating.priority = priority; else this.ratings.push({ source: saved, priority });
   }

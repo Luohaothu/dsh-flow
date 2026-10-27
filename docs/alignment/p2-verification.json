@@ -87,7 +87,7 @@
     "Current archive decoding validates required AssignmentSnapshot DTO structure and owned submitted result; malformed records cannot become resumes sources while null/false/zero remain valid.",
     "RunRecord and nested defaults, origin, receipt and idempotency table fields share one complete read/write type predicate; invalid persisted input is never asserted to the complete type."
   ],
-  "reviewStatus": "Complete RunRecord boundary red-green fix passes 402 contracts and awaits updated-head independent review.",
+  "reviewStatus": "PASS at a7e87cad6e904e930ec37cff26d3e7db7f5d6c34; PR #10 merged as e70c3b2f61c795a6fe0a2803d1fab667e48b1947.",
   "commentReview": {
     "retained": 1,
     "deleted": 0,
