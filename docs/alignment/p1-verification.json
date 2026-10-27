@@ -67,8 +67,8 @@
       "tests": 119,
       "failed": 0,
       "skipped": 0,
-      "coreTests": 78,
-      "hostTopLevelTests": 35,
+      "coreTests": 77,
+      "hostTopLevelTests": 36,
       "hostSubtests": 6
     },
     {

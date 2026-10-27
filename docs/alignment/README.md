@@ -58,7 +58,7 @@ PR 的评审记录对应确定的提交。产生新提交后重新评审受影�
 
 ## P1 验证范围
 
-[P1 验证记录](p1-verification.json)对应 C001–C035 的 Core 与 DSH 基础合同。新测试共 119 项：Core 78 项，真实 Host runtime 35 项顶层测试及 6 项子测试；另有 8 项清单校验器测试。真实 Host 测试使用未打补丁的 rc.2 服务、AgentLoop、ToolRuntime 和 JSONL，模型输出由确定性适配器提供。
+[P1 验证记录](p1-verification.json)对应 C001–C035 的 Core 与 DSH 基础合同。新测试共 119 项：Core 77 项，真实 Host runtime 36 项顶层测试及 6 项子测试；另有 8 项清单校验器测试。真实 Host 测试使用未打补丁的 rc.2 服务、AgentLoop、ToolRuntime 和 JSONL，模型输出由确定性适配器提供。
 
 当前构建导出 Core/Host ESM 模块和声明文件。完整插件入口、团队与作业服务、协议、界面及安装验收随 P2–P7 接入。原生观察和 API 所有权保护在 P6 按宿主缺口实现。总结格式与请求约束已检验，真实模型的语义保留效果在 P7 验证。管理工具拒绝使用实际 ToolRuntime 的同名动作探针，未修改真实插件配置；120 秒与 10 秒默认值经静态核验，状态转换使用短时限运行测试。
 
