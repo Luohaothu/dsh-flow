@@ -8,7 +8,7 @@
     "explicitScenarioTags": 120,
     "semanticMaps": 114
   },
-  "interpretation": "Evidence links identify owning source and checks. A tag or file mapping does not establish every compound clause; deterministic tests, product UI and real model runs have distinct evidence. Execution results are recorded per phase. Case references resolve through checks; each check is stored once.",
+  "interpretation": "Evidence links identify owning source and checks. A tag or file mapping does not establish every compound clause; deterministic tests, product UI and real model runs have distinct evidence. Execution results are recorded per phase. Case references resolve through checks; each check is stored once. P7 adds production React collapse, timing and reduced-motion regressions.",
   "rows": [
     {
       "id": "C001-01",
@@ -6202,11 +6202,21 @@
             "K0321",
             "K0322"
           ]
+        },
+        {
+          "path": "tests/contracts/ui/tree-render.test.ts",
+          "cases": [
+            "K0421",
+            "K0422"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/ui/geometry.test.ts tests/contracts/ui/state.test.ts",
       "verificationRecord": "p6-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C066-02",
@@ -6243,11 +6253,21 @@
             "K0321",
             "K0322"
           ]
+        },
+        {
+          "path": "tests/contracts/ui/tree-render.test.ts",
+          "cases": [
+            "K0421",
+            "K0422"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/ui/geometry.test.ts tests/contracts/ui/state.test.ts",
       "verificationRecord": "p6-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C066-03",
@@ -6468,11 +6488,21 @@
             "K0315",
             "K0316"
           ]
+        },
+        {
+          "path": "tests/contracts/ui/tree-render.test.ts",
+          "cases": [
+            "K0421",
+            "K0422"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/dashboard/projector.test.ts tests/contracts/dashboard/replay-mode.test.ts tests/contracts/ui/client-store.test.ts tests/contracts/ui/geometry.test.ts",
       "verificationRecord": "p6-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C068-02",
@@ -6651,11 +6681,21 @@
             "K0315",
             "K0316"
           ]
+        },
+        {
+          "path": "tests/contracts/ui/tree-render.test.ts",
+          "cases": [
+            "K0421",
+            "K0422"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/dashboard/projector.test.ts tests/contracts/dashboard/replay-mode.test.ts tests/contracts/ui/client-store.test.ts tests/contracts/ui/geometry.test.ts",
       "verificationRecord": "p6-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C069-01",
@@ -8441,11 +8481,21 @@
             "K0222",
             "K0223"
           ]
+        },
+        {
+          "path": "tests/contracts/ui/tree-render.test.ts",
+          "cases": [
+            "K0421",
+            "K0422"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/native/configuration.test.ts tests/contracts/patterns/native.test.ts",
       "verificationRecord": "p7-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C085-01",
@@ -10854,6 +10904,16 @@
       "path": "tests/contracts/native-client/settings-input.test.ts",
       "line": 132,
       "text": "await t.test('numeric paste retains malformed text and accepts finite decimal exponents', async () => {"
+    },
+    "K0421": {
+      "path": "tests/contracts/ui/tree-render.test.ts",
+      "line": 45,
+      "text": "test('a selected branch can fold and reopen during its exit transition without unmounting the React tree', { timeout: 15_000 }, async t => {"
+    },
+    "K0422": {
+      "path": "tests/contracts/ui/tree-render.test.ts",
+      "line": 81,
+      "text": "test('independent exit batches retain their own timing and an old timer cannot remove a reopened member', { timeout: 15_000 }, async t => {"
     }
   }
 }

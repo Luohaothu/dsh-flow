@@ -20,21 +20,28 @@ export function AgentTree({ snapshot, view, now, deliveries, joined, locateKey, 
   const order = useRef(new Map<string, number>()), cardRefs = useRef(new Map<string, HTMLDivElement>()), itemRefs = useRef(new Map<string, HTMLDivElement>());
   const [size, setSize] = useState({ width: 800, height: 600 }), [heights, setHeights] = useState(new Map<string, number>()), [focusedId, setFocusedId] = useState<string | null>(null);
   const [actual, setActual] = useState<TreeGeometry | null>(null), [layoutReady, setLayoutReady] = useState(false);
-  const [exiting, setExiting] = useState<{ node: Card; rect: Rect; depth: number; parent: Rect | null; firstLevel: boolean }[]>([]);
+  const [exiting, setExiting] = useState<{ node: Card; rect: Rect; depth: number; parent: Rect | null; firstLevel: boolean; batch: number; delay: number; duration: number }[]>([]);
   const nodes = useMemo(() => orderedNodes(snapshot.nodes, order.current), [snapshot.nodes]);
   const collapsed = useMemo(() => new Set(view.collapsed), [view.collapsed]), visible = useMemo(() => visibleTree(nodes, collapsed), [nodes, collapsed]);
   const tree = useMemo(() => treeIndex(nodes), [nodes]), wide = size.width >= 560 && view.mode === 'tree';
   const layout = useMemo(() => layoutTree(visible, heights, size.width, snapshot.groups, view.mode === 'list'), [visible, heights, size.width, snapshot.groups, view.mode]);
   const previousLayout = useRef({ visible, layout });
-  const exitTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
+  const exitTimers = useRef(new Set<ReturnType<typeof setTimeout>>()), exitBatch = useRef(0);
   useLayoutEffect(() => {
     const previous = previousLayout.current, visibleIds = new Set(visible.map(item => item.node.id));
     const removed = previous.visible.filter(item => !visibleIds.has(item.node.id)).flatMap(item => { const rect = previous.layout.cards.get(item.node.id); return rect ? [{ node: item.node, depth: item.depth, rect, parent: item.parentId ? previous.layout.cards.get(item.parentId) ?? null : null, firstLevel: size.width >= 560 && view.mode === 'tree' && item.depth === 1 }] : []; });
     previousLayout.current = { visible, layout };
-    if (!removed.length) { setExiting(current => current.some(item => visibleIds.has(item.node.id)) ? current.filter(item => !visibleIds.has(item.node.id)) : current); return; }
-    clearTimeout(exitTimer.current); setExiting(removed); exitTimer.current = setTimeout(() => setExiting([]), 280);
-  }, [visible, layout]);
-  useEffect(() => () => clearTimeout(exitTimer.current), []);
+    if (!removed.length) {
+      if (exiting.some(item => visibleIds.has(item.node.id))) setExiting(current => current.some(item => visibleIds.has(item.node.id)) ? current.filter(item => !visibleIds.has(item.node.id)) : current);
+      return;
+    }
+    const batch = ++exitBatch.current, depth = Math.max(...removed.map(item => item.depth)), removedIds = new Set(removed.map(item => item.node.id));
+    const next = removed.map(item => { const delay = Math.max(0, depth - item.depth) * Math.min(20, 240 / (depth + 1)); return { ...item, batch, delay, duration: 280 - delay }; });
+    setExiting(current => [...current.filter(item => !visibleIds.has(item.node.id) && !removedIds.has(item.node.id)), ...next]);
+    const timer = setTimeout(() => { exitTimers.current.delete(timer); setExiting(current => current.some(item => item.batch === batch) ? current.filter(item => item.batch !== batch) : current); }, 280);
+    exitTimers.current.add(timer);
+  }, [visible, layout, exiting]);
+  useEffect(() => () => { for (const timer of exitTimers.current) clearTimeout(timer); exitTimers.current.clear(); }, []);
   const geometry = actual && actual.cards.size === layout.cards.size && [...layout.cards.keys()].every(id => actual.cards.has(id)) ? actual : layout;
   const edges = useMemo(() => relations(visible, geometry.cards, wide), [visible, geometry, wide]);
   const segments = useMemo(() => groupSegments(snapshot.groups, visible, geometry.cards, nodes, wide), [snapshot.groups, visible, geometry, nodes, wide]);
@@ -48,7 +55,10 @@ export function AgentTree({ snapshot, view, now, deliveries, joined, locateKey, 
     const observer = new ResizeObserver(update); observer.observe(element); return () => observer.disconnect();
   }, []);
   useLayoutEffect(() => {
-    const measure = () => setHeights(previous => { const next = new Map(previous); let changed = false; for (const [id, element] of cardRefs.current) { const height = element.offsetHeight; if (height > 0 && next.get(id) !== height) { next.set(id, height); changed = true; } } return changed ? next : previous; });
+    const measure = () => {
+      const measured = [...cardRefs.current].map(([id, element]) => [id, element.offsetHeight] as const);
+      setHeights(previous => { const next = new Map(previous); let changed = false; for (const [id, height] of measured) { if (height > 0 && next.get(id) !== height) { next.set(id, height); changed = true; } } return changed ? next : previous; });
+    };
     measure(); const observer = new ResizeObserver(measure); for (const element of cardRefs.current.values()) observer.observe(element); return () => observer.disconnect();
   }, [visible]);
   useLayoutEffect(() => { if (layoutReady || size.width !== viewportRef.current?.clientWidth || !visible.every(item => heights.has(item.node.id))) return; const frame = requestAnimationFrame(() => setLayoutReady(true)); return () => cancelAnimationFrame(frame); }, [layoutReady, size.width, visible, heights]);
@@ -107,7 +117,7 @@ export function AgentTree({ snapshot, view, now, deliveries, joined, locateKey, 
         <svg className="flow-geometry" width={layout.width} height={layout.height} aria-hidden="true" overflow="visible">
           {segments.map(segment => <g key={segment.key} className={`flow-group ${view.groupId === segment.group.id ? 'is-selected' : ''}`}><rect {...segment.rect} rx="12" /></g>)}
           {edges.map(edge => <g key={edge.id} className={`flow-relation ${edge.from === view.selectedId || edge.to === view.selectedId ? 'is-related' : ''} ${tree.byId.get(edge.to)?.status === 'terminated' ? 'is-terminated' : ''} ${joined.has(edge.to) ? 'is-new' : ''}`}><path d={edge.path} pathLength="1" /><circle cx={geometry.cards.get(edge.from)!.x + (wide && visible.find(item => item.node.id === edge.to)?.depth === 1 ? geometry.cards.get(edge.from)!.width / 2 : 16)} cy={geometry.cards.get(edge.from)!.y + geometry.cards.get(edge.from)!.height} r="2.5" /><circle cx={geometry.cards.get(edge.to)!.x + (edge.firstLevel ? geometry.cards.get(edge.to)!.width / 2 : 0)} cy={geometry.cards.get(edge.to)!.y + (edge.firstLevel ? 0 : 24)} r="2.5" /></g>)}
-          {exiting.map(item => item.parent && <path key={`exit/${item.node.id}`} className="flow-exiting-relation" pathLength="1" d={relationPath(item.parent, item.rect, item.firstLevel)} />)}
+          {exiting.map(item => item.parent && <path key={`exit/${item.batch}/${item.node.id}`} className="flow-exiting-relation" pathLength="1" d={relationPath(item.parent, item.rect, item.firstLevel)} />)}
           {activeDeliveries.map(delivery => { const source = delivery.message.source; if (source.kind !== 'agent' && source.kind !== 'group') return null; const route = deliveryPath(source.agentId, delivery.message.recipientId, nodes, geometry, edges); if (!route) return null; return <DeliveryGlyph key={delivery.key} path={route.path} direct={route.direct} label={`${source.name} → ${tree.byId.get(delivery.message.recipientId)?.name ?? delivery.message.recipientId}`} />; })}
         </svg>
         {segments.map(segment => <button key={segment.key} type="button" className="flow-group-label" style={{ left: segment.rect.x + 12, top: segment.rect.y - 10 }} aria-label={`群 ${segment.group.id}，${segment.group.members.length} 个成员${segment.hidden ? `，${segment.hidden} 个隐藏成员` : ''}`} onClick={() => onGroup(segment.group)}><Icon name="group" />{segment.group.id} · {segment.group.members.length}{segment.hidden > 0 ? ` · 隐藏 ${segment.hidden}` : ''}</button>)}
@@ -119,7 +129,7 @@ export function AgentTree({ snapshot, view, now, deliveries, joined, locateKey, 
             </div>;
           })}
         </div>
-        <div className="flow-exiting-layer" aria-hidden="true" ref={element => { if (element) element.inert = true; }}>{exiting.map(item => { const depth = Math.max(...exiting.map(exit => exit.depth)), delay = Math.max(0, depth - item.depth) * Math.min(20, 240 / (depth + 1)); return <div key={item.node.id} className="flow-exiting-card" style={{ left: item.rect.x, top: item.rect.y, width: item.rect.width, animationDelay: `${delay}ms`, animationDuration: `${280 - delay}ms` }}><div className="flow-card-surface"><AgentCard node={item.node} snapshot={snapshot} collapsed={false} now={now} onToggle={() => {}} onMarkers={() => {}} /></div></div>; })}</div>
+        <div className="flow-exiting-layer" aria-hidden="true" ref={element => { if (element) element.inert = true; }}>{exiting.map(item => <div key={`${item.batch}/${item.node.id}`} className="flow-exiting-card" style={{ left: item.rect.x, top: item.rect.y, width: item.rect.width, animationDelay: `${item.delay}ms`, animationDuration: `${item.duration}ms` }}><div className="flow-card-surface"><AgentCard node={item.node} snapshot={snapshot} collapsed={false} now={now} onToggle={() => {}} onMarkers={() => {}} /></div></div>)}</div>
       </div>
       {!nodes.length && <div className="flow-canvas-empty"><Icon name="branch" size={28} />等待团队根实例发布</div>}
     </div>
