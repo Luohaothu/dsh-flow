@@ -51,14 +51,21 @@ export function apply(ctx) {
   assert.ok(scenario.prompt.trim());
   assert.equal(typeof scenario.workspace, 'string');
   assert.ok(scenario.plain === undefined || typeof scenario.plain === 'boolean', 'plain must be a boolean');
+  if (scenario.userPrompts !== undefined) {
+    assert.ok(Array.isArray(scenario.userPrompts) && scenario.userPrompts.length > 0, 'userPrompts must be a nonempty array');
+    assert.ok(scenario.userPrompts.every(prompt => typeof prompt === 'string' && prompt.trim()), 'Every user prompt must be a nonempty string');
+    assert.equal(scenario.userPrompts[0], scenario.prompt, 'The first user prompt must equal prompt');
+  }
+  const userPrompts = scenario.userPrompts ?? [scenario.prompt];
   assert.ok(lstatSync(scenario.workspace).isDirectory());
   for (const field of ['maxRequests', 'maxTotalTokens', 'maxDurationMs', 'noProgressMs']) assert.ok(Number.isSafeInteger(scenario[field]) && scenario[field] > 0, `${field} must be a positive integer`);
   if (!scenario.plain) assert.match(scenario.prompt, /^\/agent-team\s+\S/);
+  if (scenario.userTurnBoundary !== undefined) assert.ok(['main-idle', 'task-complete'].includes(scenario.userTurnBoundary), 'Unknown user turn boundary');
   const saveProof = privateWriter(process.env.NATURAL_PROOF_DIR);
-  const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: scenario.prompt, workspace: realpathSync(scenario.workspace), limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
+  const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: scenario.prompt, userPrompts, userTimeline: [], checkpoints: [], awaitingUser: false, workspace: realpathSync(scenario.workspace), limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
   const archived = new Map();
   const seenProgress = new Set();
-  let main, timer, stableSince, lastProgressAt = evidence.startedAt, finished = false;
+  let main, timer, stableSince, matchedUserCount = 0, lastProgressAt = evidence.startedAt, finished = false;
   const save = () => { evidence.updatedAt = Date.now(); saveProof(evidence); };
   const finish = (status, reason, details) => {
     if (finished) return;
@@ -112,6 +119,16 @@ export function apply(ctx) {
       evidence.snapshots = evidence.registry.runs.filter(run => run.entry.callerSessionId === evidence.mainSessionId).map(run => copy(ctx.flow.projector.snapshot(run.id)));
       const mainEvents = evidence.histories.find(history => history.sessionId === evidence.mainSessionId)?.events ?? [];
       evidence.skillInvocations = mainEvents.filter(event => event.type === 'user/message' && event.data.source?.kind === 'skill-invocation');
+      const userTimeline = [], seenUserSequences = new Set();
+      for (const event of mainEvents) {
+        if (event.type !== 'user/message' || event.data.source?.kind !== 'user' || seenUserSequences.has(event.seq)) continue;
+        seenUserSequences.add(event.seq);
+        const prompt = userPrompts[userTimeline.length];
+        if (prompt !== undefined && event.data.content?.some(block => block.type === 'text' && block.text === prompt)) {
+          userTimeline.push({ index: userTimeline.length, seq: event.seq, time: event.time, prompt });
+        }
+      }
+      evidence.userTimeline = userTimeline;
       const semantic = [
         ...evidence.snapshots.flatMap(snapshot => snapshot.assignments.map(assignment => ['assignment', assignment.id, assignment.status, assignment.result, assignment.reason])),
         ...evidence.snapshots.flatMap(snapshot => snapshot.nodes.map(node => ['member', node.id, node.parentId])),
@@ -129,14 +146,14 @@ export function apply(ctx) {
         lastProgressAt = Date.now();
         evidence.progress.push({ timestamp: lastProgressAt, kind: item[0], digest: key });
       }
-      evidence.lastProgressAt = lastProgressAt;
       const now = Date.now();
       if (now - evidence.startedAt >= scenario.maxDurationMs) return finish('ABORTED', 'duration-limit');
       const runningRequests = evidence.requests.filter(request => request.status === 'running').length;
-      if (!runningRequests && now - lastProgressAt >= scenario.noProgressMs) return finish('ABORTED', 'no-progress');
       const relevantIds = new Set([evidence.mainSessionId, ...evidence.snapshots.flatMap(snapshot => snapshot.nodes.map(node => node.sessionID))]);
       const idle = !!main && ctx.agents.list().filter(agent => relevantIds.has(agent.session.id)).every(agent => agent.status === 'idle') && !runningRequests;
-      const ended = mainEvents.some(event => event.type === 'turn/end');
+      const lastUserSeq = userTimeline.at(-1)?.seq;
+      const ended = mainEvents.some(event => event.type === 'turn/end' && (scenario.userPrompts === undefined || lastUserSeq !== undefined && event.seq > lastUserSeq));
+      const allUserPromptsReceived = scenario.userPrompts === undefined || userTimeline.length === userPrompts.length;
       const terminalAssignments = evidence.snapshots.flatMap(snapshot => snapshot.assignments).filter(assignment => assignment.parentAssignmentId === null && assignment.status !== 'pending');
       const readCalls = mainEvents.filter(event => event.type === 'tool/call' && event.data.name === 'flow_team_assignment_read');
       const readback = terminalAssignments.every(assignment => readCalls.some(call => {
@@ -145,9 +162,20 @@ export function apply(ctx) {
         if (args.assignmentId !== assignment.id) return false;
         return mainEvents.some(event => event.type === 'tool/result' && event.data.message?.toolCallId === call.data.callId && !event.data.message.isError && event.data.message.content?.some(part => part.type === 'text' && (() => { try { return JSON.parse(part.text).status === assignment.status; } catch { return false; } })()));
       }));
-      const qualifying = idle && ended && (scenario.plain || terminalAssignments.length > 0 && readback && evidence.snapshots.every(snapshot => snapshot.assignments.every(assignment => assignment.status !== 'pending')));
+      const taskComplete = terminalAssignments.length > 0 && readback && evidence.snapshots.every(snapshot => snapshot.assignments.every(assignment => assignment.status !== 'pending'));
+      const userTurnBoundary = scenario.userTurnBoundary ?? (scenario.plain ? 'main-idle' : 'task-complete');
+      const awaitingUser = !allUserPromptsReceived && userTimeline.length > 0 && idle && ended && (userTurnBoundary === 'main-idle' || taskComplete);
+      if (scenario.userPrompts !== undefined && (userTimeline.length > matchedUserCount || evidence.awaitingUser && !awaitingUser)) lastProgressAt = now;
+      matchedUserCount = userTimeline.length;
+      evidence.awaitingUser = awaitingUser;
+      if (awaitingUser && !evidence.checkpoints.some(checkpoint => checkpoint.userEventSeq === lastUserSeq)) {
+        evidence.checkpoints.push({ afterPromptCount: userTimeline.length, userEventSeq: lastUserSeq, observedAt: now });
+      }
+      evidence.lastProgressAt = lastProgressAt;
+      if (!awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) return finish('ABORTED', 'no-progress');
+      const qualifying = allUserPromptsReceived && idle && ended && (scenario.plain || taskComplete);
       stableSince = qualifying ? stableSince ?? now : undefined;
-      evidence.observation = { idle, ended, runningRequests, terminalAssignments: terminalAssignments.map(assignment => assignment.id), readback, stableSince };
+      evidence.observation = { idle, ended, runningRequests, matchedUserPrompts: userTimeline.length, expectedUserPrompts: userPrompts.length, awaitingUser, terminalAssignments: terminalAssignments.map(assignment => assignment.id), readback, stableSince };
       save();
       if (stableSince !== undefined && now - stableSince >= 3000) finish('SETTLED', scenario.plain ? 'plain-main-ended' : 'terminal-assignments-read-back');
     } catch (error) { finish('ERROR', 'observer-error', String(error?.stack ?? error)); }

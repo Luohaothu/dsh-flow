@@ -79,6 +79,26 @@ test('real native flow_submit delivers all six JSON kinds, including every JSON 
   }
 });
 
+test('native submission distinguishes a JSON-encoded string from the required object and accepts a corrected value', async t => {
+  const f = await fixture(t), main = await f.ordinary('result-main'), { run, root } = await f.active(main, 'result-run');
+  const value = { issues: [], complete: false };
+  const assignment = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null,
+    spec: { ...spec(), resultSchema: { type: 'object', properties: { issues: { type: 'array' }, complete: { type: 'boolean' } }, required: ['issues', 'complete'] } } }, 'object-result');
+  const encoded = await f.call(f.native(root), 'flow_submit', { assignmentId: assignment.id, result: JSON.stringify(value), continuingChildren: [] });
+  assert.equal(encoded.error, false, encoded.text);
+  const rejected = JSON.parse(encoded.text);
+  assert.equal(rejected.kind, 'invalid-result');
+  assert.deepEqual(rejected.errors, [{ path: '', message: 'Expected type object; received string' }]);
+  assert.equal(run.assignments!.read(run, assignment).status, 'pending');
+  assert.equal(run.assignments!.read(run, assignment).result, undefined);
+  const corrected = await f.call(f.native(root), 'flow_submit', { assignmentId: assignment.id, result: value, continuingChildren: [] });
+  assert.equal(JSON.parse(corrected.text).kind, 'accepted');
+  const saved = run.assignments!.read(run, assignment);
+  assert.deepEqual(saved.result, value);
+  assert.equal(saved.schemaFailures, 1);
+  assert.equal(saved.submissionCount, 2);
+});
+
 test('two ordinary main tools isolate Run listings, assignment queries and admitted material origins', async t => {
   const f = await fixture(t), mainA = await f.ordinary('isolation-main-a'), mainB = await f.ordinary('isolation-main-b');
   const a = await f.active(mainA, 'same-request'), b = await f.active(mainB, 'same-request');
