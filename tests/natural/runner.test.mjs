@@ -13,7 +13,7 @@ const alive = pid => {
   catch (error) { if (error.code === 'ESRCH') return false; throw error; }
 };
 
-async function fixture(t, body) {
+async function fixture(t, body, preexisting = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'flow-runner-')));
   const runner = join(root, 'tests/natural/run.mjs');
   const cli = join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js');
@@ -26,6 +26,7 @@ async function fixture(t, body) {
   await writeFile(join(home, 'profiles/web/cordis.patch.yml'), '[]\n');
   await writeFile(scenario, JSON.stringify({ maxDurationMs: 1000 }));
   await writeFile(cli, `const fs = require('node:fs');\nconst { join } = require('node:path');\nconst proof = process.env.NATURAL_PROOF_DIR;\nfs.writeFileSync(join(proof, 'host.json'), JSON.stringify({ pid: process.pid }));\n${body}\n`);
+  for (const [name, content] of Object.entries(preexisting)) await writeFile(join(proof, name), content);
   const child = spawn(process.execPath, [runner], { cwd: root, env: { ...process.env, DSH_HOME: home, NATURAL_SCENARIO_FILE: scenario, NATURAL_PROOF_DIR: proof, NATURAL_PROFILE_NAME: 'web', NATURAL_UI_HOLD_MS: '0' } });
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
@@ -91,4 +92,13 @@ setInterval(() => {}, 1000);
   assert.equal(receipt.runnerOwnedStop, true);
   assert.equal(receipt.forced, false);
   await stopped(receipt.pid);
+});
+
+
+test('runner rejects a stale operator finish request before launching the host', { timeout: 7000 }, async t => {
+  const f = await fixture(t, 'setInterval(() => {}, 1000);', { 'finish-request.json': JSON.stringify({ sessionId: 'old-main', afterUserSeq: 1 }) });
+  assert.equal(await completed(f), 1, f.output());
+  assert.equal(JSON.parse(f.output().trim()).errorCode, 'ERR_ASSERTION');
+  await assert.rejects(readFile(join(f.proof, 'host.json')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(f.proof, 'process.json')), { code: 'ENOENT' });
 });
