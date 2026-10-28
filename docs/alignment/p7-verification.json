@@ -1,0 +1,962 @@
+{
+  "phase": "P7",
+  "schemaVersion": 1,
+  "overall": {
+    "status": "verification-complete-awaiting-review",
+    "remaining": [
+      "exact final PR review",
+      "final remote checks",
+      "merge"
+    ],
+    "scope": "All recorded local acceptance items are complete. This is not the final PR review or merge verdict."
+  },
+  "design": {
+    "path": "docs/design/design.md",
+    "sha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+    "soleAuthority": true
+  },
+  "source": {
+    "functionalCheckpoint": "27848f062fe93b50212abe2c420be5deacc51818",
+    "hashes": {
+      "packages/dsh-flow/src/host/dsh-adaptor.ts": "f77cca0ac01a940c9876caf118c44d865cbc442a946888b3e04cd3e12cb0c625",
+      "tests/contracts/host/design-edges.test.ts": "3d7809a8bac4ad71629d82ae76e88883071d9dcdde7e4e24bd8f71248e55e73e",
+      "tests/contracts/host/dsh-runtime.test.ts": "afe0b7f78456bdcade0f865650fc5999c061ceeeffccab390f002ae19613205e",
+      "tests/live/host.mjs": "c77d9148ea02ac23fbbe354c870b4ada190a9c1f566b18e16dc0e384b15a9bcf",
+      "tests/live/runner.mjs": "1da57cc95973fef9823f663cea369e2ef84c23c71f78ba6150b4c2e5eb5232f9",
+      "tests/live/README.md": "54e354e74ffc816709e6e3e22dd740ca8d1b1fc1d2e64127a6162c1a32f73fb1",
+      "packages/dsh-flow/src/ui/AgentTree.tsx": "8b9e1072d0d96258ba453bedab4f9e4233cb24db2df04691a5c840d4bed7cbfa",
+      "packages/dsh-flow/src/ui/styles.tsx": "d7049654b589f1e2c547615d1eb226cf05d23a6eed0cf6a266be7cad2f417b77",
+      "tests/contracts/ui/tree-render.test.ts": "40c3444a7e445b37152656da14dcafd6ddd821b5f4c18a7add6de7ba86395db8",
+      "tests/live/path-guard.test.mjs": "493dfda0c617644f81f2452f56170f9c9644bf1bb32ddf8bf0212b024797555b",
+      ".github/workflows/alignment.yml": "ce2405d735fe71e042694a0f6f1ffb6fb0ce5177bcdb4261381f9ac2ceaab7d6"
+    },
+    "product": {
+      "package": "dsh-flow",
+      "version": "0.1.0",
+      "tarballSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "installedFiles": 164,
+      "nativeClientSha256": "98a070c3d8d300845c3f1a643d2e3c751de50c83a397c99d93dd689650f0ea9f",
+      "webAppSha256": "49455c1bcba85dc8247b2cde9463c06cfef7f42292bdd67b8d60b2557c37ce0a",
+      "webIndexSha256": "d262d7c731ee09745b568c6bd2a9f282f1748b3dfd38ace6209f5864fc31609c"
+    },
+    "finalCommitReview": {
+      "status": "pending",
+      "head": null,
+      "verdict": null,
+      "mergeCommit": null,
+      "authority": "https://github.com/Luohaothu/dsh-flow/pull/15"
+    },
+    "phaseCheckpointSemantics": "phases.json records phase/PR checkpoints; the final PR15 page is authoritative for its final reviewed head, checks and merge. This document does not predict its own merge SHA.",
+    "hashScope": "The hashes map records the functional checkpoint and the actual full4/herb/final-pair/Desktop fixture snapshots. The later fixture-only output-path protection and its separate regression are identified below; the 117-request run is not relabelled.",
+    "fixtureSafetyFollowup": {
+      "status": "PASS",
+      "files": {
+        "tests/live/host.mjs": "03908bca379410f3cd4bfa2d27d6f1569bcc937276dcece2391fa8694c235a05",
+        "tests/live/runner.mjs": "2db3fc80fc77f07b5de39593ad7b36fcbd3b61bcbc467b48b9274fa7a874fb98",
+        "tests/live/README.md": "c5870adf41b5f4a0f5f6374ec8fce4b05f347628409e17caa3753ece445e64e2",
+        "tests/live/path-guard.test.mjs": "d87c24d73266226535986e9bfaa82fdff17ced7deed8545cd563780f194bf32f"
+      },
+      "productionSourceSha256": "f77cca0ac01a940c9876caf118c44d865cbc442a946888b3e04cd3e12cb0c625",
+      "productionTarballSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "recordedFull4AndDesktopHostSha256": "c77d9148ea02ac23fbbe354c870b4ada190a9c1f566b18e16dc0e384b15a9bcf",
+      "guardedSingleHostSha256": "03908bca379410f3cd4bfa2d27d6f1569bcc937276dcece2391fa8694c235a05",
+      "fullSixScenariosRerunAfterWriterChange": false,
+      "scope": "Only fixture output path validation/writes and diagnostic documentation changed. Production package/model flow unchanged; final full4 117 request snapshot is not relabelled as new writer."
+    },
+    "entryBoundaryFollowup": {
+      "status": "PASS",
+      "files": {
+        "tests/live/runner.mjs": "be4672477e9b013671a231ffcc104aa4ef0626949ffb44b79808fcf17c4f85c4",
+        "tests/live/endpoint-policy.test.mjs": "3f26ccd538b0857592b481bd8d8bac27ef4f83dfd1fdcf8372ebc3cb915416e1",
+        "tests/live/README.md": "131406a7041230614175342e43a1b8e167f4e132737bfbc3750aefbaa42f87dd",
+        ".github/workflows/alignment.yml": "4ff55c5d04a2b963296a4dcf966ed31b4d645fae02c6c71da1deb2b02d1c28a2"
+      },
+      "productionSourceSha256": "f77cca0ac01a940c9876caf118c44d865cbc442a946888b3e04cd3e12cb0c625",
+      "productionTarballSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "recordedExecutionsRelabelled": false,
+      "scope": "Live runner configuration/bootstrap only; actual model requests and product package unchanged. Earlier execution snapshot hashes remain above."
+    }
+  },
+  "census": {
+    "contracts": 85,
+    "scenarios": 234,
+    "mappedTestDeclarations": 423,
+    "explicitScenarioTags": 120,
+    "semanticMaps": 114,
+    "disposedComponents": 134,
+    "disposedOldTestsAndFixtures": 79,
+    "disposedOldFilePatches": 19,
+    "retiredTrackedRootFilesInP7": 28,
+    "coverageIndex": "coverage.json",
+    "dispositionIndex": "dispositions.json",
+    "interpretation": "85 contracts, 234 compound scenarios, 423 declaration mappings and 711 executed test results are different measures. Every scenario has an evidence link; not all 234 scenarios or every clause was independently executed by an auditor. Same-path replacements do not preserve old behavior; the eight current SDK adaptations are separately justified, not a revival of nineteen old file patches."
+  },
+  "environments": {
+    "deterministicFinalChecks": {
+      "node": "24.21.0",
+      "platform": "Darwin arm64",
+      "sdk": "0.2.0-rc.2 with eight selected adaptations",
+      "cordis": "4.0.4",
+      "model": "ContractHost and deterministic SDK model fixtures where a model is needed; not external inference"
+    },
+    "initialCleanSdkInstall": {
+      "node": "26.12.1",
+      "platform": "Darwin arm64",
+      "pnpm": "12.9.1",
+      "source": "633f7bbe2c4303e0136bfd0c17fdf104cdd78441",
+      "sdk": "0.2.0-rc.2",
+      "scope": "Empty installation/store/state and repeated frozen install; final Flow profile verified separately below"
+    },
+    "finalFreshProfile": {
+      "node": "24.21.0",
+      "platform": "Darwin arm64",
+      "pnpm": "12.9.1",
+      "sdk": "same frozen clean SDK owner",
+      "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc"
+    },
+    "liveModelCli": {
+      "node": "26.12.1",
+      "platform": "Darwin arm64",
+      "host": "official DSH CLI 0.2.0-rc.2",
+      "adapter": "@deepseek-ai/dsh-llm-pi-ai@0.2.0-rc.2",
+      "providerRoute": "p7-local",
+      "model": "Qwen3.8-27B-4bit",
+      "reasoningEffort": "off",
+      "temperature": 0,
+      "maxOutputTokensPerRequest": 1024,
+      "providerAutomaticRetries": 0,
+      "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc"
+    },
+    "matchingDesktop": {
+      "status": "PASS",
+      "sourceTag": "dsh-v0.2.0-rc.2",
+      "sourceCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+      "sdk": "0.2.0-rc.2",
+      "electron": "44.0.0",
+      "hostNode": "24.18.1",
+      "platform": "Darwin arm64",
+      "isPackaged": false,
+      "privateBuild": true,
+      "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "scope": "Actual matching product main/preload/host from source with stock Electron; Playwright attaches to CDP after launch. Not a signed/notarized distributed App and not the separately installed unmatched App."
+    },
+    "pathGuardVerification": {
+      "node": "24.21.0",
+      "platform": "Darwin arm64",
+      "guardModelRequests": 0,
+      "guardedActualCliSingleRequests": 8,
+      "productionSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc"
+    }
+  },
+  "validation": {
+    "deterministic": {
+      "status": "PASS",
+      "tests": {
+        "passed": 711,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "nodeTypes": "PASS",
+      "clientTypes": "PASS",
+      "schema": {
+        "cases": 108,
+        "mismatches": 0,
+        "scope": "draft-07/flow-subset-2; not complete JSON Schema certification"
+      },
+      "inventoryTests": 8,
+      "officialNativeApiGeneration": "PASS",
+      "documentationBuild": "PASS",
+      "source": "functional checkpoint and hashes above",
+      "logs": [
+        {
+          "id": "contracts",
+          "command": "pnpm test",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-contracts.tap",
+          "sha256": "ea82731a3dab19327404a2d70a660f0fdfc16a2440ca5399d85acf6a6ff732bc",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "nodeTypes",
+          "command": "tsc --noEmit -p tsconfig.json",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-node-types.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "clientTypes",
+          "command": "tsc --noEmit -p tsconfig.client.json",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-client-types.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "schema",
+          "command": "pnpm test:schema",
+          "status": "PASS",
+          "retainedLog": "p7-final-schema.log",
+          "sha256": "a3b1ca8f86e93cf3db1e7f1bf1485dbff916ff06d8b3ff21512b80fa908a5f5e",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "inventory",
+          "command": "pnpm test:inventory",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-inventory.log",
+          "sha256": "d7fdd544658e4d33761e830bc8d7f9262190d69c633679d7d3b2262fb1f2d8c3",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "selfBuildPackage",
+          "command": "pnpm test:patterns-package",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-package.log",
+          "sha256": "a75380eb6802b46d213adf9d2ea3b55d98bc50ca77c4a19f785ed2cb4cb38d63",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "nativeApi",
+          "command": "pnpm test:native-api",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-native-api.log",
+          "sha256": "77347e96c41efc5e26454b760dcd260120e2470300af8b29e19da1f35999a136",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        },
+        {
+          "id": "docs",
+          "command": "pnpm docs:build",
+          "status": "PASS",
+          "retainedLog": "p7-final-711-docs.log",
+          "sha256": "5c2d28d94154e09b3888449947ce2b45f845fb8c14a934c9e6cc5217f85f9988",
+          "producer": "final Node24 verification",
+          "rawLogPublished": false
+        }
+      ]
+    },
+    "selfBuildPackage": {
+      "status": "PASS",
+      "builtFromSource": true,
+      "patterns": 14,
+      "matchingPatternAssets": 14,
+      "matchingSkills": 2,
+      "runtimeDependencyOnly": true,
+      "nativeModulePackaging": true,
+      "actualNativeExternalIds": [
+        "react",
+        "react/jsx-runtime"
+      ],
+      "standaloneWeb": true,
+      "defaultWebHttp": true,
+      "explicitWebDirectoryOverride": true,
+      "iconLicense": true,
+      "scope": "Production self-build/extraction/isolated consumer checks; matching Desktop is a separate acceptance item."
+    },
+    "sdkDelivery": {
+      "status": "PASS",
+      "initialCleanSdkInstall": "PASS",
+      "repeatedFrozenSdkInstall": "PASS",
+      "originalNpmIntegrityAndSelectedPatchApply": "PASS",
+      "inheritanceBasis": {
+        "initialSource": "633f7bbe2c4303e0136bfd0c17fdf104cdd78441",
+        "filesByteUnchangedFromInitialCleanFreeze": [
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml",
+          "packages/dsh-flow/package.json"
+        ],
+        "explanation": "The initial empty SDK install is inherited only because all four installation manifests are byte-identical. The final Flow package is independently installed into a new empty profile under Node24."
+      },
+      "finalFreshProfile": {
+        "status": "PASS",
+        "officialAdd": true,
+        "repeatAddProfileManifestByteUnchanged": true,
+        "singleBundle": true,
+        "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+        "installedFiles": 164,
+        "allInstalledBytesEqualTarball": true,
+        "sameCliProfileFlowSdkOwners": 9,
+        "installedSdkFilesRechecked": 18,
+        "installedSdkHashDrift": 0,
+        "realSdkLauncherLogin": "PASS",
+        "defaultWebBytes": {
+          "indexSha256": "d262d7c731ee09745b568c6bd2a9f282f1748b3dfd38ace6209f5864fc31609c",
+          "appSha256": "49455c1bcba85dc8247b2cde9463c06cfef7f42292bdd67b8d60b2557c37ce0a"
+        },
+        "defaultOriginAuthentication": "PASS: exact default origins, origin-bound authorization and Bearer queries; no credentials published",
+        "emptyRunRegistry": true,
+        "ownedCliStopped": true,
+        "defaultAllowedOrigins": [
+          "http://127.0.0.1:3080",
+          "http://localhost:3080",
+          "dsh-app://app"
+        ]
+      },
+      "selectedPackages": [
+        {
+          "package": "@deepseek-ai/dsh-api-session-controller",
+          "patch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+          "sha256": "345bbc3be04c9219abc8c7fe28f0279108773b1d0d49b75326731a555db6f236",
+          "purpose": "Controller拥有的只读会话源、引用、身份和写入口拒绝",
+          "modifiedFiles": [
+            "lib/client.js",
+            "lib/types/client/contract/sessions.d.ts",
+            "lib/types/client/index.d.ts",
+            "lib/types/client/sessions/service.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-chat",
+          "patch": "patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch",
+          "sha256": "aaf061806afb64f376728f8264563eacf9d46a0e0f4b90c19dd45c3f112a8605",
+          "purpose": "原生transcript只读装配，排除输入及执行控件",
+          "modifiedFiles": [
+            "lib/client.js",
+            "lib/types/client/contract/slots.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-conversation",
+          "patch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+          "sha256": "607b513ca749df74102a130ba51cb29dd477c5e2e340d8a7f23891101e0e9b7a",
+          "purpose": "主会话内导航、完整只读贡献和同SID的真实引用路由",
+          "modifiedFiles": [
+            "lib/client.js",
+            "lib/types/client/contract/input.d.ts",
+            "lib/types/client/contract/slots.d.ts",
+            "lib/types/client/conversation/assembly.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-session",
+          "patch": "patches/@deepseek-ai+dsh-client-ui-session@0.2.0-rc.2.patch",
+          "sha256": "1744eb16a0674d40c4b18197d03e3e3ffeab48fc76a81268c84b596b21ad26bf",
+          "purpose": "只读能力可在真实session scope中物化",
+          "modifiedFiles": [
+            "lib/client.js"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/cordis-plugin-include",
+          "patch": "patches/@deepseek-ai+cordis-plugin-include@1.0.9.patch",
+          "sha256": "fdfdd009c6bf8b729625fbf6a6b1fc94ae268adcc6b3e45f25a979773d559c6f",
+          "purpose": "稀疏configMerge的纯对象继承语义",
+          "modifiedFiles": [
+            "lib/index.js",
+            "lib/types/index.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-config-editor",
+          "patch": "patches/@deepseek-ai+dsh-config-editor@0.2.0-rc.2.patch",
+          "sha256": "6c72327b278a6669a27ec6b09f3a898925379bf74304517e4e6da676c0cdaa98",
+          "purpose": "锁和修订号内持久保存原始覆盖，按有效值验证",
+          "modifiedFiles": [
+            "lib/index.js",
+            "lib/types/index.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-settings",
+          "patch": "patches/@deepseek-ai+dsh-settings@0.2.0-rc.2.patch",
+          "sha256": "35259b2fbfa77e88aedf027a0d83ab906b6e4ccaa3723187caff8dc49e74c4b1",
+          "purpose": "按拥有fiber显式启用稀疏profile继承",
+          "modifiedFiles": [
+            "lib/index.js",
+            "lib/types/index.d.ts"
+          ]
+        },
+        {
+          "package": "@deepseek-ai/dsh-app-boot",
+          "patch": "patches/@deepseek-ai+dsh-app-boot@0.2.0-rc.2.patch",
+          "sha256": "be57a0f2487eaafd33510cebff8f16c432a318bdedfa6cc11eb73857277785f6",
+          "purpose": "实际bootstrap使用同一configMerge并保持Include身份",
+          "modifiedFiles": [
+            "lib/index.js"
+          ]
+        }
+      ],
+      "installedSdkFileHashes": [
+        {
+          "package": "@deepseek-ai/dsh-api-session-controller",
+          "file": "lib/client.js",
+          "sha256": "56a2b66014b51acf7087e9d7a0dc51823ec7d93f4ec3d1e273a9f45d767ab7ce"
+        },
+        {
+          "package": "@deepseek-ai/dsh-api-session-controller",
+          "file": "lib/types/client/contract/sessions.d.ts",
+          "sha256": "10ff5ce29d736fa4faaff96ce121592ea10af5fb82f139992850c529aac833e9"
+        },
+        {
+          "package": "@deepseek-ai/dsh-api-session-controller",
+          "file": "lib/types/client/index.d.ts",
+          "sha256": "7020c52157d2e8ae3312b9204c138fe38587cd4f1694843491b9c579e1c9a06c"
+        },
+        {
+          "package": "@deepseek-ai/dsh-api-session-controller",
+          "file": "lib/types/client/sessions/service.d.ts",
+          "sha256": "62b266d1ccdfa8cb174abeae00e7052b76123d074ce7d38b1cd8a38d9bf1f7bd"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-session",
+          "file": "lib/client.js",
+          "sha256": "6ba6f0c9026607c47bca8f05f6d881d57688ba310bb924651ab6a096bbc89ec3"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-conversation",
+          "file": "lib/client.js",
+          "sha256": "687d1996ad54e89248b7aba8636ccf069e9aca77a76ec3b74bdf7b903665f024"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-conversation",
+          "file": "lib/types/client/contract/input.d.ts",
+          "sha256": "b08cac4d6ce9e4309d72501525dd7de0e8196e21c15881fd89565ca8fba36f75"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-conversation",
+          "file": "lib/types/client/contract/slots.d.ts",
+          "sha256": "f5db53f58bae3bcddf22583155325258613f01d7e7bd41c128b24dfd841660c4"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-conversation",
+          "file": "lib/types/client/conversation/assembly.d.ts",
+          "sha256": "596732d75266a5a8178e439d577deb1b4315502bfccc63f2ebcab9f5d2df15ea"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-chat",
+          "file": "lib/client.js",
+          "sha256": "b86de8087c1c7aa4cf07cbcb133320e63b53116095cd7c4dea1d99d3a82443a9"
+        },
+        {
+          "package": "@deepseek-ai/dsh-client-ui-chat",
+          "file": "lib/types/client/contract/slots.d.ts",
+          "sha256": "6af2b871d2adad51f85568a2b6e19b1e3abe308c5ded67a66e4ad891b19a64fd"
+        },
+        {
+          "package": "@deepseek-ai/cordis-plugin-include",
+          "file": "lib/index.js",
+          "sha256": "b1e3d4216afb13b3bf42be8e243c176b7edc0f446969f613c59b41231112290a"
+        },
+        {
+          "package": "@deepseek-ai/cordis-plugin-include",
+          "file": "lib/types/index.d.ts",
+          "sha256": "71dfed7191e17ca442fe48835eb7edd18cd8b19443f8426577b5961f09830764"
+        },
+        {
+          "package": "@deepseek-ai/dsh-config-editor",
+          "file": "lib/index.js",
+          "sha256": "bc0d53bce587e4ff4efe23b3dfe34785aba87ce023b8ac73767b1a3b3fb11464"
+        },
+        {
+          "package": "@deepseek-ai/dsh-config-editor",
+          "file": "lib/types/index.d.ts",
+          "sha256": "980bc714512e91cc904218268ce0a8ea266877c36967b1604aa52494e26cf2a6"
+        },
+        {
+          "package": "@deepseek-ai/dsh-settings",
+          "file": "lib/index.js",
+          "sha256": "86839a2f64a67dd0374fcc877dc19b2971768e96de645374d7a3738ee85b5f9b"
+        },
+        {
+          "package": "@deepseek-ai/dsh-settings",
+          "file": "lib/types/index.d.ts",
+          "sha256": "7462026952894b4094eb8a5970bf054c7fecf5a5f4733529ceeca5dd05329d3d"
+        },
+        {
+          "package": "@deepseek-ai/dsh-app-boot",
+          "file": "lib/index.js",
+          "sha256": "9ac6c3a04a7cb9cade302c91b180a438b5350646e9a76ee6fb7b5f08a5b9631b"
+        }
+      ],
+      "currentModelRuntimeSdkRecheck": {
+        "status": "PASS",
+        "packages": 8,
+        "modifiedFiles": 18,
+        "allEqualCleanOriginalPlusSelectedPatch": true
+      },
+      "boundary": "The Flow tgz contains its product assets and declared runtime dependencies, not an installer that patches an arbitrary DSH App. The matched host resolves one Cordis and one owner for the eight necessary SDK adaptations. Old nineteen-patch installers are not used."
+    },
+    "realModel": {
+      "status": "PASS",
+      "harness": "tests/live/runner.mjs",
+      "instructions": "tests/live/README.md",
+      "fixture": "tests/live/host.mjs",
+      "controlledPresentation": "The fixture enables the SDK public tools.presentAs(native) in its Agent scopes and advertises only tools relevant to each supplied command. Global file/shell/install/model-setting tools are restricted. Actual dispatch, submit, cancel, result reads, release and resume run through the official AgentLoop and Flow ToolRuntime; capture/gate only observe or coordinate. This is controlled integration acceptance, not an autonomous-planning or performance benchmark.",
+      "fullSixScenarios": {
+        "status": "PASS",
+        "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+        "requests": [
+          {
+            "phase": "main",
+            "count": 93
+          },
+          {
+            "phase": "restart",
+            "count": 24
+          }
+        ],
+        "totalRequests": 117,
+        "uniqueDurableToolCalls": 117,
+        "actualFlowToolCalls": 57,
+        "helperCalls": {
+          "capture": 57,
+          "gate": 3
+        },
+        "actualFlowTools": {
+          "flow_unread": 21,
+          "flow_submit": 9,
+          "flow_assign": 7,
+          "flow_assignment_read": 5,
+          "flow_team_assign": 6,
+          "flow_team_assignment_read": 4,
+          "flow_team_assignment_cancel": 1,
+          "flow_team_release": 1,
+          "flow_assignment_archive_read": 1,
+          "flow_resume": 1,
+          "flow_team_get": 1
+        },
+        "scenarios": [
+          {
+            "number": 1,
+            "status": "PASS",
+            "result": "Idle team and nested pattern: six members/two groups, zero model requests before work."
+          },
+          {
+            "number": 2,
+            "status": "PASS",
+            "result": "Different closed result schemas, real root/lead/worker dispatch and submission, team remains reusable."
+          },
+          {
+            "number": 3,
+            "status": "PASS",
+            "result": "Cancel one assignment subtree while another completes; members survive and accept subsequent work."
+          },
+          {
+            "number": 4,
+            "status": "PASS",
+            "result": "An outcome reaches a busy ordinary main session; actual followup tool reads and saves the submitted result. Real HTTP snapshot and Native discovery agree on source identity.",
+            "visualScope": "No final full4 S4 screenshot; the separate final-package single below supplies the actual NativeSDK/Web pair."
+          },
+          {
+            "number": 5,
+            "status": "PASS",
+            "result": "Explicit release cancels unfinished work; logical termination precedes physical cleanup and completed stop operation. Restart rejects the old Run/handle while archive result remains readable."
+          },
+          {
+            "number": 6,
+            "status": "PASS",
+            "result": "Explicit cold resume reuses SID with a new instance, keeps the valid history prefix, restores no old mailbox/group/job bindings, and submits successor assignments with resumesAssignmentId.",
+            "visualScope": "No final full4 S6 screenshot; no substitute image claimed."
+          }
+        ],
+        "releaseJournalEvents": 52,
+        "restoredHistoryPrefix": {
+          "events": 39,
+          "sha256": "50a7099d5459fee239a63dd0ba9ae8949dcebd5ba600f55d03a79ed8742ee0ce",
+          "byteEqual": true
+        },
+        "durableAfterLogicalTermination": {
+          "toolResultDelayMs": 3037,
+          "physicalCleanupAfterResultMs": 40,
+          "resultPreserved": true
+        },
+        "usage": {
+          "inputTokens": 166299,
+          "outputTokens": 7761,
+          "totalTokens": 701220,
+          "cacheReadTokens": 527160
+        },
+        "process": {
+          "runnerExitCode": 0,
+          "ownedCliExitCodes": [
+            130,
+            130
+          ],
+          "ownedCliStop": "SIGINT by runner after successful acceptance; code130 is not reported as code0"
+        }
+      },
+      "finalSamePackageCliUiPair": {
+        "status": "PASS",
+        "independentRun": true,
+        "requests": 8,
+        "result": {
+          "answer": 7,
+          "environment": "web"
+        },
+        "actualMainReadAndSave": true,
+        "nativeSdkAndWebSameRun": true,
+        "nativeLoadedExecutableBodyMatchesFile": true,
+        "nativeClientSha256": "98a070c3d8d300845c3f1a643d2e3c751de50c83a397c99d93dd689650f0ea9f",
+        "webServedAppSha256": "49455c1bcba85dc8247b2cde9463c06cfef7f42292bdd67b8d60b2557c37ce0a",
+        "uiAck": true,
+        "usage": {
+          "inputTokens": 9858,
+          "outputTokens": 629,
+          "totalTokens": 18500,
+          "cacheReadTokens": 8013
+        },
+        "scope": "Separate one-member real assignment/main readback after Playwright readiness; not a full4 S4/S6 capture and not matching Desktop."
+      },
+      "summariesAndMerge": {
+        "status": "PASS",
+        "contract": "C013-02",
+        "requestsIncludingSourceAndChildTurns": 7,
+        "actualAuxiliaryCalls": 3,
+        "outputTokens": [
+          619,
+          254,
+          903
+        ],
+        "finishReasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "textDeltaEqualsFinalBlocks": true,
+        "strictParserUnchanged": true,
+        "auxiliaryExecutionAndUsageUnchanged": true,
+        "sourceHistoriesByteEqual": true,
+        "childHasActualMergedInitialPayload": true,
+        "childParentModelParamsPermissionInheritedFromMother": true,
+        "manualSemantics": {
+          "actualSourceIdentityRetained": true,
+          "constraintsAndNumbers": "Alpha budget ceiling40/offline/Kafka-required and Beta budget floor80/internet/Kafka-prohibited retain their ownership.",
+          "unfinishedWorkSection": "Both source-specific pending approvals remain explicitly unfinished in section5.",
+          "unresolvedConflictSection": "All three conflicts remain explicitly unadjudicated in section6."
+        },
+        "independentReview": {
+          "verdict": "PASS for this product/model execution and prompt refinement",
+          "actualChildPayloadByteEqualMerged": true,
+          "reviewerReranHostContracts": 43,
+          "reviewerReinvokedExternalModel": false,
+          "doesNotEstablishOverallP7Pass": true
+        },
+        "usage": {
+          "inputTokens": 7937,
+          "outputTokens": 1969,
+          "totalTokens": 16180,
+          "cacheReadTokens": 6274
+        }
+      }
+    },
+    "desktop": {
+      "status": "PASS",
+      "productSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "freshSeparateHomeAndUserData": true,
+      "source": {
+        "tag": "dsh-v0.2.0-rc.2",
+        "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+        "version": "0.2.0-rc.2",
+        "hostProtocolVersion": 4,
+        "privateUnpackagedBuild": true,
+        "logIsolationOnly": {
+          "file": "apps/desktop/src/main.ts",
+          "originalSha256": "1fd424f16514d82d79665e0e8a1e2448dd8636126d3a37be7fa888d883b6ea3a",
+          "modifiedSha256": "e9378847d804989c7a92aa645ecedab786ea6b275717188df57d2e9b4d089e8d",
+          "change": "Product logs redirected to the dedicated private test directory; no API/protocol or Flow/SDK compatibility change."
+        },
+        "artifactHashes": [
+          {
+            "artifact": "desktop main.js",
+            "sha256": "70e8fe4037845dd133182215d764bd74eac6d0b07b44e147a0f447c84e6f131d"
+          },
+          {
+            "artifact": "desktop preload-app.cjs",
+            "sha256": "f323eb67f7ace407d3b1d858f264f7846e436d9ba3e80c02b0454a6da0aed968"
+          },
+          {
+            "artifact": "desktop-host index.js",
+            "sha256": "6c6182cbd9ff7df144145065885fbc5873e9a9db9651c5152e785c84a55689d6"
+          }
+        ]
+      },
+      "allInstalledPackageFilesEqualTarball": {
+        "files": 164,
+        "equal": true
+      },
+      "sdkOwnerAgreement": {
+        "owners": 9,
+        "allEqual": true,
+        "all18PatchedFilesUnchanged": true
+      },
+      "actualModelSingle": {
+        "status": "PASS",
+        "model": "Qwen3.8-27B-4bit",
+        "adapter": "official pi-ai adapter",
+        "deterministicAdapter": false,
+        "requests": 8,
+        "allRequestsCompleted": true,
+        "actualMainReadCall": true,
+        "submittedResult": {
+          "answer": 7,
+          "environment": "desktop"
+        },
+        "executedFixtureSnapshotSha256": "c77d9148ea02ac23fbbe354c870b4ada190a9c1f566b18e16dc0e384b15a9bcf"
+      },
+      "nativeUi": {
+        "finalClientActuallyExecutedByV8": true,
+        "nativeClientSha256": "98a070c3d8d300845c3f1a643d2e3c751de50c83a397c99d93dd689650f0ea9f",
+        "resultAndEnvironmentVisible": true,
+        "actualMainReadToolPresent": true,
+        "themes": [
+          "light",
+          "dark"
+        ],
+        "canvasWidths": [
+          {
+            "innerWidth": 560,
+            "canvasWidth": 560,
+            "layout": "wide",
+            "documentOverflow": false
+          },
+          {
+            "innerWidth": 559,
+            "canvasWidth": 559,
+            "layout": "narrow",
+            "documentOverflow": false
+          }
+        ],
+        "viewportScope": "CDP viewport emulation of the actual dsh-app renderer; not an OS shell resize claim.",
+        "reducedMotion": {
+          "matches": true,
+          "spinners": [
+            "none"
+          ],
+          "transitions": [
+            "0s"
+          ]
+        },
+        "narrowOverlayCanvasInert": true,
+        "tabForwardAndBackward": true,
+        "observerFocusReturned": true,
+        "nodeFocusReturned": true,
+        "transformRestored": true,
+        "liveReadonlyReaderEditableCount": 0,
+        "terminatedReadonlyReader": {
+          "phase": "complete",
+          "endSeq": 38,
+          "editables": 0,
+          "forbiddenActions": [],
+          "alerts": [],
+          "actualSubmitInputAndOutputVisible": true
+        }
+      },
+      "priorDeterministicFixture": {
+        "separateRuntime": true,
+        "productSha256": "5f93b57903df19c2ddc4c4a2641d52f2a0c8772f8741f669561dc37bbbb3a1bd",
+        "scope": "Earlier three-node/group/blackboard/token-presentation/multi-node focus and sibling-survival checks retain their original capture and model scope; they are not the final real-model Run."
+      },
+      "excludedExploration": {
+        "oldMixedPackageOverlay": "Import failed; cause not established and not claimed fixed. A fresh complete final package succeeded without new compatibility Source/SDK changes.",
+        "blockedComputerUseCall": "The blocked computer-use attempt and missed full4 image windows are excluded; later captures used bounded Playwright/CDP/inspector operations."
+      },
+      "notValidated": [
+        "Signed packaged distribution",
+        "Notarization",
+        "Updater",
+        "OS protocol registration",
+        "All six model scenarios inside Desktop; those belong to the separate final CLI receipt"
+      ],
+      "scope": "This is the actual final-package private matching Desktop single and native UI acceptance. It is separate from the final CLI NativeSDK/Web pair and historical deterministic fixtures."
+    },
+    "liveHarnessOutputPaths": {
+      "status": "PASS",
+      "publicRegression": "tests/live/path-guard.test.mjs",
+      "node": "24.21.0",
+      "passed": 18,
+      "failed": 0,
+      "contextStarted": false,
+      "modelRequests": 0,
+      "attackedFixedOutputs": 10,
+      "allExternalSentinelsByteUnchanged": true,
+      "covers": [
+        "All ten fixed host outputs are preflighted before Context access",
+        "Proof-root and ancestor symlinks",
+        "Leaf or proof directory replaced after startup",
+        "Phase filename escape and unknown output path",
+        "Self-contained immutable copied host direct entry"
+      ],
+      "writeBoundary": "Host validates the dedicated project artifact directory and all fixed outputs, then rechecks each write, opens with O_NOFOLLOW without truncation, and verifies fd/path identity before truncating. The direct Desktop entry has the same guard.",
+      "immutableSnapshotImports": "No extra utility module or environment setting is needed by a copied host.",
+      "guardedActualCliSingle": {
+        "status": "PASS",
+        "node": "24.21.0",
+        "requests": 8,
+        "executedHostSha256": "03908bca379410f3cd4bfa2d27d6f1569bcc937276dcece2391fa8694c235a05",
+        "actualMainReadAndSave": true,
+        "usage": {
+          "inputTokens": 9771,
+          "outputTokens": 615,
+          "totalTokens": 18358,
+          "cacheReadTokens": 7972
+        },
+        "runnerExitCode": 0,
+        "ownedCliExitCode": 130
+      },
+      "independentReview": "Original zero-model red probe became green; independent Node24 eighteen-case regression passed. Final exact-commit review remains separate.",
+      "recordedExecutionLimit": "The full4 117-request execution and Desktop used the retained c77 fixture. New039 output-writer code was checked by eighteen zero-model cases and a separate eight-request actual Node24 CLI single; the product f77/19147 is unchanged.",
+      "cleanCheckoutPreparation": "The test creates its ignored .artifacts parent before mkdtemp; verified in a minimal fresh checkout as well as the implementation workspace."
+    },
+    "liveHarnessEntryBoundaries": {
+      "status": "PASS",
+      "publicRegression": "tests/live/endpoint-policy.test.mjs",
+      "node": "24.21.0",
+      "passed": 19,
+      "failed": 0,
+      "contextStarted": false,
+      "modelRequests": 0,
+      "covers": [
+        "Actual runner rejects remote HTTP, unsupported schemes, malformed URLs, DNS names and alternative loopback spellings before preparation",
+        "Literal 127.0.0.1/[::1] HTTP and remote HTTPS continue to existing private-home validation",
+        "Fresh checkout creates absent .artifacts",
+        "Existing artifact-root symlink rejected before external home/proof creation"
+      ],
+      "transportPolicy": "HTTPS is accepted; HTTP requires a literal 127.0.0.1 or [::1] authority, optionally with a port. Validation precedes profile/credential creation and Context startup.",
+      "testBoundary": "Legal endpoint cases intentionally provide an out-of-scope home and must reach the real private-path rejection. No profile, secret or model is constructed.",
+      "executedProductUnchanged": true
+    }
+  },
+  "failureToClosure": {
+    "harnessAndConfiguration": [
+      "SDK off-only reasoning catalog declaration rejected before a model request; route declares off+low while actual requests remain off.",
+      "Over-strict capture-stage label and an expired authorization value caused earlier harness failures; final runner checks actual call/result/value and obtains a fresh authorization before stop.",
+      "A restart trial after an interrupted harness had incomplete explicit-cleanup preparation and is excluded; formal full4 follows successful explicit release and durable handoff."
+    ],
+    "productionSummary": [
+      {
+        "stage": "original production",
+        "result": "REJECTED",
+        "observed": "Two normal-stop auxiliary outputs contained only source name/SID, not v1 sections; complete input confirms unquoted recorded instructions followed the initial format template.",
+        "sourceHistoryUnchanged": true,
+        "childCreated": false
+      },
+      {
+        "stage": "official streaming diagnostic; not acceptance",
+        "result": "CONTROLLED_COMPARISON",
+        "observed": "Original33 tokens and history-quoted-only33 tokens returned identity lines; source-in-template-only35 tokens returned one fact sentence. Independent task plus quoted data and a final complete contract663 tokens produced all six sections. SDK text-delta/final blocks/BlockAssembler text matched in each case.",
+        "excludes": "An earlier setup attempt had no ready credentials service and made zero provider requests; it is not a model comparison."
+      },
+      {
+        "stage": "first revised production package",
+        "result": "REJECTED",
+        "observed": "Two summaries were structurally valid; the merge reached maxTokens1024 and was strictly rejected. Current task metadata and irrelevant host guidance were over-summarized.",
+        "childCreated": false
+      },
+      {
+        "stage": "second revised production package",
+        "automatedFormatAndMarkerGuard": "PASS",
+        "manualAcceptance": "REJECTED",
+        "observed": "One pending approval survived only in risk text while its unfinished-work section incorrectly claimed no remaining work; the completed model reply was mistaken for task completion.",
+        "childCreated": true
+      },
+      {
+        "stage": "final production package",
+        "result": "PASS",
+        "observed": "Summary/merge prompts distinguish current task from quoted history and classify original outstanding work separately from conflicts. Both approvals and all three source conflicts are preserved. Three normal-stop auxiliary calls; no output repair, relaxed parser, extra revision request, model or sampling change."
+      }
+    ],
+    "frontend": "Production React regressions cover reopening during exit, independent timed exit batches and reduced-motion handling; the final711 run includes these checks. Earlier visual fixtures are not relabelled as final-package Desktop acceptance.",
+    "captureWindows": "Final full4 S4/S6 windows expired while a screenshot-owner computer-use call was blocked. No images/acks were claimed. A readiness-gated separate final-package single then captured the actual NativeSDK/Web pair.",
+    "fixtureOutputPaths": {
+      "original": "Independent zero-model direct-host probe followed a pre-existing evidence-file symlink and changed an external self-owned sentinel. Partial runner preflight did not cover every host output.",
+      "final": "All host outputs now use one self-contained no-follow writer; every fixed output, ancestor escape, later replacement and copied-host entry is covered. Eighteen Node24 filesystem cases and a separate eight-request actual CLI single passed.",
+      "productCodeChanged": false,
+      "modelFlowChanged": false
+    }
+  },
+  "retainedEvidence": [
+    {
+      "id": "final-clean-profile",
+      "retainedReceipt": "p7-final-delivery/delivery-evidence.json",
+      "sha256": "0d368c3ff7b5834b70c96e945163351e9fddaca938aab62da8cdc871f0d4acf3",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "initial-clean-sdk",
+      "retainedReceipt": "p7-clean-install/sdk-verified-manifest.json",
+      "sha256": "9bdf784b64d6c21b197810d4acd535b77d8f4cd783120ab3748d3a6c77131de4",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "final-six-scenarios",
+      "retainedReceipt": "p7-live/full4/delivery-evidence.json",
+      "sha256": "b0e9ecb0529af4694613c075ca88bd9c978cda6dedff76c80ccfa7ee590f1166",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "final-runtime-sdk",
+      "retainedReceipt": "p7-live/full4/sdk-runtime-verified.json",
+      "sha256": "17b8c0b09c2ceee829be2ffa81d6ab101bd645a5c1944c7676ab9c1f8101f50b",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "final-three-auxiliary-calls",
+      "retainedReceipt": "p7-live/herb-final3/delivery-evidence.json",
+      "sha256": "d1547286b902be0f5d4b708524f43443ba6f6811a7d325ca83bc7c45bc595cec",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "independent-summary-review",
+      "retainedReceipt": "design-alignment-execution/p7-summary-final-review.json",
+      "sha256": "328e38929d1a6aa95a415b59c31c4c28980b4397cdd186e8c22060dd4f218651",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "final-cli-ui-single",
+      "retainedReceipt": "p7-live/final-pair/delivery-evidence.json",
+      "sha256": "6f20b1f3e3587d33cbf1544e8790b55cd21a3a6b9dcd16240e2d5e9ee8b33bf6",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "independent-final-cli-ui-capture",
+      "retainedReceipt": "p7-desktop/logs/final-cli-pair-evidence.json",
+      "sha256": "03ebbf8d48ed7b988d2ae7adefe3cf7343a529f91365434330c298a292ed8b51",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "final-matching-desktop",
+      "retainedReceipt": "p7-desktop/delivery-evidence.json",
+      "sha256": "b4668b7652e9e971d9956cb328231a4fba2cb272282abed575d21bb92e6d43ca",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "fixture-output-path-closure",
+      "retainedReceipt": "p7-live/a05-guard-closure.json",
+      "sha256": "f19fe4b38641daadf3e9d7bcb0e494cc8663cd1e4b359c0f24685952cf4a53fa",
+      "rawReceiptPublished": false
+    },
+    {
+      "id": "zero-model-path-regression",
+      "retainedReceipt": "p7-live/a05-guard-node24.tap",
+      "sha256": "cb58d9f6981bd7a99c64c1f693c2c67131ccfae7d8351a04d3d536f46b05b583",
+      "rawReceiptPublished": false
+    }
+  ],
+  "reproducibility": {
+    "automaticCommands": [
+      "pnpm install --frozen-lockfile",
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm test:inventory",
+      "pnpm test:schema",
+      "pnpm test:patterns-package",
+      "pnpm test:native-api",
+      "pnpm docs:build",
+      "node --test tests/live/path-guard.test.mjs",
+      "node --test tests/live/endpoint-policy.test.mjs"
+    ],
+    "liveCommand": "node tests/live/runner.mjs",
+    "livePrerequisites": "Use the official CLI and production tgz with matched adapted SDK in a dedicated project/.artifacts home. Supply only the selected provider credential privately; follow tests/live/README.md. No daily home or credential-store modifications are required.",
+    "privacy": "Only repository-relative paths, hashes, counts and public-fixture semantic conclusions are published here. Retained raw inputs/outputs, screenshots and detailed receipts remain private. No machine-absolute home paths, credential values, authorization tokens or login URLs are published.",
+    "evidenceLimit": "A retained receipt hash is provenance, not a claim that a public reader or independent reviewer re-executed every scenario."
+  }
+}

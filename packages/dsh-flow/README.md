@@ -30,3 +30,22 @@ Flow 提供持续存在的 Agent 团队、正式作业、模板目录及 DSH 原
 共享 React 界面同时用于独立 Web 页面与 DSH 原生面板。原生入口为全局“智能体”面板、主会话内页签及团队导航；成员观察使用宿主只读会话引用读取完整原生记录，关闭观察仅释放读取引用。设置通过宿主 profile 的修订号保存，区分继承、本地覆盖、保存成功、运行态应用失败及需重启字段。
 
 当前宿主目标是锁定的 DSH `0.2.0-rc.2`。仓库 `pnpm-workspace.yaml` 声明八项必要 SDK 适配：四项用于只读会话引用、阅读器与会话内导航，四项用于稀疏 profile 继承及真实配置持久化。`pnpm install --frozen-lockfile` 应用这些工件；Native 功能须运行于这份适配后的宿主。普通 Flow tarball 不会修改已安装的桌面 App。
+
+## 在锁定宿主中安装
+
+仓库声明的 pnpm 版本和 `pnpm-lock.yaml` 共同固定 DSH `0.2.0-rc.2`、八项 SDK 适配与构建依赖。以下示例从空的项目内 `DSH_HOME` 启动；CLI、Flow 及其 SDK peer 必须解析到同一份安装树。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm --dir packages/dsh-flow pack --pack-destination "$PWD/.artifacts/dist"
+export DSH_HOME="$PWD/.artifacts/demo-home"
+node node_modules/@deepseek-ai/dsh/lib/bin.js web --help
+node node_modules/@deepseek-ai/dsh/lib/bin.js plugin --profile web add "$PWD/.artifacts/dist/dsh-flow-0.1.0.tgz"
+cp examples/flow.patch.yml "$DSH_HOME/profiles/web/cordis.patch.yml"
+node node_modules/@deepseek-ai/dsh/lib/bin.js web --host 127.0.0.1 --port 3080 --no-open
+```
+
+官方插件管理器会把 Flow 同时加入依赖与 profile 的 bundle 列表；重复添加保持一个 bundle。进入宿主后在原生设置中选择实际可用的模型、权限和工作区，使用 `/agent-team` 开始协作。完成有效模型配置后，空闲团队和模板成员的创建本身不发起模型调用。
+
+独立 Web 资源随包发布，`ctx.flow.dashboardAddress` 返回实际本机地址；Native 注册入口和阅读器使用同一实例的数据。SDK 适配的文件、必要能力与验证记录见[实施记录](../../docs/alignment/README.md)。匹配 Desktop 必须加载同一份适配后的 SDK；普通 tarball 只安装 Flow 包，不改写其他宿主。

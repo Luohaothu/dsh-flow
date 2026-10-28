@@ -31,7 +31,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm typecheck
+      - name: Check live harness syntax
+        run: |
+          node --check tests/live/runner.mjs
+          node --check tests/live/host.mjs
+      - run: node --test tests/live/path-guard.test.mjs
+      - run: node --test tests/live/endpoint-policy.test.mjs
       - run: pnpm test
       - run: pnpm test:schema
       - run: pnpm test:patterns-package
       - run: pnpm test:native-api
+      - run: pnpm docs:build

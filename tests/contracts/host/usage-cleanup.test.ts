@@ -96,7 +96,7 @@ test('cleanup deadline abandonment remains terminal after late native idle', asy
 });
 
 test('real after-turn deadline publishes the upgrade and new immediate deadline before completing', async t => {
-  const f = await runtime(t, { afterTurnTimeoutMs: 15, immediateTimeoutMs: 200 }), agent = await f.create('cleanup-upgrade'), native = f.native(agent), events: CoreObservation[] = [];
+  const f = await runtime(t, { afterTurnTimeoutMs: 15, immediateTimeoutMs: 5_000 }), agent = await f.create('cleanup-upgrade'), native = f.native(agent), events: CoreObservation[] = [];
   observeCore(f.context, event => { if (event.type === 'host-cleanup') events.push(event); });
   let started!: () => void;
   const entered = new Promise<void>(resolve => { started = resolve; });

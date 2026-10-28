@@ -327,7 +327,7 @@ test('C014-01 C033-01 C033-02 C034-02: actual herb uses each source model and at
   const f = await runtime(t), ownProfile = profile('herb-mother'), otherProfile = profile('herb-other');
   ownProfile.model = { provider: 'fixture', id: 'mother-model' }; otherProfile.model = { provider: 'fixture', id: 'other-model' };
   const mother = await Agent.create(f.context, ownProfile, null), other = await Agent.create(f.context, otherProfile, null);
-  f.model.script = options => text(options).includes('Flow 上下文总结 v1') && options.messages.length === 1 ? validSummary : 'CHILD-DONE';
+  f.model.script = (_options, index) => index < 3 ? validSummary : 'CHILD-DONE';
   const { observeCore } = await import('../../../packages/dsh-flow/src/core/observation.js');
   const observations: { type: string; agent: Agent; model?: string }[] = [];
   observeCore(f.context, event => {

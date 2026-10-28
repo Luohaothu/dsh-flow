@@ -1,31 +1,9 @@
-# Standard Agent validation
+# 设计验收证据
 
-The retired role-specific execution hierarchy, mandatory allocation gate, lease, budget, effects, and FormalPlan fixtures are deleted. Orchestrator and Worker remain responsibility roles configured on standard native Agents. There is no target test-count or compatibility bridge.
+以 `docs/design/design.md` 为唯一行为依据。旧 Controller、SQLite 协作状态、角色执行层和旧宿主夹具均已退出；旧测试不构成当前实现的行为约束。
 
-- `tests/unit/flow-controller.test.ts`: real controller/store with an injected native handle boundary, for ownership, current result versions, command idempotency, mechanical task dispatch, cancellation, and recovery. Independent work can reuse an idle member before the previous result is accepted; `ready` is a publication checkpoint, not a promise that the Agent stays idle.
-- `tests/unit/collaboration-state-model.test.ts`: bounded checks against the actual controller and SQLite: 98 two-sibling cuts (seven reachable states in both construction orders), seven recursive completion traces, and one actor/version/current-result trace. Rejected operations leave all collaboration tables and command/event records unchanged; accepted root completion creates no self-review and does not close the native owner.
-- `tests/unit/team-command-regression.test.ts`: command identity, attachment preservation, and controlled fault cuts after intent persistence, team commit, and native Inbox publication. SQLite is actually reopened; Session checkpoints and injected exceptions are test seams, not OS crashes or proof of native journal durability under torn writes.
-- `tests/unit/queued-task-update.test.ts` and `same-member-order-regression.test.ts`: queued work can be revised without cancelling unrelated active work, roots are never automatically dispatched, and an Agent's membership restrictions apply to that team rather than a separate team it owns.
-- `tests/integration/native-member.test.ts`: real native preset, tools, permission behavior, persistence, and cancellation; only model generation is scripted.
-- `tests/integration/native-browser.test.ts`: ordinary and Flow Agents actually navigate and read distinct test pages through the configured native Playwright MCP provider.
-- `tests/integration/team-command.test.ts`: real command RPC and native tools with scripted model generation. The minimal successful path records member `write` plus natural return and owner `flow_task → read → flow_review → flow_result`; there are three Flow calls, no create alias, no explicit member result, and no root self-review. It also checks concurrent/cold command replay, encoded PNG admission, member release, and the owner's final reply.
-- `tests/integration/provider-settings.test.ts`: isolated native web settings create/edit/cold reload/delete; existing provider/default preserved, zero model calls.
-- `tests/unit/reader-source.test.ts`: read-only native history observation and delayed availability.
-- `tests/acceptance/native-live.ts`: explicit ordinary/team modes, same configured profile/preset/model, separate fresh workspaces, actual 2026-10-12 market data and native receipts. Every attempted run keeps its report; sources/build drift and failed/partial output remain visible.
+`tests/contracts/` 按 Core、宿主、作业、模板、看板与 Native 分组，使用设计合同及失败竞争建立新测试。`pnpm test` 执行这些合同；`pnpm typecheck` 分别检查 Node 与 Client 类型。清单检查、Schema 子集、官方 Native API 再生成及 tarball 消费验证分别由 `test:inventory`、`test:schema`、`test:native-api` 和 `test:patterns-package` 执行。
 
-The state cuts cover their declared finite bounds, not every asynchronous schedule or unbounded task tree. Controlled fault cuts establish collaboration replay behavior at specified API boundaries; the separate native integration covers the normal host path. The command integration does not exercise file-upload receipt admission. Passing artifacts apply to their recorded source/bundle identity. These checks establish protocol behavior and native integration, not business artifact correctness or model speed rankings.
+每个场景的源码、测试和验证种类见 `docs/alignment/coverage.json`；旧组件、测试及宿主文件补丁的处置见 `docs/alignment/dispositions.json`。测试数量不等于场景数量，也不证明所有 UI 或真实模型场景已经执行。实际运行结论以分阶段验证记录为准。
 
-Example after building and freezing the source tree:
-
-```sh
-node --import tsx tests/acceptance/native-live.ts --mode ordinary --profile-dir /path/to/configured/profile
-node --import tsx tests/acceptance/native-live.ts --mode team --profile-dir /path/to/configured/profile
-```
-
-Provider credentials stay in protected local profile/environment inputs and are never printed. Each run creates its own `.artifacts/native-agent-simplification/` workspace. Mechanical file checks do not establish price correctness; inspect the saved raw responses, actual HTTP tool receipts, native model/usage, and final task acceptance. A performance claim requires both matched runs; it cannot be inferred from one successful team run.
-
-The runner waits for the owner's latest matching native Turn end and two stable `running=false` observations. A completed execution with valid file structure is recorded as `AWAITING_SOURCE_REVIEW`, never `PASSED`. Independent source review must verify the actual fetch receipts and raw index prices before reporting task success. RPC and settings requests have bounded deadlines; timeout/error cleanup only cancels the newly created owner Session.
-
-Team instructions ask for complementary business delegation and personal checking by the existing main Agent. They do not prescribe fetch/reviewer roles or two members. The harness verifies at least one actual child Session with persisted model responses and tool calls; it does not enforce this as a product runtime limit. Team-specific instructions are preserved separately beside the common task prompt. V2 used older fixed-two-member instructions and was intentionally stopped as a diagnostic pilot; preserve that limitation when comparing its artifacts with later runs.
-
-Role configuration is checked at the public flow_task boundary, durable member/recovery records, native model requests and the rendered interface. The same native tools remain available to both roles; skill instructions add no model initialization turns or collaboration operations. Skills must be installed and model-invocable. Roles do not substitute for task-owner authorization.
+实际安装验证固定 SDK 版本、补丁及依赖归属，从空依赖和空状态开始，再检查重复安装。Web、原生 SDK 界面和匹配版本 Desktop 分别记录运行产物与实际操作。真实模型场景使用独立状态和工作区，凭据通过受保护的宿主配置提供；报告只保存模型、输入、工具与结果证据，不保存密钥。
