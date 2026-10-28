@@ -62,6 +62,19 @@
       "guardedSingleHostSha256": "03908bca379410f3cd4bfa2d27d6f1569bcc937276dcece2391fa8694c235a05",
       "fullSixScenariosRerunAfterWriterChange": false,
       "scope": "Only fixture output path validation/writes and diagnostic documentation changed. Production package/model flow unchanged; final full4 117 request snapshot is not relabelled as new writer."
+    },
+    "entryBoundaryFollowup": {
+      "status": "PASS",
+      "files": {
+        "tests/live/runner.mjs": "be4672477e9b013671a231ffcc104aa4ef0626949ffb44b79808fcf17c4f85c4",
+        "tests/live/endpoint-policy.test.mjs": "3f26ccd538b0857592b481bd8d8bac27ef4f83dfd1fdcf8372ebc3cb915416e1",
+        "tests/live/README.md": "131406a7041230614175342e43a1b8e167f4e132737bfbc3750aefbaa42f87dd",
+        ".github/workflows/alignment.yml": "4ff55c5d04a2b963296a4dcf966ed31b4d645fae02c6c71da1deb2b02d1c28a2"
+      },
+      "productionSourceSha256": "f77cca0ac01a940c9876caf118c44d865cbc442a946888b3e04cd3e12cb0c625",
+      "productionTarballSha256": "19147ab43726461b8124b0c846ca768dc5f50bfd1d7e21c96b382e88f0aaa3dc",
+      "recordedExecutionsRelabelled": false,
+      "scope": "Live runner configuration/bootstrap only; actual model requests and product package unchanged. Earlier execution snapshot hashes remain above."
     }
   },
   "census": {
@@ -792,6 +805,24 @@
       "independentReview": "Original zero-model red probe became green; independent Node24 eighteen-case regression passed. Final exact-commit review remains separate.",
       "recordedExecutionLimit": "The full4 117-request execution and Desktop used the retained c77 fixture. New039 output-writer code was checked by eighteen zero-model cases and a separate eight-request actual Node24 CLI single; the product f77/19147 is unchanged.",
       "cleanCheckoutPreparation": "The test creates its ignored .artifacts parent before mkdtemp; verified in a minimal fresh checkout as well as the implementation workspace."
+    },
+    "liveHarnessEntryBoundaries": {
+      "status": "PASS",
+      "publicRegression": "tests/live/endpoint-policy.test.mjs",
+      "node": "24.21.0",
+      "passed": 19,
+      "failed": 0,
+      "contextStarted": false,
+      "modelRequests": 0,
+      "covers": [
+        "Actual runner rejects remote HTTP, unsupported schemes, malformed URLs, DNS names and alternative loopback spellings before preparation",
+        "Literal 127.0.0.1/[::1] HTTP and remote HTTPS continue to existing private-home validation",
+        "Fresh checkout creates absent .artifacts",
+        "Existing artifact-root symlink rejected before external home/proof creation"
+      ],
+      "transportPolicy": "HTTPS is accepted; HTTP requires a literal 127.0.0.1 or [::1] authority, optionally with a port. Validation precedes profile/credential creation and Context startup.",
+      "testBoundary": "Legal endpoint cases intentionally provide an out-of-scope home and must reach the real private-path rejection. No profile, secret or model is constructed.",
+      "executedProductUnchanged": true
     }
   },
   "failureToClosure": {
@@ -920,7 +951,8 @@
       "pnpm test:patterns-package",
       "pnpm test:native-api",
       "pnpm docs:build",
-      "node --test tests/live/path-guard.test.mjs"
+      "node --test tests/live/path-guard.test.mjs",
+      "node --test tests/live/endpoint-policy.test.mjs"
     ],
     "liveCommand": "node tests/live/runner.mjs",
     "livePrerequisites": "Use the official CLI and production tgz with matched adapted SDK in a dedicated project/.artifacts home. Supply only the selected provider credential privately; follow tests/live/README.md. No daily home or credential-store modifications are required.",

@@ -29,11 +29,13 @@ node tests/live/runner.mjs
 
 默认连接本机 `http://127.0.0.1:8000/v1`，使用 `Qwen3.8-27B-4bit`，SDK Web 端口为 `3090`。可显式覆盖：
 
+模型端点在创建 `.artifacts`、profile、写入凭据或启动 Context 前校验。远程端点必须使用 HTTPS；HTTP 仅允许字面地址 `127.0.0.1` 或 `[::1]`，可附端口。其他主机名、地址及 IPv4 简写不按 HTTP 回环地址接受。
+
 | 环境变量 | 含义 |
 | --- | --- |
 | `P7_LIVE_HOME` | 项目 `.artifacts/` 内的专用 DSH home |
 | `P7_PROOF_DIR` | 项目 `.artifacts/` 内的本轮证据目录 |
-| `P7_LIVE_BASE_URL` | 真实 OpenAI completions 兼容端点 |
+| `P7_LIVE_BASE_URL` | 真实 OpenAI completions 兼容端点，远程使用 HTTPS |
 | `P7_LIVE_MODEL` | 该端点实际提供的模型 ID |
 | `P7_LIVE_PORT` | SDK Web 端口（`1`–`65535`） |
 | `P7_PHASE` | `all`、`main`、`restart`、`probe`、`single`、`herb` 或诊断用 `resume-probe` |
@@ -50,7 +52,10 @@ node tests/live/runner.mjs
 
 ```sh
 node --test tests/live/path-guard.test.mjs
+node --test tests/live/endpoint-policy.test.mjs
 ```
+
+端点回归通过真实 runner 入口验证无效 URL 在任何准备动作前拒绝，合法 URL 则继续到已有的专用目录检查；另验证新项目自动创建 `.artifacts`，既有根目录 symlink 不会改变授权边界。它们不会启动宿主 Context 或请求模型。
 
 ## 场景与证据
 

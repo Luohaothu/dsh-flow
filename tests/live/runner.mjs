@@ -6,9 +6,21 @@ import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createProofWriter } from './host.mjs';
+const baseURL = process.env.P7_LIVE_BASE_URL ?? 'http://127.0.0.1:8000/v1';
+let endpoint;
+try { endpoint = new URL(baseURL); }
+catch { throw new Error('P7_LIVE_BASE_URL must be a valid HTTP or HTTPS URL'); }
+const authority = baseURL.match(/^https?:\/\/([^/?#]*)/i)?.[1];
+const literalLoopback = authority !== undefined && /^(?:127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(authority)
+    && ['127.0.0.1', '[::1]'].includes(endpoint.hostname);
+assert.ok(endpoint.protocol === 'https:' || (endpoint.protocol === 'http:' && literalLoopback), 'P7_LIVE_BASE_URL requires HTTPS except for literal 127.0.0.1 or [::1] HTTP loopback');
 const root = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const require = createRequire(join(root, 'package.json')), { stringify } = require('yaml');
-const artifacts = await realpath(join(root, '.artifacts'));
+const artifactPath = join(root, '.artifacts');
+await mkdir(artifactPath, { recursive: true });
+assert.ok(!(await lstat(artifactPath)).isSymbolicLink(), 'Live artifact root cannot be a symlink');
+const artifacts = await realpath(artifactPath);
+assert.equal(artifacts, artifactPath, 'Live artifact root must stay at this project/.artifacts');
 async function privatePath(input, file = false) {
     const target = resolve(input), path = relative(artifacts, target);
     assert.ok(path && !path.startsWith('..') && !path.startsWith('/'), 'Live paths must stay below this project/.artifacts');
@@ -57,8 +69,6 @@ const key = process.env.P7_LOCAL_LLM;
 assert.ok(key, 'Provide the selected local service credential as P7_LOCAL_LLM');
 await privateWrite(join(home, '.credentials.yaml'), stringify({ version: 1, refs: { P7_LOCAL_LLM: key } }), { mode: 0o600 });
 const model = process.env.P7_LIVE_MODEL ?? 'Qwen3.8-27B-4bit';
-const baseURL = process.env.P7_LIVE_BASE_URL ?? 'http://127.0.0.1:8000/v1';
-assert.ok(['http:', 'https:'].includes(new URL(baseURL).protocol));
 const port = Number(process.env.P7_LIVE_PORT ?? 3090);
 assert.ok(Number.isInteger(port) && port >= 1 && port <= 65535);
 const route = { api: 'openai-completions', displayName: 'P7 local model', baseURL, apiKeyEnv: 'P7_LOCAL_LLM', models: [{ id: model, contextWindow: 131072, maxTokens: 1024, input: ['text'], reasoningEfforts: { off: null, low: 'low' } }], compat: { thinkingFormat: 'qwen-chat-template', supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false, supportsStrictMode: false, supportsUsageInStreaming: true, maxTokensField: 'max_tokens', chatTemplateKwargs: { enable_thinking: false } }, retryPolicy: { mode: 'normal', maxRetries: 0 }, timeoutMs: 120000, streamIdleTimeoutMs: 120000 };
