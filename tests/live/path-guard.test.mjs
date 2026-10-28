@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { apply, createProofWriter } from './host.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+mkdirSync(join(root, '.artifacts'), { recursive: true });
 const owned = mkdtempSync(join(root, '.artifacts/live-output-guard-'));
 const external = mkdtempSync(join(tmpdir(), 'flow-external-sentinel-'));
 const sentinel = join(external, 'sentinel.txt');

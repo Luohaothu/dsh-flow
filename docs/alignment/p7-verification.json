@@ -27,7 +27,7 @@
       "packages/dsh-flow/src/ui/AgentTree.tsx": "8b9e1072d0d96258ba453bedab4f9e4233cb24db2df04691a5c840d4bed7cbfa",
       "packages/dsh-flow/src/ui/styles.tsx": "d7049654b589f1e2c547615d1eb226cf05d23a6eed0cf6a266be7cad2f417b77",
       "tests/contracts/ui/tree-render.test.ts": "40c3444a7e445b37152656da14dcafd6ddd821b5f4c18a7add6de7ba86395db8",
-      "tests/live/path-guard.test.mjs": "d87c24d73266226535986e9bfaa82fdff17ced7deed8545cd563780f194bf32f",
+      "tests/live/path-guard.test.mjs": "493dfda0c617644f81f2452f56170f9c9644bf1bb32ddf8bf0212b024797555b",
       ".github/workflows/alignment.yml": "ce2405d735fe71e042694a0f6f1ffb6fb0ce5177bcdb4261381f9ac2ceaab7d6"
     },
     "product": {
@@ -790,7 +790,8 @@
         "ownedCliExitCode": 130
       },
       "independentReview": "Original zero-model red probe became green; independent Node24 eighteen-case regression passed. Final exact-commit review remains separate.",
-      "recordedExecutionLimit": "The full4 117-request execution and Desktop used the retained c77 fixture. New039 output-writer code was checked by eighteen zero-model cases and a separate eight-request actual Node24 CLI single; the product f77/19147 is unchanged."
+      "recordedExecutionLimit": "The full4 117-request execution and Desktop used the retained c77 fixture. New039 output-writer code was checked by eighteen zero-model cases and a separate eight-request actual Node24 CLI single; the product f77/19147 is unchanged.",
+      "cleanCheckoutPreparation": "The test creates its ignored .artifacts parent before mkdtemp; verified in a minimal fresh checkout as well as the implementation workspace."
     }
   },
   "failureToClosure": {
