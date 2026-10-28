@@ -34,11 +34,13 @@
     "packaging": "Production ModuleLoader CJS, exactly the allowed nine external module IDs, self-contained Web, shared React 18.3.1 and bundled icon license.",
     "apiGeneration": "Official Typert generator with reproducible --check and explicit --write.",
     "navigation": "One menu registry subscription, finite serialized snapshots, navigation-only registry invalidation and caller/epoch cancellation; no per-Run menu SSE.",
-    "fieldDrafts": "Raw local input survives group changes; invalid-only edits keep their base revision and may be discarded. Decimal intermediate text is distinct from serialized numeric operations."
+    "fieldDrafts": "Raw local input survives group changes; invalid-only edits keep their base revision and may be discarded. Decimal intermediate text is distinct from serialized numeric operations.",
+    "stopRetries": "Known failed stop gets a new operation ID; an uncertain transport outcome replays its original ID, including a failed attempt whose new response was lost.",
+    "protocolCompatibility": "Handshake rejects old minor versions lacking mandatory 1.1 features with a terminal incompatible-protocol error; no old-implementation fallback. Future additive minors/unknown fields remain accepted."
   },
   "validation": {
     "contracts": {
-      "passed": 698,
+      "passed": 708,
       "failed": 0,
       "skipped": 0
     },
@@ -192,6 +194,8 @@
     "HTTP1 multi-Run menu connection budget",
     "raw field input and invalid-only/cross-group draft lifetime",
     "default packaged Web directory with explicit override",
-    "owned HTTP connections entering after shutdown stream scan"
+    "owned HTTP connections entering after shutdown stream scan",
+    "explicit failed stop new ID versus unknown-outcome replay",
+    "reject unsupported protocol 1.0 before reconnect loop"
   ]
 }

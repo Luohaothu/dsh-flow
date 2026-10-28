@@ -5,6 +5,7 @@ import { runFixture } from '../../helpers/contract-run.js';
 import { DashboardProjector } from '../../../packages/dsh-flow/src/dashboard/projector.js';
 import { DashboardServer } from '../../../packages/dsh-flow/src/dashboard/server.js';
 import { DashboardClient } from '../../../packages/dsh-flow/src/dashboard/client.js';
+import { PROTOCOL_VERSION } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
 
 test('finite snapshot reads preserve panel selection, own cancellation and recover one same-epoch 401 without opening streams', async t => {
   const f = await runFixture(t), projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events') });
@@ -47,7 +48,7 @@ test('snapshot token epoch changes never combine a new process token with the pr
   let reset = false, tokens = 0;
   const client = new DashboardClient({ baseUrl: server.address, origin: 'dsh-app://app', fetch: async (url, init) => {
     const path = new URL(String(url)).pathname;
-    if (path === '/api/token' && ++tokens > 1) return Response.json({ version: { major: 1, minor: 0 }, epoch: 'new-process', token: 'fixture-next' });
+    if (path === '/api/token' && ++tokens > 1) return Response.json({ version: PROTOCOL_VERSION, epoch: 'new-process', token: 'fixture-next' });
     if (reset && path === `/api/runs/${team.id}`) return Response.json({ error: { code: 'unauthorized', message: 'old process' } }, { status: 401 });
     return fetch(url, init);
   } });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { decodeRegistry, decodeRunEvent, decodeSnapshot } from '../../../packages/dsh-flow/src/dashboard/decoder.js';
-import type { AgentCard, RunSnapshot } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
+import { PROTOCOL_VERSION, type AgentCard, type RunSnapshot } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
 
 function fixture(): RunSnapshot {
   const node: AgentCard = { id: 'root', parentId: null, sessionID: 'root-session', name: 'root', role: 'worker', model: { provider: 'fixture', id: 'model' }, permission: 'workspace-write', task: 'task', status: 'waiting',
@@ -9,7 +9,7 @@ function fixture(): RunSnapshot {
     markers: [{ id: 'marker', kind: 'auto-reject', timestamp: 2, message: 'rejected' }], usage: [{ callId: 'call', kind: 'main', timestamp: 2, model: { provider: 'fixture', id: 'model' }, inputTokens: 1, outputTokens: 2, totalTokens: 3, amount: null, currency: null }],
     createdAt: 1, terminatedAt: null, messages: [{ id: 'message', source: { kind: 'group', agentId: 'root', sessionID: 'root-session', name: 'root', groupId: 'group' }, recipientId: 'root', timestamp: 1, summary: 'summary', priority: 'high', read: false, readTimestamp: null }],
     blackboardWrites: [{ id: 'write', groupId: 'group', startedAt: 1 }], assignmentIds: ['assignment'], groups: ['group'], outputs: [{ timestamp: 1, text: 'output' }], errors: [{ timestamp: 1, message: 'error' }] };
-  return { version: { major: 1, minor: 0 }, seq: 10, run: { id: 'run', epoch: 'epoch', name: 'run', entry: { backend: 'dsh', callerSessionId: 'origin' }, rootSummary: { id: 'root', name: 'root', sessionID: 'root-session' }, status: 'active', startedAt: 1, pendingAssignmentCount: 1 }, nodes: [node],
+  return { version: { ...PROTOCOL_VERSION }, seq: 10, run: { id: 'run', epoch: 'epoch', name: 'run', entry: { backend: 'dsh', callerSessionId: 'origin' }, rootSummary: { id: 'root', name: 'root', sessionID: 'root-session' }, status: 'active', startedAt: 1, pendingAssignmentCount: 1 }, nodes: [node],
     groups: [{ id: 'group', members: ['root'], dissolved: false, blackboard: [{ id: 'blackboard', source: { kind: 'user' }, timestamp: 1, summary: 'posted', payload: { data: [null, false, 0, ''] } }] }],
     assignments: [{ id: 'assignment', runId: 'run', spec: { name: 'spec', type: 'test', background: '', requirements: '', acceptanceCriteria: '', resultSchema: true, materials: [{ id: 'material', sourceId: 'source', digest: 'digest', location: 'path', mediaType: 'text/plain' }] }, sender: { kind: 'run', runId: 'run' }, recipientSessionID: 'root-session', recipientInstanceId: 'root', parentAssignmentId: null, status: 'submitted', submissionCount: 1, schemaFailures: 0, schemaDialect: 'json', schemaDigest: 'digest', continuingChildren: [], result: false,
       submissions: [{ transportKey: 'transport', timestamp: 2, submission: { result: false, continuingChildren: [] }, receipt: { kind: 'accepted', assignmentId: 'assignment', status: 'submitted' } }] }],
