@@ -291,37 +291,42 @@ test('question evidence distinguishes skips and errors and ignores question text
   assert.equal(captured.awaitingUser, false);
 });
 
-test('timed pending and resumed questions wait until their own admitted native replies', { timeout: 6000 }, async t => {
-  const f = await fixture(t, { completion: 'operator', userPrompts: undefined, userTurnBoundary: 'main-idle', noProgressMs: 100 });
-  f.append('request/header', { header: { tools: [{ name: 'ask_user_question', parameters: { type: 'object', properties: { questions: { type: 'array' }, timeout: { type: 'integer', minimum: 1 } } } }] } });
-  const call = f.ask('timed-question', { timeout: 1 });
-  f.answer(call, { pending: true, callId: call.data.callId, message: 'Question remains answerable.' });
-  const resumed = f.ask('resumed-question', { timeout: 1 });
-  const unknown = f.answer(resumed, 'Error: unknown tool outcome', { name: 'ToolError', code: 'TOOL_OUTCOME_UNKNOWN' });
-  f.endTurn();
-  await f.requestFinish(unknown.seq);
-  const pending = await f.until(value => value.observation.pendingQuestions.length === 2 && value.operatorRequests.length === 1);
-  assert.equal(pending.observation.idle, true);
-  assert.equal(pending.observation.ended, true);
-  assert.equal(pending.observation.operatorFinished, false);
-  assert.equal(pending.observation.qualifying, false);
-  assert.equal(pending.observation.stableSince, undefined);
-  await pause(650);
-  const waiting = await f.evidence();
-  assert.equal(waiting.status, 'OBSERVING');
-  assert.equal(waiting.awaitingUser, true);
-  assert.equal(waiting.checkpoints.length, 1);
-  const reply = f.user(JSON.stringify({ kind: 'answer_to_pending_question', tool: 'ask_user_question', callId: call.data.callId, questions: clarification, answers: [{ id: 'scope', selected: [], custom: '按订单汇总。' }] }), { kind: 'user-question-reply', callId: call.data.callId, outcome: 'answered' });
-  const partial = await f.until(value => value.observation.lastInputSeq === reply.seq);
-  assert.deepEqual(partial.observation.pendingQuestions, [resumed.data.callId]);
-  assert.equal(partial.awaitingUser, true);
-  const second = f.user(JSON.stringify({ kind: 'answer_to_pending_question', tool: 'ask_user_question', callId: resumed.data.callId, questions: clarification, answers: [{ id: 'scope', selected: [] }] }), { kind: 'user-question-reply', callId: resumed.data.callId, outcome: 'answered' });
-  const answered = await f.until(value => value.observation.lastInputSeq === second.seq);
-  assert.equal(answered.actualUserTimeline.length, 1);
-  assert.deepEqual(answered.questionTimeline.map(item => item.state), ['answered', 'answered']);
-  assert.deepEqual(answered.questionTimeline[0].reply, reply.data);
-  assert.deepEqual(answered.questionTimeline[1].reply, second.data);
-  assert.equal(answered.observation.ended, false);
+test('timed pending and resumed questions wait until their own admitted native replies', { timeout: 10000 }, async t => {
+  for (const completion of ['auto', 'operator']) await t.test(completion, async t => {
+    const f = await fixture(t, { completion, userPrompts: undefined, userTurnBoundary: 'main-idle', noProgressMs: 100 });
+    Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+    f.readback(f.assignments[0]);
+    f.append('request/header', { header: { tools: [{ name: 'ask_user_question', parameters: { type: 'object', properties: { questions: { type: 'array' }, timeout: { type: 'integer', minimum: 1 } } } }] } });
+    const call = f.ask('timed-question', { timeout: 1 });
+    f.answer(call, { pending: true, callId: call.data.callId, message: 'Question remains answerable.' });
+    const resumed = f.ask('resumed-question', { timeout: 1 });
+    const unknown = f.answer(resumed, 'Error: unknown tool outcome', { name: 'ToolError', code: 'TOOL_OUTCOME_UNKNOWN' });
+    f.endTurn();
+    if (completion === 'operator') await f.requestFinish(unknown.seq);
+    const pending = await f.until(value => value.observation.pendingQuestions.length === 2 && value.operatorRequests.length === (completion === 'operator' ? 1 : 0));
+    assert.equal(pending.observation.idle, true);
+    assert.equal(pending.observation.ended, true);
+    assert.equal(pending.observation.taskComplete, true);
+    assert.equal(pending.observation.operatorFinished, completion === 'operator' ? false : undefined);
+    assert.equal(pending.observation.qualifying, false);
+    assert.equal(pending.observation.stableSince, undefined);
+    await pause(650);
+    const waiting = await f.evidence();
+    assert.equal(waiting.status, 'OBSERVING');
+    assert.equal(waiting.awaitingUser, true);
+    assert.equal(waiting.checkpoints.length, completion === 'operator' ? 1 : 0);
+    const reply = f.user(JSON.stringify({ kind: 'answer_to_pending_question', tool: 'ask_user_question', callId: call.data.callId, questions: clarification, answers: [{ id: 'scope', selected: [], custom: '按订单汇总。' }] }), { kind: 'user-question-reply', callId: call.data.callId, outcome: 'answered' });
+    const partial = await f.until(value => value.observation.lastInputSeq === reply.seq);
+    assert.deepEqual(partial.observation.pendingQuestions, [resumed.data.callId]);
+    assert.equal(partial.awaitingUser, true);
+    const second = f.user(JSON.stringify({ kind: 'answer_to_pending_question', tool: 'ask_user_question', callId: resumed.data.callId, questions: clarification, answers: [{ id: 'scope', selected: [] }] }), { kind: 'user-question-reply', callId: resumed.data.callId, outcome: 'answered' });
+    const answered = await f.until(value => value.observation.lastInputSeq === second.seq);
+    assert.equal(answered.actualUserTimeline.length, 1);
+    assert.deepEqual(answered.questionTimeline.map(item => item.state), ['answered', 'answered']);
+    assert.deepEqual(answered.questionTimeline[0].reply, reply.data);
+    assert.deepEqual(answered.questionTimeline[1].reply, second.data);
+    assert.equal(answered.observation.ended, false);
+  });
 });
 
 test('native question matching never uses another main session with the same call ID and event sequences', { timeout: 5000 }, async t => {
@@ -338,44 +343,102 @@ test('native question matching never uses another main session with the same cal
   assert.equal(captured.mains[1].awaitingUser, true);
 });
 
-test('automatic completion keeps its original no-progress behavior for a pending native question', { timeout: 5000 }, async t => {
-  const f = await fixture(t, { noProgressMs: 700 });
-  f.main.status = 'running'; f.ask();
-  await f.until(value => value.questionTimeline.length === 1);
-  const stopped = await f.until(value => value.status === 'ABORTED');
-  assert.equal(stopped.reason, 'no-progress');
-  assert.equal(stopped.awaitingUser, false);
+test('automatic native clarification waits for an answer and a new turn, then requires formal delivery and readback', { timeout: 20000 }, async t => {
+  const f = await fixture(t, { userPrompts: undefined, noProgressMs: 15000 });
+  f.main.status = 'running';
+  const call = f.ask();
+  const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
+  assert.equal(waiting.completion, 'auto');
+  assert.equal(waiting.observation.matchedUserPrompts, 1);
+  assert.equal(waiting.observation.expectedUserPrompts, 1);
+  assert.equal(waiting.observation.idle, false);
+  assert.equal(waiting.observation.runningRequests, 0);
+  assert.equal(waiting.observation.qualifying, false);
+  const reply = f.answer(call, { answers: [{ id: 'scope', selected: [], custom: '只按订单和总额汇总退款，保留原始格式。' }] });
+  const answered = await f.until(value => value.observation.lastInputSeq === reply.seq);
+  assert.equal(answered.awaitingUser, false);
+  assert.equal(answered.observation.ended, false);
+  assert.deepEqual(answered.userTimeline.map(item => item.seq), [1]);
+  assert.deepEqual(answered.actualUserTimeline.map(item => item.seq), [1]);
+  assert.deepEqual(answered.inputBoundaryTimeline.map(item => [item.kind, item.seq]), [['user-message', 1], ['question-result', reply.seq]]);
+  assert.deepEqual(answered.questionTimeline[0].result, reply.data);
+  f.main.status = 'idle'; f.endTurn();
+  const incomplete = await f.until(value => value.observation.idle && value.observation.ended);
+  assert.equal(incomplete.observation.taskComplete, false);
+  assert.equal(incomplete.awaitingUser, false);
+  await pause(3300);
+  assert.equal((await f.evidence()).status, 'OBSERVING');
+  Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+  const unread = await f.until(value => value.observation.terminalAssignments.length === 1);
+  assert.equal(unread.observation.readback, false);
+  assert.equal(unread.observation.qualifying, false);
+  await pause(3300);
+  assert.equal((await f.evidence()).status, 'OBSERVING');
+  f.readback(f.assignments[0]); f.endTurn();
+  const settled = await f.until(value => value.status === 'SETTLED');
+  assert.equal(settled.reason, 'terminal-assignments-read-back');
+  assert.equal(settled.observation.taskComplete, true);
+  assert.equal(settled.operatorRequests.length, 0);
+  assert.equal(f.initialInputs(), 1);
 });
 
-test('operator native question waits retain duration, request and reported-token limits', { timeout: 10000 }, async t => {
-  await t.test('duration', async t => {
-    const f = await fixture(t, { completion: 'operator', userPrompts: undefined, userTurnBoundary: 'main-idle', maxDurationMs: 1200, noProgressMs: 100 });
-    f.main.status = 'running'; f.ask();
-    const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
-    assert.equal(waiting.observation.idle, false);
-    assert.equal(waiting.observation.runningRequests, 0);
-    assert.equal((await f.until(value => value.status === 'ABORTED')).reason, 'duration-limit');
-  });
-  await t.test('requests', async t => {
-    const f = await fixture(t, { completion: 'operator', userPrompts: undefined, userTurnBoundary: 'main-idle', maxRequests: 1 });
-    f.main.status = 'running'; f.ask();
-    const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
-    assert.equal(waiting.observation.idle, false);
-    assert.equal(waiting.observation.runningRequests, 0);
-    await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]);
-    await assert.rejects(f.stream([]), /boundary reached/);
-    assert.equal((await f.evidence()).reason, 'request-budget');
-  });
-  await t.test('tokens', async t => {
-    const f = await fixture(t, { completion: 'operator', userPrompts: undefined, userTurnBoundary: 'main-idle', maxTotalTokens: 10 });
-    f.main.status = 'running'; f.ask();
-    const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
-    assert.equal(waiting.observation.idle, false);
-    assert.equal(waiting.observation.runningRequests, 0);
-    await f.stream([{ type: 'usage', usage: { totalTokens: 11 } }, { type: 'finish', reason: { kind: 'stop' } }]);
-    const stopped = await f.evidence();
-    assert.equal(stopped.reason, 'total-token-budget');
-    assert.equal(stopped.requests[0].sessionId, f.sessionId);
+test('one native question does not suspend global no-progress for another genuinely stalled main', { timeout: 5000 }, async t => {
+  const f = await fixture(t, { noProgressMs: 700 }, 2);
+  f.main.status = 'running'; f.ask();
+  const waiting = await f.until(value => value.mains[0].awaitingUser);
+  assert.equal(waiting.mains[1].awaitingUser, false);
+  assert.equal(waiting.mains[1].observation.qualifying, false);
+  assert.equal(waiting.awaitingUser, false);
+  const stopped = await f.until(value => value.status === 'ABORTED');
+  assert.equal(stopped.reason, 'no-progress');
+  assert.equal(stopped.mains[0].questionTimeline[0].state, 'pending');
+  assert.equal(stopped.mains[1].observation.taskComplete, false);
+});
+
+test('a native question and an independently completed main pause global no-progress until the hard deadline', { timeout: 5000 }, async t => {
+  const f = await fixture(t, { noProgressMs: 100, maxDurationMs: 1800 }, 2), other = f.mains[1];
+  f.main.status = 'running'; f.ask();
+  Object.assign(other.assignments[0], { status: 'submitted', result: { complete: true } });
+  other.readback(other.assignments[0]); other.endTurn();
+  const waiting = await f.until(value => value.mains[0].awaitingUser && value.mains[1].observation.qualifying);
+  assert.equal(waiting.awaitingUser, true);
+  assert.equal(waiting.mains[0].observation.taskComplete, false);
+  assert.equal(waiting.mains[1].observation.readback, true);
+  const stopped = await f.until(value => value.status === 'ABORTED');
+  assert.equal(stopped.reason, 'duration-limit');
+});
+
+test('native question waits retain duration, request and reported-token limits', { timeout: 15000 }, async t => {
+  for (const completion of ['auto', 'operator']) await t.test(completion, async t => {
+    await t.test('duration', async t => {
+      const f = await fixture(t, { completion, userPrompts: undefined, userTurnBoundary: 'main-idle', maxDurationMs: 1200, noProgressMs: 100 });
+      f.main.status = 'running'; f.ask();
+      const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
+      assert.equal(waiting.observation.idle, false);
+      assert.equal(waiting.observation.runningRequests, 0);
+      assert.equal((await f.until(value => value.status === 'ABORTED')).reason, 'duration-limit');
+    });
+    await t.test('requests', async t => {
+      const f = await fixture(t, { completion, userPrompts: undefined, userTurnBoundary: 'main-idle', maxRequests: 1 });
+      f.main.status = 'running'; f.ask();
+      const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
+      assert.equal(waiting.observation.idle, false);
+      assert.equal(waiting.observation.runningRequests, 0);
+      await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]);
+      await assert.rejects(f.stream([]), /boundary reached/);
+      assert.equal((await f.evidence()).reason, 'request-budget');
+    });
+    await t.test('tokens', async t => {
+      const f = await fixture(t, { completion, userPrompts: undefined, userTurnBoundary: 'main-idle', maxTotalTokens: 10 });
+      f.main.status = 'running'; f.ask();
+      const waiting = await f.until(value => value.awaitingUser && value.observation.pendingQuestions.length === 1);
+      assert.equal(waiting.observation.idle, false);
+      assert.equal(waiting.observation.runningRequests, 0);
+      await f.stream([{ type: 'usage', usage: { totalTokens: 11 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+      const stopped = await f.evidence();
+      assert.equal(stopped.reason, 'total-token-budget');
+      assert.equal(stopped.requests[0].sessionId, f.sessionId);
+    });
   });
 });
 

@@ -220,10 +220,9 @@ export function apply(ctx) {
         record.runIds = owned.map(projection => projection.id);
         const relevantIds = new Set([record.sessionId, ...snapshots.flatMap(snapshot => snapshot.nodes.map(node => node.sessionID))]);
         const idle = !!main.agent && activeAgents.filter(agent => relevantIds.has(agent.session.id)).every(agent => agent.status === 'idle') && !runningRequests;
-        const lastActualUserSeq = record.actualUserTimeline.at(-1)?.seq;
         const lastUserSeq = record.userTimeline.at(-1)?.seq;
-        const lastInputSeq = operator ? record.inputBoundaryTimeline.at(-1)?.seq : lastActualUserSeq;
-        const pendingQuestions = operator ? record.questionTimeline.filter(question => question.state === 'pending').map(question => question.callId) : [];
+        const lastInputSeq = record.inputBoundaryTimeline.at(-1)?.seq;
+        const pendingQuestions = record.questionTimeline.filter(question => question.state === 'pending').map(question => question.callId);
         const ended = lastInputSeq !== undefined && events.some(event => event.type === 'turn/end' && event.seq > lastInputSeq);
         const terminalAssignments = snapshots.flatMap(snapshot => snapshot.assignments).filter(assignment => assignment.parentAssignmentId === null && assignment.status !== 'pending');
         const readback = terminalAssignments.every(assignment => readBack(assignment, events));
@@ -232,7 +231,7 @@ export function apply(ctx) {
         const checkpoint = record.checkpoints.findLast(value => value.userEventSeq === previousUserSeq && value.taskComplete && value.sequential);
         const sequential = !record.requireNewTerminalAfterUserWait || previousUserSeq === undefined || !!checkpoint && terminalAssignments.some(assignment => !checkpoint.terminalAssignmentIds.includes(assignment.id) && readBack(assignment, events, lastUserSeq));
         record.observation = { idle, ended, runningRequests, lastInputSeq, pendingQuestions, matchedUserPrompts: matched.length, expectedUserPrompts: record.userPrompts.length, terminalAssignments: terminalAssignments.map(assignment => assignment.id), readback, taskComplete, sequential, sequentialBaselineMissing: record.requireNewTerminalAfterUserWait && previousUserSeq !== undefined && !checkpoint };
-        const inputBoundaryCount = operator ? record.inputBoundaryTimeline.length : users.length;
+        const inputBoundaryCount = record.inputBoundaryTimeline.length;
         if (inputBoundaryCount !== main.inputBoundaryCount || record.awaitingUser && !(pendingQuestions.length || idle && ended)) lastProgressAt = now;
         main.inputBoundaryCount = inputBoundaryCount;
       }
@@ -253,12 +252,12 @@ export function apply(ctx) {
         const operatorFinished = !!request && request.afterUserSeq === observation.lastInputSeq && observation.pendingQuestions.length === 0;
         const inputsReceived = operator ? observation.matchedUserPrompts > 0 && operatorFinished : observation.matchedUserPrompts === record.userPrompts.length;
         const previouslyAwaiting = record.awaitingUser;
-        record.awaitingUser = !inputsReceived && record.userTimeline.length > 0 && (observation.pendingQuestions.length > 0 || observation.idle && observation.ended && (record.userTurnBoundary === 'main-idle' || observation.taskComplete && observation.sequential));
+        record.awaitingUser = record.userTimeline.length > 0 && (observation.pendingQuestions.length > 0 || !inputsReceived && observation.idle && observation.ended && (record.userTurnBoundary === 'main-idle' || observation.taskComplete && observation.sequential));
         if (previouslyAwaiting && !record.awaitingUser) lastProgressAt = now;
         if (record.awaitingUser && observation.pendingQuestions.length === 0 && !record.checkpoints.some(checkpoint => checkpoint.lastInputSeq === observation.lastInputSeq)) record.checkpoints.push({ afterPromptCount: record.userTimeline.length, userEventSeq: lastUserSeq, lastInputSeq: observation.lastInputSeq, lastActualUserSeq: record.actualUserTimeline.at(-1)?.seq, observedAt: now, taskComplete: observation.taskComplete, sequential: observation.sequential, terminalAssignmentIds: [...observation.terminalAssignments] });
         observation.awaitingUser = record.awaitingUser;
         observation.operatorFinished = operator ? operatorFinished : undefined;
-        observation.qualifying = inputsReceived && observation.idle && observation.ended && observation.sequential && (scenario.plain || observation.taskComplete);
+        observation.qualifying = inputsReceived && observation.pendingQuestions.length === 0 && observation.idle && observation.ended && observation.sequential && (scenario.plain || observation.taskComplete);
       }
       const semantic = [
         ...evidence.snapshots.flatMap(snapshot => snapshot.assignments.map(assignment => ['assignment', assignment.id, assignment.status, assignment.result, assignment.reason])),
