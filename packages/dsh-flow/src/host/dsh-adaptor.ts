@@ -25,6 +25,7 @@ import { ExecutionCapacity } from './capacity.js';
 import { NativePreparation, decodeNativeRecipe, nativeService } from './provisioning.js';
 import type { NativePlan, NativeRecipe } from './native-types.js';
 import { NativeFlowBindings } from './native-bindings.js';
+import type { NativeHistory } from '../native/history.js';
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap { flow: { kind: 'flow'; purpose: SendPurpose; priority: 'high' | 'normal' | 'low'; waitCompletion: boolean } }
@@ -32,6 +33,8 @@ declare module '@deepseek-ai/dsh-llm' {
 export interface DshHostAdaptorOptions {
   workspaceRoot: string;
   stateDirectory: string;
+  history?: NativeHistory;
+  runId?: string;
   afterTurnTimeoutMs?: number;
   immediateTimeoutMs?: number;
   capacity?: ExecutionCapacity;
@@ -218,12 +221,17 @@ export class DshHostAdaptor implements HostAdaptor {
   private readonly stateDirectory: string;
   private readonly removeUsageSink: () => void;
   private disposed = false;
+  private readonly history?: NativeHistory;
+  private readonly runId?: string;
   private disposal?: Promise<void>;
   constructor(readonly host: DshContext, private readonly context: Context, options: DshHostAdaptorOptions) {
     this.stateDirectory = resolve(options.stateDirectory);
     this.preparation = options.preparation ?? new NativePreparation(host, context, { cwd: resolve(options.workspaceRoot) });
     if (this.preparation.context !== context || this.preparation.host !== host) throw new Error('Native preparation belongs to another Context or host');
     this.nativeBindings = options.bindings ?? new NativeFlowBindings(host);
+    if (options.history && !options.runId) throw new Error('Native history requires a trusted Run identity');
+    if (options.history) this.history = options.history;
+    if (options.runId) this.runId = options.runId;
     this.capacity = options.capacity ?? new ExecutionCapacity();
     this.afterTurnTimeoutMs = timeout(options.afterTurnTimeoutMs, 120_000); this.immediateTimeoutMs = timeout(options.immediateTimeoutMs, 10_000);
     for (const service of ['agents', 'llm', 'tools', 'sessions', 'systemPrompt', 'sandboxPolicy', 'approval']) {
@@ -237,6 +245,7 @@ export class DshHostAdaptor implements HostAdaptor {
   async createAgent(flow: Agent, input: AgentProfile, history?: string): Promise<HostAgent> {
     this.assertOpen();
     const profile = snapshotProfile(input);
+    await this.history?.beforeReuse(profile.sessionID);
     this.reserve(profile.sessionID);
     let owned: OwnedAgent | undefined;
     let plan: NativePlan | undefined;
@@ -263,6 +272,7 @@ export class DshHostAdaptor implements HostAdaptor {
       return owned.public;
     } catch (error) {
       if (owned) { this.unbind(owned); await owned.handle?.dispose(); this.owned.delete(owned.public); }
+      await this.history?.rollback(this.runId!, flow);
       if (plan) this.preparation.release(plan, flow);
       this.reserved.delete(profile.sessionID); throw error;
     } finally { lease?.dispose(); }
@@ -270,6 +280,7 @@ export class DshHostAdaptor implements HostAdaptor {
   async resumeAgent(flow: Agent, id: SessionID): Promise<HostAgent> {
     this.assertOpen();
     if (!this.host.get('sessionPersistence')) throw new Error('DSH persistence is unavailable');
+    await this.history?.beforeReuse(id);
     this.reserve(id);
     let owned: OwnedAgent | undefined;
     let plan: NativePlan | undefined;
@@ -299,6 +310,7 @@ export class DshHostAdaptor implements HostAdaptor {
       owned.handle = handle; this.owned.set(owned.public, owned); return owned.public;
     } catch (error) {
       if (owned) { this.unbind(owned); await owned.handle?.dispose(); this.owned.delete(owned.public); }
+      await this.history?.rollback(this.runId!, flow);
       if (plan) this.preparation.release(plan, flow);
       this.reserved.delete(id); throw error;
     } finally { lease?.dispose(); }
@@ -369,6 +381,7 @@ export class DshHostAdaptor implements HostAdaptor {
     if (commands) owned.bindings.push(commands.register({ name: 'permission', description: 'Flow permissions are selected at creation',
       handler: () => { throw new Error('Flow does not expose permission changes'); } }));
     owned.bindings.push(...this.nativeBindings.installMember(scope, binding, execution => this.assertCaller(owned, execution), () => this.releaseCapacity(owned)));
+    await this.history?.bind(this.runId!, flow, native);
     return owned;
   }
   private assertCaller(owned: OwnedAgent, execution: ToolRunContext): void {
@@ -570,6 +583,7 @@ export class DshHostAdaptor implements HostAdaptor {
     const promise = new Promise<void>((resolve, reject) => { resolveClose = resolve; rejectClose = reject; });
     const close: CloseOperation = { phase: 'after-turn', mode, turn: owned.turn, promise, resolve: resolveClose, reject: rejectClose };
     owned.close = close;
+    this.history?.closing(this.runId!, owned.flow);
     this.observeCleanup(owned, 'pending', mode === 'immediate' ? 'immediate-request' : 'release-request');
     if (mode === 'after-turn' && close.turn !== undefined && owned.admittedTurn === close.turn && owned.native.status === 'running') {
       close.deadline = Date.now() + this.afterTurnTimeoutMs;
@@ -587,6 +601,7 @@ export class DshHostAdaptor implements HostAdaptor {
     close.timer = setTimeout(() => {
       if (close.phase !== 'cleaning') return;
       close.phase = 'abandoned';
+      this.history?.fail(this.runId!, owned.flow, 'abandoned', 'Native cleanup deadline elapsed; no final cut is available');
       this.observeCleanup(owned, 'abandoned', 'immediate-cleanup-timeout');
       const error = new Error('Native cleanup abandoned: the immediate cleanup deadline elapsed; DSH cannot forcibly destroy in-process execution', { cause: close.persistenceError });
       this.emit(owned, { type: 'error', message: error.message }); this.unbind(owned); close.reject(error);
@@ -601,6 +616,7 @@ export class DshHostAdaptor implements HostAdaptor {
       });
       await awaitAuxiliaryUsageSettlements(this, owned.public);
       await owned.handle!.dispose();
+      await this.history?.complete(this.runId!, owned.flow);
     })().then(() => {
       if (close.phase === 'abandoned') return;
       clearTimeout(close.timer); close.phase = 'completed'; this.observeCleanup(owned, 'complete', 'resources-released'); this.reserved.delete(owned.public.profile.sessionID);
@@ -608,7 +624,7 @@ export class DshHostAdaptor implements HostAdaptor {
       this.terminal.set(owned.public, close.promise); this.owned.delete(owned.public); close.resolve();
     }, error => {
       if (close.phase === 'abandoned') return;
-      clearTimeout(close.timer); close.phase = 'failed'; this.observeCleanup(owned, 'failed', describeError(error)); this.unbind(owned); close.reject(error);
+      clearTimeout(close.timer); close.phase = 'failed'; this.history?.fail(this.runId!, owned.flow, 'failed', describeError(error)); this.observeCleanup(owned, 'failed', describeError(error)); this.unbind(owned); close.reject(error);
     });
   }
   private observeCleanup(owned: OwnedAgent, phase: 'pending' | 'waiting' | 'releasing' | 'complete' | 'failed' | 'abandoned', reason: string): void {

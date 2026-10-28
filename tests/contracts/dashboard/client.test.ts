@@ -19,7 +19,7 @@ async function fixture(t: TestContext) {
     if (url.pathname.endsWith('/events') || url.pathname === '/api/events') {
       assert.equal(url.searchParams.get('epoch'), epoch);
       if (fail === url.pathname) { fail = ''; json(409, { error: { code: 'reset-required', message: 'cursor outside journal' } }); return; }
-      response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write(': ready\n\n'); streams.set(url.pathname, response);
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Flow-Replay-Through': url.searchParams.get('after') ?? '0' }); response.write(': ready\n\n'); streams.set(url.pathname, response);
       request.on('close', () => { if (streams.get(url.pathname) === response) streams.delete(url.pathname); }); return;
     }
     if (url.pathname.endsWith('/stop')) { assert.equal(request.headers.origin, 'dsh-app://app'); let body = ''; request.on('data', chunk => { body += chunk; }); request.on('end', () => json(202, { operationId: JSON.parse(body).operationId, status: 'accepted' })); return; }

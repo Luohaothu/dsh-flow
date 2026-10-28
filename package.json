@@ -10,14 +10,16 @@
   },
   "scripts": {
     "build": "tsx scripts/build.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test tests/contracts/*/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
+    "test": "node --import tsx --test --test-timeout=120000 tests/contracts/*/*.test.ts",
     "test:inventory": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
     "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
     "docs:build": "vitepress build docs/design",
     "docs:preview": "vitepress preview docs/design",
     "test:schema": "tsx scripts/verify-result-schema.ts",
-    "test:patterns-package": "tsx scripts/verify-pattern-package.ts"
+    "test:patterns-package": "tsx scripts/verify-pattern-package.ts",
+    "generate:native-api": "tsx scripts/generate-native-typert.ts --write",
+    "test:native-api": "tsx scripts/generate-native-typert.ts --check"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -78,7 +80,28 @@
     "@deepseek-ai/dsh-storage": "0.2.0-rc.2",
     "@deepseek-ai/dsh-ptc-runtime-node": "0.2.0-rc.2",
     "@deepseek-ai/dsh-subprocess-local": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-sandbox-local": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-sandbox-local": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-generator": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-config-editor": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-api-remotes": "0.2.0-rc.2",
+    "zod": "4.6.5",
+    "@deepseek-ai/cordis-plugin-include": "1.0.9",
+    "@deepseek-ai/dsh-app-boot": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-api-settings-controller": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2",
+    "zustand": "4.4.7",
+    "immer": "10.1.1",
+    "@deepseek-ai/dsh-client-ui-theme": "0.2.0-rc.2"
   },
   "packageManager": "pnpm@12.9.1"
 }

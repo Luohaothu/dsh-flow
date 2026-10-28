@@ -1,0 +1,67 @@
+diff --git a/lib/index.js b/lib/index.js
+index 5eb4ac6..a9abc09 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -478,7 +478,7 @@ var SettingsForms = class extends Service {
+ 	*/
+ 	async replace(ns, section, expectedRevision) {
+ 		const input = cloneJsonShaped(section);
+-		await this.write(ns, (_current, base) => mergeLayers(base, input), expectedRevision);
++		await this.write(ns, (_current, base, _schema, sparse) => sparse ? input : mergeLayers(base, input), expectedRevision);
+ 	}
+ 	/** Apply field edits without restating redacted secrets; unsetting an array index removes its element.
+ 	* @param ns Profile entry id.
+@@ -486,7 +486,15 @@ var SettingsForms = class extends Service {
+ 	* @param expectedRevision Revision returned by describe.
+ 	*/
+ 	async mutate(ns, ops, expectedRevision) {
+-		await this.write(ns, (current, base, schema) => ops.reduce((value, op) => {
++		await this.write(ns, (current, base, schema, sparse) => ops.reduce((value, op) => {
++			if (sparse) {
++				for (let length = 1; length < op.path.length; length++) {
++					const path = op.path.slice(0, length);
++					const inherited = path.reduce((node, key) => member(node, key, true), base);
++					if (Array.isArray(inherited) && path.reduce((node, key) => member(node, key, true), value) === undefined) value = applyPathOp(value, { op: "set", path, value: cloneJsonShaped({ value: inherited }).value }, schema);
++				}
++				return applyPathOp(value, op, schema);
++			}
+ 			if (op.op === "set") return applyPathOp(value, op, schema);
+ 			const parent = op.path.slice(0, -1).reduce((node, key) => member(node, key), value);
+ 			if (Array.isArray(parent)) return applyPathOp(value, op, schema);
+@@ -504,12 +512,13 @@ var SettingsForms = class extends Service {
+ 		if (entry === void 0 || schema === void 0) throw new Error(`No configurable plugin entry "${ns}"`);
+ 		const form = volatileForm(schema);
+ 		if (form === void 0) throw new Error(`Plugin entry "${ns}" has no volatile fields`);
++		const sparse = this.presentations.get(entry.fiber)?.profileInheritance === "merge";
+ 		for (const path of paths) if (path.length && !isVolatilePath(schema, path)) throw new Error(`Config field "${path.join(".")}" is not volatile`);
+ 		await this.ownerContext.configEditor.edit(entry, (raw, inherited) => {
+ 			const descriptor = this.describe().find((row) => row.ns === ns);
+ 			if (descriptor === void 0) throw new Error(`Plugin entry "${ns}" is no longer configurable`);
+ 			if (expected !== void 0 && descriptor.revision !== expected) throw new SettingsConflictError(ns, expected, descriptor.revision);
+-			const next = cloneJsonShaped(change(projectForm(form, raw), projectForm(form, inherited), schema));
++			const next = cloneJsonShaped(change(projectForm(form, raw), projectForm(form, inherited), schema, sparse));
+ 			const validatePaths = (value, node, path = []) => {
+ 				for (const [key, child] of Object.entries(value)) {
+ 					const target = [...path, key];
+@@ -532,7 +541,7 @@ var SettingsForms = class extends Service {
+ 				return result;
+ 			};
+ 			return mergeLayers(strip(raw, form), next);
+-		});
++		}, sparse ? { mode: "merge" } : undefined);
+ 		this.describe();
+ 	}
+ 	schema(entry) {
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+index 3e762df..541d39b 100644
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -79,6 +79,8 @@ export declare class SettingsForms extends Service {
+      */
+     configure(presentation: {
+         auto?: boolean;
++        /** Opt this owning fiber into sparse profile configMerge persistence and own-key inheritance. */
++        profileInheritance?: 'merge';
+     }, owner?: Fiber): () => void;
+     private invalidate;
+     /** Whether the active profile accepts form edits. */

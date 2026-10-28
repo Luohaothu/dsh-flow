@@ -2,7 +2,9 @@ import type { OperationAccepted, ProtocolVersion, RegistrySnapshot, RunSnapshot,
 import { IncompatibleProtocol, decodeToken, decodeRegistry, decodeSnapshot, decodeRegistryEvent, decodeRunEvent } from './decoder.js';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error' | 'disposed';
+export interface DashboardUpdate { kind: 'state' | 'snapshot' | 'replay' | 'live'; generation: number; seq?: number; eventType?: string }
 export interface DashboardClientState {
+  update: DashboardUpdate;
   connection: ConnectionStatus;
   registryConnection: ConnectionStatus;
   runConnection: ConnectionStatus;
@@ -19,6 +21,12 @@ export class DashboardRequestError extends Error {
   constructor(readonly status: number, readonly code: string | undefined, message: string) { super(message); this.name = 'DashboardRequestError'; }
 }
 class ResetRequired extends Error {}
+function replayWatermark(response: Response, after: number): number {
+  const value = response.headers.get('X-Flow-Replay-Through');
+  const cursor = value !== null && /^(0|[1-9]\d*)$/.test(value) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(cursor) || cursor < after) { void response.body?.cancel().catch(() => {}); throw new ResetRequired('Invalid replay watermark'); }
+  return cursor;
+}
 async function responseError(response: Response): Promise<DashboardRequestError> {
   let code: string | undefined, detail = `Dashboard request failed (${response.status})`;
   try {
@@ -68,7 +76,7 @@ export class DashboardClient {
   private readonly fetcher: typeof fetch;
   private readonly base: string;
   private readonly listeners = new Set<(state: DashboardClientState) => void>();
-  private state: DashboardClientState = { connection: 'idle', registryConnection: 'idle', runConnection: 'idle', version: null, epoch: null,
+  private state: DashboardClientState = { update: { kind: 'state', generation: 0 }, connection: 'idle', registryConnection: 'idle', runConnection: 'idle', version: null, epoch: null,
     registry: null, selectedRunId: null, snapshot: null, updatedAt: null, error: null };
   private token = '';
   private disposed = false;
@@ -87,7 +95,7 @@ export class DashboardClient {
   subscribe(listener: (state: DashboardClientState) => void): () => void { this.listeners.add(listener); listener(this.getState()); return () => { this.listeners.delete(listener); }; }
   private publish(patch: Partial<DashboardClientState>): void {
     if (this.disposed) return;
-    this.state = { ...this.state, ...patch };
+    this.state = { ...this.state, ...patch, update: patch.update ?? { kind: 'state', generation: this.runGeneration } };
     for (const listener of [...this.listeners]) { try { listener(this.getState()); } catch {} }
   }
   private headers(auth = true): Headers { const headers = new Headers(); if (auth) headers.set('Authorization', `Bearer ${this.token}`); if (this.options.origin) headers.set('Origin', this.options.origin); return headers; }
@@ -97,7 +105,8 @@ export class DashboardClient {
       const response = await this.fetcher(`${this.base}/api/token`, { headers: this.headers(false), signal: this.lifetime.signal, cache: 'no-store' });
       if (!response.ok) throw await responseError(response);
       const next = decodeToken(await response.json()); this.lifetime.signal.throwIfAborted();
-      this.token = next.token; this.publish({ version: next.version, epoch: next.epoch });
+      this.token = next.token;
+      if (this.state.epoch !== next.epoch || this.state.version?.major !== next.version.major || this.state.version.minor !== next.version.minor) this.publish({ version: next.version, epoch: next.epoch });
     })();
     this.authentication = operation;
     void operation.finally(() => { if (this.authentication === operation) this.authentication = undefined; }).catch(() => {});
@@ -186,6 +195,32 @@ export class DashboardClient {
     }
     this.publish({ registry: { ...current, seq: event.seq, runs }, updatedAt: Date.now() });
   }
+  /** Read one current registry Run without selecting it or opening a stream. */
+  async readRunSnapshot(runId: string, signal: AbortSignal): Promise<RunSnapshot> {
+    if (this.disposed) throw new Error('Dashboard client is disposed');
+    if (!this.state.registry || !this.registryAbort || this.registryAbort.signal.aborted) throw new Error('Dashboard client must connect before reading a Run');
+    const epoch = this.state.registry.epoch;
+    const lifetime = AbortSignal.any([signal, this.lifetime.signal]);
+    const current = () => {
+      lifetime.throwIfAborted();
+      if (this.state.epoch !== epoch || this.state.registry?.epoch !== epoch) throw new ResetRequired('Run snapshot epoch changed');
+      if (!this.state.registry.runs.some(run => run.id === runId && run.epoch === epoch && run.status !== 'invalid')) throw new DashboardRequestError(404, 'run-unavailable', 'Run is unavailable');
+    };
+    current();
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await this.request(`/api/runs/${encodeURIComponent(runId)}`, lifetime, { cache: 'no-store' });
+        const value = decodeSnapshot(await response.json(), runId);
+        current();
+        if (value.run.epoch !== epoch) throw new ResetRequired('Run snapshot epoch changed');
+        if (value.run.status === 'invalid') throw new DashboardRequestError(404, 'run-unavailable', 'Run is unavailable');
+        return value;
+      } catch (error) {
+        current();
+        if (!(error instanceof ResetRequired) || attempt !== 0) throw error;
+      }
+    }
+  }
   async selectRun(runId: string): Promise<void> {
     if (this.disposed) throw new Error('Dashboard client is disposed');
     await this.connect(); this.runAbort?.abort();
@@ -207,7 +242,7 @@ export class DashboardClient {
     const response = await this.request(`/api/runs/${encodeURIComponent(runId)}`, signal), value = decodeSnapshot(await response.json(), runId);
     signal.throwIfAborted(); if (generation !== this.runGeneration) return;
     if (value.run.epoch !== this.state.epoch) { await this.authenticate(); throw new ResetRequired('Run epoch changed'); }
-    this.publish({ snapshot: value, updatedAt: Date.now() });
+    this.publish({ snapshot: value, updatedAt: Date.now(), update: { kind: 'snapshot', generation, seq: value.seq } });
   }
   private async runLoop(runId: string, generation: number, controller: AbortController, baseline = false): Promise<void> {
     while (!controller.signal.aborted && generation === this.runGeneration && !this.disposed) {
@@ -221,8 +256,9 @@ export class DashboardClient {
         const snapshot = this.state.snapshot!;
         const response = await this.request(`/api/runs/${encodeURIComponent(runId)}/events?after=${snapshot.seq}&epoch=${encodeURIComponent(snapshot.run.epoch)}`, controller.signal);
         if (generation !== this.runGeneration || controller.signal.aborted) { await response.body?.cancel(); return; }
+        const replayThrough = replayWatermark(response, snapshot.seq);
         this.publish({ runConnection: 'connected', error: null });
-        await consumeSse(response, controller.signal, raw => { if (generation === this.runGeneration) this.applyRun(raw, runId); });
+        await consumeSse(response, controller.signal, raw => { if (generation === this.runGeneration) this.applyRun(raw, runId, generation, replayThrough); });
         throw new Error('Dashboard run stream disconnected');
       } catch (error) {
         if (controller.signal.aborted || generation !== this.runGeneration || this.disposed) return;
@@ -233,7 +269,7 @@ export class DashboardClient {
       }
     }
   }
-  private applyRun(raw: unknown, runId: string): void {
+  private applyRun(raw: unknown, runId: string, generation: number, replayThrough: number): void {
     let event: ReturnType<typeof decodeRunEvent>;
     try { event = decodeRunEvent(raw); } catch (error) { throw new ResetRequired(message(error)); }
     if (event.runId !== runId) throw new ResetRequired('Invalid run event');
@@ -250,7 +286,7 @@ export class DashboardClient {
       if (event.run.id !== runId || event.run.epoch !== current.run.epoch) throw new ResetRequired('Invalid run record');
       next.run = event.run;
     }
-    this.publish({ snapshot: next, updatedAt: Date.now() });
+    this.publish({ snapshot: next, updatedAt: Date.now(), update: { kind: event.seq <= replayThrough ? 'replay' : 'live', generation, seq: event.seq, eventType: event.type } });
   }
   async stop(runId: string, request: StopRequest): Promise<OperationAccepted> {
     if (this.disposed) throw new Error('Dashboard client is disposed');

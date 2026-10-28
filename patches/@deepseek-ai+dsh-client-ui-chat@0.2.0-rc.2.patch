@@ -1,0 +1,165 @@
+diff --git a/lib/client.js b/lib/client.js
+index f997683..f1cdf57 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -5127,7 +5127,13 @@ window.__ModuleLoader__.load({
+ 		* The chat view slot entry: pure component over the composed props; each
+ 		* ordered business Node crosses the keyed renderer seat.
+ 		*/
+-		function ChatView({ useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot, sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions, usePresentation, useProjection, t }) {
++		function ChatView({ readOnly = false, readonlyBinding = false, useTranscriptSummary, useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot, sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions, usePresentation, useProjection, t }) {
++			readOnly = readOnly || readonlyBinding;
++            if (readOnly) {
++                forkAt = undefined;
++                const originalRenderSlot = renderSlot;
++                renderSlot = (name, ...args) => name === "conversation.chat.assistant-actions" || name === "conversation.chat.turnTail" ? null : originalRenderSlot(name, ...args);
++            }
+ 			const order = useChat((s) => s.order);
+ 			const groupedEntries = useConversation((snapshot) => snapshot.views.grouped("chat")?.entries);
+ 			const entries = (0, react.useMemo)(() => groupedEntries ?? order.map((key) => ({
+@@ -5144,7 +5150,9 @@ window.__ModuleLoader__.load({
+ 			const turnOutline = useProjection("turnOutline");
+ 			const railItems = (0, react.useMemo)(() => mergeTurnRailItems(turnNavigationItems, turnOutline), [turnNavigationItems, turnOutline]);
+ 			const inbox = useProjection("inbox");
+-			const cwd = useSessions((s) => s.byId[sessionId]?.cwd);
++			const catalogCwd = useSessions((s) => s.byId[sessionId]?.cwd);
++            const transcriptCwd = useTranscriptSummary(value => value?.cwd);
++            const cwd = readonlyBinding ? transcriptCwd : transcriptCwd ?? catalogCwd;
+ 			const fileImages = (0, react.useMemo)(() => ({
+ 				resolve: (path) => fileMediaUrl(document.baseURI, resolveWorkspacePath(cwd, path)),
+ 				labels: {
+@@ -6577,7 +6585,7 @@ window.__ModuleLoader__.load({
+ 			const turn = node.location.kind === "turn" || node.location.kind === "step" ? node.location.turn : void 0;
+ 			if (turn === void 0) return null;
+ 			const closing = data.closing;
+-			const tail = renderSlot("conversation.chat.turnTail", {
++			const tail = forkAt === undefined ? null : renderSlot("conversation.chat.turnTail", {
+ 				turn,
+ 				seq: closing?.finalNode.seq ?? data.seq,
+ 				openFile
+@@ -6588,7 +6596,7 @@ window.__ModuleLoader__.load({
+ 				children: tail
+ 			});
+ 			const messageId = closing.finalNode.messageId;
+-			const assistantActions = messageId === void 0 ? null : renderSlot("conversation.chat.assistant-actions", { messageId });
++			const assistantActions = forkAt === undefined || messageId === void 0 ? null : renderSlot("conversation.chat.assistant-actions", { messageId });
+ 			return (0, react_jsx_runtime.jsxs)("div", {
+ 				className: TurnTailNodeView_module_css_default.root,
+ 				"data-turn-tail": data.turn,
+@@ -6597,7 +6605,7 @@ window.__ModuleLoader__.load({
+ 					text: assistantText(closing.blocks),
+ 					time: closing.time,
+ 					clock: "end",
+-					onBranch: () => {
++					onBranch: forkAt === undefined ? undefined : () => {
+ 						forkAt(data.seq);
+ 					},
+ 					branchUnavailable: data.branchUnavailable || hasLaterChatNode,
+@@ -12387,12 +12395,9 @@ window.__ModuleLoader__.load({
+ 					}
+ 				})
+ 			}, TranscriptViewRow));
+-			ctx.slots.inject("conversation.view", () => {
+-				return ctx.slots.register({
+-					name: "conversation.view",
+-					id: "chat",
+-					order: 0,
+-					label: () => t("view.chat"),
++			ctx.slots.registerFactory({
++					name: "chat.transcript",
++                    scope: "session",
+ 					locale: NS,
+ 					children: {
+ 						"conversation.chat.node": {
+@@ -12407,13 +12412,15 @@ window.__ModuleLoader__.load({
+ 					},
+ 					store: chatStore,
+ 					inject: (sessionId) => {
+-						const binding = ctx.sessions.binding(sessionId);
++						const binding = ctx.sessions.bindingByScopeKey(sessionId);
+ 						if (binding === void 0) throw new Error(`ui-chat: unknown session "${sessionId}"`);
++						sessionId = binding.sessionId;
+ 						const session = binding.session;
+ 						const chat = chatSource(binding);
+ 						const conversation = ctx.uiConversation.binding(binding);
+ 						return {
+-							hooks: { presentation },
++							hooks: { presentation, transcriptSummary: binding.summary ?? { getSnapshot: () => ctx.sessions.list.getSnapshot().byId[sessionId], subscribe: listener => ctx.sessions.list.subscribe(listener) } },
++                            readonlyBinding: binding.readOnly,
+ 							keyedHooks: {
+ 								chatNode: (key) => chat.getSnapshot().nodes.source(key),
+ 								chatNodeProcess: (key) => chat.getSnapshot().nodes.processSource(key),
+@@ -12421,7 +12428,7 @@ window.__ModuleLoader__.load({
+ 							},
+ 							fileMentions: (owner) => ctx.get("chatFileMentions")?.forClosing(owner, sessionId),
+ 							openFile: async (path, options) => {
+-								const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd;
++								const cwd = binding.readOnly ? binding.summary?.getSnapshot()?.cwd : ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd;
+ 								const url = fileAddressFor(sessionId, cwd, path);
+ 								if (options?.line === void 0) ctx.sidebarRight.openResource(url);
+ 								else ctx.sidebarRight.openResource(url, { params: { line: options.line } });
+@@ -12440,13 +12447,13 @@ window.__ModuleLoader__.load({
+ 								session.loadOlder();
+ 							},
+ 							loadThrough: (seq) => session.loadThrough(seq),
+-							loadImage: Object.assign((attachment) => ctx.uiConversation.imageUrl(sessionId, attachment), { peek: (attachment) => ctx.uiConversation.peekImageUrl(sessionId, attachment) }),
++							loadImage: Object.assign((attachment) => ctx.uiConversation.imageUrl(binding, attachment), { peek: (attachment) => ctx.uiConversation.peekImageUrl(binding, attachment) }),
+ 							chatScroll: {
+ 								save: (position) => {
+-									if (position === null) chatScrollPositions.delete(sessionId);
+-									else chatScrollPositions.set(sessionId, position);
++									if (position === null) chatScrollPositions.delete(binding.scopeKey);
++									else chatScrollPositions.set(binding.scopeKey, position);
+ 								},
+-								read: () => chatScrollPositions.get(sessionId) ?? null
++								read: () => chatScrollPositions.get(binding.scopeKey) ?? null
+ 							},
+ 							forkAt: (seq) => {
+ 								const messageId = [...chat.getSnapshot().timeline.turns.values()].find((turn) => turn.end?.seq === seq)?.data.get("turn-tail")?.closing?.finalNode.messageId;
+@@ -12469,7 +12476,9 @@ window.__ModuleLoader__.load({
+ 						};
+ 					}
+ 				}, ChatView);
+-			});
++            ctx.slots.inject("conversation.view", () => ctx.slots.register({
++                name: "conversation.view", id: "chat", order: 0, label: () => t("view.chat"), locale: NS,
++            }, ({ renderFactorySlot, inspectCall }) => renderFactorySlot("chat.transcript", { readOnly: false, inspectCall })));
+ 			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+ 				name: "shell.overlay",
+ 				id: "chat.quota-notice",
+diff --git a/lib/types/client/contract/slots.d.ts b/lib/types/client/contract/slots.d.ts
+index a3f4a42..2dd58f5 100644
+--- a/lib/types/client/contract/slots.d.ts
++++ b/lib/types/client/contract/slots.d.ts
+@@ -185,9 +185,11 @@ export interface PerformanceUsageInjected {
+ }
+ /** Business callbacks injected into the Chat view. */
+ export interface ChatViewInjected {
++    readonlyBinding: boolean;
+     hooks: {
+         /** Live presentation policy derived from the accepted work-details mode. */
+         presentation: ObservableSnapshot<ChatPresentationPolicy>;
++        transcriptSummary: ObservableSnapshot<{ readonly cwd?: string } | undefined>;
+     };
+     keyedHooks: {
+         /** Resolve the stable source for one Chat Node key. */
+@@ -298,4 +300,17 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+         };
+     }
+ }
+-//# sourceMappingURL=slots.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=slots.d.ts.map
++/** Full native transcript; readonly mode omits all execution controls and composer. */
++export interface TranscriptOwnerProps { readonly readOnly: boolean; readonly inspectCall?: ((callId: string) => void) | undefined; }
++declare module '@deepseek-ai/dsh-client-ui-slots' {
++    interface SlotFactoryMap {
++        'chat.transcript': {
++            scope: 'session'; props: TranscriptOwnerProps;
++            children: { 'conversation.chat.node': { kind: 'keyed'; scope: 'session'; inject: ChatNodeInjected }; 'conversation.message.images': { kind: 'single'; scope: 'session' } };
++            store: ChatStore;
++            inject: ChatViewInjected;
++            locale: 'chat';
++        };
++    }
++}

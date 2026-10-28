@@ -10,7 +10,7 @@ import type { RunService } from '../run/run.js';
 import { EventJournal } from './events.js';
 import { PROTOCOL_VERSION, type AgentCard, type GroupView, type MessageSourceView, type OperationView, type PriceTable, type RegistryEvent, type RegistrySnapshot, type RunEvent, type RunInfo, type RunSnapshot, type UsageView } from './protocol.js';
 
-type Projection = { view: RunReadView; info: RunInfo; nodes: Map<string, AgentCard>; agents: Map<string, Agent>; groups: Map<string, GroupView>; operations: Map<string, OperationView>; journal: EventJournal<RunEvent>; unsubscribe: () => void; assignments: Map<string, RunReadView['assignments'][number]> };
+type Projection = { navigation: Map<string, string>; view: RunReadView; info: RunInfo; nodes: Map<string, AgentCard>; agents: Map<string, Agent>; groups: Map<string, GroupView>; operations: Map<string, OperationView>; journal: EventJournal<RunEvent>; unsubscribe: () => void; assignments: Map<string, RunReadView['assignments'][number]> };
 const copy = <T>(value: T): T => structuredClone(value);
 export class DashboardProjector {
   private readonly projections = new Map<string, Projection>();
@@ -66,7 +66,7 @@ export class DashboardProjector {
     const appeared = !p;
     if (!p) {
       if (hasCoreObservations(view.context)) throw new Error('Dashboard projector must attach before Context initialization');
-      p = { view, info: this.info(view), nodes: new Map(), agents: new Map(), groups: new Map(), operations: new Map(), assignments: new Map(), journal: new EventJournal({ directory: join(this.directory, 'runs'), name: view.run.id, epoch: view.run.epoch, tolerateInitializationFailure: true }), unsubscribe: () => {} };
+      p = { navigation: new Map(), view, info: this.info(view), nodes: new Map(), agents: new Map(), groups: new Map(), operations: new Map(), assignments: new Map(), journal: new EventJournal({ directory: join(this.directory, 'runs'), name: view.run.id, epoch: view.run.epoch, tolerateInitializationFailure: true }), unsubscribe: () => {} };
       this.projections.set(view.run.id, p);
       this.resetDisposers.push(p.journal.observeReset(() => { for (const listener of this.resetListeners) listener(view.run.id); }));
       const projection = p;
@@ -182,7 +182,14 @@ export class DashboardProjector {
     return { ...copy(usage), callId, amount, currency: amount === null ? null : price!.currency };
   }
   private marker(node: AgentCard, id: string, kind: string, timestamp: number, message: string): void { if (!node.markers.some(marker => marker.id === id)) node.markers.push({ id, kind, timestamp, message }); }
-  private node(p: Projection, node: AgentCard, type: Extract<RunEvent, { node: AgentCard }>['type'] = 'node-changed'): void { this.publish(p, { type, node: copy(node) }); }
+  private node(p: Projection, node: AgentCard, type: Extract<RunEvent, { node: AgentCard }>['type'] = 'node-changed'): void {
+    this.publish(p, { type, node: copy(node) });
+    const fingerprint = JSON.stringify([node.id, node.sessionID, node.name, node.model.provider, node.model.id, node.status, node.outcome,
+      node.waiting, node.cleanup?.phase, node.cleanup?.reason, node.markers.length]);
+    if (p.navigation.get(node.id) === fingerprint) return;
+    p.navigation.set(node.id, fingerprint);
+    this.append<RegistryEvent>(this.journal, seq => ({ epoch: p.info.epoch, seq, type: 'run-changed', run: copy(p.info) }));
+  }
   private publish(p: Projection, payload: Omit<Extract<RunEvent, { node: AgentCard }>, 'seq' | 'runId' | 'timestamp'> | Omit<Extract<RunEvent, { group: GroupView }>, 'seq' | 'runId' | 'timestamp'> | Omit<Extract<RunEvent, { assignment: unknown }>, 'seq' | 'runId' | 'timestamp'> | Omit<Extract<RunEvent, { operation: OperationView }>, 'seq' | 'runId' | 'timestamp'> | Omit<Extract<RunEvent, { run: RunInfo }>, 'seq' | 'runId' | 'timestamp'>): void { this.append(p.journal, seq => ({ runId: p.info.id, seq, timestamp: Date.now(), ...payload })); }
 }
 

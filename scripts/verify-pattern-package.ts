@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = join(root, 'docs/design/public/patterns');
@@ -16,7 +18,7 @@ function files(directory: string): string[] {
   }).sort();
 }
 try {
-  execFileSync('pnpm', ['build'], { cwd: root, stdio: 'pipe' });
+  execFileSync(process.execPath, ['--import', 'tsx', join(root, 'scripts/build.ts')], { cwd: root, stdio: 'pipe' });
   execFileSync('pnpm', ['--config.ignore-scripts=true', '--dir', join(root, 'packages/dsh-flow'), 'pack', '--pack-destination', scratch], { stdio: 'pipe' });
   const archives = readdirSync(scratch).filter(name => name.endsWith('.tgz'));
   assert.equal(archives.length, 1);
@@ -24,6 +26,33 @@ try {
   const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n');
   assert.ok(entries.every(entry => entry.startsWith('package/') && !entry.split('/').includes('..')));
   execFileSync('tar', ['-xzf', archive, '-C', scratch]);
+  const packaged = join(scratch, 'package');
+  const metadata = JSON.parse(readFileSync(join(packaged, 'package.json'), 'utf8'));
+  assert.equal(metadata.dsh.client.platform, 'web');
+  assert.ok(metadata.dsh.client.inject.includes('@deepseek-ai/dsh-api-session-controller'));
+  assert.ok(metadata.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-theme'));
+  assert.equal(metadata.exports['./client'].default, './lib/client.js');
+  for (const entry of ['./native', './native/protocol', './ui', './client']) {
+    for (const path of Object.values(metadata.exports[entry]) as string[]) assert.ok(readFileSync(join(packaged, path)).length > 0);
+  }
+  const patch = parse(readFileSync(join(packaged, metadata.dsh.bundle.patch), 'utf8'));
+  assert.equal(patch[0].insert[0].id, 'dsh-flow');
+  const nativeScript = readFileSync(join(packaged, metadata.exports['./client'].default), 'utf8');
+  const allowed = new Set(['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+    '@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-dockkit']);
+  const localRequire = createRequire(import.meta.url), external = new Set<string>();
+  let registration: { id: string; factory(require: (name: string) => unknown): { apply: unknown; inject: unknown } } | undefined;
+  runInNewContext(nativeScript, { window: { __ModuleLoader__: { load(value: typeof registration) { registration = value; } } },
+    AbortController, TextEncoder, TextDecoder, URL, queueMicrotask, setTimeout, clearTimeout, crypto: globalThis.crypto }, { timeout: 5_000 });
+  assert.equal(registration?.id, 'dsh-flow');
+  const native = registration!.factory(name => { assert.ok(allowed.has(name), `Unexpected Native external: ${name}`); external.add(name); return localRequire(name); });
+  assert.equal(typeof native.apply, 'function');
+  assert.ok(Array.isArray(native.inject));
+  const webHtml = readFileSync(join(packaged, 'web/index.html'), 'utf8');
+  assert.match(webHtml, /src="\.\/app\.js"/);
+  assert.ok(readFileSync(join(packaged, 'web/app.js')).length > 0);
+  for (const path of ['lib', 'web']) assert.deepEqual(readFileSync(join(packaged, path, 'LICENSE.deepseek-icon.txt')),
+    readFileSync(join(root, 'packages/dsh-flow/src/ui/LICENSE.deepseek-icon.txt')));
   const assets = files(source);
   for (const path of assets) assert.deepEqual(readFileSync(join(scratch, 'package/patterns', relative(source, path))), readFileSync(path), relative(source, path));
   const skills = files(join(root, 'packages/dsh-flow/skills'));
@@ -60,7 +89,36 @@ console.log(JSON.stringify({ packages: listed.patterns.length, installed: true, 
 `;
   writeFileSync(join(runner, 'probe.mjs'), probe);
   const result: unknown = JSON.parse(execFileSync(process.execPath, ['probe.mjs'], { cwd: runner, encoding: 'utf8' }));
-  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, matchingSkillFiles: skills.length, runtimeDependencyOnly: true, builtFromSource: true }));
+  symlinkSync(join(root, 'node_modules'), join(packaged, 'node_modules'), 'dir');
+  const nativeProbe = `
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { FlowPlugin } from ${JSON.stringify(pathToFileURL(join(packaged, 'lib/index.js')).href)};
+import { runtime } from ${JSON.stringify(pathToFileURL(join(root, 'tests/helpers/contract-runtime.ts')).href)};
+import { enablePluginHost } from ${JSON.stringify(pathToFileURL(join(root, 'tests/helpers/contract-plugin.ts')).href)};
+test('packaged Flow serves its Web assets by default and preserves an explicit directory', { timeout: 15_000 }, async t => {
+  const f = await runtime(t); await enablePluginHost(f.host, f.directory);
+  const plugin = await FlowPlugin.create(f.host, { stateDirectory: join(f.directory, 'flow') });
+  try {
+    const page = await fetch(plugin.dashboardAddress);
+    assert.equal(page.status, 200);
+    assert.equal(await page.text(), await readFile(${JSON.stringify(join(packaged, 'web/index.html'))}, 'utf8'));
+    const script = await fetch(plugin.dashboardAddress + '/app.js');
+    assert.equal(script.status, 200);
+    assert.deepEqual(Buffer.from(await script.arrayBuffer()), await readFile(${JSON.stringify(join(packaged, 'web/app.js'))}));
+  } finally { await plugin.dispose(); }
+  const override = join(f.directory, 'alternate'); await mkdir(override); await writeFile(join(override, 'index.html'), 'explicit-web-directory');
+  const configured = await FlowPlugin.create(f.host, { stateDirectory: join(f.directory, 'alternate-flow'), connection: { staticDirectory: override } });
+  try { assert.equal(await (await fetch(configured.dashboardAddress)).text(), 'explicit-web-directory'); }
+  finally { await configured.dispose(); }
+});
+`;
+  writeFileSync(join(scratch, 'native-web-probe.mts'), nativeProbe);
+  execFileSync(process.execPath, ['--import', 'tsx', '--test', join(scratch, 'native-web-probe.mts')], { cwd: root, stdio: 'pipe' });
+  console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, matchingSkillFiles: skills.length, runtimeDependencyOnly: true,
+    builtFromSource: true, nativeModulePackaging: true, nativeExternals: [...external], standaloneWeb: true, defaultWebHttp: true, explicitWebDirectory: true, iconLicense: true }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

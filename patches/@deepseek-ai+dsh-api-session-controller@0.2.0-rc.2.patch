@@ -1,0 +1,353 @@
+diff --git a/lib/client.js b/lib/client.js
+index 1ae21e3..8421820 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -1682,6 +1682,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the minted identity for {@link prompt} plus the pre-prompt abandon path.
+ 			*/
+ 			beginSubmission(input) {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				const requestId = randomUUID();
+ 				const placement = this.running ? input.mode === "steer" ? "steering" : "queued" : "transcript";
+ 				this.pendingSubmissions = [...this.pendingSubmissions, {
+@@ -1714,6 +1715,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the prompt result (also mirrored into promptError on failure).
+ 			*/
+ 			async prompt(content, mode, signal, requestId) {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				this.promptError = null;
+ 				this.lastAgentError = null;
+ 				this.promptAttempted = true;
+@@ -1771,6 +1773,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the authenticated reference and decoded bytes.
+ 			*/
+ 			async readAttachment(attachmentId) {
++				if (this.options.readOnly) return this.options.readAttachment(attachmentId);
+ 				const result = await this.remote.session.attachment({
+ 					sessionId: this.sessionId,
+ 					attachmentId
+@@ -1788,6 +1791,7 @@ window.__ModuleLoader__.load({
+ 			}
+ 			/** Apply one operation to a still-pending queue occurrence. */
+ 			async updateQueue(itemId, action) {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				return this.remote.session.updateQueue({
+ 					sessionId: this.sessionId,
+ 					itemId,
+@@ -1802,6 +1806,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the cancel result.
+ 			*/
+ 			async cancel() {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				const address = this.address;
+ 				const result = address !== void 0 ? await this.remote.subagents.interruptByParent(address.childSessionId, address.parentSessionId, "continuable") : await this.remote.session.cancel({ sessionId: this.sessionId });
+ 				if (!result.ok) {
+@@ -1823,6 +1828,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the rename result (normalized accepted title + title event seq).
+ 			*/
+ 			async rename(title) {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				const result = await this.remote.session.rename({
+ 					sessionId: this.sessionId,
+ 					title
+@@ -1846,6 +1852,7 @@ window.__ModuleLoader__.load({
+ 			* @returns the admission result.
+ 			*/
+ 			async command(line) {
++				if (this.options.readOnly) throw new Error("session/read-only: observation cannot write");
+ 				const result = await this.remote.commands.execute(this.sessionId, line, []);
+ 				if (!result.ok) return result;
+ 				return {
+@@ -3151,6 +3158,11 @@ window.__ModuleLoader__.load({
+ 			list;
+ 			/** The object-layer instance cluster and frame dispatch entry. */
+ 			manager;
++			clientRemote;
++			readonlyProviders = new Map();
++			readonlyScopes = new Map();
++			ownedReferences = new WeakMap();
++			ownedBindings = new WeakSet();
+ 			scopes = /* @__PURE__ */ new Map();
+ 			/** Stable per-id sources retained for the Client root lifetime, including across generation replacement. */
+ 			retainObservers = /* @__PURE__ */ new Map();
+@@ -3162,6 +3174,7 @@ window.__ModuleLoader__.load({
+ 			*/
+ 			constructor(rootCtx, remote) {
+ 				this.rootCtx = rootCtx;
++				this.clientRemote = remote;
+ 				this.manager = new SessionManager(remote);
+ 				this.list = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)({
+ 					ids: [],
+@@ -3174,6 +3187,7 @@ window.__ModuleLoader__.load({
+ 				});
+ 				rootCtx.effect(() => async () => {
+ 					this.closed = true;
++					for (const provider of [...this.readonlyProviders.values()]) provider[Symbol.dispose]();
+ 					disposeManagerProjection();
+ 					const scopes = [...this.scopes];
+ 					this.scopes.clear();
+@@ -3191,6 +3205,137 @@ window.__ModuleLoader__.load({
+ 				}, "session-controller.client.sessions");
+ 				rootCtx.reflect.provide("sessions", this, void 0);
+ 			}
++
++            ownsReference(reference) {
++                const record = this.ownedReferences.get(reference);
++                if (!record?.live) return false;
++                try { return reference.binding === record.binding; } catch { return false; }
++            }
++            ownsBinding(binding) { return this.ownedBindings.has(binding) && ([...this.scopes.values(), ...this.readonlyScopes.values()].some(record => record.live && record.binding === binding)); }
++            bindingByScopeKey(key) {
++                const ordinary = this.scopes.get(key);
++                if (ordinary?.live) return ordinary.binding;
++                for (const record of this.readonlyScopes.values()) if (record.live && record.binding.scopeKey === key) return record.binding;
++            }
++            referenceInfo(reference) {
++                if (!this.ownsReference(reference)) throw new Error("Session reference is not owned by this Controller");
++                return this.ownedReferences.get(reference).retention;
++            }
++            registerReadonlySource(key, source) {
++                if (this.closed || this.readonlyProviders.has(key)) throw new Error("Readonly source is unavailable or already registered");
++                let active = true;
++                const records = new Map();
++                const controller = this;
++                const registration = {
++                    retain(target, options) {
++                        if (!active || controller.closed) throw new Error("Readonly source is disposed");
++                        options.signal?.throwIfAborted();
++                        if (!target.bindingKey || !target.sessionId) throw new Error("Readonly target requires a stable bindingKey and sessionId");
++                        const identity = JSON.stringify([key, target.bindingKey]);
++                        let record = records.get(identity);
++                        if (record && (record.binding.sessionId !== target.sessionId || JSON.stringify(record.target.locator) !== JSON.stringify(target.locator))) throw new Error("Readonly bindingKey identifies a different target");
++                        if (!record) {
++                            const { fiber, ctx } = createScope(controller.rootCtx, target.sessionId);
++                            const lifetime = new AbortController();
++                            const summary = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(undefined);
++                            let epoch;
++                            let session;
++                            const denied = async () => { throw new Error("session/read-only: observation cannot write"); };
++                            const transport = {
++                                $stream: controller.clientRemote.$stream.bind(controller.clientRemote),
++                                commands: { execute: denied }, subagents: { prompt: denied, interruptByParent: denied },
++                                session: {
++                                    async *follow(request, signal) {
++                                        let opened = false;
++                                        for await (const envelope of source.follow(target, { maxMessages: request.maxMessages, turnWindow: request.turnWindow, assistantStream: true }, AbortSignal.any([signal, lifetime.signal]))) {
++                                            if (!record.live || signal.aborted || lifetime.signal.aborted) return;
++                                            if (typeof envelope.epoch !== "string" || envelope.epoch.length === 0) throw new RemoteError("gateway/internal", "Readonly source snapshot requires a non-empty epoch", {});
++                                            if (envelope.kind === "journal" && envelope.frame.type === "snapshot" && (!envelope.frame.header || envelope.frame.header.id !== target.sessionId)) throw new RemoteError("gateway/internal", "Readonly source snapshot Session identity does not match its target", {});
++                                            if (!opened) {
++                                                if (envelope.kind !== "journal" || envelope.frame.type !== "snapshot") throw new RemoteError("gateway/internal", "Readonly source must open with a native snapshot", {});
++                                                opened = true;
++                                                epoch = envelope.epoch;
++                                            } else if (envelope.epoch !== epoch) throw new RemoteError("gateway/internal", "Readonly source epoch changed without a new snapshot", {});
++                                            if (envelope.kind === "state") {
++                                                if (envelope.summary.sessionId !== target.sessionId) throw new RemoteError("gateway/internal", "Readonly source returned a different Session", {});
++                                                summary.set(envelope.summary);
++                                                session.handleRunning(envelope.summary.running);
++                                                session.handleBlank(envelope.summary.blank);
++                                                session.projections.seed(projectionsBaseline(envelope.projections));
++                                            } else yield envelope.frame;
++                                        }
++                                    },
++                                    async page(request, signal) {
++                                        const expected = epoch;
++                                        if (expected === undefined) throw new Error("Readonly source has not opened");
++                                        const value = await source.page(target, expected, { throughSeq: request.throughSeq, beforeSeq: request.beforeSeq, maxMessages: request.maxMessages, turnWindow: request.turnWindow }, AbortSignal.any([signal, lifetime.signal]));
++                                        if (!record.live || expected !== epoch) throw new Error("Readonly page belongs to a released source epoch");
++                                        return { ok: true, value };
++                                    }
++                                }
++                            };
++                            session = new Session(target.sessionId, transport, {
++                                readOnly: true,
++                                async readAttachment(attachmentId) {
++                                    const expected = epoch;
++                                    if (expected === undefined) throw new Error("Readonly source has not opened");
++                                    const value = await source.attachment(target, expected, attachmentId, lifetime.signal);
++                                    if (!record.live || expected !== epoch) throw new Error("Readonly attachment belongs to a released source epoch");
++                                    return { ok: true, value: { attachment: value.attachment, data: Uint8Array.from(atob(value.data), char => char.charCodeAt(0)) } };
++                                }
++                            });
++                            session.bindScope(ctx);
++                            record = { target, fiber, ctx, session, lifetime, live: true, retention: EMPTY_RETAIN_INFO,
++                                binding: { sessionId: target.sessionId, scopeKey: `readonly:${identity}`, readOnly: true, summary, session, eventSource: session.eventSource, ctx } };
++                            controller.ownedBindings.add(record.binding);
++                            const retire = () => {
++                                if (!record.live) return;
++                                record.live = false;
++                                controller.ownedBindings.delete(record.binding);
++                                records.delete(identity); controller.readonlyScopes.delete(identity);
++                                lifetime.abort(new Error("Readonly source released"));
++                                session.unbindScope();
++                                const disposal = Promise.allSettled([session.dispose(), Promise.resolve().then(() => fiber.dispose())]);
++                                controller.scopeDrops.add(disposal);
++                                disposal.finally(() => controller.scopeDrops.delete(disposal));
++                            };
++                            record.retire = retire;
++                            ctx.effect(() => retire, "session-controller: readonly generation");
++                            records.set(identity, record); controller.readonlyScopes.set(identity, record);
++                        }
++                        const current = record;
++                        const label = options.source;
++                        const previous = current.retention;
++                        current.retention = Object.freeze({ referenceCount: previous.referenceCount + 1, retainedBy: freezeRetainedBy({ ...previous.retainedBy, [label]: (previous.retainedBy[label] ?? 0) + 1 }) });
++                        const reference = new ClientSessionReference(target.sessionId, current, () => {
++                            if (!current.live) return;
++                            const { [label]: count, ...rest } = current.retention.retainedBy;
++                            if (count > 1) rest[label] = count - 1;
++                            current.retention = Object.freeze({ referenceCount: current.retention.referenceCount - 1, retainedBy: freezeRetainedBy(rest) });
++                            if (current.retention.referenceCount === 0) current.retire();
++                        });
++                        controller.ownedReferences.set(reference, current);
++                        const aborted = () => reference.release();
++                        options.signal?.addEventListener("abort", aborted, { once: true });
++                        reference.attachOpening(current.session.open().then(() => {
++                            const snapshot = current.session.getSnapshot();
++                            if (snapshot.openState !== "open") throw snapshot.openError ?? new Error("Readonly history failed to open");
++                        }), options.signal);
++                        reference.ready.catch(() => reference.release());
++                        const release = reference.release.bind(reference);
++                        reference.release = () => { options.signal?.removeEventListener("abort", aborted); release(); };
++                        return reference;
++                    },
++                    [Symbol.dispose]() {
++                        if (!active) return; active = false;
++                        controller.readonlyProviders.delete(key);
++                        for (const record of [...records.values()]) record.retire();
++                    }
++                };
++                this.readonlyProviders.set(key, registration);
++                return registration;
++            }
++
+ 			retain(target, options) {
+ 				const { source, signal } = options;
+ 				signal?.throwIfAborted();
+@@ -3397,7 +3542,8 @@ window.__ModuleLoader__.load({
+ 				const id = scopeOf(ctx);
+ 				if (id === void 0) return void 0;
+ 				const record = this.scopes.get(id);
+-				return record !== void 0 && scopeIdentityOf(record.ctx) === scopeIdentityOf(ctx) ? record.binding.session : void 0;
++				if (record !== undefined && scopeIdentityOf(record.ctx) === scopeIdentityOf(ctx)) return record.binding.session;
++				for (const candidate of this.readonlyScopes.values()) if (candidate.live && scopeIdentityOf(candidate.ctx) === scopeIdentityOf(ctx)) return candidate.binding.session;
+ 			}
+ 			/**
+ 			* Borrow an already-retained binding without extending its lifetime.
+@@ -3432,6 +3578,7 @@ window.__ModuleLoader__.load({
+ 					if (count === 0) this.retireScope(id, record);
+ 					else this.publishRetention(id);
+ 				});
++				this.ownedReferences.set(reference, record);
+ 				if (this.list.getSnapshot().byId[id] === void 0 && this.manager.subagentAddress(id) !== void 0) this.projectList();
+ 				this.publishRetention(id);
+ 				return reference;
+@@ -3462,6 +3609,7 @@ window.__ModuleLoader__.load({
+ 			retireScope(id, record, disposeFiber = true) {
+ 				if (!record.live) return;
+ 				record.live = false;
++				this.ownedBindings.delete(record.binding);
+ 				if (this.scopes.get(id) === record) this.scopes.delete(id);
+ 				record.session.unbindScope();
+ 				const sessionDisposal = this.manager.drop(id, record.session);
+@@ -3479,6 +3627,8 @@ window.__ModuleLoader__.load({
+ 					ctx,
+ 					binding: {
+ 						sessionId: id,
++						scopeKey: id,
++						readOnly: false,
+ 						session,
+ 						eventSource: session.eventSource,
+ 						ctx
+@@ -3488,6 +3638,7 @@ window.__ModuleLoader__.load({
+ 					live: true
+ 				};
+ 				this.scopes.set(id, record);
++				this.ownedBindings.add(record.binding);
+ 				ctx.effect(() => () => {
+ 					this.retireScope(id, record, false);
+ 				}, "session-controller: exact generation");
+diff --git a/lib/types/client/contract/sessions.d.ts b/lib/types/client/contract/sessions.d.ts
+index 81cc3c6..29b3fad 100644
+--- a/lib/types/client/contract/sessions.d.ts
++++ b/lib/types/client/contract/sessions.d.ts
+@@ -41,6 +41,12 @@ export interface SessionRetainInfo {
+ }
+ /** The sessions-service face injected as `ctx.sessions`. */
+ export interface ISessions {
++    registerReadonlySource(key: string, source: ReadonlySessionSource): ReadonlySourceRegistration;
++    ownsReference(reference: SessionReference): boolean;
++    ownsBinding(binding: SessionBinding): boolean;
++    bindingByScopeKey(key: string): SessionBinding | undefined;
++    referenceInfo(reference: SessionReference): SessionRetainInfo;
++
+     /** Host catalog and local reference-source counts; navigation belongs to view owners. */
+     readonly list: ObservableSnapshot<SessionListState>;
+     /**
+@@ -153,4 +159,16 @@ export interface ISessions {
+      */
+     binding(id: SessionId): SessionBinding | undefined;
+ }
+-//# sourceMappingURL=sessions.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=sessions.d.ts.map
++import type { AttachmentIdType } from '@deepseek-ai/dsh-attachment';
++import type { SessionFollowRequest, SessionFollowFrame, SessionPageRequest, SessionPage, SessionAttachmentValue, SessionProjectionBaseline, SessionSummary } from '../../types.ts';
++/** A provider-owned locator; Session identity remains unchanged. */
++export interface ReadonlySessionTarget { readonly bindingKey: string; readonly sessionId: SessionId; readonly locator: unknown; }
++export type ReadonlySourceFrame = { readonly epoch: string; readonly kind: 'journal'; readonly frame: SessionFollowFrame } | { readonly epoch: string; readonly kind: 'state'; readonly summary: SessionSummary; readonly projections: SessionProjectionBaseline };
++export interface ReadonlySessionSource {
++  /** First frame in each physical generation is a native snapshot whose header.id exactly equals target.sessionId and epoch is non-empty. Cancelled generations cannot publish late frames. */
++  follow(target: ReadonlySessionTarget, request: Omit<SessionFollowRequest, 'address'>, signal: AbortSignal): AsyncIterable<ReadonlySourceFrame>;
++  page(target: ReadonlySessionTarget, epoch: string, request: Omit<SessionPageRequest, 'address'>, signal: AbortSignal): Promise<SessionPage>;
++  attachment(target: ReadonlySessionTarget, epoch: string, attachmentId: AttachmentIdType, signal: AbortSignal): Promise<SessionAttachmentValue>;
++}
++export interface ReadonlySourceRegistration extends Disposable { retain(target: ReadonlySessionTarget, options: SessionRetainOptions): SessionReference; }
+diff --git a/lib/types/client/index.d.ts b/lib/types/client/index.d.ts
+index f691bd2..d212376 100644
+--- a/lib/types/client/index.d.ts
++++ b/lib/types/client/index.d.ts
+@@ -36,4 +36,5 @@ export declare const inject: string[];
+  * @param ctx - Client Cordis context.
+  */
+ export declare function apply(ctx: Context): void;
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map
++export type { ReadonlySessionTarget, ReadonlySessionSource, ReadonlySourceRegistration, ReadonlySourceFrame } from './contract/sessions.ts';
+diff --git a/lib/types/client/sessions/service.d.ts b/lib/types/client/sessions/service.d.ts
+index f73b123..e7b95c8 100644
+--- a/lib/types/client/sessions/service.d.ts
++++ b/lib/types/client/sessions/service.d.ts
+@@ -8,7 +8,7 @@ import { type ObservableSnapshot, type SnapshotStore } from '@deepseek-ai/dsh-cl
+ import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
+ import type { SessionEventSource } from '../contract/events.ts';
+ import type { SessionFace } from '../contract/session.ts';
+-import type { AgentContext, ISessions, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget } from '../contract/sessions.ts';
++import type { ReadonlySessionSource, ReadonlySourceRegistration, AgentContext, ISessions, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget } from '../contract/sessions.ts';
+ import { SessionManager } from './manager.ts';
+ import type { SessionRemotes } from './remotes.ts';
+ import type { SessionListPhase, SessionSearchResultItem, SessionProjectionSnapshot } from './manager.ts';
+@@ -74,6 +74,9 @@ export declare class SessionForkError extends Error {
+ }
+ /** Identity-stable logical binding for one materialized Client Session. */
+ export interface SessionBinding {
++    readonly scopeKey: string;
++    readonly readOnly: boolean;
++    readonly summary?: ObservableSnapshot<import('../../types.ts').SessionSummary | undefined>;
+     readonly sessionId: SessionId;
+     /** The outward session face only — feature code never sees the concrete class. */
+     readonly session: SessionFace;
+@@ -106,6 +109,12 @@ export declare class ClientSessions implements ISessions {
+      * @param remote - generated Remote namespaces shared with every Session.
+      */
+     constructor(rootCtx: Context, remote: SessionRemotes);
++
++    registerReadonlySource(key: string, source: ReadonlySessionSource): ReadonlySourceRegistration;
++    ownsReference(reference: SessionReference): boolean;
++    ownsBinding(binding: SessionBinding): boolean;
++    bindingByScopeKey(key: string): SessionBinding | undefined;
++    referenceInfo(reference: SessionReference): SessionRetainInfo;
+     retain(target: SessionTarget, options: SessionRetainOptions): SessionReference;
+     using<T>(target: SessionTarget, options: SessionRetainOptions, operation: (reference: SessionReference) => T | Promise<T>): Promise<T>;
+     retainInfo(id: SessionId): ObservableSnapshot<SessionRetainInfo>;

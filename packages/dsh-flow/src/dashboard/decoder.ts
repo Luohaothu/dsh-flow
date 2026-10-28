@@ -13,7 +13,12 @@ function list<T>(value: unknown, decode: (item: unknown) => T): T[] { if (!Array
 function nullable<T>(value: unknown, decode: (item: unknown) => T): T | null { return value === null ? null : decode(value); }
 function tag<const T extends readonly string[]>(value: unknown, allowed: T): T[number] { if (typeof value !== 'string' || !allowed.includes(value)) return invalid('tag'); return value as T[number]; }
 function model(value: unknown) { const v = record(value); return { provider: text(v.provider), id: text(v.id) }; }
-function protocol(value: unknown) { const v = record(value), major = count(v.major), minor = count(v.minor); if (major !== PROTOCOL_VERSION.major) throw new IncompatibleProtocol('Incompatible dashboard protocol'); return { major, minor }; }
+function protocol(value: unknown) {
+  const v = record(value), major = count(v.major), minor = count(v.minor);
+  if (major !== PROTOCOL_VERSION.major || minor < PROTOCOL_VERSION.minor) throw new IncompatibleProtocol(
+    `Incompatible dashboard protocol ${major}.${minor}; requires major ${PROTOCOL_VERSION.major} with minor >= ${PROTOCOL_VERSION.minor} (${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor})`);
+  return { major, minor };
+}
 function json(value: unknown): JsonValue {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') { if (!Number.isFinite(value)) return invalid('JSON number'); return value; }

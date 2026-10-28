@@ -1,9 +1,3 @@
-# Native presets own all execution tools, approval, compaction and context policy.
-# Flow configures collaboration storage and physical Agent capacity only.
 - insert:
     - id: dsh-flow
       name: dsh-flow
-    - id: dsh-flow-web
-      name: dsh-flow/web
-    - id: dsh-flow-agent-team-command
-      name: dsh-flow/command

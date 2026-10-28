@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "packages/dsh-flow/src/ui/**/*.ts",
+    "packages/dsh-flow/src/ui/**/*.tsx",
+    "packages/dsh-flow/src/native/**/*.tsx",
+    "packages/dsh-flow/src/native/protocol.ts",
+    "packages/dsh-flow/src/native/typert.remote-client.d.ts",
+    "tests/contracts/ui/**/*.ts",
+    "tests/contracts/native-client/**/*.ts",
+    "tests/helpers/native-sdk.d.ts"
+  ],
+  "exclude": []
+}

@@ -6,7 +6,7 @@ import type { PriceTable } from './dashboard/protocol.js';
 
 export interface CleanupConfig { gracefulTimeoutMs: number; immediateTimeoutMs: number }
 export interface ConnectionConfig { port?: number; staticDirectory?: string; allowedOrigins?: string[]; prices?: PriceTable }
-export interface Config {
+export interface PlainConfig {
   stateDirectory?: string;
   defaults?: RunDefaults;
   cwd?: string;
@@ -25,10 +25,12 @@ function positiveCleanupTimeout(value: number): number {
   if (!Number.isFinite(value) || value <= 0) throw new TypeError('Cleanup timeout must be finite and positive');
   return value;
 }
-const cleanupTimeout = Schema.transform(Schema.number(), positiveCleanupTimeout);
+
 
 /** Native caller settings supply inherited values; only explicit defaults override them. */
-export const Config: Schema<Config> = Schema.object({
+export function createPlainConfigSchema(): Schema<PlainConfig> {
+  const cleanupTimeout = Schema.transform(Schema.number(), positiveCleanupTimeout);
+  return Schema.object({
   stateDirectory: Schema.string().default('.dsh-flow'),
   defaults: Schema.dict(Schema.any()).default({}),
   cwd: Schema.string(), rootRole: Schema.string(),
@@ -36,12 +38,14 @@ export const Config: Schema<Config> = Schema.object({
   maxConcurrentAgents: Schema.number().step(1).min(1).default(4),
   cleanup: Schema.object({ gracefulTimeoutMs: cleanupTimeout.default(120_000), immediateTimeoutMs: cleanupTimeout.default(10_000) }).default({}),
   connection: Schema.object({ port: Schema.number().step(1).min(0).max(65535), staticDirectory: Schema.string(),
-    allowedOrigins: Schema.array(Schema.string()), prices: Schema.array(Schema.object({
+    allowedOrigins: Schema.array(Schema.string()).default(['http://127.0.0.1:3080', 'http://localhost:3080']), prices: Schema.array(Schema.object({
       model: Schema.object({ provider: Schema.string().required(), id: Schema.string().required() }).required(),
       currency: Schema.string().required(), input: Schema.number().min(0).required(), output: Schema.number().min(0).required(),
       cacheRead: Schema.number().min(0), cacheWrite: Schema.number().min(0),
     })) }).default({}),
-});
+  });
+}
+export const PlainConfigSchema = createPlainConfigSchema();
 function object(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${path} must be an object`);
   return value as Record<string, unknown>;
@@ -73,11 +77,11 @@ function validateDefaults(defaults: RunDefaults): void {
     if (extras.dsh !== undefined) { const dsh = object(extras.dsh, 'defaults.hostExtras.dsh'); keys(dsh, ['stop'], 'defaults.hostExtras.dsh'); if (dsh.stop !== undefined) strings(dsh.stop, 'defaults.hostExtras.dsh.stop'); }
   }
 }
-export function resolveConfig(input: Config = {}): ResolvedConfig {
+export function resolveConfig(input: PlainConfig = {}): ResolvedConfig {
   keys(object(input, 'Flow configuration'), ['stateDirectory', 'defaults', 'cwd', 'rootRole', 'patternSources', 'maxConcurrentAgents', 'cleanup', 'connection'], 'Flow configuration');
   if (input.cleanup) keys(object(input.cleanup, 'cleanup'), ['gracefulTimeoutMs', 'immediateTimeoutMs'], 'cleanup');
   if (input.connection) keys(object(input.connection, 'connection'), ['port', 'staticDirectory', 'allowedOrigins', 'prices'], 'connection');
-  const parsed = Config(input);
+  const parsed = PlainConfigSchema(input);
   const defaults = structuredClone(parsed.defaults ?? {}); assertJson(defaults); validateDefaults(defaults);
   text(parsed.stateDirectory, 'stateDirectory');
   if (parsed.cwd !== undefined) text(parsed.cwd, 'cwd');
@@ -87,7 +91,14 @@ export function resolveConfig(input: Config = {}): ResolvedConfig {
   for (const value of Object.values(cleanup)) positiveCleanupTimeout(value);
   const connection = structuredClone(parsed.connection ?? {});
   if (connection.staticDirectory !== undefined) { text(connection.staticDirectory, 'connection.staticDirectory'); connection.staticDirectory = resolve(connection.staticDirectory); }
-  if (connection.allowedOrigins) strings(connection.allowedOrigins, 'connection.allowedOrigins');
+  if (connection.allowedOrigins) {
+    strings(connection.allowedOrigins, 'connection.allowedOrigins');
+    for (const origin of connection.allowedOrigins) {
+      if (origin === 'dsh-app://app') continue;
+      const parsed = new URL(origin);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) throw new TypeError('Expected an exact allowed origin');
+    }
+  }
   if (connection.prices !== undefined) {
     if (!Array.isArray(connection.prices)) throw new TypeError('connection.prices must be an array');
     const models = new Set<string>();

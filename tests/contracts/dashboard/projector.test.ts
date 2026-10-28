@@ -79,7 +79,15 @@ test('usage replaces call sampling and unknown pricing stays unavailable', async
 
 test('registry and per-run cursors are independent; replay listener reentry loses no event', async t => {
   const f = await setup(t); const registry = f.p.registry(); const snapshot = f.p.snapshot(f.run.id); const child = await Agent.create(f.context, profile('replay'), f.root);
-  assert.equal(f.p.registry().seq, registry.seq); assert.ok(f.p.snapshot(f.run.id).seq > snapshot.seq);
+  assert.ok(f.p.registry().seq > registry.seq); assert.ok(f.p.snapshot(f.run.id).seq > snapshot.seq);
+  const navigation = f.p.registry().seq, history = f.p.snapshot(f.run.id).seq;
+  f.host.emit({ type: 'output', agent: f.host.native(child), timestamp: Date.now(), text: 'history only' });
+  f.host.emit({ type: 'usage', agent: f.host.native(child), timestamp: Date.now(), usage: { callId: 'nav-usage', kind: 'main', timestamp: Date.now(), model: child.getProfile().model, totalTokens: 1 } });
+  assert.equal(f.p.registry().seq, navigation); assert.ok(f.p.snapshot(f.run.id).seq > history);
+  f.host.status(child, 'running');
+  const beforeMessages = f.p.registry().seq, beforeHistory = f.p.snapshot(f.run.id).seq;
+  child.recvMessage(message('message-only while already running')); await flush(); child.getMailbox().getLastUnread();
+  assert.equal(f.p.registry().seq, beforeMessages); assert.ok(f.p.snapshot(f.run.id).seq > beforeHistory);
   const events: number[] = []; let reentered = false;
   f.p.subscribeRun(f.run.id, snapshot.seq, f.service.epoch, event => { events.push(event.seq); if (!reentered) { reentered = true; child.recvMessage(message('during replay')); } });
   assert.deepEqual(events, [...new Set(events)].sort((a, b) => a - b)); assert.equal(events.at(-1), f.p.snapshot(f.run.id).seq);
