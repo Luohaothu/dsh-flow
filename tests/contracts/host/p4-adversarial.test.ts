@@ -9,7 +9,8 @@ import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model';
 import Loader from '@deepseek-ai/cordis-plugin-loader';
 import Presets from '@deepseek-ai/dsh-agent-preset-registry';
 import Skills from '@deepseek-ai/dsh-skill';
-import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm';
+import { createUserMessage, type GenerateOptions, type ToolSchema } from '@deepseek-ai/dsh-llm';
+import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { JsonSchemaNode, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { Agent } from '../../../packages/dsh-flow/src/core/index.js';
@@ -27,6 +28,11 @@ import { profile, runtime } from '../../helpers/contract-runtime.js';
 const message = (text: string) => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] });
 const spec = (materials: MaterialRef[] = []): AssignmentSpec => ({ name: 'boundary task', type: 'test', background: '', requirements: 'preserve the formal contract', acceptanceCriteria: 'exact value and caller', resultSchema: true, materials });
 const promptText = (options: GenerateOptions) => [options.system, ...options.messages.flatMap(item => item.content.flatMap(block => block.type === 'text' ? [block.text] : []))].join('\n');
+const submitResultSchema = (tools: readonly ToolSchema[] | undefined): JsonSchemaNode => {
+  const tool = tools?.find(tool => tool.name === 'flow_submit'); assert.ok(tool);
+  const result = (tool.parameters as JsonSchemaNode).properties?.result; assert.ok(result); return result;
+};
+const assertAnyJson = (schema: JsonSchemaNode) => assert.deepEqual(schema.oneOf?.map(branch => branch.type).sort(), ['array', 'boolean', 'null', 'number', 'object', 'string']);
 
 async function fixture(t: Parameters<typeof runtime>[0], pattern?: string) {
   const f = await runtime(t);
@@ -81,6 +87,7 @@ test('real native flow_submit delivers all six JSON kinds, including every JSON 
 
 test('native submission distinguishes a JSON-encoded string from the required object and accepts a corrected value', async t => {
   const f = await fixture(t), main = await f.ordinary('result-main'), { run, root } = await f.active(main, 'result-run');
+  const native = f.native(root);
   const value = { issues: [], complete: false };
   const assignment = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null,
     spec: { ...spec(), resultSchema: { type: 'object', properties: { issues: { type: 'array' }, complete: { type: 'boolean' } }, required: ['issues', 'complete'] } } }, 'object-result');
@@ -91,12 +98,85 @@ test('native submission distinguishes a JSON-encoded string from the required ob
   assert.deepEqual(rejected.errors, [{ path: '', message: 'Expected type object; received string' }]);
   assert.equal(run.assignments!.read(run, assignment).status, 'pending');
   assert.equal(run.assignments!.read(run, assignment).result, undefined);
+  const objectHeader = native.session.snapshotEvents().find(event => event.type === 'request/header' && submitResultSchema(event.data.header.tools).type === 'object');
+  assert.ok(objectHeader); assert.equal(objectHeader.type, 'request/header');
+  if (objectHeader.type !== 'request/header') throw new Error('Missing object submission header');
+  const objectHeaderBefore = JSON.stringify(objectHeader.data.header);
+  assert.equal(submitResultSchema(f.model.requests.at(-1)!.tools).type, 'object');
   const corrected = await f.call(f.native(root), 'flow_submit', { assignmentId: assignment.id, result: value, continuingChildren: [] });
   assert.equal(JSON.parse(corrected.text).kind, 'accepted');
   const saved = run.assignments!.read(run, assignment);
   assert.deepEqual(saved.result, value);
   assert.equal(saved.schemaFailures, 1);
   assert.equal(saved.submissionCount, 2);
+  assertAnyJson(submitResultSchema(f.model.requests.at(-1)!.tools));
+  const next = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null, spec: { ...spec(), resultSchema: { type: 'string' } } }, 'literal-string-result');
+  const literal = JSON.stringify(value), before = f.model.requests.length;
+  const string = await f.call(native, 'flow_submit', { assignmentId: next.id, result: literal, continuingChildren: [] });
+  assert.equal(JSON.parse(string.text).kind, 'accepted');
+  assert.equal(submitResultSchema(f.model.requests[before]!.tools).type, 'string');
+  assert.equal(run.assignments!.read(run, next).result, literal);
+  assert.equal(JSON.stringify(objectHeader.data.header), objectHeaderBefore);
+});
+
+test('model-visible object metadata still lets three invalid native values reach formal failure counting', async t => {
+  const f = await fixture(t), main = await f.ordinary('invalid-result-main'), { run, root } = await f.active(main, 'invalid-result-run');
+  const assignment = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null, spec: { ...spec(), resultSchema: { type: 'object' } } }, 'invalid-object-result');
+  for (let index = 1; index <= 3; index++) {
+    const before = f.model.requests.length, value = JSON.stringify({ attempt: index });
+    const result = await f.call(f.native(root), 'flow_submit', { assignmentId: assignment.id, result: value, continuingChildren: [] });
+    assert.equal(submitResultSchema(f.model.requests[before]!.tools).type, 'object');
+    assert.equal(result.error, false, result.text);
+    assert.equal(JSON.parse(result.text).kind, 'invalid-result');
+    const record = run.assignments!.read(run, assignment);
+    assert.equal(record.schemaFailures, index); assert.equal(record.submissionCount, index);
+    assert.equal(record.status, index === 3 ? 'failed' : 'pending');
+    assert.equal(record.submissions.at(-1)!.submission.result, value);
+    assert.equal(record.result, undefined);
+  }
+  assertAnyJson(submitResultSchema(f.model.requests.at(-1)!.tools));
+});
+
+test('SDK assembly presents the common pending result type per recipient and falls back for unknown or mixed types', async t => {
+  const f = await fixture(t), main = await f.ordinary('metadata-main');
+  const constructed = new Map<string, JsonSchemaNode>();
+  const assemble = async (native: NativeAgent) => {
+    const scope = scopeOf(native.ctx); assert.ok(scope);
+    return submitResultSchema((await f.host.systemPrompt.assemble({ scope })).tools);
+  };
+  f.host.on('agent/created', async ({ agent }) => {
+    if (f.host.tools.schemas(scopeOf(agent.ctx)).some(tool => tool.name === 'flow_submit')) constructed.set(agent.session.id, await assemble(agent));
+  });
+  const { run, root } = await f.active(main, 'metadata-run'), native = f.native(root);
+  assertAnyJson(constructed.get(native.session.id)!);
+  const prepare = (resultSchema: AssignmentSpec['resultSchema'], requestId: string) => run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null, spec: { ...spec(), resultSchema } }, requestId);
+  const one = await prepare({ type: 'object', properties: { amount: { type: ['number', 'null'] } } }, 'object-one');
+  const previous = await assemble(native); assert.equal(previous.type, 'object'); assert.equal(previous.additionalProperties, true); assert.equal(previous.properties, undefined);
+  await prepare({ type: 'object', properties: { rows: { type: 'array' } } }, 'object-two');
+  const child = await Agent.create(run.context!, { ...root.getProfile(), sessionID: newSessionID(), name: 'metadata child' }, root);
+  const childJob = await run.assignments!.prepare({ sender: root, recipient: child, parentAssignment: one, spec: { ...spec(), resultSchema: { type: 'integer' } } }, 'child-integer');
+  assertAnyJson(constructed.get(f.native(child).session.id)!);
+  assert.equal((await assemble(native)).type, 'object');
+  assert.equal((await assemble(f.native(child))).type, 'integer');
+  const mixed = await prepare({ type: 'array' }, 'root-array');
+  assertAnyJson(await assemble(native));
+  await run.assignments!.cancel(run, mixed, 'remove mixed task'); await native.whenIdle();
+  assert.equal((await assemble(native)).type, 'object');
+  for (const [index, schema] of [true, false, { oneOf: [{ type: 'string' }, { type: 'null' }] }, { type: ['object', 'null'] }].entries()) {
+    const unknown = await prepare(schema as AssignmentSpec['resultSchema'], `unknown-${index}`);
+    assertAnyJson(await assemble(native));
+    await run.assignments!.cancel(run, unknown, 'finish unknown task'); await native.whenIdle();
+  }
+  assert.equal(previous.type, 'object'); assert.equal(previous.oneOf, undefined);
+  await run.assignments!.cancel(root, childJob, 'finish child task'); await f.native(child).whenIdle();
+  assertAnyJson(await assemble(f.native(child)));
+  const arrayJob = await run.assignments!.prepare({ sender: root, recipient: child, parentAssignment: one,
+    spec: { ...spec(), resultSchema: { type: 'array', items: { type: ['integer', 'null'] } } } }, 'child-array');
+  const array = await assemble(f.native(child)); assert.equal(array.type, 'array'); assert.deepEqual(array.items, {});
+  const arrayResult = await f.call(f.native(child), 'flow_submit', { assignmentId: arrayJob.id, result: [0, null], continuingChildren: [] });
+  assert.equal(JSON.parse(arrayResult.text).kind, 'accepted');
+  assert.deepEqual(run.assignments!.read(run, arrayJob).result, [0, null]);
+  assertAnyJson(await assemble(f.native(child)));
 });
 
 test('two ordinary main tools isolate Run listings, assignment queries and admitted material origins', async t => {

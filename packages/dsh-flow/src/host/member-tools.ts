@@ -1,8 +1,9 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
-import type { JsonSchemaNode, ToolRunContext } from '@deepseek-ai/dsh-tools';
+import type { JsonSchemaNode, JsonSchemaType, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { Agent } from '../core/agent.js';
 import { Group } from '../core/group.js';
 import { agentControl, groupControl } from '../core/internals.js';
+import { getAgentInstanceId } from '../core/observation.js';
 import { sessionID } from '../core/message.js';
 import { contextRun, runState } from '../run/internal.js';
 import { applyPattern } from '../patterns/apply.js';
@@ -48,8 +49,8 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
   const run = () => contextRun(context);
   const assignments = () => { const service = run().assignments; if (!service) throw new Error('Run assignments are not ready'); return service; };
   const assignment = (id: unknown) => assignments().resolve(id as string);
-  const tool = (name: string, description: string, parameters: JsonSchemaNode, execute: (args: Record<string, unknown>, execution: ToolRunContext) => unknown) => {
-    disposers.push(registerJsonTool(scope, name, description, parameters, (args, execution) => { guard(execution); return execute(args, execution); }));
+  const tool = (name: string, description: string, parameters: JsonSchemaNode, execute: (args: Record<string, unknown>, execution: ToolRunContext) => unknown, modelParameters?: () => JsonSchemaNode) => {
+    disposers.push(registerJsonTool(scope, name, description, parameters, (args, execution) => { guard(execution); return execute(args, execution); }, modelParameters));
   };
   try {
     disposers.push(...installFlowTools(scope, context, caller, guard, yieldCapacity));
@@ -85,16 +86,28 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
     tool('flow_assignment_read', 'Read an assignment in your Run.', objectSchema({ assignmentId: stringSchema }, ['assignmentId']), args => assignments().read(caller, assignment(args.assignmentId)));
     tool('flow_assignments', 'Query assignments in your Run.', objectSchema({ parentAssignmentId: { oneOf: [stringSchema, { type: 'null' }] }, status: { type: 'string', enum: ['pending', 'submitted', 'failed', 'cancelled'] } }), args => assignments().list(caller, args));
     tool('flow_assignment_archive_read', 'Read an archived formal assignment.', objectSchema({ assignmentId: stringSchema }, ['assignmentId']), args => assignments().readArchive(args.assignmentId as string));
-    tool('flow_submit', 'Submit the actual result and reasons for continuing child assignments. accepted saves the result and completes this assignment. invalid-result returns field errors; after the first formatting failure only two corrections remain. terminal is already ended and cannot accept another result.', objectSchema({ assignmentId: stringSchema,
+    const resultDescription = 'The actual JSON value matching this assignment resultSchema. Pass objects and arrays directly, not as JSON-encoded strings. Use a string only when the assignment schema accepts a string.';
+    const submitParameters = objectSchema({ assignmentId: stringSchema,
       result: {
-        description: 'The actual JSON value matching this assignment resultSchema. Pass objects and arrays directly, not as JSON-encoded strings. Use a string only when the assignment schema accepts a string.',
+        description: resultDescription,
         oneOf: [{ type: 'object', additionalProperties: true }, { type: 'array', items: {} }, { type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }],
       },
-      continuingChildren: { type: 'array', items: objectSchema({ assignmentId: stringSchema, reason: stringSchema }, ['assignmentId', 'reason']) } }, ['assignmentId', 'result', 'continuingChildren']), (args, execution) => {
+      continuingChildren: { type: 'array', items: objectSchema({ assignmentId: stringSchema, reason: stringSchema }, ['assignmentId', 'reason']) } }, ['assignmentId', 'result', 'continuingChildren']);
+    tool('flow_submit', 'Submit the actual result and reasons for continuing child assignments. accepted saves the result and completes this assignment. invalid-result returns field errors; after the first formatting failure only two corrections remain. terminal is already ended and cannot accept another result.', submitParameters, (args, execution) => {
       const transportKey = bindings.transportKey(binding, execution);
       return withTrustedCall({ actor: caller, transportKey }, () => assignments().submit(caller, assignment(args.assignmentId), {
         result: args.result as JsonValue, continuingChildren: (args.continuingChildren as { assignmentId: string; reason: string }[]).map(child => ({ assignment: assignment(child.assignmentId), reason: child.reason })),
       }));
+    }, () => {
+      const current = run(), service = current.assignments;
+      if (!service) return submitParameters;
+      const schemas = service.list(current, { status: 'pending' }).filter(item => item.recipientInstanceId === getAgentInstanceId(caller)).map(item => item.spec.resultSchema);
+      const first = schemas[0], type = typeof first === 'object' ? first.type : undefined;
+      if (typeof type !== 'string' || !['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'].includes(type)
+        || !schemas.every(schema => typeof schema === 'object' && schema.type === type)) return submitParameters;
+      const result: JsonSchemaNode = { description: resultDescription, type: type as JsonSchemaType,
+        ...(type === 'object' ? { additionalProperties: true } : type === 'array' ? { items: {} } : {}) };
+      return { ...submitParameters, properties: { ...submitParameters.properties, result } };
     });
     tool('flow_assignment_cancel', 'Cancel assignments you dispatched, including their descendants.', objectSchema({ assignmentIds: { type: 'array', items: stringSchema }, reason: stringSchema }, ['assignmentIds', 'reason']), async args => {
       const outcomes = [];
