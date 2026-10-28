@@ -1,7 +1,6 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderSkillContent } from '@deepseek-ai/dsh-skill';
 import { resolveConfig, type PlainConfig, type ResolvedConfig } from './config.js';
 import { registerAgentTeamCommand } from './command.js';
 import { ExecutionCapacity } from './host/capacity.js';
@@ -10,7 +9,7 @@ import { PatternCatalog } from './patterns/catalog.js';
 import { RunService } from './run/run.js';
 import { RunStore } from './run/store.js';
 import type { RunServiceDependencies } from './run/types.js';
-import { loadAgentTeamSource, loadTeamStrategySource } from './skills.js';
+import { loadAgentTeamSource } from './skills.js';
 import { DashboardProjector } from './dashboard/projector.js';
 import { DashboardServer } from './dashboard/server.js';
 import { NativeHistory } from './native/history.js';
@@ -61,7 +60,7 @@ export class FlowPlugin {
   static async create(host: DshContext, input: PlainConfig = {}): Promise<FlowPlugin> {
     const configuration = resolveConfig(input);
     for (const service of inject) if (!host.get(service)) throw new Error(`DSH service ${service} is required by Flow`);
-    const [agentTeamSkill, strategy] = await Promise.all([loadAgentTeamSource(), loadTeamStrategySource()]);
+    const agentTeamSkill = await loadAgentTeamSource();
     const runtime = new FlowPlugin(host, configuration, agentTeamSkill);
     try {
       runtime.projection = new DashboardProjector(runtime.runs, { directory: join(configuration.stateDirectory, 'events'),
@@ -70,7 +69,7 @@ export class FlowPlugin {
         ...configuration.connection,
         staticDirectory: configuration.connection.staticDirectory ?? fileURLToPath(new URL('../web/', import.meta.url)) });
       runtime.bridge.attachRunService(runtime.runs);
-      runtime.stopCommand = registerAgentTeamCommand(host, runtime.bridge, `${renderSkillContent(agentTeamSkill)}\n\n${renderSkillContent({ ...strategy, provider: strategy.provider ?? 'dsh-flow' })}`);
+      runtime.stopCommand = registerAgentTeamCommand(host, runtime.bridge);
       return runtime;
     } catch (error) {
       try { await runtime.dispose(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'Flow plugin activation and cleanup failed'); }

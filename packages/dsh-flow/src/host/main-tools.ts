@@ -5,7 +5,7 @@ import type { RunDefaults } from '../run/types.js';
 import type { AssignmentSpec } from '../assignments/types.js';
 import type { DshNativeBridge } from './native-bridge.js';
 import { registerJsonTool, rollbackTools } from './tools.js';
-import { objectSchema, stringSchema } from './member-tools.js';
+import { assignmentSpecSchema, objectSchema, stringSchema } from './member-tools.js';
 
 /** Every definition closes over one ordinary native instance and its own scope. */
 export function installMainTools(native: NativeAgent, bridge: DshNativeBridge, service: RunService,
@@ -24,7 +24,7 @@ export function installMainTools(native: NativeAgent, bridge: DshNativeBridge, s
     tool('flow_team_get', 'Read your Flow team state and native input or artifact material references.', objectSchema(runFields, ['runId']), async (args, execution) => {
       const origin = bridge.createOrigin(native, execution); return { ...service.read(origin, bridge.resolveRun(origin, args.runId as string)), materials: await bridge.materials.admitSession(native) };
     });
-    tool('flow_team_assign', 'Save and deliver a top-level assignment to your active team root.', objectSchema({ ...runFields, spec: { type: 'object' }, requestId: stringSchema }, ['runId', 'spec', 'requestId']), async (args, execution) => {
+    tool('flow_team_assign', 'Save and deliver a top-level assignment to your active team root.', objectSchema({ ...runFields, spec: assignmentSpecSchema, requestId: stringSchema }, ['runId', 'spec', 'requestId']), async (args, execution) => {
       const origin = bridge.createOrigin(native, execution);
       await bridge.materials.admitSession(native);
       return service.assign(origin, bridge.resolveRun(origin, args.runId as string), args.spec as AssignmentSpec, args.requestId as string);

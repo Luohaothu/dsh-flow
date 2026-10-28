@@ -55,7 +55,9 @@ export class AssignmentService {
     this.assertCaller(request.recipient);
     const parent = request.parentAssignment === null ? null : this.binding(request.parentAssignment).handle.id;
     const spec = this.spec(request.spec);
-    const schema = compileSchema(spec.resultSchema);
+    let schema: ReturnType<typeof compileSchema>;
+    try { schema = compileSchema(spec.resultSchema); }
+    catch (error) { throw new TypeError(`resultSchema: ${text(error)}`, { cause: error }); }
     const key = JSON.stringify([actorOf(request.sender), requestId]);
     const digest = digestJson({ sender: actorOf(request.sender), recipientSessionID: request.recipient.getProfile().sessionID, recipientInstanceId: getAgentInstanceId(request.recipient), parentAssignmentId: parent, spec });
     const existing = this.existing(key, digest);

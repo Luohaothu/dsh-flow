@@ -4,7 +4,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { DshNativeBridge } from './host/native-bridge.js';
 
 /** Human entry: inject the selected skill and task into the ordinary main session. */
-export function registerAgentTeamCommand(ctx: Context, bridge: DshNativeBridge, instructions: string): () => void {
+export function registerAgentTeamCommand(ctx: Context, bridge: DshNativeBridge): () => void {
   const delivered = new Map<string, { digest: string; promise: Promise<CommandResult> }>();
   async function invoke(invocation: CommandInvocation): Promise<CommandResult> {
     // The command is globally discoverable, so classify before reading its input.
@@ -23,7 +23,6 @@ export function registerAgentTeamCommand(ctx: Context, bridge: DshNativeBridge, 
       const materials = await bridge.admitCommand(invocation);
       invocation.signal.throwIfAborted();
       if (!bridge.isOrdinary(invocation.agent)) throw new Error('Main session is no longer available');
-      invocation.agent.inject(createUserMessage({ source: { kind: 'skill-invocation', name: 'agent-team', form: 'instructions' }, content: [{ type: 'text', text: instructions }] }));
       invocation.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [
         { type: 'text', text: `/agent-team ${task}` }, ...invocation.attachments,
         ...(materials.length ? [{ type: 'text' as const, text: `已接纳的作业材料引用：${JSON.stringify(materials)}` }] : []),

@@ -16,6 +16,21 @@ import { installFlowTools, registerJsonTool, rollbackTools } from './tools.js';
 
 export const stringSchema: JsonSchemaNode = { type: 'string' };
 export const objectSchema = (properties: Record<string, JsonSchemaNode>, required: string[] = []): JsonSchemaNode => ({ type: 'object', properties, required, additionalProperties: false });
+export const assignmentSpecSchema: JsonSchemaNode = objectSchema({
+  name: { type: 'string', description: 'Short name for this assignment.' },
+  type: { type: 'string', description: 'Task category chosen by the sender.' },
+  background: { type: 'string', description: 'Context and relevant prior findings.' },
+  requirements: { type: 'string', description: 'Work the recipient must perform and constraints to preserve.' },
+  acceptanceCriteria: { type: 'string', description: 'Evidence and outcomes the sender will check.' },
+  resultSchema: {
+    description: 'JSON Schema for the submitted result. Use an object with supported type, oneOf, properties, required, additionalProperties, items, enum, const, minimum, maximum and annotations, or a boolean schema.',
+    oneOf: [{ type: 'boolean' }, { type: 'object' }],
+  },
+  materials: { type: 'array', description: 'Copy complete material references returned by flow_team_get or flow_team_read without changing or reconstructing any field.', items: objectSchema({
+    id: stringSchema, sourceId: stringSchema, digest: stringSchema, location: stringSchema, mediaType: stringSchema,
+  }, ['id', 'sourceId', 'digest', 'location', 'mediaType']) },
+  resumesAssignmentId: { type: 'string', description: 'Optional archived assignment continued by this new assignment.' },
+}, ['name', 'type', 'background', 'requirements', 'acceptanceCriteria', 'resultSchema']);
 export function teamRead(caller: Agent) {
   const context = caller[agentControl].context;
   return { agents: context.list(value => value instanceof Agent).map(value => {
@@ -57,7 +72,7 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
       return { agents: Object.fromEntries(Object.entries(created.agents).map(([key, agent]) => [key, agent.getProfile().sessionID])),
         groups: Object.fromEntries(Object.entries(created.groups).map(([key, group]) => [key, group.getID()])), instructions: created.instructions };
     });
-    tool('flow_assign', 'Prepare and deliver a formal assignment to your direct child.', objectSchema({ recipientSessionID: stringSchema, parentAssignmentId: stringSchema, spec: { type: 'object' }, requestId: stringSchema }, ['recipientSessionID', 'parentAssignmentId', 'spec', 'requestId']), async args => {
+    tool('flow_assign', 'Prepare and deliver a formal assignment to your direct child.', objectSchema({ recipientSessionID: stringSchema, parentAssignmentId: stringSchema, spec: assignmentSpecSchema, requestId: stringSchema }, ['recipientSessionID', 'parentAssignmentId', 'spec', 'requestId']), async args => {
       const recipient = context.getAgent(sessionID(args.recipientSessionID as string));
       if (!recipient) throw new Error('Recipient is not active in this Run');
       await materials.admitSession(binding.native);

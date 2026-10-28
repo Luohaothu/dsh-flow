@@ -11,7 +11,7 @@ import Presets from '@deepseek-ai/dsh-agent-preset-registry';
 import Skills from '@deepseek-ai/dsh-skill';
 import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
+import type { JsonSchemaNode, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { Agent } from '../../../packages/dsh-flow/src/core/index.js';
 import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
 import type { AssignmentSpec, JsonValue, MaterialRef } from '../../../packages/dsh-flow/src/assignments/types.js';
@@ -110,6 +110,45 @@ test('two ordinary main tools isolate Run listings, assignment queries and admit
   assert.deepEqual((await f.bridge.materials.read(a.root, refsA[0]!.id)).content, [{ type: 'text', text: 'CONFIDENTIAL MATERIAL A' }]);
   await assert.rejects(f.bridge.materials.read(a.root, refsB[0]!.id), /not received/);
   await assert.rejects(f.bridge.materials.read(b.root, refsA[0]!.id), /not received/);
+});
+
+test('model-visible assignment inputs expose the complete contract and accept corrected top-level and child dispatch', async t => {
+  const f = await fixture(t), main = await f.ordinary('assignment-contract-main'), { run, root } = await f.active(main, 'assignment-contract-run');
+  main.followup(message('Source document for the assignment')); await main.whenIdle();
+  const refs = await f.bridge.materials.admitSession(main);
+  const child = await Agent.create(run.context!, { ...root.getProfile(), sessionID: newSessionID(), name: 'contract child' }, root);
+  const { resultSchema: _omitted, ...missingSchema } = spec(refs);
+  const rejected = await f.call(main, 'flow_team_assign', { runId: run.id, spec: missingSchema, requestId: 'corrected-top' });
+  assert.equal(rejected.error, true); assert.match(rejected.text, /resultSchema/);
+  assert.equal(run.assignments!.list(run).length, 0);
+  const topResult = await f.call(main, 'flow_team_assign', { runId: run.id, spec: spec(refs), requestId: 'corrected-top' });
+  assert.equal(topResult.error, false, topResult.text); await f.native(root).whenIdle();
+  const top = JSON.parse(topResult.text);
+  assert.equal(top.status, 'pending'); assert.equal(top.spec.resultSchema, true);
+  const task = { ...spec(refs), resultSchema: { type: 'string' } };
+  const incompleteMaterial = { ...task, materials: [{ id: refs[0]!.id }] };
+  const rejectedChild = await f.call(f.native(root), 'flow_assign', { recipientSessionID: child.getProfile().sessionID, parentAssignmentId: top.id, spec: incompleteMaterial, requestId: 'corrected-child' });
+  assert.equal(rejectedChild.error, true); assert.match(rejectedChild.text, /sourceId/);
+  const childResult = await f.call(f.native(root), 'flow_assign', { recipientSessionID: child.getProfile().sessionID, parentAssignmentId: top.id, spec: task, requestId: 'corrected-child' });
+  assert.equal(childResult.error, false, childResult.text); await f.native(child).whenIdle();
+  const savedChild = JSON.parse(childResult.text);
+  assert.equal(savedChild.parentAssignmentId, top.id); assert.deepEqual(savedChild.spec, task);
+  assert.equal(run.assignments!.list(run).length, 2);
+
+  const observed = f.model.requests.flatMap(request => request.tools ?? []);
+  const definitions = ['flow_team_assign', 'flow_assign'].map(name => {
+    const tool = observed.find(tool => tool.name === name); assert.ok(tool, `${name} reached the real model boundary`);
+    const input = (tool.parameters as JsonSchemaNode).properties!.spec!;
+    assert.deepEqual([...input.required!].sort(), ['acceptanceCriteria', 'background', 'name', 'requirements', 'resultSchema', 'type']);
+    for (const field of ['name', 'type', 'background', 'requirements', 'acceptanceCriteria']) assert.equal(input.properties![field]!.type, 'string', field);
+    assert.deepEqual(input.properties!.resultSchema!.oneOf!.map(branch => branch.type).sort(), ['boolean', 'object']);
+    assert.equal(input.properties!.resumesAssignmentId!.type, 'string');
+    const material = input.properties!.materials!.items!;
+    assert.deepEqual([...material.required!].sort(), ['digest', 'id', 'location', 'mediaType', 'sourceId']);
+    for (const field of material.required!) assert.equal(material.properties![field]!.type, 'string', field);
+    return input;
+  });
+  assert.deepEqual(definitions[0], definitions[1]);
 });
 
 test('an actual SDK-admitted token cannot cross native instances, impersonate the same Session object, or outlive its execution', async t => {

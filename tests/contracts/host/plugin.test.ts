@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createUserMessage, ReasoningEffortId, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
+import * as ToolSkill from '@deepseek-ai/dsh-tool-skill';
 import { FlowPlugin } from '../../../packages/dsh-flow/src/plugin.js';
 import * as Flow from '../../../packages/dsh-flow/src/index.js';
 import { PlainConfigSchema, resolveConfig } from '../../../packages/dsh-flow/src/config.js';
@@ -41,6 +42,7 @@ test('P4 config validates design fields, detached snapshots and loader diagnosti
 
 test('P4 actual command injects skill and task without creating any Run; Flow members reject', async t => {
   const f = await pluginRuntime(t);
+  await f.host.plugin(ToolSkill);
   const main = await f.host.agents.create({ sessionId: SessionId(randomUUID()), agentOptions: { provider: 'fixture', model: 'model', reasoningEffort: ReasoningEffortId('medium') }, meta: { cwd: f.directory } }).then(handle => handle.agent);
   f.model.script = () => 'MAIN-RECEIVED';
   const command = await f.host.commands.execute(main, '/agent-team Investigate an existing project.', [], new AbortController().signal);
@@ -49,7 +51,14 @@ test('P4 actual command injects skill and task without creating any Run; Flow me
   assert.equal(f.plugin.runs.list(f.plugin.bridge.createOrigin(main)).length, 0);
   assert.equal(f.model.requests.length, 1);
   const firstPrompt = promptText(f.model.requests[0]!);
-  assert.match(firstPrompt, /团队入口/); assert.match(firstPrompt, /团队协作策略/); assert.match(firstPrompt, /Investigate an existing project/);
+  assert.match(firstPrompt, /团队入口/); assert.doesNotMatch(firstPrompt, /# 团队协作策略/); assert.match(firstPrompt, /Investigate an existing project/);
+  const events = main.session.snapshotEvents();
+  const skills = events.filter(event => event.type === 'user/message' && event.data.source.kind === 'skill-invocation');
+  assert.equal(skills.length, 1);
+  assert.equal(skills[0]!.type === 'user/message' && skills[0]!.data.source.kind === 'skill-invocation' && skills[0]!.data.source.name, 'agent-team');
+  assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'user' && event.data.content.some(block => block.type === 'text' && block.text === '/agent-team Investigate an existing project.')).length, 1);
+  assert.equal(events.filter(event => event.type === 'command/run').length, 1);
+  assert.equal(events.filter(event => event.type === 'command/done').length, 1);
   const member = await f.create('command-member');
   const before = f.model.requests.length;
   const denied = await f.host.commands.execute(f.native(member), '/agent-team should refuse', [], new AbortController().signal);
