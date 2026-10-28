@@ -1,0 +1,7 @@
+- id: hmr
+  disabled: true
+
+- id: dsh-flow
+  configMerge:
+    stateDirectory: .dsh-flow
+    maxConcurrentAgents: 4

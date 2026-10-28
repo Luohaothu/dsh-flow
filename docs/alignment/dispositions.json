@@ -1,0 +1,2544 @@
+{
+  "schemaVersion": 1,
+  "authority": "../design/design.md",
+  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "counts": {
+    "components": 134,
+    "oldTests": 79,
+    "oldHostFilePatches": 19
+  },
+  "interpretation": "The baseline includes previously uncommitted local files. Not adopted means absent from this implementation; it does not imply every file was previously committed. Same-path new implementations do not preserve old behavior. New SDK adaptations are justified separately from the nineteen old file patches.",
+  "components": [
+    {
+      "id": "file:.agents/skills/module-design/SKILL.md",
+      "path": ".agents/skills/module-design/SKILL.md",
+      "disposition": "retain-repository-instruction",
+      "replacement": [
+        ".agents/skills/module-design/SKILL.md"
+      ]
+    },
+    {
+      "id": "file:.agents/skills/module-design/references/interface-review.md",
+      "path": ".agents/skills/module-design/references/interface-review.md",
+      "disposition": "retain-repository-instruction",
+      "replacement": [
+        ".agents/skills/module-design/references/interface-review.md"
+      ]
+    },
+    {
+      "id": "file:.agents/skills/module-design/scripts/check_sections.py",
+      "path": ".agents/skills/module-design/scripts/check_sections.py",
+      "disposition": "retain-repository-instruction",
+      "replacement": [
+        ".agents/skills/module-design/scripts/check_sections.py"
+      ]
+    },
+    {
+      "id": "file:.agents/skills/module-design/scripts/test_check_sections.py",
+      "path": ".agents/skills/module-design/scripts/test_check_sections.py",
+      "disposition": "retain-repository-instruction",
+      "replacement": [
+        ".agents/skills/module-design/scripts/test_check_sections.py"
+      ]
+    },
+    {
+      "id": "file:AGENTS.md",
+      "path": "AGENTS.md",
+      "disposition": "retain-repository-instruction",
+      "replacement": [
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "file:examples/cluster.patch.yml",
+      "path": "examples/cluster.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/cluster.web.patch.yml",
+      "path": "examples/cluster.web.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/deepseek.patch.yml",
+      "path": "examples/deepseek.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/flow.patch.yml",
+      "path": "examples/flow.patch.yml",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/instance-runtime.patch.yml",
+      "path": "examples/instance-runtime.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/instance.patch.yml",
+      "path": "examples/instance.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/omlx.patch.yml",
+      "path": "examples/omlx.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:examples/openai-compatible.patch.yml",
+      "path": "examples/openai-compatible.patch.yml",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:package.json",
+      "path": "package.json",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/README.md",
+      "path": "packages/dsh-flow/README.md",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/cordis.patch.yml",
+      "path": "packages/dsh-flow/cordis.patch.yml",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/install.d.mts",
+      "path": "packages/dsh-flow/host-extensions/install.d.mts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "pnpm-workspace.yaml",
+        "patches/",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/install.mjs",
+      "path": "packages/dsh-flow/host-extensions/install.mjs",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "pnpm-workspace.yaml",
+        "patches/",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/host-extensions/rc2.json",
+      "path": "packages/dsh-flow/host-extensions/rc2.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "pnpm-workspace.yaml",
+        "patches/",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/locale/en.json",
+      "path": "packages/dsh-flow/locale/en.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/locale/zh.json",
+      "path": "packages/dsh-flow/locale/zh.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/package.json",
+      "path": "packages/dsh-flow/package.json",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/package.json"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/skills/agent-team/SKILL.md",
+      "path": "packages/dsh-flow/skills/agent-team/SKILL.md",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/skills/agent-team/SKILL.md"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client.ts",
+      "path": "packages/dsh-flow/src/client.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Dashboard.tsx",
+      "path": "packages/dsh-flow/src/client/Dashboard.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Native.tsx",
+      "path": "packages/dsh-flow/src/client/Native.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/Settings.tsx",
+      "path": "packages/dsh-flow/src/client/Settings.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/agent-session.ts",
+      "path": "packages/dsh-flow/src/client/agent-session.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/assets.d.ts",
+      "path": "packages/dsh-flow/src/client/assets.d.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/connection.ts",
+      "path": "packages/dsh-flow/src/client/connection.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/identity.ts",
+      "path": "packages/dsh-flow/src/client/identity.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/model.ts",
+      "path": "packages/dsh-flow/src/client/model.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/observer.ts",
+      "path": "packages/dsh-flow/src/client/observer.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/reader-source.ts",
+      "path": "packages/dsh-flow/src/client/reader-source.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/reader.tsx",
+      "path": "packages/dsh-flow/src/client/reader.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/sidebar.tsx",
+      "path": "packages/dsh-flow/src/client/sidebar.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/standalone.tsx",
+      "path": "packages/dsh-flow/src/client/standalone.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/styles.css",
+      "path": "packages/dsh-flow/src/client/styles.css",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/styles.ts",
+      "path": "packages/dsh-flow/src/client/styles.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/surfaces.tsx",
+      "path": "packages/dsh-flow/src/client/surfaces.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/team-view.tsx",
+      "path": "packages/dsh-flow/src/client/team-view.tsx",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/client/tree.ts",
+      "path": "packages/dsh-flow/src/client/tree.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/ui/",
+        "packages/dsh-flow/src/native/client.tsx",
+        "packages/dsh-flow/src/dashboard/client.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/command.ts",
+      "path": "packages/dsh-flow/src/command.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/command.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/config.ts",
+      "path": "packages/dsh-flow/src/config.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/config.ts",
+        "packages/dsh-flow/src/native/settings.tsx"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/agent-queue.ts",
+      "path": "packages/dsh-flow/src/core/agent-queue.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/core/",
+        "packages/dsh-flow/src/host/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/agent.ts",
+      "path": "packages/dsh-flow/src/core/agent.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/agent.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/collaboration.ts",
+      "path": "packages/dsh-flow/src/core/collaboration.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/run/",
+        "packages/dsh-flow/src/assignments/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/context.ts",
+      "path": "packages/dsh-flow/src/core/context.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/context.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/controller.ts",
+      "path": "packages/dsh-flow/src/core/controller.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/core/",
+        "packages/dsh-flow/src/host/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/deadline.ts",
+      "path": "packages/dsh-flow/src/core/deadline.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/deadline.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/group.ts",
+      "path": "packages/dsh-flow/src/core/group.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/group.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/index.ts",
+      "path": "packages/dsh-flow/src/core/index.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/index.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/mailbox.ts",
+      "path": "packages/dsh-flow/src/core/mailbox.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/mailbox.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/member-tools.ts",
+      "path": "packages/dsh-flow/src/core/member-tools.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/message-queue.ts",
+      "path": "packages/dsh-flow/src/core/message-queue.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/core/",
+        "packages/dsh-flow/src/host/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/message.ts",
+      "path": "packages/dsh-flow/src/core/message.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/message.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/profile.ts",
+      "path": "packages/dsh-flow/src/core/profile.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/profile.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/runtime.ts",
+      "path": "packages/dsh-flow/src/core/runtime.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/core/",
+        "packages/dsh-flow/src/host/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/snapshot-data.ts",
+      "path": "packages/dsh-flow/src/core/snapshot-data.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/snapshot-data.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/store.ts",
+      "path": "packages/dsh-flow/src/core/store.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/run/",
+        "packages/dsh-flow/src/assignments/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/system.ts",
+      "path": "packages/dsh-flow/src/core/system.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/core/",
+        "packages/dsh-flow/src/host/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/core/types.ts",
+      "path": "packages/dsh-flow/src/core/types.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/core/types.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/protocol.ts",
+      "path": "packages/dsh-flow/src/dashboard/protocol.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/dashboard/protocol.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/runs.ts",
+      "path": "packages/dsh-flow/src/dashboard/runs.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/dashboard/",
+        "packages/dsh-flow/src/core/observation.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/dashboard/server.ts",
+      "path": "packages/dsh-flow/src/dashboard/server.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/dashboard/server.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/errors.ts",
+      "path": "packages/dsh-flow/src/errors.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/capacity.ts",
+      "path": "packages/dsh-flow/src/host/capacity.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/host/capacity.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/dsh-adaptor.ts",
+      "path": "packages/dsh-flow/src/host/dsh-adaptor.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/host/dsh-adaptor.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/index.ts",
+      "path": "packages/dsh-flow/src/host/index.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/host/index.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/materials.ts",
+      "path": "packages/dsh-flow/src/host/materials.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/host/materials.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/model-selection.ts",
+      "path": "packages/dsh-flow/src/host/model-selection.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/start-intents.ts",
+      "path": "packages/dsh-flow/src/host/start-intents.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/host/tools.ts",
+      "path": "packages/dsh-flow/src/host/tools.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/host/tools.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/index.ts",
+      "path": "packages/dsh-flow/src/index.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "packages/dsh-flow/src/index.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/main-model.ts",
+      "path": "packages/dsh-flow/src/main-model.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/assignments.ts",
+      "path": "packages/dsh-flow/src/patterns/assignments.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/assignments/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/engine.ts",
+      "path": "packages/dsh-flow/src/patterns/engine.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/patterns/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/patterns/schema.ts",
+      "path": "packages/dsh-flow/src/patterns/schema.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/assignments/"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/service.ts",
+      "path": "packages/dsh-flow/src/service.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/skill.ts",
+      "path": "packages/dsh-flow/src/skill.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/tool-arguments.ts",
+      "path": "packages/dsh-flow/src/tool-arguments.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/types.ts",
+      "path": "packages/dsh-flow/src/types.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/host/",
+        "packages/dsh-flow/src/plugin.ts",
+        "packages/dsh-flow/src/command.ts",
+        "packages/dsh-flow/src/config.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/src/web.ts",
+      "path": "packages/dsh-flow/src/web.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "packages/dsh-flow/src/dashboard/",
+        "packages/dsh-flow/src/core/observation.ts"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.client.json",
+      "path": "packages/dsh-flow/tsconfig.client.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.host.json",
+      "path": "packages/dsh-flow/tsconfig.host.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:packages/dsh-flow/tsconfig.json",
+      "path": "packages/dsh-flow/tsconfig.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/LICENSE",
+      "path": "packages/typert-protocol/LICENSE",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/README.md",
+      "path": "packages/typert-protocol/README.md",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/package.json",
+      "path": "packages/typert-protocol/package.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/src/index.ts",
+      "path": "packages/typert-protocol/src/index.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/src/types.ts",
+      "path": "packages/typert-protocol/src/types.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:packages/typert-protocol/tsconfig.host.json",
+      "path": "packages/typert-protocol/tsconfig.host.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/generate-native-typert.ts",
+        "packages/dsh-flow/src/native/typert.host.js"
+      ]
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-api-remotes@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-api-session-controller@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch"
+      ]
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch"
+      ]
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-commands@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch"
+      ]
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-dockkit@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-layout@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-plan@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-plugin-manager@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-renderer@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-subagent@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-client-ui-workspace@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-commands@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+      "path": "patches/@deepseek-ai__dsh-session@0.2.0-rc.2.patch",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:patches/README.md",
+      "path": "patches/README.md",
+      "disposition": "old-path-absent",
+      "replacement": []
+    },
+    {
+      "id": "file:pnpm-lock.yaml",
+      "path": "pnpm-lock.yaml",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:pnpm-workspace.yaml",
+      "path": "pnpm-workspace.yaml",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/boot.ts",
+      "path": "scripts/boot.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/build.ts",
+      "path": "scripts/build.ts",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/client-build.ts",
+      "path": "scripts/client-build.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/client-native-preview.ts",
+      "path": "scripts/client-native-preview.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/e2e.ts",
+      "path": "scripts/e2e.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/host-smoke.ts",
+      "path": "scripts/host-smoke.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/initialize-omlx-profile.ts",
+      "path": "scripts/initialize-omlx-profile.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:scripts/launch-dsh.ts",
+      "path": "scripts/launch-dsh.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-e2e-lib.ts",
+      "path": "scripts/native-agent-ashare-e2e-lib.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-e2e.ts",
+      "path": "scripts/native-agent-ashare-e2e.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:scripts/native-agent-ashare-stage.ts",
+      "path": "scripts/native-agent-ashare-stage.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:scripts/serve.ts",
+      "path": "scripts/serve.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/verify-package.ts",
+      "path": "scripts/verify-package.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:scripts/verify-retained-e2e.ts",
+      "path": "scripts/verify-retained-e2e.ts",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:src/host/browser.ts",
+      "path": "src/host/browser.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:src/host/dsh-launch.ts",
+      "path": "src/host/dsh-launch.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:src/host/host.ts",
+      "path": "src/host/host.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:src/host/profile-models.ts",
+      "path": "src/host/profile-models.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:src/host/session-scan.ts",
+      "path": "src/host/session-scan.ts",
+      "disposition": "retired-in-P7",
+      "replacement": [
+        "packages/dsh-flow/cordis.patch.yml",
+        "packages/dsh-flow/README.md"
+      ]
+    },
+    {
+      "id": "file:tsconfig.base.client.json",
+      "path": "tsconfig.base.client.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:tsconfig.base.json",
+      "path": "tsconfig.base.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:tsconfig.build.json",
+      "path": "tsconfig.build.json",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:tsconfig.client.json",
+      "path": "tsconfig.client.json",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:tsconfig.host.json",
+      "path": "tsconfig.host.json",
+      "disposition": "old-path-absent",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "file:tsconfig.json",
+      "path": "tsconfig.json",
+      "disposition": "same-path-new-implementation",
+      "replacement": [
+        "scripts/build.ts",
+        "scripts/verify-pattern-package.ts",
+        "tsconfig.json",
+        "tsconfig.client.json",
+        "package.json"
+      ]
+    }
+  ],
+  "oldTests": [
+    {
+      "id": "T001",
+      "path": "scripts/boot.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T002",
+      "path": "scripts/client-build.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T003",
+      "path": "scripts/client-native-preview.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T004",
+      "path": "scripts/e2e.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T005",
+      "path": "scripts/host-smoke.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T006",
+      "path": "scripts/launch-dsh.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T007",
+      "path": "scripts/native-agent-ashare-e2e-lib.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T008",
+      "path": "scripts/native-agent-ashare-e2e.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T009",
+      "path": "scripts/native-agent-ashare-stage.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T010",
+      "path": "scripts/verify-package.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T011",
+      "path": "scripts/verify-retained-e2e.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T012",
+      "path": "tests/acceptance/COVERAGE.md",
+      "disposition": "rewritten-evidence-index",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T013",
+      "path": "tests/acceptance/native-live.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T014",
+      "path": "tests/assignments.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T015",
+      "path": "tests/card-rendering.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T016",
+      "path": "tests/client-retained-ui.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T017",
+      "path": "tests/client-retained.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T018",
+      "path": "tests/client-ui.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T019",
+      "path": "tests/client.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T020",
+      "path": "tests/core-races.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T021",
+      "path": "tests/core-values.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T022",
+      "path": "tests/core.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T023",
+      "path": "tests/graph-layout.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T024",
+      "path": "tests/helpers/fake-host.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T025",
+      "path": "tests/helpers/preset-host.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T026",
+      "path": "tests/helpers/reader-nesting-fixture.tsx",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T027",
+      "path": "tests/helpers/retained-ui-fixture.tsx",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T028",
+      "path": "tests/helpers/runtime-host.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T029",
+      "path": "tests/helpers/team-ui-fixture.tsx",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T030",
+      "path": "tests/host-extensions.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T031",
+      "path": "tests/host.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T032",
+      "path": "tests/integration/fixtures/native-browser-probe.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T033",
+      "path": "tests/integration/fixtures/native-member-probe.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T034",
+      "path": "tests/integration/fixtures/team-command-probe.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T035",
+      "path": "tests/integration/native-browser.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T036",
+      "path": "tests/integration/native-member.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T037",
+      "path": "tests/integration/provider-settings.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native-client/settings-input.test.ts"
+      ]
+    },
+    {
+      "id": "T038",
+      "path": "tests/integration/team-command.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T039",
+      "path": "tests/integration/team-ui.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T040",
+      "path": "tests/launch-profile.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T041",
+      "path": "tests/observation-extension.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T042",
+      "path": "tests/patterns.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/application.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T043",
+      "path": "tests/plugin-entry.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T044",
+      "path": "tests/reader-nesting.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T045",
+      "path": "tests/retained-e2e-evidence.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T046",
+      "path": "tests/runs.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/observation-retry.test.ts",
+        "tests/contracts/dashboard/client-connect.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts",
+        "tests/contracts/dashboard/client-native.test.ts",
+        "tests/contracts/dashboard/client-snapshot.test.ts",
+        "tests/contracts/dashboard/client-version.test.ts",
+        "tests/contracts/dashboard/client.test.ts",
+        "tests/contracts/dashboard/events.test.ts",
+        "tests/contracts/dashboard/operations.test.ts",
+        "tests/contracts/dashboard/projector.test.ts",
+        "tests/contracts/dashboard/replay-mode.test.ts",
+        "tests/contracts/dashboard/server.test.ts",
+        "tests/contracts/host/retry-tools.test.ts",
+        "tests/contracts/host/usage-cleanup.test.ts",
+        "tests/contracts/native/origins.test.ts",
+        "tests/contracts/run/p5-persistence.test.ts",
+        "tests/contracts/run/release-failure.test.ts",
+        "tests/contracts/ui/client-store.test.ts",
+        "tests/contracts/ui/stop-control.test.ts"
+      ]
+    },
+    {
+      "id": "T047",
+      "path": "tests/runtime-capacity.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T048",
+      "path": "tests/runtime-settings.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native-client/settings-input.test.ts"
+      ]
+    },
+    {
+      "id": "T049",
+      "path": "tests/schema.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T050",
+      "path": "tests/server.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/observation-retry.test.ts",
+        "tests/contracts/dashboard/client-connect.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts",
+        "tests/contracts/dashboard/client-native.test.ts",
+        "tests/contracts/dashboard/client-snapshot.test.ts",
+        "tests/contracts/dashboard/client-version.test.ts",
+        "tests/contracts/dashboard/client.test.ts",
+        "tests/contracts/dashboard/events.test.ts",
+        "tests/contracts/dashboard/operations.test.ts",
+        "tests/contracts/dashboard/projector.test.ts",
+        "tests/contracts/dashboard/replay-mode.test.ts",
+        "tests/contracts/dashboard/server.test.ts",
+        "tests/contracts/host/retry-tools.test.ts",
+        "tests/contracts/host/usage-cleanup.test.ts",
+        "tests/contracts/native/origins.test.ts",
+        "tests/contracts/run/p5-persistence.test.ts",
+        "tests/contracts/run/release-failure.test.ts",
+        "tests/contracts/ui/client-store.test.ts",
+        "tests/contracts/ui/stop-control.test.ts"
+      ]
+    },
+    {
+      "id": "T051",
+      "path": "tests/types/flow-contracts.client.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T052",
+      "path": "tests/types/flow-contracts.host.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T053",
+      "path": "tests/unit/agent-binding.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T054",
+      "path": "tests/unit/agent-communication.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T055",
+      "path": "tests/unit/agent-lifecycle.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T056",
+      "path": "tests/unit/agent-profile.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T057",
+      "path": "tests/unit/agent-queue.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T058",
+      "path": "tests/unit/collaboration-state-model.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T059",
+      "path": "tests/unit/control-message-regression.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T060",
+      "path": "tests/unit/flow-controller.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T061",
+      "path": "tests/unit/host-profile.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T062",
+      "path": "tests/unit/member-tools.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T063",
+      "path": "tests/unit/message-queue.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T064",
+      "path": "tests/unit/native-close-regression.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T065",
+      "path": "tests/unit/native-fixture.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T066",
+      "path": "tests/unit/profile-models.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native-client/settings-input.test.ts"
+      ]
+    },
+    {
+      "id": "T067",
+      "path": "tests/unit/provider-baseline.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T068",
+      "path": "tests/unit/provider-factory-scope.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T069",
+      "path": "tests/unit/provider-message.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T070",
+      "path": "tests/unit/provider-observation.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T071",
+      "path": "tests/unit/provider-session-restore.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/communication.test.ts",
+        "tests/contracts/core/context-group.test.ts",
+        "tests/contracts/core/derivation.test.ts",
+        "tests/contracts/core/lifecycle-regressions.test.ts",
+        "tests/contracts/core/lifecycle.test.ts",
+        "tests/contracts/core/mailbox.test.ts",
+        "tests/contracts/host/design-edges.test.ts",
+        "tests/contracts/host/dsh-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "T072",
+      "path": "tests/unit/queued-task-update.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T073",
+      "path": "tests/unit/reader-source.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts"
+      ]
+    },
+    {
+      "id": "T074",
+      "path": "tests/unit/root-completion-regression.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/assignments/service.test.ts",
+        "tests/contracts/assignments/schema.test.ts",
+        "tests/contracts/run/lifetime.test.ts"
+      ]
+    },
+    {
+      "id": "T075",
+      "path": "tests/unit/same-member-order-regression.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T076",
+      "path": "tests/unit/session-scan.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "scripts/verify-pattern-package.ts",
+        "scripts/generate-native-typert.ts"
+      ]
+    },
+    {
+      "id": "T077",
+      "path": "tests/unit/team-command-regression.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/host/lifecycle-tools.test.ts",
+        "tests/contracts/host/materials.test.ts",
+        "tests/contracts/host/native-bridge.test.ts",
+        "tests/contracts/host/p4-adversarial.test.ts",
+        "tests/contracts/host/plugin.test.ts",
+        "tests/contracts/host/provisioning.test.ts",
+        "tests/contracts/native-client/client-settings.test.ts",
+        "tests/contracts/native/configuration.test.ts",
+        "tests/contracts/patterns/compiler.test.ts",
+        "tests/contracts/patterns/native.test.ts"
+      ]
+    },
+    {
+      "id": "T078",
+      "path": "tests/unit/team-tree.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/ui/geometry.test.ts",
+        "tests/contracts/ui/state.test.ts",
+        "tests/contracts/native-client/header-menu.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts"
+      ]
+    },
+    {
+      "id": "T079",
+      "path": "tests/usage.test.ts",
+      "disposition": "old-test-not-adopted",
+      "replacement": [
+        "tests/contracts/core/observation-retry.test.ts",
+        "tests/contracts/dashboard/client-connect.test.ts",
+        "tests/contracts/dashboard/client-decoder.test.ts",
+        "tests/contracts/dashboard/client-native.test.ts",
+        "tests/contracts/dashboard/client-snapshot.test.ts",
+        "tests/contracts/dashboard/client-version.test.ts",
+        "tests/contracts/dashboard/client.test.ts",
+        "tests/contracts/dashboard/events.test.ts",
+        "tests/contracts/dashboard/operations.test.ts",
+        "tests/contracts/dashboard/projector.test.ts",
+        "tests/contracts/dashboard/replay-mode.test.ts",
+        "tests/contracts/dashboard/server.test.ts",
+        "tests/contracts/host/retry-tools.test.ts",
+        "tests/contracts/host/usage-cleanup.test.ts",
+        "tests/contracts/native/origins.test.ts",
+        "tests/contracts/run/p5-persistence.test.ts",
+        "tests/contracts/run/release-failure.test.ts",
+        "tests/contracts/ui/client-store.test.ts",
+        "tests/contracts/ui/stop-control.test.ts"
+      ]
+    }
+  ],
+  "oldHostFilePatches": [
+    {
+      "id": "H001",
+      "package": "@deepseek-ai/dsh-api-remotes",
+      "oldPath": "lib/client.js",
+      "oldCapability": "聚合 API 远程客户端对 observationOnly 的编码",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": null,
+      "newResponsibility": "stock SDK + Flow-owned Remote/readonly source; no patch to this package",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H002",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/client.js",
+      "oldCapability": "只读观察引用：allowUnlisted、observationOnly、重连不激活；历史分页错误与订阅代次隔离",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H003",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/index.js",
+      "oldCapability": "原生执行所有权/变更入口保护、session driver；观察 follow 不激活 prepared 会话；成员来源分类",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H004",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/typert.host.js",
+      "oldCapability": "SessionFollowRequest.observationOnly 的服务端编解码与声明元数据",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H005",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/typert.remote-client.js",
+      "oldCapability": "SessionFollowRequest.observationOnly 的远程客户端编解码",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H006",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/client/contract/sessions.d.ts",
+      "oldCapability": "SessionRetainOptions 的 allowUnlisted/observationOnly 独立只读引用声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H007",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/client/contract/snapshot.d.ts",
+      "oldCapability": "历史分页失败的 historyError 公开快照声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H008",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/client/sessions/manager.d.ts",
+      "oldCapability": "resolveTarget 的 allowUnlisted 本地目录预检参数声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H009",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/client/sessions/session.d.ts",
+      "oldCapability": "Session.open 保存并沿用 observationOnly 的生命周期声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H010",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/client/transport.d.ts",
+      "oldCapability": "重连 follow 传输保留 observationOnly 的选项声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H011",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/index.d.ts",
+      "oldCapability": "SessionDriver 执行拥有者注册/解析与成员 session origin 分类声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H012",
+      "package": "@deepseek-ai/dsh-api-session-controller",
+      "oldPath": "lib/types/types.d.ts",
+      "oldCapability": "公共 SessionFollowRequest.observationOnly 请求类型",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-api-session-controller@0.2.0-rc.2.patch",
+      "newResponsibility": "managed readonly ClientSession reference + Flow NativeHistoryService exact instance/cut",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H013",
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "oldPath": "lib/client.js",
+      "oldCapability": "原生 Chat 只读动作抑制、禁用分支/命令变更/turnTail；初始跟随及阅读位置",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H014",
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "oldPath": "lib/types/client/contract/slots.d.ts",
+      "oldCapability": "ChatNodeOwnerProps.readOnly 对只读渲染动作的声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-chat@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H015",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "oldPath": "lib/client.js",
+      "oldCapability": "view presentation 注册、contained/readOnly、只读无 composer/draft 镜像、初始跟随、当前页签返回导航",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H016",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "oldPath": "lib/types/client/contract/slots.d.ts",
+      "oldCapability": "会话/视图 readOnly 与 initialFollow；header currentView/selectView 类型",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H017",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "oldPath": "lib/types/client/contract/views.d.ts",
+      "oldCapability": "ViewTab.contained/readOnly 视图呈现类型",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H018",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "oldPath": "lib/types/client/conversation/assembly.d.ts",
+      "oldCapability": "UiConversation view presentation 注册/读取/订阅接口声明",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": "patches/@deepseek-ai+dsh-client-ui-conversation@0.2.0-rc.2.patch",
+      "newResponsibility": "native read-only contribution registration",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    },
+    {
+      "id": "H019",
+      "package": "@deepseek-ai/dsh-client-ui-renderer",
+      "oldPath": "lib/client.js",
+      "oldCapability": "render factory 递归检测按 root/session generation 区分嵌套阅读器作用域",
+      "finalDisposition": "old-file-patch-not-adopted",
+      "newPatch": null,
+      "newResponsibility": "stock SDK + Flow-owned Remote/readonly source; no patch to this package",
+      "newFileIsNotNecessarilySameOldPath": true,
+      "evidence": [
+        "tests/contracts/native/history.test.ts",
+        "tests/contracts/native-client/sdk-ports.test.ts",
+        "tests/contracts/native-client/full-contributions.test.ts",
+        "tests/contracts/native-client/remote-injection.test.ts"
+      ]
+    }
+  ],
+  "currentSdkAdaptations": {
+    "packages": 8,
+    "modifiedFiles": 18,
+    "mechanism": "pnpm patchedDependencies with locked artifacts; no custom SDK installer",
+    "verificationRecord": "p6-verification.json"
+  }
+}
