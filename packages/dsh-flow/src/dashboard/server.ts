@@ -22,6 +22,7 @@ export class DashboardServer {
   private readonly streamRuns = new Map<ServerResponse, string | undefined>();
   private readonly unsubscribeReset: () => void;
   private host = '';
+  private closing = false;
   private disposal?: Promise<void>;
   private endpoint = '';
   private constructor(private readonly options: Options) {
@@ -52,12 +53,15 @@ export class DashboardServer {
   get address(): string { return this.endpoint; }
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
+    this.closing = true;
     this.unsubscribeReset();
     this.disposal = new Promise<void>((yes, no) => { this.server.close(error => error ? no(error) : yes()); this.server.closeIdleConnections(); });
     for (const response of this.streams) response.destroy();
+    this.server.closeAllConnections();
     return this.disposal;
   }
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (this.closing) { response.destroy(); return; }
     response.setHeader('Cache-Control', 'no-store');
     if (!loopback(request.socket.remoteAddress) || header(request, 'host') !== this.host) throw new HttpError(403, 'forbidden', 'Expected the exact local dashboard address');
     const raw = request.url ?? '/';

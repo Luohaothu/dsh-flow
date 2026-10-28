@@ -20,6 +20,7 @@ export interface DraftState {
   invalid: Readonly<Record<string, string>>;
   invalidText: Readonly<Record<string, string>>;
 }
+function hasDraftChanges(state: DraftState): boolean { return state.ops.length > 0 || Object.keys(state.invalid).length > 0 || Object.keys(state.invalidText).length > 0; }
 export function pathValue(value: unknown, path: readonly string[]): unknown {
   for (const key of path) { if (!value || typeof value !== 'object' || !Object.hasOwn(value, key)) return undefined; value = (value as Record<string, unknown>)[key]; }
   return value;
@@ -40,7 +41,7 @@ export class SettingsDraft {
   private update(patch: Partial<DraftState>): void { if (this.disposed) return; this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
   accept(view: SettingsNamespaceView | undefined): void {
     if (!view || view.ns !== this.entryId || (this.state.latest && view.revision < this.state.latest.revision)) return;
-    this.update({ latest: view, ...this.state.ops.length || this.state.pending ? {} : { base: view } });
+    this.update({ latest: view, ...hasDraftChanges(this.state) || this.state.pending ? {} : { base: view } });
   }
   edit(path: string[], value?: Json): void {
     if (this.state.pending || !this.state.base) return;
@@ -98,18 +99,28 @@ const fields: readonly Field[] = [
   { path: 'connection.prices', label: '价格表', kind: 'json', group: 3, effect: 'restart' },
 ];
 function display(value: unknown, field: Field): string { return value === undefined ? '' : field.kind === 'lines' && Array.isArray(value) ? value.join('\n') : field.kind === 'json' ? JSON.stringify(value, null, 2) : String(value); }
-function SettingsField({ field, state, editor }: { field: Field; state: DraftState; editor: SettingsDraft }) {
+function SettingsField({ field, state, editor, texts }: { field: Field; state: DraftState; editor: SettingsDraft; texts: Map<string, string> }) {
   const path = field.path.split('.'), edit = state.ops.find(item => JSON.stringify(item.path) === JSON.stringify(path));
   const effective = edit ? edit.op === 'set' ? edit.value : pathValue(state.base?.base, path) : pathValue(state.base?.value, path);
   const inherited = edit ? edit.op === 'unset' : pathValue(state.base?.user, path) === undefined;
   const pendingText = state.invalidText[field.path];
-  const [text, setText] = useState(pendingText ?? display(effective, field)), [error, setError] = useState(state.invalid[field.path] ?? '');
-  useEffect(() => { setText(pendingText ?? display(effective, field)); setError(state.invalid[field.path] ?? ''); }, [effective, field, pendingText, state.invalid]);
+  const hasDraft = edit !== undefined || pendingText !== undefined || state.invalid[field.path] !== undefined;
+  const [text, setText] = useState(hasDraft ? pendingText ?? texts.get(field.path) ?? display(effective, field) : display(effective, field)), [error, setError] = useState(state.invalid[field.path] ?? '');
+  useEffect(() => {
+    if (hasDraft) return;
+    texts.delete(field.path);
+    setText(display(pathValue(state.base?.value, field.path.split('.')), field));
+    setError('');
+  }, [state.base, hasDraft, field, texts]);
   const commit = (value: string) => {
-    setText(value); try {
+    texts.set(field.path, value); setText(value); try {
       if (value.trim() === '') { editor.edit(path); setError(''); return; }
       let parsed: Json = value;
-      if (field.kind === 'number') { const number = Number(value); if (value.trim() === '' || !Number.isFinite(number)) throw new Error('请输入有效数字'); parsed = number; }
+      if (field.kind === 'number') {
+        const decimal = value.trim(), number = Number(decimal);
+        if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(decimal) || !Number.isFinite(number)) throw new Error('请输入有效数字');
+        parsed = number;
+      }
       else if (field.kind === 'json') parsed = JSON.parse(value) as Json;
       else if (field.kind === 'lines') parsed = value.split('\n').map(item => item.trim()).filter(Boolean);
       if (field.path.startsWith('defaults.params.') && pathValue(state.base?.value, ['defaults', 'params', 'version']) !== 1) editor.edit(['defaults', 'params', 'version'], 1);
@@ -117,17 +128,17 @@ function SettingsField({ field, state, editor }: { field: Field; state: DraftSta
     } catch (reason) { const message = observationError(reason); setError(message); editor.invalid(path, message, value); }
   };
   const timing = field.effect === 'restart' ? '重启生效' : field.effect === 'admission' ? '后续执行生效' : '新运行生效';
-  return <div className={`flow-settings-field ${edit ? 'dirty' : ''}`}><label htmlFor={`flow-setting-${field.path}`}>{field.label}<span title={timing} tabIndex={0}>{timing}</span></label>
+  return <div className={`flow-settings-field ${hasDraft ? 'dirty' : ''}`}><label htmlFor={`flow-setting-${field.path}`}>{field.label}<span title={timing} tabIndex={0}>{timing}</span></label>
     <div>{field.kind === 'lines' || field.kind === 'json' ? <textarea id={`flow-setting-${field.path}`} value={text} onChange={event => commit(event.target.value)} disabled={state.pending} aria-invalid={!!error} />
       : field.kind === 'permission' ? <select id={`flow-setting-${field.path}`} value={text} onChange={event => commit(event.target.value)} disabled={state.pending}><option value="">继承</option><option value="read-only">只读</option><option value="workspace-write">工作区写入</option><option value="full-access">完整访问</option></select>
-        : <input id={`flow-setting-${field.path}`} type={field.kind === 'number' ? 'number' : 'text'} value={text} onChange={event => commit(event.target.value)} disabled={state.pending} aria-invalid={!!error} />}
-      <button type="button" title="恢复继承" aria-label={`${field.label}恢复继承`} onClick={() => editor.edit(path)} disabled={state.pending}>↶</button></div>
-    <small>{inherited ? '🔗 继承' : '本地覆盖'}{edit ? ' · 未保存' : ''}</small>
+        : <input id={`flow-setting-${field.path}`} type="text" inputMode={field.kind === 'number' ? 'decimal' : undefined} value={text} onChange={event => commit(event.target.value)} disabled={state.pending} aria-invalid={!!error} />}
+      <button type="button" title="恢复继承" aria-label={`${field.label}恢复继承`} onClick={() => { const inheritedText = display(pathValue(state.base?.base, path), field); texts.set(field.path, inheritedText); setText(inheritedText); setError(''); editor.edit(path); }} disabled={state.pending}>↶</button></div>
+    <small>{inherited ? '🔗 继承' : '本地覆盖'}{hasDraft ? ' · 未保存' : ''}</small>
     {state.conflict && <small>本地：{text || '（继承）'} · 最新：{display(pathValue(state.latest?.value, path), field)}</small>}
     {error && <small role="alert">{error}</small>}</div>;
 }
 
-function ModelPicker({ ctx, state, editor }: { ctx: Context; state: DraftState; editor: SettingsDraft }) {
+function ModelPicker({ ctx, state, editor, texts }: { ctx: Context; state: DraftState; editor: SettingsDraft; texts: Map<string, string> }) {
   const [catalog, setCatalog] = useState<ModelCatalog>(), [failure, setFailure] = useState('');
   useEffect(() => { let active = true; void ctx.remote.session.modelCatalog().then(result => {
     if (!active) return; if (result.ok) setCatalog(result.value); else setFailure(observationError(result.error));
@@ -150,7 +161,7 @@ function ModelPicker({ ctx, state, editor }: { ctx: Context; state: DraftState; 
       {catalog?.failures.map(item => <p key={item.id} role="status">{item.name}：{item.message}</p>)}
       {!catalog && <p role="status">{failure || '正在读取宿主模型…'}</p>}</details>
     <button type="button" disabled={state.pending} onClick={() => editor.edit(['defaults', 'model'])}>恢复模型继承</button>
-    {(!catalog || !catalog.groups.length) && fields.filter(field => field.path.startsWith('defaults.model.')).map(field => <SettingsField key={field.path} field={field} state={state} editor={editor} />)}
+    {(!catalog || !catalog.groups.length) && fields.filter(field => field.path.startsWith('defaults.model.')).map(field => <SettingsField key={field.path} field={field} state={state} editor={editor} texts={texts} />)}
   </div>;
 }
 
@@ -160,6 +171,7 @@ export function FlowSettings({ ctx, entryId }: { ctx: Context; entryId: string }
     mutate: (...args) => ctx.remote.settings.mutate(...args),
     async configuration() { const result = await ctx.remote.flowDashboard.connection(); if (!result.ok) throw result.error; return result.value.configuration; },
   }), [ctx, entryId]);
+  const texts = useMemo(() => new Map<string, string>(), [editor]);
   const state = useSyncExternalStore(editor.subscribe, editor.getSnapshot), [group, setGroup] = useState(0);
   const mirror = ctx.configForms.describe();
   const mirrorState = useSyncExternalStore(listener => mirror.subscribe(listener), () => mirror.getSnapshot());
@@ -169,7 +181,7 @@ export function FlowSettings({ ctx, entryId }: { ctx: Context; entryId: string }
   return <section className="flow-native-settings" aria-label="智能体团队设置"><nav aria-label="设置分组">{['运行与角色默认值', '模式包来源', '执行与清理', '服务连接'].map((label, index) => <button type="button" key={label} aria-current={index === group ? 'page' : undefined} onClick={() => setGroup(index)}>{label}</button>)}</nav>
     <div><h2>{['运行与角色默认值', '模式包来源', '执行与清理', '服务连接'][group]}</h2>
       {model && group === 0 && <p><ModelMark model={model} /> {model.provider} / {model.id}</p>}
-      {!state.base ? <p role="status">{state.message ?? '正在读取宿主配置…'}</p> : <fieldset disabled={state.pending || !mirrorState.view?.writable}>{group === 0 && <ModelPicker ctx={ctx} state={state} editor={editor} />}{fields.filter(field => field.group === group && !field.path.startsWith('defaults.model.')).map(field => <SettingsField key={field.path} field={field} state={state} editor={editor} />)}</fieldset>}
+      {!state.base ? <p role="status">{state.message ?? '正在读取宿主配置…'}</p> : <fieldset disabled={state.pending || !mirrorState.view?.writable}>{group === 0 && <ModelPicker ctx={ctx} state={state} editor={editor} texts={texts} />}{fields.filter(field => field.group === group && !field.path.startsWith('defaults.model.')).map(field => <SettingsField key={field.path} field={field} state={state} editor={editor} texts={texts} />)}</fieldset>}
       {group === 1 && state.configuration?.catalog && <div aria-label="模式加载结果"><h3>可用模式</h3>{state.configuration.catalog.patterns.length ? <ul>{state.configuration.catalog.patterns.map(pattern => <li key={pattern.id}><strong>{pattern.id}</strong><p>{pattern.description}</p></li>)}</ul> : <p>没有可用模式</p>}
         {!!state.configuration.catalog.diagnostics.length && <div role="status" aria-label="模式配置诊断">{state.configuration.catalog.diagnostics.map((item, index) => <p key={`${item.path}/${index}`}><code>{item.path}</code>：{item.message}</p>)}</div>}</div>}
       {state.configuration?.application.status === 'failed' && <p role="alert">配置已保存，运行态应用失败：{state.configuration.application.error?.message}</p>}
@@ -177,7 +189,7 @@ export function FlowSettings({ ctx, entryId }: { ctx: Context; entryId: string }
       <footer><span role={state.message && !state.saved ? 'alert' : 'status'}>{state.pending ? '正在保存…' : state.message}</span>
         {state.conflict && <button type="button" onClick={() => editor.compareAndKeepDraft()} disabled={state.pending}>比较后采用最新修订号</button>}
         <button type="button" onClick={() => { void editor.refresh(); }} disabled={state.pending}>重新读取</button>
-        <button type="button" onClick={() => editor.discard()} disabled={state.pending || !state.ops.length}>放弃修改</button>
+        <button type="button" onClick={() => editor.discard()} disabled={state.pending || !hasDraftChanges(state)}>放弃修改</button>
         <button type="button" className="flow-primary" onClick={() => { void editor.save(); }} disabled={state.pending || !state.ops.length || !!Object.keys(state.invalid).length || !mirrorState.view?.writable}>{state.pending ? '保存中…' : state.saved ? '✓ 已保存' : '保存'}</button></footer>
     </div></section>;
 }

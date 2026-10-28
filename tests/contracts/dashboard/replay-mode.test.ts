@@ -8,7 +8,7 @@ import { deferred, message } from '../../helpers/contract-host.js';
 import { runFixture } from '../../helpers/contract-run.js';
 import { until } from '../../helpers/contract-runtime.js';
 
-test('actual SSE replay watermark separates initial and reconnect backlog from live message delivery', async t => {
+test('actual SSE replay watermark separates initial and reconnect backlog from live message delivery', { timeout: 10_000 }, async t => {
   const f = await runFixture(t), projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events') });
   const run = await f.createActive(), { root } = f.binding(run);
   const server = await DashboardServer.create({ projector, service: f.service });
@@ -60,5 +60,4 @@ test('actual SSE replay watermark separates initial and reconnect backlog from l
   assert.equal(new Set(messages.map(update => update.generation)).size, 1);
   assert.ok(headers.every(value => value.includes('X-Flow-Replay-Through')));
   assert.equal(updates[0]!.kind, 'snapshot');
-  await server.dispose(); projector.dispose(); client.dispose();
 });

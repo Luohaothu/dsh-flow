@@ -105,7 +105,8 @@ export class DashboardClient {
       const response = await this.fetcher(`${this.base}/api/token`, { headers: this.headers(false), signal: this.lifetime.signal, cache: 'no-store' });
       if (!response.ok) throw await responseError(response);
       const next = decodeToken(await response.json()); this.lifetime.signal.throwIfAborted();
-      this.token = next.token; this.publish({ version: next.version, epoch: next.epoch });
+      this.token = next.token;
+      if (this.state.epoch !== next.epoch || this.state.version?.major !== next.version.major || this.state.version.minor !== next.version.minor) this.publish({ version: next.version, epoch: next.epoch });
     })();
     this.authentication = operation;
     void operation.finally(() => { if (this.authentication === operation) this.authentication = undefined; }).catch(() => {});
@@ -193,6 +194,32 @@ export class DashboardClient {
       if (event.run.id === this.state.selectedRunId && event.run.status === 'invalid') { this.runAbort?.abort(); this.runGeneration++; this.publish({ runConnection: 'error', error: 'Selected run is no longer valid' }); }
     }
     this.publish({ registry: { ...current, seq: event.seq, runs }, updatedAt: Date.now() });
+  }
+  /** Read one current registry Run without selecting it or opening a stream. */
+  async readRunSnapshot(runId: string, signal: AbortSignal): Promise<RunSnapshot> {
+    if (this.disposed) throw new Error('Dashboard client is disposed');
+    if (!this.state.registry || !this.registryAbort || this.registryAbort.signal.aborted) throw new Error('Dashboard client must connect before reading a Run');
+    const epoch = this.state.registry.epoch;
+    const lifetime = AbortSignal.any([signal, this.lifetime.signal]);
+    const current = () => {
+      lifetime.throwIfAborted();
+      if (this.state.epoch !== epoch || this.state.registry?.epoch !== epoch) throw new ResetRequired('Run snapshot epoch changed');
+      if (!this.state.registry.runs.some(run => run.id === runId && run.epoch === epoch && run.status !== 'invalid')) throw new DashboardRequestError(404, 'run-unavailable', 'Run is unavailable');
+    };
+    current();
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await this.request(`/api/runs/${encodeURIComponent(runId)}`, lifetime, { cache: 'no-store' });
+        const value = decodeSnapshot(await response.json(), runId);
+        current();
+        if (value.run.epoch !== epoch) throw new ResetRequired('Run snapshot epoch changed');
+        if (value.run.status === 'invalid') throw new DashboardRequestError(404, 'run-unavailable', 'Run is unavailable');
+        return value;
+      } catch (error) {
+        current();
+        if (!(error instanceof ResetRequired) || attempt !== 0) throw error;
+      }
+    }
   }
   async selectRun(runId: string): Promise<void> {
     if (this.disposed) throw new Error('Dashboard client is disposed');

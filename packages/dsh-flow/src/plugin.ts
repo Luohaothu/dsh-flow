@@ -1,5 +1,6 @@
 import type { Context as DshContext } from '@deepseek-ai/cordis';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderSkillContent } from '@deepseek-ai/dsh-skill';
 import { resolveConfig, type PlainConfig, type ResolvedConfig } from './config.js';
 import { registerAgentTeamCommand } from './command.js';
@@ -66,7 +67,8 @@ export class FlowPlugin {
       runtime.projection = new DashboardProjector(runtime.runs, { directory: join(configuration.stateDirectory, 'events'),
         ...(configuration.connection.prices === undefined ? {} : { prices: configuration.connection.prices }) });
       runtime.dashboard = await DashboardServer.create({ projector: runtime.projector, service: runtime.runs,
-        ...configuration.connection });
+        ...configuration.connection,
+        staticDirectory: configuration.connection.staticDirectory ?? fileURLToPath(new URL('../web/', import.meta.url)) });
       runtime.bridge.attachRunService(runtime.runs);
       runtime.stopCommand = registerAgentTeamCommand(host, runtime.bridge, `${renderSkillContent(agentTeamSkill)}\n\n${renderSkillContent({ ...strategy, provider: strategy.provider ?? 'dsh-flow' })}`);
       return runtime;

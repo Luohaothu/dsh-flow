@@ -13,7 +13,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client';
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client';
 import { DashboardClient, type DashboardClientState } from '../dashboard/client.js';
-import type { RunInfo } from '../dashboard/protocol.js';
+import type { RegistrySnapshot, RunInfo } from '../dashboard/protocol.js';
+import { HeaderMembers, type HeaderMembersState, type HeaderRunMembers } from './header-members.js';
 import { DashboardApp } from '../ui/DashboardApp.js';
 import { DashboardStyles } from '../ui/styles.js';
 import { AgentStatusBadge, Icon, ModelMark } from '../ui/icons.js';
@@ -87,8 +88,7 @@ function NativeDashboard({ address, scope, host, focus, onFocusConsumed, ctx, vi
     nativeActions={{ returnToSession: callerSessionId => ctx.uiWorkspace.openSession(callerSessionId as SessionId),
       renderObserver: props => <FlowObserver {...props} {...host} /> }} />;
 }
-function HeaderRun({ run, address, openView, observe }: { run: RunInfo; address: string; openView(view: string, focus: string): void; observe(target: ObservationTarget, opener: HTMLButtonElement): void }) {
-  const { state } = useDashboard(address, run.id);
+function HeaderRun({ run, state = {}, openView, observe }: { run: RunInfo; state?: HeaderRunMembers; openView(view: string, focus: string): void; observe(target: ObservationTarget, opener: HTMLButtonElement): void }) {
   return <div role="group" aria-label={run.name}><div className="flow-native-run-label">{run.name}</div>
     {state.error && <p role="status">{state.error}</p>}
     {state.snapshot?.nodes.map(node => <div className="flow-native-member" key={node.id}>
@@ -107,16 +107,29 @@ function HeaderObserver({ address, target, host, close, theme }: { address: stri
   if (!member) return <aside className="flow-native-header-observer"><button type="button" onClick={close}>关闭观察</button><p role="status">{state.error ?? (state.snapshot ? '该成员已不可用' : '正在读取成员…')}</p></aside>;
   return <div className="flow-native-header-observer flow-dashboard" data-theme={theme}><FlowObserver target={selected} member={member} members={state.snapshot!.nodes} onSelect={next => setSelection({ key: targetKey, target: next })} onClose={close} {...host} /></div>;
 }
-function TeamHeader({ address, callerSessionId, openView, host, theme }: { address: string; callerSessionId: string; openView(view: string, focus: string): void; host: ObserverHost; theme: 'light' | 'dark' }) {
-  const { state } = useDashboard(address), [expanded, setExpanded] = useState(false), [target, setTarget] = useState<ObservationTarget>();
+function useHeaderMembers(client: DashboardClient, registry: RegistrySnapshot | null, caller: string, enabled: boolean): HeaderMembersState {
+  const pool = useMemo(() => enabled ? new HeaderMembers(client, caller) : undefined, [client, caller, enabled, registry?.epoch]);
+  const [owned, setOwned] = useState<{ pool: HeaderMembers | undefined; state: HeaderMembersState }>({ pool, state: {} });
+  useEffect(() => {
+    if (!pool) return;
+    const unsubscribe = pool.subscribe(state => setOwned({ pool, state }));
+    return () => { unsubscribe(); pool.dispose(); };
+  }, [pool]);
+  useEffect(() => { pool?.update(registry); }, [pool, registry?.epoch, registry?.seq]);
+  return owned.pool === pool ? owned.state : pool?.getState() ?? {};
+}
+export function TeamHeader({ address, callerSessionId, openView, host, theme }: { address: string; callerSessionId: string; openView(view: string, focus: string): void; host: ObserverHost; theme: 'light' | 'dark' }) {
+  const { client, state } = useDashboard(address), [expandedCaller, setExpandedCaller] = useState<string | null>(null), [target, setTarget] = useState<ObservationTarget>();
+  const expanded = expandedCaller === callerSessionId;
+  const members = useHeaderMembers(client, state.registry, callerSessionId, expanded && state.registry?.epoch === state.epoch);
   const trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), opener = useRef<HTMLButtonElement | null>(null);
   const runs = state.registry?.runs.filter(run => run.entry.callerSessionId === callerSessionId) ?? [];
-  const closeMenu = () => { setExpanded(false); trigger.current?.focus(); };
+  const closeMenu = () => { setExpandedCaller(null); trigger.current?.focus(); };
   const closeObserver = () => { setTarget(undefined); (opener.current?.isConnected ? opener.current : trigger.current)?.focus(); };
-  useEffect(() => { setExpanded(false); setTarget(undefined); }, [callerSessionId]);
+  useEffect(() => { setExpandedCaller(null); setTarget(undefined); }, [callerSessionId]);
   useEffect(() => {
     if (!expanded) return;
-    const pointer = (event: PointerEvent) => { if (event.target instanceof Node && !menu.current?.contains(event.target) && !trigger.current?.contains(event.target)) setExpanded(false); };
+    const pointer = (event: PointerEvent) => { if (event.target instanceof Node && !menu.current?.contains(event.target) && !trigger.current?.contains(event.target)) setExpandedCaller(null); };
     document.addEventListener('pointerdown', pointer); return () => document.removeEventListener('pointerdown', pointer);
   }, [expanded]);
   return <div className="flow-native-team-header" onKeyDown={event => {
@@ -126,8 +139,8 @@ function TeamHeader({ address, callerSessionId, openView, host, theme }: { addre
       const index = buttons.indexOf(document.activeElement as HTMLButtonElement), delta = event.key === 'ArrowDown' ? 1 : -1;
       buttons[(index + delta + buttons.length) % buttons.length]?.focus();
     }
-  }}><button ref={trigger} type="button" className="flow-native-team-trigger" aria-label={`当前会话 ${runs.length} 个团队运行`} aria-haspopup="menu" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><Icon name="group" size={15} />{runs.length}<Icon name="down" /></button>
-    {expanded && <div className="flow-native-team-menu flow-dashboard" data-theme={theme} ref={menu} role="menu" aria-label="当前会话团队">{state.error && <p role="status">{state.error}</p>}{runs.length ? runs.map(run => <HeaderRun key={run.id} run={run} address={address} openView={(view, focus) => { openView(view, focus); closeMenu(); }} observe={(next, element) => { opener.current = element; setTarget(next); setExpanded(false); }} />) : <p>使用 /agent-team 创建团队</p>}</div>}
+  }}><button ref={trigger} type="button" className="flow-native-team-trigger" aria-label={`当前会话 ${runs.length} 个团队运行`} aria-haspopup="menu" aria-expanded={expanded} onClick={() => setExpandedCaller(value => value === callerSessionId ? null : callerSessionId)}><Icon name="group" size={15} />{runs.length}<Icon name="down" /></button>
+    {expanded && <div className="flow-native-team-menu flow-dashboard" data-theme={theme} ref={menu} role="menu" aria-label="当前会话团队">{state.error && <p role="status">{state.error}</p>}{runs.length ? runs.map(run => <HeaderRun key={run.id} run={run} state={members[run.id] ?? {}} openView={(view, focus) => { openView(view, focus); closeMenu(); }} observe={(next, element) => { opener.current = element; setTarget(next); setExpandedCaller(null); }} />) : <p>使用 /agent-team 创建团队</p>}</div>}
     {target && <HeaderObserver address={address} target={target} host={host} close={closeObserver} theme={theme} />}
   </div>;
 }

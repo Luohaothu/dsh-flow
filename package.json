@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsx scripts/build.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
-    "test": "node --import tsx --test tests/contracts/*/*.test.ts",
+    "test": "node --import tsx --test --test-timeout=120000 tests/contracts/*/*.test.ts",
     "test:inventory": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
     "docs:dev": "vitepress dev docs/design --host 127.0.0.1",
     "docs:build": "vitepress build docs/design",

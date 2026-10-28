@@ -32,11 +32,13 @@
     "settings": "Real profile persistence and revisions; own-key inheritance, compare conflicts, requested/effective/application failure/restart feedback.",
     "protocol": "Replay watermark header separates replay from live facts without changing event order; initial/reconnect history remains static.",
     "packaging": "Production ModuleLoader CJS, exactly the allowed nine external module IDs, self-contained Web, shared React 18.3.1 and bundled icon license.",
-    "apiGeneration": "Official Typert generator with reproducible --check and explicit --write."
+    "apiGeneration": "Official Typert generator with reproducible --check and explicit --write.",
+    "navigation": "One menu registry subscription, finite serialized snapshots, navigation-only registry invalidation and caller/epoch cancellation; no per-Run menu SSE.",
+    "fieldDrafts": "Raw local input survives group changes; invalid-only edits keep their base revision and may be discarded. Decimal intermediate text is distinct from serialized numeric operations."
   },
   "validation": {
     "contracts": {
-      "passed": 679,
+      "passed": 698,
       "failed": 0,
       "skipped": 0
     },
@@ -50,7 +52,7 @@
       "oldHostFilePatches": 19
     },
     "schemaCensus": "passed; supported subset, not full JSON Schema certification",
-    "package": "Self-build, tarball extraction, isolated consumer install, 14 patterns/2 skills, Native registration and allowed externals, Web assets and icon license passed",
+    "package": "Self-build, tarball extraction, isolated consumer install, 14 patterns/2 skills, Native registration and allowed externals, Web assets and icon license passed; extracted package default Web HTTP bytes and explicit directory override passed",
     "generator": "fresh official generator --check passed",
     "webProduction": {
       "runtime": "real Core/HTTP/SSE fixture and headed Chrome; no production API mocking",
@@ -74,7 +76,9 @@
         "close observation and return to real ordinary caller",
         "header two-Run count and member focus into session panel",
         "real profile save, two-page revision conflict comparison, explicit retry and unset inheritance",
-        "actual host model catalog"
+        "actual host model catalog",
+        "4+ Run menu bounded HTTP reads with navigation invalidation (independent real Chrome/HTTP1 regression)",
+        "real keyboard multiline/partial-number input and invalid-only/group-switch draft lifecycle"
       ],
       "pageAndConsoleErrors": 0,
       "model": "deterministic acceptance adapter; external model acceptance belongs to P7"
@@ -83,7 +87,8 @@
       "packages": 8,
       "modifiedInstalledFiles": 18,
       "allInstalledHashesMatched": true
-    }
+    },
+    "runtime": "Node 24.21.0 (same version as CI), Darwin arm64; remote Linux checks required separately"
   },
   "sdkPatches": [
     {
@@ -172,7 +177,7 @@
   "review": {
     "model": "gpt-6-astra",
     "incrementalVerdict": "PASS",
-    "exactCommitAndPullRequestChecks": "pending"
+    "exactCommitAndPullRequestChecks": "pending revised commit and all remote checks"
   },
   "remainingP7Acceptance": [
     "Clean installation of the final eight necessary SDK adaptations and repeated installation",
@@ -180,6 +185,13 @@
     "Real model complete scenarios, restoration and final inventory dispositions"
   ],
   "observedLimits": [
-    "Synchronous blackboard append start/end has no sustained browser frame; records and state transitions are verified without adding artificial delay."
+    "Synchronous blackboard append start/end has no sustained browser frame; records and state transitions are verified without adding artificial delay.",
+    "An initial remote Node24 run hung and was cancelled. A real accepted partial-header shutdown race was independently reproduced and fixed; the original CI exact wait site was not proven. Tests now have bounded timeouts and one client-first cleanup."
+  ],
+  "postReviewFixes": [
+    "HTTP1 multi-Run menu connection budget",
+    "raw field input and invalid-only/cross-group draft lifetime",
+    "default packaged Web directory with explicit override",
+    "owned HTTP connections entering after shutdown stream scan"
   ]
 }

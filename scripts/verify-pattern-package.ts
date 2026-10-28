@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
 import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
@@ -89,8 +89,36 @@ console.log(JSON.stringify({ packages: listed.patterns.length, installed: true, 
 `;
   writeFileSync(join(runner, 'probe.mjs'), probe);
   const result: unknown = JSON.parse(execFileSync(process.execPath, ['probe.mjs'], { cwd: runner, encoding: 'utf8' }));
+  symlinkSync(join(root, 'node_modules'), join(packaged, 'node_modules'), 'dir');
+  const nativeProbe = `
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { FlowPlugin } from ${JSON.stringify(pathToFileURL(join(packaged, 'lib/index.js')).href)};
+import { runtime } from ${JSON.stringify(pathToFileURL(join(root, 'tests/helpers/contract-runtime.ts')).href)};
+import { enablePluginHost } from ${JSON.stringify(pathToFileURL(join(root, 'tests/helpers/contract-plugin.ts')).href)};
+test('packaged Flow serves its Web assets by default and preserves an explicit directory', { timeout: 15_000 }, async t => {
+  const f = await runtime(t); await enablePluginHost(f.host, f.directory);
+  const plugin = await FlowPlugin.create(f.host, { stateDirectory: join(f.directory, 'flow') });
+  try {
+    const page = await fetch(plugin.dashboardAddress);
+    assert.equal(page.status, 200);
+    assert.equal(await page.text(), await readFile(${JSON.stringify(join(packaged, 'web/index.html'))}, 'utf8'));
+    const script = await fetch(plugin.dashboardAddress + '/app.js');
+    assert.equal(script.status, 200);
+    assert.deepEqual(Buffer.from(await script.arrayBuffer()), await readFile(${JSON.stringify(join(packaged, 'web/app.js'))}));
+  } finally { await plugin.dispose(); }
+  const override = join(f.directory, 'alternate'); await mkdir(override); await writeFile(join(override, 'index.html'), 'explicit-web-directory');
+  const configured = await FlowPlugin.create(f.host, { stateDirectory: join(f.directory, 'alternate-flow'), connection: { staticDirectory: override } });
+  try { assert.equal(await (await fetch(configured.dashboardAddress)).text(), 'explicit-web-directory'); }
+  finally { await configured.dispose(); }
+});
+`;
+  writeFileSync(join(scratch, 'native-web-probe.mts'), nativeProbe);
+  execFileSync(process.execPath, ['--import', 'tsx', '--test', join(scratch, 'native-web-probe.mts')], { cwd: root, stdio: 'pipe' });
   console.log(JSON.stringify({ result, matchingAssetFiles: assets.length, matchingSkillFiles: skills.length, runtimeDependencyOnly: true,
-    builtFromSource: true, nativeModulePackaging: true, nativeExternals: [...external], standaloneWeb: true, iconLicense: true }));
+    builtFromSource: true, nativeModulePackaging: true, nativeExternals: [...external], standaloneWeb: true, defaultWebHttp: true, explicitWebDirectory: true, iconLicense: true }));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
