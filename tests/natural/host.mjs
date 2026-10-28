@@ -51,7 +51,8 @@ function privateWriter(directory) {
     try {
       verify();
       const opened = fstatSync(fd), current = lstatSync(path);
-      assert.ok(opened.isFile() && opened.ino === current.ino && opened.dev === current.dev);
+      assert.ok(opened.isFile());
+      if (opened.ino !== current.ino || opened.dev !== current.dev) return;
       const value = JSON.parse(readFileSync(fd, 'utf8'));
       assert.ok(value && typeof value === 'object' && !Array.isArray(value));
       assert.deepEqual(Object.keys(value).sort(), ['afterUserSeq', 'sessionId']);

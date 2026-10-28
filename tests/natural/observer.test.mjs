@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as pause } from 'node:timers/promises';
 import { register } from 'tsx/esm/api';
@@ -185,6 +187,39 @@ test('operator completion records unplanned business replies and cannot bypass p
   assert.deepEqual(settled.userTimeline.map(item => item.seq), [1, reply.seq]);
   assert.equal(settled.operatorRequests.length, 2);
   assert.equal(f.initialInputs(), 1);
+});
+
+test('operator completion retries a legitimate atomic replacement before accepting the finish request', { timeout: 10000 }, async t => {
+  const f = await fixture(t, { completion: 'operator', userPrompts: undefined, userTurnBoundary: 'main-idle', noProgressMs: 15000 });
+  Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+  f.readback(f.assignments[0]); f.endTurn();
+  await f.until(value => value.awaitingUser);
+  const open = fs.openSync;
+  let replaced = false, allowRead = false, controlPath;
+  fs.openSync = (path, ...args) => {
+    const fd = open(path, ...args);
+    if (!allowRead && basename(String(path)) === 'finish-request.json') {
+      replaced = true; controlPath = String(path);
+      fs.writeFileSync(controlPath + '.replacement', JSON.stringify({ sessionId: f.sessionId, afterUserSeq: 1 }), { mode: 0o600 });
+      fs.renameSync(controlPath + '.replacement', controlPath);
+    }
+    return fd;
+  };
+  syncBuiltinESMExports();
+  try {
+    await f.requestFinish(1);
+    const skipped = await f.until(value => replaced && value.operatorRequests.length === 0);
+    assert.equal(skipped.status, 'OBSERVING');
+    assert.equal(skipped.observation.operatorFinished, false);
+    allowRead = true;
+    const settled = await f.until(value => value.status === 'SETTLED');
+    assert.equal(settled.reason, 'operator-finish-after-terminal-readback');
+    assert.deepEqual(settled.operatorRequests.map(({ sessionId, afterUserSeq }) => ({ sessionId, afterUserSeq })), [{ sessionId: f.sessionId, afterUserSeq: 1 }]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(controlPath, 'utf8')), { sessionId: f.sessionId, afterUserSeq: 1 });
+  } finally {
+    fs.openSync = open;
+    syncBuiltinESMExports();
+  }
 });
 
 test('operator clarification retains duration, request and reported-token limits', { timeout: 10000 }, async t => {
