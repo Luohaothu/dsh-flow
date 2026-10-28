@@ -90,7 +90,7 @@
       "modifiedInstalledFiles": 18,
       "allInstalledHashesMatched": true
     },
-    "runtime": "Node 24.21.0 (same version as CI), Darwin arm64; remote Linux checks required separately"
+    "runtime": "Local Node 24.21.0 on Darwin arm64. CI workflow selects Node 24; the successful PR14 contract job 122553348734 used Node 24.21.0 on Linux. The workflow does not pin that patch version."
   },
   "sdkPatches": [
     {
