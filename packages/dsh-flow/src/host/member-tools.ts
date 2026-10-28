@@ -86,7 +86,10 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
     tool('flow_assignments', 'Query assignments in your Run.', objectSchema({ parentAssignmentId: { oneOf: [stringSchema, { type: 'null' }] }, status: { type: 'string', enum: ['pending', 'submitted', 'failed', 'cancelled'] } }), args => assignments().list(caller, args));
     tool('flow_assignment_archive_read', 'Read an archived formal assignment.', objectSchema({ assignmentId: stringSchema }, ['assignmentId']), args => assignments().readArchive(args.assignmentId as string));
     tool('flow_submit', 'Submit the actual result and reasons for continuing child assignments. accepted saves the result and completes this assignment. invalid-result returns field errors; after the first formatting failure only two corrections remain. terminal is already ended and cannot accept another result.', objectSchema({ assignmentId: stringSchema,
-      result: { description: 'The actual JSON value matching this assignment resultSchema. Pass objects and arrays directly, not as JSON-encoded strings. Use a string only when the assignment schema accepts a string.' },
+      result: {
+        description: 'The actual JSON value matching this assignment resultSchema. Pass objects and arrays directly, not as JSON-encoded strings. Use a string only when the assignment schema accepts a string.',
+        oneOf: [{ type: 'object', additionalProperties: true }, { type: 'array', items: {} }, { type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }],
+      },
       continuingChildren: { type: 'array', items: objectSchema({ assignmentId: stringSchema, reason: stringSchema }, ['assignmentId', 'reason']) } }, ['assignmentId', 'result', 'continuingChildren']), (args, execution) => {
       const transportKey = bindings.transportKey(binding, execution);
       return withTrustedCall({ actor: caller, transportKey }, () => assignments().submit(caller, assignment(args.assignmentId), {
