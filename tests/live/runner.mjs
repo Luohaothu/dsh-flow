@@ -5,6 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createProofWriter } from './host.mjs';
 const root = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const require = createRequire(join(root, 'package.json')), { stringify } = require('yaml');
 const artifacts = await realpath(join(root, '.artifacts'));
@@ -41,6 +42,7 @@ async function privateWrite(path, content, options = {}) {
 }
 const home = await privateDirectory(process.env.P7_LIVE_HOME ?? join(artifacts, 'p7-live/home'));
 const proof = await privateDirectory(process.env.P7_PROOF_DIR ?? join(artifacts, 'p7-live/run-' + Date.now()));
+const writeProof = createProofWriter(proof);
 const cli = join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js');
 for (const path of ['profiles/web/package.json', 'profiles/web/cordis.patch.yml', '.credentials.yaml']) await privatePath(join(home, path), true);
 try {
@@ -72,7 +74,7 @@ for (const phase of mode === 'all' ? ['main', 'restart'] : [mode]) {
     await privateWrite(hostSnapshot, await readFile(join(root, 'tests/live/host.mjs')));
     overrides.at(-1).insert[0].name = hostSnapshot;
     await privateWrite(join(home, 'profiles/web/cordis.patch.yml'), stringify(overrides));
-    await privateWrite(join(proof, 'evidence.json'), JSON.stringify({ status: 'STARTING' }));
+    writeProof('evidence.json', JSON.stringify({ status: 'STARTING' }));
     const child = spawn(process.execPath, [cli, 'web', '--host', '127.0.0.1', '--port', String(port), '--no-open'], { cwd: root, env });
     let exitState, spawnError, ioError;
     const exited = new Promise(resolve => {

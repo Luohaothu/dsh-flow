@@ -1,23 +1,74 @@
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdirSync, writeFileSync, readFileSync, realpathSync, lstatSync, openSync, closeSync, fstatSync, ftruncateSync, constants } from 'node:fs';
+import { join, dirname, resolve, relative, isAbsolute, sep } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 export const name = 'flow-live-acceptance';
 export const inject = ['flow', 'agents', 'llm', 'tools', 'systemPrompt', 'sessionQuery', 'typertGateway'];
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const json = value => JSON.parse(JSON.stringify(value));
+const phases = ['probe', 'resume-probe', 'herb', 'single', 'main', 'restart'];
+const outputNames = ['evidence.json', 'handoff.json', 'ui-ready.json', 'restart-ui-ready.json', ...phases.map(phase => phase + '-evidence.json')];
+function projectRoot() {
+    let directory = dirname(fileURLToPath(import.meta.url));
+    for (;;) {
+        try {
+            if (JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')).name === 'dsh-flow-workspace') return realpathSync(directory);
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        const parent = dirname(directory);
+        if (parent === directory) throw new Error('Live fixture must run inside its dsh-flow workspace');
+        directory = parent;
+    }
+}
+export function createProofWriter(input) {
+    const artifacts = join(projectRoot(), '.artifacts'), directory = resolve(input), path = relative(artifacts, directory);
+    assert.ok(path && path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path), 'Live proof must stay below this project/.artifacts');
+    assert.ok(constants.O_NOFOLLOW, 'Live proof writes require O_NOFOLLOW');
+    const directories = () => {
+        let current = artifacts;
+        for (const part of ['', ...path.split(sep)]) {
+            if (part) current = join(current, part);
+            let state;
+            try { state = lstatSync(current); }
+            catch (error) { if (error.code !== 'ENOENT') throw error; mkdirSync(current); state = lstatSync(current); }
+            assert.ok(state.isDirectory() && !state.isSymbolicLink(), 'Live proof directories cannot be symlinks');
+        }
+        assert.equal(realpathSync(directory), directory, 'Live proof directory escaped its private root');
+    };
+    const leaf = name => {
+        assert.ok(outputNames.includes(name), 'Unknown live proof output');
+        const target = join(directory, name);
+        try { const state = lstatSync(target); assert.ok(state.isFile() && !state.isSymbolicLink(), 'Live proof files cannot be symlinks'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        return target;
+    };
+    directories();
+    for (const name of outputNames) leaf(name);
+    return (name, content) => {
+        directories();
+        const target = leaf(name), fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
+        try {
+            directories();
+            leaf(name);
+            const opened = fstatSync(fd), current = lstatSync(target);
+            assert.ok(opened.isFile() && opened.dev === current.dev && opened.ino === current.ino, 'Live proof output identity changed');
+            ftruncateSync(fd, 0);
+            writeFileSync(fd, content);
+        } finally { closeSync(fd); }
+    };
+}
 export function apply(ctx) {
     let createUserMessage, SessionId;
     const directory = process.env.P7_PROOF_DIR;
     if (!directory)
         throw new Error('P7_PROOF_DIR is required');
-    mkdirSync(directory, { recursive: true });
+    const writeProof = createProofWriter(directory);
     const evidence = { status: 'RUNNING', phase: process.env.P7_PHASE ?? 'probe', model: process.env.P7_LIVE_MODEL ?? 'Qwen3.8-27B-4bit', provider: 'p7-local', requests: [], captures: [], scenarios: [] };
+    assert.ok(phases.includes(evidence.phase), 'Unknown live phase');
     evidence.hostSourceSha256 = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
-    const save = () => writeFileSync(join(directory, 'evidence.json'), JSON.stringify(evidence, null, 2));
+    const save = () => writeProof('evidence.json', JSON.stringify(evidence, null, 2));
     const progress = (stage, data = {}) => { evidence.stage = stage; evidence.updatedAt = new Date().toISOString(); Object.assign(evidence, data); save(); console.log('[P7 live]', stage); };
     const captures = new Map(), gates = new Map(), selectedTools = new Map();
     const archivedHistories = new Map();
@@ -167,7 +218,7 @@ export function apply(ctx) {
             selectedTools.delete(gate.sessionId);
             gate.release();
         } };
-        const finish = async (status) => { evidence.histories = histories(); evidence.status = status; save(); writeFileSync(join(directory, evidence.phase + '-evidence.json'), JSON.stringify(evidence, null, 2)); };
+        const finish = async (status) => { evidence.histories = histories(); evidence.status = status; save(); writeProof(evidence.phase + '-evidence.json', JSON.stringify(evidence, null, 2)); };
         if (evidence.phase === 'probe') {
             const probe = await command(main, 'p7_capture', { stage: 'provider-probe', value: { sum: 5 } }, 'provider-probe', '{sum:5}');
             assert.deepEqual(probe.capture.value, { sum: 5 });
@@ -254,7 +305,7 @@ export function apply(ctx) {
             evidence.runId = run.id;
             evidence.address = flow.dashboardAddress;
             evidence.scenarios.push({ name: 'single-real-model-Flow-job', status: 'PASS', assignmentId: job.id, result: saved.value, mainReadCall: true });
-            writeFileSync(join(directory, 'ui-ready.json'), JSON.stringify({ address: flow.dashboardAddress, mainSessionId: main.session.id, runId: run.id, assignmentIds: [job.id] }, null, 2));
+            writeProof('ui-ready.json', JSON.stringify({ address: flow.dashboardAddress, mainSessionId: main.session.id, runId: run.id, assignmentIds: [job.id] }, null, 2));
             progress('single-ui-ready');
             const end = Date.now() + Number(process.env.P7_UI_HOLD_MS ?? 180000);
             while (Date.now() < end) {
@@ -341,7 +392,7 @@ export function apply(ctx) {
             assert.deepEqual(webSnapshot.assignments.find(value => value.id === b.id).result, { label: 'B', count: 3 });
             evidence.scenarios.push({ number: 4, status: 'PASS', activeMain: main.session.id, notificationAssignment: b.id, modelReadCapture: await verifyOutcome(b.id, { label: 'B', count: 3 }), webNativeSameAddress: true });
             const ui = { address: flow.dashboardAddress, mainSessionId: main.session.id, runId: run.id, assignmentIds: [a.id, b.id, c.id], sessionIds: snapshot(run).nodes.map(node => node.sessionID) };
-            writeFileSync(join(directory, 'ui-ready.json'), JSON.stringify(ui, null, 2));
+            writeProof('ui-ready.json', JSON.stringify(ui, null, 2));
             progress('s4-ui-ready');
             const uiEnd = Date.now() + Number(process.env.P7_UI_HOLD_MS ?? 180000);
             while (Date.now() < uiEnd) {
@@ -377,7 +428,7 @@ export function apply(ctx) {
             const oldWorker = initialSnapshot.nodes.find(node => node.sessionID === sid(worker));
             const oldHistory = await ctx.sessionQuery.readSession(SessionId(sid(worker)));
             const handoff = { mainSessionId: main.session.id, oldRunId: run.id, oldEpoch: flow.runs.epoch, oldWorkerSessionId: sid(worker), oldWorkerInstanceId: oldWorker.id, oldTopAssignmentId: a.id, oldChildAssignmentId: a2.id, oldResult: { sum: 5 }, operationId, oldHistoryPrefix: oldHistory.events };
-            writeFileSync(handoffPath, JSON.stringify(handoff, null, 2));
+            writeProof('handoff.json', JSON.stringify(handoff, null, 2));
             evidence.scenarios.push({ number: 5, status: 'PASS', operationId, logicalTerminationSeen: true, allCleanupComplete: true, releaseEvents, unfinishedCancelled: [unfinished.id, pendingChild.id], oldRunId: run.id });
             await created.dispose();
             progress('phase1-complete');
@@ -427,7 +478,7 @@ export function apply(ctx) {
         evidence.address = flow.dashboardAddress;
         evidence.scenarios.push({ number: 5, status: 'PASS', restartEpochChanged: true, oldRunRejected: true, archiveResult: archived.assignment.result });
         evidence.scenarios.push({ number: 6, status: 'PASS', sameSessionId: prior.oldWorkerSessionId, oldInstance: prior.oldWorkerInstanceId, newInstance: next.id, newParent: next.parentId, noRestoredMailboxGroupAssignmentBindings: true, successorTop: successor.id, resumesAssignmentId: successor.spec.resumesAssignmentId, successorChild: child.id, childResumesAssignmentId: child.spec.resumesAssignmentId, nativeReaderSnapshot: true });
-        writeFileSync(join(directory, 'restart-ui-ready.json'), JSON.stringify({ address: flow.dashboardAddress, mainSessionId: main.session.id, runId: run.id, resumedSessionId: prior.oldWorkerSessionId, instanceId: next.id }, null, 2));
+        writeProof('restart-ui-ready.json', JSON.stringify({ address: flow.dashboardAddress, mainSessionId: main.session.id, runId: run.id, resumedSessionId: prior.oldWorkerSessionId, instanceId: next.id }, null, 2));
         progress('s6-ui-ready');
         const uiEnd = Date.now() + Number(process.env.P7_UI_HOLD_MS ?? 180000);
         while (Date.now() < uiEnd) {
@@ -444,5 +495,5 @@ export function apply(ctx) {
         await created.dispose();
         progress('all-six-scenarios-complete');
         await finish('PASS');
-    })().catch(error => { evidence.histories = histories(); evidence.status = 'FAIL'; evidence.error = { message: error.message, stack: error.stack }; save(); writeFileSync(join(directory, evidence.phase + '-evidence.json'), JSON.stringify(evidence, null, 2)); console.error('[P7 live] FAIL', error.message); });
+    })().catch(error => { evidence.histories = histories(); evidence.status = 'FAIL'; evidence.error = { message: error.message, stack: error.stack }; save(); writeProof(evidence.phase + '-evidence.json', JSON.stringify(evidence, null, 2)); console.error('[P7 live] FAIL', error.message); });
 }

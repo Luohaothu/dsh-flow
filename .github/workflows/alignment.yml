@@ -35,6 +35,7 @@ jobs:
         run: |
           node --check tests/live/runner.mjs
           node --check tests/live/host.mjs
+      - run: node --test tests/live/path-guard.test.mjs
       - run: pnpm test
       - run: pnpm test:schema
       - run: pnpm test:patterns-package

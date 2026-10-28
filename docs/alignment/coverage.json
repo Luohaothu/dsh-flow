@@ -907,7 +907,8 @@
       "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted.",
       "additionalVerificationRecords": [
         "p7-verification.json"
-      ]
+      ],
+      "p7ExecutionScope": "Final-package actual three auxiliary calls, strict formatting, manual source/constraint/unfinished-work/conflict review, unchanged histories and actual child payload; deterministic tests remain separate."
     },
     {
       "id": "C013-03",
@@ -8455,7 +8456,7 @@
       "designSection": "客户端注册与打包",
       "expectation": "新空状态安装启动后，14模板、team-strategy和/agent-team可用，原生注册入口及独立Web资源加载；若采用设计所需的宿主适配，验证干净安装、重复执行及实际能力。",
       "method": "semantic-source-and-test-map",
-      "status": "pending-final-product-acceptance",
+      "status": "evidence-linked",
       "sources": [
         "scripts/verify-pattern-package.ts",
         "packages/dsh-flow/package.json",
@@ -8483,7 +8484,8 @@
       ],
       "commands": "node --import tsx --test tests/contracts/native/configuration.test.ts tests/contracts/patterns/native.test.ts",
       "verificationRecord": "p7-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
+      "p7ExecutionScope": "Final-package fresh Node24 official profile installation/repeat, all164 files, eight SDK adaptations/eighteen files/nine owners, default HTTP and product assets verified. Matching Desktop remains separate."
     },
     {
       "id": "C084-02",
@@ -8493,7 +8495,7 @@
       "designSection": "客户端注册与打包",
       "expectation": "同一最终源码的类型、新测试、产品和文档构建通过，Web与原生实测浅深色、560px边界、窄屏、键盘及减少动效，产物身份与状态一致。",
       "method": "semantic-source-and-test-map",
-      "status": "pending-final-product-acceptance",
+      "status": "evidence-linked",
       "sources": [
         "scripts/verify-pattern-package.ts",
         "packages/dsh-flow/package.json",
@@ -8531,7 +8533,8 @@
       "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
       "additionalVerificationRecords": [
         "p7-verification.json"
-      ]
+      ],
+      "p7ExecutionScope": "Final-package actual private matching Desktop source639/hostNode24.18.1/Electron44 verifies real-model single, themes, actual dsh-app canvas559/560 viewport layouts, reduced motion, keyboard/focus, navigation and terminated complete native history. Final CLI711/types/package/docs and a separate same-package NativeSDK/Web single are distinct evidence; signed distribution and six scenarios inside Desktop are not claimed."
     },
     {
       "id": "C085-01",
@@ -8541,7 +8544,7 @@
       "designSection": "团队运行模型",
       "expectation": "创建空闲团队和嵌套成员本身模型调用为0；向同团队交两份不同schema作业并逐层派发获得真实结果，首份完成后仍可用。",
       "method": "semantic-source-and-test-map",
-      "status": "pending-external-model-end-to-end",
+      "status": "evidence-linked",
       "sources": [
         "scripts/verify-pattern-package.ts",
         "packages/dsh-flow/package.json",
@@ -8633,7 +8636,8 @@
       ],
       "commands": "node --import tsx --test tests/contracts/assignments/service.test.ts tests/contracts/host/native-bridge.test.ts tests/contracts/native/history.test.ts tests/contracts/run/failure-restart.test.ts tests/contracts/run/lifetime.test.ts",
       "verificationRecord": "p7-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
+      "p7ExecutionScope": "Final-package full4 actual model/tool/history execution recorded in p7-verification.json; this evidence link does not mean every compound clause was independently re-executed by an auditor."
     },
     {
       "id": "C085-02",
@@ -8643,7 +8647,7 @@
       "designSection": "团队运行模型",
       "expectation": "取消一作业子树时另一作业继续、Agent存活并可复用；主会话主动接续通知并读结果，Web与原生显示一致。",
       "method": "semantic-source-and-test-map",
-      "status": "pending-external-model-end-to-end",
+      "status": "evidence-linked",
       "sources": [
         "scripts/verify-pattern-package.ts",
         "packages/dsh-flow/package.json",
@@ -8735,7 +8739,8 @@
       ],
       "commands": "node --import tsx --test tests/contracts/assignments/service.test.ts tests/contracts/host/native-bridge.test.ts tests/contracts/native/history.test.ts tests/contracts/run/failure-restart.test.ts tests/contracts/run/lifetime.test.ts",
       "verificationRecord": "p7-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
+      "p7ExecutionScope": "Final-package full4 real-model cancellation/reuse/busy-main followup and real source checks passed; actual NativeSDK/Web image pair uses a separate same-package single Run. No final full4 S4/S6 screenshot is claimed."
     },
     {
       "id": "C085-03",
@@ -8745,7 +8750,7 @@
       "designSection": "团队运行模型",
       "expectation": "显式解散团队观察取消/逻辑终止/清理/操作结果；重启原句柄失效，历史结果可读，显式resume再建后继作业保resumesAssignmentId和当前关系，旧通信及作业不自动重绑。",
       "method": "semantic-source-and-test-map",
-      "status": "pending-external-model-end-to-end",
+      "status": "evidence-linked",
       "sources": [
         "scripts/verify-pattern-package.ts",
         "packages/dsh-flow/package.json",
@@ -8837,7 +8842,8 @@
       ],
       "commands": "node --import tsx --test tests/contracts/assignments/service.test.ts tests/contracts/host/native-bridge.test.ts tests/contracts/native/history.test.ts tests/contracts/run/failure-restart.test.ts tests/contracts/run/lifetime.test.ts",
       "verificationRecord": "p7-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence."
+      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence.",
+      "p7ExecutionScope": "Final-package full4 actual model/tool/history execution recorded in p7-verification.json; this evidence link does not mean every compound clause was independently re-executed by an auditor."
     }
   ],
   "checks": {

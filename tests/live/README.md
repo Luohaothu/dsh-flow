@@ -6,7 +6,7 @@
 
 先按项目 README 完成匹配 SDK 的安装、Flow 构建和打包。宿主必须使用仓库声明的 8 个 SDK 适配，同一 CLI、profile 中的 Flow 和关键 SDK 应解析到同一安装树。
 
-所有 live 路径必须位于当前项目的 `.artifacts/` 内。runner 在写入前检查路径和现有祖先的 realpath，拒绝指向外部目录的 symlink。使用本次验收专用 home；runner 会替换该 home 的选中凭据文档及 web profile 的 `cordis.patch.yml`。
+所有 live 路径必须位于当前项目的 `.artifacts/` 内。runner 在写入前检查路径和现有祖先的 realpath，拒绝指向外部目录的 symlink。host 从源文件或自含快照的祖先识别本仓库，固定输出在模型调用前完整预检；每次写入都复查父目录与文件，使用 `O_NOFOLLOW` 打开并核对文件身份后再截写。proof 目录链和输出文件不能使用 symlink，直接 Desktop 注入也执行同一保护。使用本次验收专用 home；runner 会替换该 home 的选中凭据文档及 web profile 的 `cordis.patch.yml`。
 
 先用官方 CLI 初始化专用 profile，并安装生产 tarball：
 
@@ -17,7 +17,7 @@ DSH_HOME="$PWD/.artifacts/p7-live/home" node node_modules/@deepseek-ai/dsh/lib/b
 
 确认 profile 的 `dependencies` 和 `dsh.profile.bundles` 已包含 `dsh-flow`。官方 plugin manager 会维护 bundle，不需要再次手动插入 Flow entry。
 
-在受控 Node 进程或会话环境中提供 `P7_LOCAL_LLM`，其值是被选中的服务凭据。不要把值写进命令行、公开源文件或报告。runner 只将该 ref 写入专用 home 的 `.credentials.yaml`，权限 `0600`；子进程通过官方 `ctx.credentials` 读取它。日常 DSH home 和模型服务配置不在此 runner 的写入范围。
+在受控 Node 进程或会话环境中提供 `P7_LOCAL_LLM`，其值是被选中的服务凭据。不要把值写进命令行、公开源文件或报告。runner 将该凭据值写入专用 home 的 `.credentials.yaml`，权限 `0600`；profile 配置只保存官方 credential ref，传给子进程的环境中删除该值，再由官方 `ctx.credentials` 解析引用。日常 DSH home 和模型服务配置不在此 runner 的写入范围。
 
 ## 执行
 
@@ -45,6 +45,12 @@ node tests/live/runner.mjs
 官方 rc.2 adapter 的模型声明不接受仅有 `off` 的 reasoning 字典。默认 Qwen route 声明 `off` 与 `low`，验收请求固定使用 `off` 和 `enable_thinking:false`。其他端点的协议及能力应按实际配置调整，不能仅替换模型名就假定兼容。
 
 每次请求最多输出 `1024` tokens；provider 无自动重试，HTTP/流空闲上界 `120` 秒，普通状态等待上界 `90` 秒，每个 CLI 阶段有 `19` 分钟验收期限。结束或中断后先发送 `SIGINT`，仍未退出时在 `10` 秒后强制终止本 runner 拥有的子进程。
+
+不提供凭据即可运行真实文件系统的输出边界回归；这些反例不调用模型，分别覆盖每个固定输出、父目录、启动后替换与独立快照入口：
+
+```sh
+node --test tests/live/path-guard.test.mjs
+```
 
 ## 场景与证据
 
