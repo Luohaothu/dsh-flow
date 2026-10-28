@@ -857,11 +857,20 @@
           "cases": [
             "K0053"
           ]
+        },
+        {
+          "path": "tests/contracts/host/design-edges.test.ts",
+          "cases": [
+            "K0423"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/core/derivation.test.ts",
       "verificationRecord": "p1-verification.json",
-      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted."
+      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C013-02",
@@ -885,11 +894,20 @@
             "K0056",
             "K0057"
           ]
+        },
+        {
+          "path": "tests/contracts/host/design-edges.test.ts",
+          "cases": [
+            "K0423"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/host/design-edges.test.ts",
       "verificationRecord": "p1-verification.json",
-      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted."
+      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C013-03",
@@ -910,11 +928,20 @@
           "cases": [
             "K0053"
           ]
+        },
+        {
+          "path": "tests/contracts/host/design-edges.test.ts",
+          "cases": [
+            "K0423"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/core/derivation.test.ts",
       "verificationRecord": "p1-verification.json",
-      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted."
+      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C013-04",
@@ -935,11 +962,20 @@
           "cases": [
             "K0058"
           ]
+        },
+        {
+          "path": "tests/contracts/host/design-edges.test.ts",
+          "cases": [
+            "K0423"
+          ]
         }
       ],
       "commands": "node --import tsx --test tests/contracts/core/derivation.test.ts",
       "verificationRecord": "p1-verification.json",
-      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted."
+      "scope": "Exact scenario ID anchors identify test assertions; a tag is traceability, not proof every compound clause is independently asserted.",
+      "additionalVerificationRecords": [
+        "p7-verification.json"
+      ]
     },
     {
       "id": "C014-01",
@@ -9077,17 +9113,17 @@
     },
     "K0055": {
       "path": "tests/contracts/host/design-edges.test.ts",
-      "line": 154,
+      "line": 186,
       "text": "test('C013-02: missing identity, v1 marker, sections, section content or text-only output rejects without retry', async t => {"
     },
     "K0056": {
       "path": "tests/contracts/host/design-edges.test.ts",
-      "line": 185,
+      "line": 217,
       "text": "test('C013-02: merge rejects malformed summaries before making any auxiliary request', async t => {"
     },
     "K0057": {
       "path": "tests/contracts/host/design-edges.test.ts",
-      "line": 197,
+      "line": 229,
       "text": "test('C013-02: a complete-looking summary with a truncated finish fails once and retains actual usage', async t => {"
     },
     "K0058": {
@@ -10914,6 +10950,11 @@
       "path": "tests/contracts/ui/tree-render.test.ts",
       "line": 81,
       "text": "test('independent exit batches retain their own timing and an old timer cannot remove a reopened member', { timeout: 15_000 }, async t => {"
+    },
+    "K0423": {
+      "path": "tests/contracts/host/design-edges.test.ts",
+      "line": 155,
+      "text": "test('C013-02: an independent summary quotes recorded instructions and ends with the complete source-specific format', async t => {"
     }
   }
 }
