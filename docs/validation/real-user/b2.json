@@ -1,0 +1,1295 @@
+{
+  "schemaVersion": 1,
+  "batch": "B2",
+  "status": "archived-exploration-targets-unmet",
+  "draftOnly": false,
+  "publicationReady": true,
+  "snapshotAt": "2026-10-29T07:29:08.249030+00:00",
+  "scope": "常用协作探索归档：十一次记录已停止、封存并评分，最新v12 M13原九事实7项通过、2项待澄清，业务不完整；正式链与通用自治过程通过。批次归档完成，模板/G01及最终冻结目标未达标。",
+  "plan": "../../plans/real-user-e2e-plan.md",
+  "baseline": "0a92333faf3ba7afd74769b5909ce7deaef98848",
+  "currentProductRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+  "materialVersion": "b2-business-v1",
+  "promptVersion": "plan-natural-inputs-v1",
+  "finalFrozenAcceptance": false,
+  "cases": [
+    {
+      "id": "N09",
+      "status": "closed-exploration-failed",
+      "latestVersion": "v8",
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finalFrozenAcceptance": false,
+      "finding": "No-Go方向正确，最终主会话将正确库存3/7改成4/6。"
+    },
+    {
+      "id": "M01",
+      "status": "two-closed-explorations-failed",
+      "latestVersion": "v9",
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "ui": "insufficient-evidence",
+      "finalFrozenAcceptance": false,
+      "finding": "保留B/D与D/D两次完整原判据失败，不以对照覆盖基线。"
+    },
+    {
+      "id": "M03",
+      "status": "closed-exploration-failed",
+      "latestVersion": "v9",
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "ui": "basic-observed-full-matrix-incomplete",
+      "finalFrozenAcceptance": false,
+      "finding": "七项关键判据五项通过；估算、未知工期和局部存储范围被不当确定化。"
+    },
+    {
+      "id": "M04",
+      "status": "single-business-and-collaboration-form-pass-template-uncovered",
+      "latestVersion": "v9",
+      "business": "pass",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "observed-manual-expert-routing",
+      "templateAdoption": "not-covered",
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "六项业务通过，四个Flow成员手工路由与整合成立；未采用目标模板。"
+    },
+    {
+      "id": "M05",
+      "status": "latest-business-incomplete-after-older-failure",
+      "latestVersion": "v11",
+      "business": "incomplete",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "六项明确通过、C5基准日通过；次日停用品警告原文有歧义，50/1机械结果及incomplete保留。"
+    },
+    {
+      "id": "M08",
+      "status": "single-business-and-manual-review-iteration-pass-template-uncovered",
+      "latestVersion": "v11",
+      "business": "pass",
+      "businessCriticalCriteria": {
+        "passed": 8,
+        "total": 8
+      },
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "observed-manual-review-revise-external-main",
+      "peerFlowMemberCollaboration": "not-covered",
+      "templateAdoption": "not-covered",
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "两份真实作业及最新复验闭环，树外Main不计第二个Flow成员。"
+    },
+    {
+      "id": "M13",
+      "status": "three-closed-explorations-latest-business-incomplete",
+      "latestVersion": "v12",
+      "closedAttempts": [
+        "m13-v11-bd-01",
+        "m13-v11-bd-02",
+        "m13-v12-bd-01"
+      ],
+      "latestCandidate": "m13-v12-bd-01",
+      "executionStateAtDraftRequest": "stopped-sealed-and-independently-graded",
+      "business": "incomplete",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "ui": "basic-final-state-observed-no-valid-ui-ack-preview-and-full-matrix-incomplete",
+      "finalFrozenAcceptance": false,
+      "candidateOutputsReadForThisDraft": false,
+      "latestCandidateStateSource": "Independent final grade, resource/process/output-seal records; original raw observation unchanged",
+      "businessCriticalCriteria": {
+        "passed": 7,
+        "incomplete": 2,
+        "failed": 0,
+        "total": 9
+      },
+      "finding": "原九事实7项通过、2项待澄清：监控查询已解决仍在字段/文件列为阻断，发布归档与回退版本一致建议有歧义。正式链及通用自治过程通过；单根无群/黑板/模板，G01未覆盖，UI仅partial。"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "n09-v8-bd-01",
+      "phase": "exploration",
+      "version": "v8",
+      "scenarios": [
+        "N09"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 72,
+      "conservativeAttempts": 72,
+      "sdkReportedTokens": 2527936,
+      "missingUsageRequests": 1,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "OBSERVING",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "none-observed",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 1,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "insufficient-evidence",
+      "finalFrozenAcceptance": false,
+      "finding": "No-Go方向正确，最终主会话将正确库存3/7改成4/6。",
+      "gradeRecordSha256": "27a8e9a30bf78d5ef49a3d950d53158d9f57ba5993e560da199170f6dd426cd9",
+      "resourceRecordSha256": "daf327467e1c9f83ac6c99439fdc467b87ee2ae22ec04c9bad5c5f784b1af623",
+      "observerAssessment": "failed-to-settle"
+    },
+    {
+      "id": "m01-v9-bd-01",
+      "phase": "exploration",
+      "version": "v9",
+      "scenarios": [
+        "M01"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 34,
+      "conservativeAttempts": 34,
+      "sdkReportedTokens": 796242,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "insufficient-evidence",
+      "finalFrozenAcceptance": false,
+      "finding": "当期算术正确；未来状态的无依据确定断言及明细纳入标记问题保留。",
+      "gradeRecordSha256": "1a69a0769e8d3a9c976b4e663f379902a824ef7dddca6bb9e8269916c0c27b45",
+      "resourceRecordSha256": "ee5e0bb973f201f83f9eab5f2ce9fe93ebb90e529d028121b9f26e36ef9a7613",
+      "observerAssessment": "settled-ui-ack"
+    },
+    {
+      "id": "m01-v9-dd-01",
+      "phase": "exploratory-configuration-comparison",
+      "version": "v9",
+      "scenarios": [
+        "M01"
+      ],
+      "modelAliases": {
+        "main": "D",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 17,
+      "conservativeAttempts": 17,
+      "sdkReportedTokens": 327808,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "insufficient-evidence",
+      "finalFrozenAcceptance": false,
+      "finding": "分店算术正确；汇总交付缺失，成因与容差断言无依据。单次配置对照不作排行。",
+      "gradeRecordSha256": "5fe0dc64dde64214eecba6005444d8cdca25c9ec75256c374940ec63e4c8851a",
+      "resourceRecordSha256": "93c53efbbb9c62fef83ec1eaeb9a5dc3b81afef3b3c8b23b17a62f07e6917df9",
+      "observerAssessment": "settled-ui-window-expired"
+    },
+    {
+      "id": "m03-v9-bd-01",
+      "phase": "exploration",
+      "version": "v9",
+      "scenarios": [
+        "M03"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 25,
+      "conservativeAttempts": 25,
+      "sdkReportedTokens": 659047,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "fail",
+      "formalDeliveryChain": "pass",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "basic-observed-full-matrix-incomplete",
+      "finalFrozenAcceptance": false,
+      "finding": "七项关键判据五项通过；估算、未知工期和局部存储范围被不当确定化。",
+      "gradeRecordSha256": "695813aa0089b33036f6b46e7406c79f304f0e619c9525e163160eb334b00afc",
+      "resourceRecordSha256": "c3a2332893536eddbb63f41b5cb0acfc79f4f07d3d731079f867a655008e0447",
+      "observerAssessment": "settled-ui-ack"
+    },
+    {
+      "id": "m04-v9-bd-01",
+      "phase": "exploration",
+      "version": "v9",
+      "scenarios": [
+        "M04"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 58,
+      "conservativeAttempts": 58,
+      "sdkReportedTokens": 1264856,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "pass",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "observed-manual-expert-routing",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 4,
+      "meaningfulFlowContributors": 4,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "六项业务通过，四个Flow成员手工路由与整合成立；未采用目标模板。",
+      "gradeRecordSha256": "4a84e3e63952702d3dec52a6b1a4498d6609cab9f068277945ffcb29a65d4327",
+      "resourceRecordSha256": "6bc11a3da1e6de24ecb56c7ea42f7b6b35499acc7dc13f4d710686b408e6fd4e",
+      "observerAssessment": "settled-ui-ack"
+    },
+    {
+      "id": "m05-v10-bd-01",
+      "phase": "exploration",
+      "version": "v10",
+      "scenarios": [
+        "M05"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 11,
+      "conservativeAttempts": 11,
+      "sdkReportedTokens": 136700,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "ABORTED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "fail-no-delivery",
+      "formalDeliveryChain": "incomplete",
+      "autonomy": "fail",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 0,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "incomplete",
+      "finalFrozenAcceptance": false,
+      "finding": "根索取已有明细且未实现工具；正文、策略与工具实际存在，不归为材料或技能缺失。",
+      "gradeRecordSha256": "98332cc517159c89c4f72ea34347a8e62b8b5c4c9706c0584d6ec38a52fd1992",
+      "resourceRecordSha256": "cf39683c8e5b5872044beb88a117e2710797ac9d2d7fb3377c79e9fdcd5322dc",
+      "observerAssessment": "aborted-no-progress"
+    },
+    {
+      "id": "m05-v11-bd-01",
+      "phase": "exploration",
+      "version": "v11",
+      "scenarios": [
+        "M05"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 75,
+      "conservativeAttempts": 75,
+      "sdkReportedTokens": 2354701,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "incomplete",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "六项明确通过、C5基准日通过；次日停用品警告原文有歧义，50/1机械结果及incomplete保留。",
+      "gradeRecordSha256": "fd3551e7245392f1f6175f6d4d6a7a12c691fcc3b9eecf60e471a9139cde8ffd",
+      "resourceRecordSha256": "630e65ef46e7df078f726fa16640c2dfd4ad47be7678232dec4a6fa843f9516e",
+      "observerAssessment": "settled-ui-ack"
+    },
+    {
+      "id": "m08-v11-bd-01",
+      "phase": "exploration",
+      "version": "v11",
+      "scenarios": [
+        "M08"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 70,
+      "conservativeAttempts": 70,
+      "sdkReportedTokens": 2508636,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "SETTLED",
+      "observerAssessment": "settled-ui-ack",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "pass",
+      "businessCriticalCriteria": {
+        "passed": 8,
+        "total": 8
+      },
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "targetCollaborationBehavior": "observed-manual-review-revise-external-main",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "fullUIMatrixPassed": false,
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "独立Main核源反馈→Root二轮实改→Main最新读回复验成立，只有单一Flow作者；模板与Flow同伴协作未覆盖。",
+      "gradeRecordSha256": "ded93bd94ec3365ed6d95ed0f41b21df545857a260f1d7979ea62e937765b165",
+      "resourceRecordSha256": "94b2b1e9269cdbb5073017bce2989775c629a000ee44ed3cc7b4bb98ddfaef1c"
+    },
+    {
+      "id": "m13-v11-bd-01",
+      "phase": "exploration",
+      "version": "v11",
+      "scenarios": [
+        "M13",
+        "G01",
+        "G06"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 78,
+      "conservativeAttempts": 79,
+      "sdkReportedTokens": 4010196,
+      "missingUsageRequests": 1,
+      "lateLocalBoundaryRejections": 1,
+      "observerStatus": "ABORTED",
+      "observerAssessment": "aborted-reported-usage-boundary-final-main-delivery-incomplete",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "incomplete",
+      "formalDeliveryChain": "incomplete",
+      "autonomy": "incomplete",
+      "autonomyScope": "process dimension; not overall acceptance",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "flowRootModelRequests": null,
+      "nativeAuxiliaryCount": 1,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "blackboardUsed": false,
+      "fullUIMatrixPassed": false,
+      "ui": "pass-observed-basic-web-only",
+      "finalFrozenAcceptance": false,
+      "finding": "根阶段八事实确认、一项监控跨字段整合未澄清；取消旧作业后两份正式结果已读回，Main无最终用户答复。",
+      "gradeRecordSha256": "e6fc87159d77f61f04d4a446a2d1bd4417b8d200f707200ac22b83f226a3348d",
+      "gradingProvenance": "independent-final-grade",
+      "resourceRecordSha256": "1d1f89d0c33e9d57933861970ba85ac64bac2a67bd241ef7a48e7b7b27cb5ca8",
+      "outputSealRecordSha256": "c77feb7660e2ad061701d8f6319b3e115394cef380fafeb71b1fdbfe1f64995e"
+    },
+    {
+      "id": "m13-v11-bd-02",
+      "phase": "exploration",
+      "version": "v11",
+      "scenarios": [
+        "M13",
+        "G01",
+        "G06"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 11,
+      "conservativeAttempts": 12,
+      "sdkReportedTokens": 235240,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 1,
+      "observerStatus": "ABORTED",
+      "observerAssessment": "aborted-no-progress-final-tool-reject-arrived-after-boundary",
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "incomplete",
+      "formalDeliveryChain": "not-formed",
+      "autonomy": "incomplete",
+      "autonomyScope": "process dimension; not overall acceptance",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 0,
+      "flowRootModelRequests": 0,
+      "nativeAuxiliaryCount": 0,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "blackboardUsed": false,
+      "fullUIMatrixPassed": false,
+      "ui": "incomplete",
+      "finalFrozenAcceptance": false,
+      "finding": "Main派发参数及结果schema多次被拒，零正式作业、Root零模型调用；无进展判界早于最后工具错误9ms，补充输入只排队未消费。",
+      "gradeRecordSha256": "6e9b4b12c4e580a01e1fbec4d051c2fc08896f9f897169919b360b39edfed544",
+      "gradingProvenance": "primary-grade-after-independent-audit-not-independent-final-grading",
+      "resourceRecordSha256": "6380fc269a6b554ec37c4f6588b4a953728b013d1d7b48438f8d3806571f06ff",
+      "outputSealRecordSha256": "f73d2d49c0bc4c155ac5c7843e53fca51bc30c33de9bf2ac41ae4b366b154825"
+    },
+    {
+      "id": "m13-v12-bd-01",
+      "phase": "exploration",
+      "version": "v12",
+      "scenarios": [
+        "M13",
+        "G01",
+        "G06"
+      ],
+      "modelAliases": {
+        "main": "B",
+        "flowDefault": "D"
+      },
+      "candidateStopped": true,
+      "recordedRequests": 55,
+      "conservativeAttempts": 55,
+      "sdkReportedTokens": 2812911,
+      "missingUsageRequests": 0,
+      "lateLocalBoundaryRejections": 0,
+      "observerStatus": "ABORTED",
+      "observerAssessment": "raw-no-progress-boundary-retained-cancelled-readback-false-negative-independently-reviewed",
+      "observerReason": "no-progress",
+      "rawReadback": false,
+      "rawTaskComplete": false,
+      "processExitCode": 130,
+      "forcedTermination": false,
+      "business": "incomplete",
+      "formalDeliveryChain": "pass",
+      "autonomy": "pass",
+      "autonomyScope": "process dimension; not overall acceptance",
+      "targetCollaborationBehavior": "not-covered",
+      "templateAdoption": "not-covered",
+      "maximumObservedFlowNodes": 1,
+      "meaningfulFlowContributors": 1,
+      "nativeAuxiliaryCountsAsFlowMember": false,
+      "groups": 0,
+      "blackboardUsed": false,
+      "fullUIMatrixPassed": false,
+      "ui": "basic-final-state-observed-no-valid-ui-ack-preview-and-full-matrix-incomplete",
+      "finalFrozenAcceptance": false,
+      "finding": "原九事实7项通过、2项待澄清：监控查询已解决仍在字段/文件列为阻断，发布归档与回退版本一致建议有歧义。正式链及通用自治过程通过；单根无群/黑板/模板，G01未覆盖，UI仅partial。",
+      "gradingProvenance": "independent-final-grade",
+      "gradeRecordSha256": "54c0f2cddb999b6507b8f97fd3f7a88ff157b53c8e9ae4f9a8a453975435989d",
+      "resourceRecordSha256": "ab0bc6478d4cc801f502f1aa694f65a460c74a824837d965e669bc1e65ad9b44",
+      "processCheckRecordSha256": "79ec1087b3fec6e88cad09d0a2cf3155728131b3f58a97850ea0e78815262512",
+      "outputSealRecordSha256": "afc1a47088f40979974101d820641070a45f4703e01de6e9c209532107d8b49c",
+      "businessCriticalCriteria": {
+        "passed": 7,
+        "incomplete": 2,
+        "failed": 0,
+        "total": 9
+      },
+      "nativeAuxiliaryCount": 0
+    }
+  ],
+  "packages": [
+    {
+      "version": "v8",
+      "sourceRevision": "5a7aeaee5d7a5b7d792a9c83f00b804433278062",
+      "tarSha256": "9b8076fa594bf2b93c23c79c0491bfc2e0e51aa261bbfa94657fa1c27a2f008c",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "f958efe2f00f6eb7bfd292ba764c6f0f7773aad5f15905b512173600b9d1e9e4",
+        "team-strategy": "7feede00946b8c4563efed06e3be7abbe792a06c8325f1a8eb740817d1d9a713"
+      }
+    },
+    {
+      "version": "v9",
+      "sourceRevision": "dc6b29a6592f9a8ca6d815a3a221c910e18955c4",
+      "tarSha256": "a535ff19896138f1f61bca2dfc567ec2f8e08d5bded473989c08cd59db691b81",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "f958efe2f00f6eb7bfd292ba764c6f0f7773aad5f15905b512173600b9d1e9e4",
+        "team-strategy": "1cfc9ed874a306c4fdd0e1737e2b9c55d65e3d23c598a7afc1ec688fe22fc3e9"
+      }
+    },
+    {
+      "version": "v10",
+      "sourceRevision": "383cae32d07f6b1538b574c01768381819087367",
+      "tarSha256": "27db20eedb97d01b44d3fc9ee903ca50bd94c12da85c9f392fd0267c8591b2ac",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "f958efe2f00f6eb7bfd292ba764c6f0f7773aad5f15905b512173600b9d1e9e4",
+        "team-strategy": "1cfc9ed874a306c4fdd0e1737e2b9c55d65e3d23c598a7afc1ec688fe22fc3e9"
+      }
+    },
+    {
+      "version": "v11",
+      "sourceRevision": "54983357b7d3133571a4bb0d41d72e099d86eb06",
+      "tarSha256": "ab160a4f94da945a914fb550a75c45daa7b4b7a67f16f05ec68b2f58643f623d",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "165cee22cbcbacedf94883f4b1aec51fbf81169959e54681a080fa92842f79c7",
+        "team-strategy": "963737802c0c63c17be6cddadcbb166e8dae076a36dbe66fa9f5e7bd0f70869b"
+      }
+    },
+    {
+      "version": "v12",
+      "sourceRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+      "tarSha256": "72694514b920dc08ba388648fce709ead8fa51170e2acad9716ac7f72a59ca17",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "165cee22cbcbacedf94883f4b1aec51fbf81169959e54681a080fa92842f79c7",
+        "team-strategy": "963737802c0c63c17be6cddadcbb166e8dae076a36dbe66fa9f5e7bd0f70869b"
+      }
+    }
+  ],
+  "aggregate": {
+    "scope": "All eleven stopped and sealed B2 exploration attempts; offline qualification, installation and engineering checks are not real model calls.",
+    "accountingStatus": "closed-and-reconciled-unknown-usage-retained",
+    "closedReviewedRuns": 11,
+    "recordedRequests": 506,
+    "conservativeAttempts": 508,
+    "lateLocalBoundaryRejections": 2,
+    "knownSdkReportedTokens": 17634273,
+    "unknownNetworkUsageRequests": 2,
+    "actualCompleteConsumptionKnown": false,
+    "allB2AttemptsIncluded": true,
+    "activeOrPendingM13Excluded": false,
+    "successRateAcrossVersions": "not pooled; separate business/formal/autonomy/behavior/template/UI/frozen conclusions",
+    "closedM08Included": true,
+    "closedM13V11AttemptsIncluded": 2,
+    "countingUnit": "Monitored attempts plus separately evidenced local post-boundary rejections; local rejections are not additional network requests.",
+    "includingB0B1Baseline": {
+      "baselineScope": "Published B1 ledger including B0 calibration",
+      "baselineConservativeAttempts": 442,
+      "baselineKnownSdkReportedTokens": 6914857,
+      "baselineUnknownNetworkUsageRequests": 2,
+      "conservativeAttempts": 950,
+      "knownSdkReportedTokens": 24549130,
+      "unknownNetworkUsageRequests": 4,
+      "activeV12Excluded": false,
+      "actualCompleteConsumptionKnown": false
+    },
+    "closedM13V12AttemptsIncluded": 1
+  },
+  "comparison": {
+    "case": "M01",
+    "baselineAttempt": "m01-v9-bd-01",
+    "comparisonAttempt": "m01-v9-dd-01",
+    "mainAliasChange": [
+      "B",
+      "D"
+    ],
+    "flowDefaultAlias": "D",
+    "sameInstalledProductAndSdkAndSkillsAndObserver": true,
+    "sameFrozenInputsAndRubric": true,
+    "frozenRubricSha256": "fb0871a89dc267b241594ad984903349b71613f01345ac4cddf4fbd80814310e",
+    "originalPreregistrationRestoredSha256": "e412ee7448d04061908b9bd1cbcd5452b19a184341fcef1e66ec01a6336f7342",
+    "postLaunchNoteCorrection": {
+      "status": "corrected-and-preserved",
+      "actualRecordedAt": "2026-10-29T03:46:22.681Z",
+      "mistakenPreExecutionLabelRemoved": true,
+      "isPreregistration": false,
+      "usedAsScoringCriterion": false
+    },
+    "uiWindowMissed": true,
+    "teamOrGlobalPanelObserved": false,
+    "returnToOriginVerified": false,
+    "uiAckWritten": false,
+    "causalOrModelRankingClaim": false
+  },
+  "m05v11": {
+    "business": "incomplete",
+    "clearCriticalPasses": 6,
+    "baselineC5": "pass",
+    "frozenComparator": {
+      "passed": 50,
+      "failed": 1,
+      "failingComparison": "next_day_warnings",
+      "allChecksPassed": false
+    },
+    "warningScope": "原文未明确警告是否涵盖七日窗口之外的历史停用品预测，两种解释均有依据。",
+    "ordinaryBusinessViolationEstablished": false,
+    "frozenAcceptance": "incomplete",
+    "formalDeliveryChain": "pass",
+    "autonomy": "pass",
+    "targetPipelineBehavior": "not-covered",
+    "templateAdoption": "not-covered",
+    "fullUMatrix": false
+  },
+  "corrections": [
+    {
+      "id": "N09-observer-stale-request",
+      "observerEvidenceStatus": "OBSERVING",
+      "request": 26,
+      "endedButMarkedRunning": true,
+      "sseDone": false,
+      "usageKnown": false,
+      "unknownTokensNotZero": true,
+      "businessIndependentlyScored": "fail"
+    },
+    {
+      "id": "M05-v10-body-and-skill",
+      "bodyPresentInMailbox": true,
+      "fullTeamStrategyPresent": true,
+      "modelVisibleTools": 64,
+      "rootActualToolCalls": 0,
+      "classification": "instruction-following/no-delivery failure; not lost body, missing skill or user material failure"
+    },
+    {
+      "id": "M05-v10-vacuous-readback",
+      "terminalAssignmentsEmpty": true,
+      "readbackFlagDoesNotEstablishChain": true
+    },
+    {
+      "id": "M01-dd-post-launch-note",
+      "mistakenPreExecutionLabelCorrected": true,
+      "originalPreregistrationBytesRestored": true,
+      "postLaunchExplanationIsNotPreregistration": true
+    },
+    {
+      "id": "M05-v11-warning-ambiguity",
+      "mechanicalFailureRetained": true,
+      "ordinaryViolationNotEstablished": true,
+      "incompleteRetained": true
+    },
+    {
+      "id": "M13-v11-01-cancelled-zero-usage",
+      "request": 78,
+      "cancelledObserverDefaultZeroNotProviderSettlement": true,
+      "unknownNetworkUsageRetained": true,
+      "separateLateLocalBoundaryRejection": 1
+    },
+    {
+      "id": "M13-v11-02-no-progress-boundary",
+      "finalToolErrorArrived9msAfterBoundary": true,
+      "rootModelRequests": 0,
+      "rootDidNotIgnoreDeliveredBody": true,
+      "secondUiMessageQueuedNotConsumed": true,
+      "allElevenNetworkRequestsCompleted": true,
+      "separateLateLocalBoundaryRejection": 1
+    },
+    {
+      "id": "M13-v12-cancelled-receipt-observer-false-negative",
+      "rawObserverStatus": "ABORTED",
+      "rawObserverReason": "no-progress",
+      "rawReadback": false,
+      "rawEvidenceUnchanged": true,
+      "oldAssignmentCancellationReceiptAtMainEvent": 158,
+      "latestSubmittedReadbackAtMainEvent": 177,
+      "mainFinalUserAnswer": true,
+      "designBasis": "docs/design/design.md:825",
+      "cancelReceiptIsTerminalAcknowledgement": true,
+      "submittedReplacementStillRequiresExactReadApi": true,
+      "collectorFixRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+      "collectorFixNotBackfilledIntoOldEvidence": true
+    }
+  ],
+  "retainedFailureNotes": {
+    "m01BD": "当前金额正确之外，未来状态和明细纳入标记问题也保留，不声称根交付所有字段无缺陷。",
+    "m03": "两次主会话派发拒绝和一次根读取归属错误自行修正；未知估算/工期/容量范围导致业务失败，额外文档日期不新增硬门槛。",
+    "m04": "12次创建中9次前置拒绝、3次成功；日期与测试执行归属瑕疵单列，业务六项通过保留。",
+    "m05v11": "委派数值预估由根纠正；两次原生更正消息失败和残留来源归因问题保留。",
+    "m08": "第二作业初次参数被拒后修正；附件摘要称25条、实际23条，1条来自Root首轮自拟问题；部分重复反馈未追认为新门槛。",
+    "m13v11_01": "Root八事实确认，一项监控更新跨字段整合仍待澄清；两次正式提交读回不替代缺失的Main最终答复。",
+    "m13v11_02": "零正式作业、Root零模型；Main派发错误与观察器最后工具返回前9ms判界并存，不能断言Root未读、上游挂起或补充已送模型。",
+    "m13v12": "原九事实7pass/2incomplete。监控查询能力已解决但正式pending_or_unknown及文件仍将生产查询/截图/运行证据列为发布阻断；回退目标2.5与本次归档须2.6时“归档版本与回退版本一致”建议未澄清。消费者2.5非幂等无来源断言、上午可发简写、5000分表述另列非关键瑕疵，不增设第十判据。原ABORTED/no-progress/readbackfalse不改，UI无ack且预览未验。"
+  },
+  "coverage": {
+    "creditedTemplates": [],
+    "m01": {
+      "collaborationForm": "not-covered",
+      "templateAdoption": "not-covered"
+    },
+    "m03": {
+      "collaborationForm": "not-covered",
+      "templateAdoption": "not-covered"
+    },
+    "m04": {
+      "collaborationForm": "observed-manual-expert-routing",
+      "templateAdoption": "not-covered",
+      "effectiveFlowContributors": 4
+    },
+    "m05": {
+      "collaborationForm": "not-covered",
+      "templateAdoption": "not-covered"
+    },
+    "m08": {
+      "actualIndependentReviewRevisionAndVerification": "pass",
+      "reviewer": "external Main",
+      "flowPeerCollaboration": "not-covered",
+      "templateAdoption": "not-covered",
+      "flowNodes": 1
+    },
+    "m13": {
+      "closedV11CollaborationForm": "not-covered",
+      "closedV11TemplateAdoption": "not-covered",
+      "singleRootAndNativeHelperNotSharedFlowReview": true,
+      "closedV12CollaborationForm": "not-covered",
+      "closedV12TemplateAdoption": "not-covered"
+    },
+    "G01": {
+      "closedV11Attempts": "not-covered",
+      "closedV12Attempt": "not-covered"
+    },
+    "G06": "incomplete: v12 UP-28 consumption, updated formal assignment, cancellation, latest submission/readback and final Main delivery pass; full correct update integration remains incomplete because monitor conclusions conflict across fields; other G06 events not presumed",
+    "observedEffectiveFlowNodeCounts": [
+      1,
+      4
+    ],
+    "nativeAuxiliaryCountsAsFlowMember": false,
+    "largerScaleTargets": "not-covered",
+    "fullUIMatrix": "pending",
+    "standaloneWeb": "pending",
+    "desktop": "pending",
+    "frozenThreeConsecutiveTrials": "not-established",
+    "scope": "Eleven closed exploration attempts; actual manual behavior does not credit template adoption or final frozen acceptance.",
+    "observedEffectiveFlowContributorCounts": [
+      0,
+      1,
+      4
+    ]
+  },
+  "validation": {
+    "sourceRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+    "fullContracts": {
+      "tests": 734,
+      "passed": 734,
+      "failed": 0,
+      "status": "pass",
+      "evidenceSource": ".artifacts/natural-b2/contracts-schema-hint.log; log tail verified",
+      "logSha256": "107a71933187402fd0c7b337603cefb7e8937e6830ba3847ce44c9e060771fb8",
+      "sourceRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377"
+    },
+    "typecheck": {
+      "status": "pass",
+      "configurations": 2,
+      "evidenceSource": "Root successful exit confirmation; .artifacts/natural-b2/typecheck-continuation-schema.log invokes both configurations",
+      "logSha256": "f4701ac72c7b6d365b162edd49b01df3808d9cc760791d3d978a6a64be6f4e6b",
+      "sourceRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377"
+    },
+    "initialBrowserSandboxBlockedRunRetained": true,
+    "otherFinalBatchChecks": {
+      "build": {
+        "status": "pass",
+        "logSha256": "c5ebe97a0a4689c67a0f7f7c43179c642b9f0e40589a07bd2ded9659c6874ccf",
+        "evidenceSource": ".artifacts/natural-b2/pack-v12.log",
+        "sourceBoundary": "Product build from immutable v12 pack; API and inventory checked in B2. Collector-only final commit does not change product declarations or inventory."
+      },
+      "docsBuild": {
+        "status": "pass",
+        "logSha256": "f84035ec8c5395c7163f76cf1f878cce557767d3c55ed1ac9c057d17c7a6d1c1",
+        "evidenceSource": ".artifacts/natural-b2/final-docs-build.log",
+        "warnings": [
+          "Vite chunk-size advisory retained; build exit 0."
+        ]
+      },
+      "nativeApi": {
+        "status": "pass",
+        "logSha256": "385f3cf69f1be7cb173a726e44b783ebbc615d434cb27feb7fa3186e6d953ee7",
+        "evidenceSource": ".artifacts/natural-b2/final-native-api.log",
+        "sourceBoundary": "Product build from immutable v12 pack; API and inventory checked in B2. Collector-only final commit does not change product declarations or inventory."
+      },
+      "inventory": {
+        "status": "pass",
+        "logSha256": "0010bb5450ea43e9e983d7d81a79a8330ef1d819f7b26114fea5c02288ba9ca8",
+        "evidenceSource": ".artifacts/natural-b2/final-inventory.log",
+        "sourceBoundary": "Product build from immutable v12 pack; API and inventory checked in B2. Collector-only final commit does not change product declarations or inventory."
+      }
+    },
+    "engineeringPassDoesNotReplaceTargetAcceptance": true,
+    "naturalInfrastructure": {
+      "tests": 44,
+      "passed": 44,
+      "failed": 0,
+      "status": "pass",
+      "evidenceSource": ".artifacts/natural-b2/natural-cancellation-all-v2.log; log tail verified",
+      "logSha256": "51115503e1559ab61631e326cdb0aee5cca66d41095483b19600e8f898a5c625",
+      "sourceRevision": "0399e5246cdcad45a8fde5945bece930a52337b8"
+    },
+    "initialBrowserSandboxBlockedRunVersion": "v11",
+    "contractsAndTypecheckRunRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+    "independentCancellationCollectorReview": {
+      "status": "pass-after-null-argument-guard-fix",
+      "sourceRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+      "syntheticMatrix": {
+        "passed": 28,
+        "total": 28
+      },
+      "newCancellationTests": {
+        "passed": 3,
+        "total": 3
+      },
+      "initialFindingRetained": "COLLECTOR-NULL-01: null arguments threw before valid later receipt; resolved and independently rechecked",
+      "remainingBlockingFindings": 0,
+      "remainingNonBlockingFindings": 0,
+      "recordSha256": "91c491417a448f8350fcffdb1bdd64d66281718ad8c39f599777b1c159c85500",
+      "scope": "Passive collector source/fixture review; does not reclassify real M13 raw observation or business outcome."
+    },
+    "independentProductSourceReview": {
+      "status": "no-code-findings-in-reviewed-scope",
+      "baseRevision": "f477a704fb488f180020e00eadffcaa979f09d9a",
+      "headRevision": "54983357b7d3133571a4bb0d41d72e099d86eb06",
+      "commitsReviewed": 6,
+      "recordSha256": "ccccdb228b2fb98a0e6d41e8bd52345c11320855d05cbfeef8fd6a080aeb5efe",
+      "blockingFindings": 0,
+      "nonBlockingCodeFindings": 0,
+      "documentationFollowup": "DOC-01: HostEvent optional turnId/error and informational execution faults do not change assignment state; explain in batch report, do not change design."
+    }
+  },
+  "blindingBoundary": {
+    "batchInterpretation": "known-material-exploration-not-final-blind-acceptance",
+    "finalHoldoutRun": false,
+    "nativeWorkspaceWriteProvidesReadIsolation": false,
+    "actualAnswerExposureInExistingTrials": "not-determined",
+    "finalUnifiedVersionAndThreeTrials": "not-established",
+    "otherIsolationDiagnosticsNotUsedToCreditThisBatch": true
+  },
+  "closure": {
+    "batchArchivalComplete": true,
+    "batchTargetsMet": false,
+    "overallPlanCompleted": false,
+    "pendingScoring": [],
+    "allB2CandidatesVerifiedStopped": true,
+    "pendingCaseStateSource": "All eleven candidates stopped, sealed, scored and accounted; public batch archive complete, targets unmet.",
+    "activeCandidateOutputsReadForDraft": false,
+    "eightReviewedAttemptsStopped": true,
+    "tenReviewedAttemptsStopped": true,
+    "v11M13AttemptsClosed": 2,
+    "elevenReviewedAttemptsStopped": true,
+    "v12M13AttemptsClosed": 1,
+    "v12IndependentGradeComplete": true
+  },
+  "pendingRootVerification": [],
+  "publicationBoundary": "本批仅B/D匿名身份、归纳结论、包/记录哈希及已报告用量；不含接入身份、账号、预算上限、私有绝对路径、原始输出或截图。",
+  "m08": {
+    "business": "pass",
+    "criticalCriteriaPassed": 8,
+    "formalDeliveryChain": "pass",
+    "autonomy": "pass",
+    "actualIndependentReviewRevisionAndLatestVerification": "pass",
+    "reviewerIsExternalMain": true,
+    "flowPeerCollaboration": "not-covered",
+    "templateAdoption": "not-covered",
+    "flowNodes": 1,
+    "successfulWriteEdits": 16,
+    "filesPerSubmissionSnapshot": 5,
+    "submissionRounds": 2,
+    "finalReconstructionMatchesSealedFiles": true,
+    "formalAssignments": 2,
+    "oneSubmissionEach": true,
+    "ui": {
+      "scope": "observed-basic-web-only",
+      "secondRoundPendingEvidence": "AX-only",
+      "inflightNamedImageActualState": "two-submitted-one-submission-each-no-pending",
+      "finalRun": "released-stopped",
+      "cleanup": "complete",
+      "pendingAtEnd": 0,
+      "returnToOriginObserved": true,
+      "fullUMatrix": false
+    },
+    "nonblocking": {
+      "presentClaimedChanges": 25,
+      "actualNumberedChanges": 23,
+      "oneEntryFromFirstDraftRatherThanFrozenOriginal": true
+    },
+    "productionApprovalClaim": false
+  },
+  "dimensionDefinitions": {
+    "autonomy": "通用自治是任务承接、推进、修正、收束等过程维度；其通过不表示业务、目标模板、UI或最终冻结验收通过。",
+    "separateAcceptance": [
+      "business",
+      "formalDeliveryChain",
+      "autonomy-process",
+      "targetCollaborationBehavior",
+      "templateAdoption",
+      "UI",
+      "finalFrozenAcceptance"
+    ]
+  },
+  "m13v11": {
+    "attempt01": {
+      "overall": "incomplete",
+      "business": "incomplete",
+      "rootArtifactFacts": {
+        "pass": 8,
+        "incomplete": 1,
+        "fail": 0,
+        "scope": "Root-stage evidence; final Main delivery absent"
+      },
+      "unclarifiedFact": "event-monitor-resolved: resolved channel-query availability and missing production evidence not consistently separated across fields",
+      "mainFinalUserAnswer": false,
+      "formal": {
+        "oldAssignmentCancelled": true,
+        "submittedAssignments": 2,
+        "bothResultsActuallyRead": true,
+        "completeFinalAcceptance": false
+      },
+      "autonomyProcess": "incomplete",
+      "flowNodes": 1,
+      "nativeHelpers": 1,
+      "flowChildren": 0,
+      "groups": 0,
+      "blackboardUsed": false,
+      "templateAdoption": "not-covered",
+      "G01": "not-covered",
+      "G06": "propagation-observed-final-acceptance-incomplete",
+      "ui": "only-observed-basic-web-and-cached-history; full matrix incomplete",
+      "networkUnknown": {
+        "request": 78,
+        "httpRequestCaptured": true,
+        "receiptCaptured": false,
+        "responseCaptured": false,
+        "usageKnown": false,
+        "observerCancelledZeroIsNotKnownZero": true,
+        "upstreamAcceptanceEstablished": false
+      },
+      "conservativeAttempts": 79,
+      "monitoredAttempts": 78,
+      "lateLocalBoundaryRejections": 1,
+      "knownSdkReportedTokens": 4010196
+    },
+    "attempt02": {
+      "overall": "incomplete",
+      "gradingProvenance": "primary-grade-after-independent-audit; not independent final grading",
+      "businessFacts": {
+        "pass": 0,
+        "incomplete": 9,
+        "fail": 0,
+        "scope": "No completed business delivery, not nine demonstrated wrong answers"
+      },
+      "formalAcceptedAssignments": 0,
+      "rootCreated": true,
+      "rootModelRequests": 0,
+      "rootAssignmentBodyReceived": false,
+      "meaningfulFlowContributors": 0,
+      "mainDispatchErrors": [
+        "material reference altered or unknown",
+        "missing spec.type",
+        "resultSchema property outside properties"
+      ],
+      "finalToolRejectionAfterObserverBoundaryMs": 9,
+      "lastModelStreamCompletedBeforeBoundary": true,
+      "networkRequestsAll200DoneAndSettled": 11,
+      "upstreamOrTransportHangEstablished": false,
+      "rootIgnoredTaskEstablished": false,
+      "update": {
+        "ordinaryUiQueued": true,
+        "mainConsumed": false,
+        "deliveredToModel": false,
+        "attachmentCopyIsNotDelivery": true
+      },
+      "autonomyProcess": "incomplete",
+      "templateAdoption": "not-covered",
+      "G01": "not-covered",
+      "ui": "incomplete",
+      "conservativeAttempts": 12,
+      "monitoredAttempts": 11,
+      "lateLocalBoundaryRejections": 1,
+      "knownSdkReportedTokens": 235240,
+      "unknownNetworkUsageRequests": 0,
+      "causeRecordSha256": "c191ee36274e7aa5de3cbe0837b1cdbc61c3e6ef2a7b2b17c675ed2dc41ea200"
+    },
+    "oldSamplesUnchanged": true,
+    "originalRubricUnchanged": true
+  },
+  "v12": {
+    "status": "stopped-sealed-independently-graded-business-incomplete",
+    "candidate": "m13-v12-bd-01",
+    "sourceRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+    "tarSha256": "72694514b920dc08ba388648fce709ead8fa51170e2acad9716ac7f72a59ca17",
+    "skillsUnchangedFromV11": true,
+    "activeOutputsReadForDraft": false,
+    "productChange": "Unsupported result-schema keyword diagnostics clarify allowed keywords and properties placement; validator semantics unchanged.",
+    "observerChange": "At most one bounded one-second continuation opportunity per semantic-progress epoch, no renewal from errored tools or queries; current snapshot published before no-progress boundary.",
+    "oldSamplesRegraded": false,
+    "sourceReviewRecordSha256": "62404bad5ba60598ba05a07f0f16af281bcd3acef0500daad003c838b95f89d7",
+    "behaviorOrBusinessImprovementEstablished": false,
+    "actualTestedProductRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+    "currentCollectorFixRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+    "rawObserver": {
+      "status": "ABORTED",
+      "reason": "no-progress",
+      "readback": false,
+      "taskComplete": false,
+      "unchanged": true
+    },
+    "formalDeliveryChain": "pass",
+    "mainFinalUserAnswer": true,
+    "business": "incomplete",
+    "autonomy": "pass",
+    "templateAdoption": "not-covered",
+    "G01": "not-covered",
+    "originalInputFilesUnchanged": 10,
+    "candidateInputCopiesUnchanged": 10,
+    "eventUP28UnchangedAndConsumed": true,
+    "sealedWorkspaceFiles": 12,
+    "sealedProofFiles": 210,
+    "processGroupStopped": true,
+    "unknownNetworkUsageRequests": 0,
+    "lateLocalBoundaryRejections": 0,
+    "validUiAck": false,
+    "artifactPreviewComplete": false,
+    "fullUMatrixPassed": false,
+    "ui": "partial: actual queued/consumed UP-28, single-root view, return to Main/final answer; post-stop cached root idle/zero pending; no valid ui-ack; preview unverified; Web desktop-read warning retained",
+    "collectorCancellationCorrection": "Main158 successful cancellation array acknowledges old terminal under design.md:825; Main177 reads latest submitted and final answer completes. Original read-API-only cancelled-state matching was a false negative. Old evidence is not rewritten.",
+    "businessFacts": {
+      "pass": 7,
+      "incomplete": 2,
+      "fail": 0,
+      "total": 9
+    },
+    "gradeRecordSha256": "54c0f2cddb999b6507b8f97fd3f7a88ff157b53c8e9ae4f9a8a453975435989d",
+    "G06": "incomplete-correct-update-integration",
+    "nativeHelpers": 0,
+    "flowChildren": 0,
+    "groups": 0,
+    "blackboardWrites": 0,
+    "templateQueries": 0,
+    "templateApplications": 0,
+    "causalImprovementClaim": false
+  },
+  "currentSourceRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+  "sourceChanges": {
+    "baseRevision": "f477a704fb488f180020e00eadffcaa979f09d9a",
+    "currentSourceRevision": "0399e5246cdcad45a8fde5945bece930a52337b8",
+    "testedV12ProductRevision": "3e690586afc3cfbf1dcd5d1f049c5d931687c377",
+    "changes": [
+      "完整呈现成员创建Profile结构声明，保留权限上限与领域语义校验。",
+      "把失败执行轮次作为informational异常提示发给实际派发者；HostEvent可携带可选turnId/error；不改变pending assignment状态、结果或提交次数。",
+      "通知摘要给出邮箱读取入口，异步结果接续仍须读实际通知与作业。",
+      "resultSchema未知关键字及properties位置的文字提示更清楚，校验语义不变。",
+      "技能明确业务材料、证据精度、Flow与宿主工具边界及独立验收职责，不硬编码角色、人数或模板。",
+      "观察器关闭调用方提前结束的底层流，按真实usage结算；语义进展阶段仅一次有界接续宽限，查询和错误不续期。",
+      "观察器识别属于同一Main、Run和作业的成功取消回执；submitted/failed及替代结果仍须精确read API证据；null等非法参数安全忽略。"
+    ],
+    "oldEvidenceRewritten": false,
+    "finalUnifiedVersionAcceptance": false
+  },
+  "m13v12": {
+    "overall": "incomplete",
+    "business": "incomplete",
+    "gradingProvenance": "independent-final-grade",
+    "originalRubricSha256": "a87d3d2368e2a0eed5506f4d6c8078c06a6fa0ce55532e7de2c1c64117ae7311",
+    "newCriticalGatesAdded": false,
+    "businessFacts": {
+      "pass": 7,
+      "incomplete": 2,
+      "fail": 0,
+      "total": 9
+    },
+    "facts": [
+      {
+        "id": "current-scope",
+        "status": "pass"
+      },
+      {
+        "id": "replay",
+        "status": "pass"
+      },
+      {
+        "id": "client-compat",
+        "status": "pass"
+      },
+      {
+        "id": "approval",
+        "status": "pass"
+      },
+      {
+        "id": "rollback-announcement",
+        "status": "incomplete"
+      },
+      {
+        "id": "initial-monitor-gap",
+        "status": "pass"
+      },
+      {
+        "id": "event-package-correction",
+        "status": "pass"
+      },
+      {
+        "id": "event-monitor-resolved",
+        "status": "incomplete"
+      },
+      {
+        "id": "post-event-decision",
+        "status": "pass"
+      }
+    ],
+    "unclarifiedFacts": {
+      "rollback-announcement": "发布归档须修到2.6，回退目标为服务2.5+消费者2.5；建议要求归档与回退版本一致，未定义另一份回退归档以消歧。",
+      "event-monitor-resolved": "正式看板字段/Main摘要正确说明查询可用且仅预演，但pending_or_unknown阻断字段和文件仍要求生产查询/截图/灰度运行证据，完整交付未统一。"
+    },
+    "formalDeliveryChain": "pass",
+    "autonomyProcess": "pass",
+    "mainFinalUserAnswer": true,
+    "formal": {
+      "oldAssignmentCancelled": true,
+      "oldCancellationReceiptMainCallSeq": 158,
+      "oldCancellationReceiptMainResultSeq": 159,
+      "oldCancelledSubmitTerminalNotAccepted": true,
+      "latestSubmittedResultMainCallSeq": 177,
+      "latestSubmittedResultMainResultSeq": 178,
+      "latestResultExactlyMatchesSubmission": true,
+      "outcomeNotificationSeq": 175,
+      "mainActualArtifactReadSeq": 187,
+      "mainIndependentMathSeq": 192,
+      "mainVerificationAppendSeq": 197,
+      "mainFinalAnswerSeq": 213,
+      "mainFinalTurnCompletedSeq": 216,
+      "businessAcceptanceCorrectness": "incomplete"
+    },
+    "update": {
+      "eventUP28Consumed": true,
+      "mainInputSeq": 110,
+      "mainAttachmentReadSeq": 118,
+      "rootAttachmentReadSeq": 34,
+      "actualUpdatedAssignment": true,
+      "propagationActions": "pass",
+      "latestUpdateBusinessIntegration": "incomplete",
+      "G06": "incomplete",
+      "otherG06Events": "not-presumed"
+    },
+    "flowNodes": 1,
+    "meaningfulFlowContributors": 1,
+    "flowChildren": 0,
+    "nativeHelpers": 0,
+    "groups": 0,
+    "blackboardWrites": 0,
+    "templateQueries": 0,
+    "templateApplications": 0,
+    "targetCollaborationBehavior": "not-covered",
+    "templateAdoption": "not-covered",
+    "G01": "not-covered",
+    "ui": {
+      "status": "partial",
+      "imagesViewedByGrader": 4,
+      "ordinaryUpdateQueuedThenConsumed": true,
+      "singleRootInFlightObserved": true,
+      "postStopCachedRootIdleAndZeroPending": true,
+      "returnToMainAndFinalAnswerObserved": true,
+      "nativeTaskList": "7 done",
+      "artifactLinkVisible": true,
+      "artifactPreviewVerified": false,
+      "webWarning": "无法读取主机桌面信息",
+      "validUiAck": false,
+      "settledHold": false,
+      "fullUMatrix": false,
+      "stopDisconnectionIsNotProductCrashProof": true
+    },
+    "rawObserver": {
+      "status": "ABORTED",
+      "reason": "no-progress",
+      "readback": false,
+      "taskComplete": false,
+      "unchanged": true,
+      "cancelledOldAssignmentReadApiPredicate": false,
+      "submittedNewAssignmentReadApiPredicate": true,
+      "successfulCancelReceiptCoversOldTerminal": true
+    },
+    "toolFriction": {
+      "mainDispatchRejections": 3,
+      "rootEditOriginalStringNotFound": 1,
+      "oldCancelledSubmissionTerminalRejected": 1,
+      "actualAssignmentSchemaFailures": 0
+    },
+    "nonCriticalNotes": [
+      "消费者2.5非幂等断言无材料依据，Main附录/最终答复保留未知但文件未统一。",
+      "Main回顾将上午网页5%简写为可发，实际初始Main104仍明确监控缺口。",
+      "5000分表述宜说明仅样例未超限的核验覆盖回放，原批准每单上限不变。"
+    ],
+    "artifactSuccessfulWritesOrEdits": 4,
+    "reconstructionMatchesSealedArtifact": true,
+    "gradeRecordSha256": "54c0f2cddb999b6507b8f97fd3f7a88ff157b53c8e9ae4f9a8a453975435989d",
+    "independentGradeMarkdownSha256": "db456428622c25d677e419bf22dd886efb2da03bebaab4f21047b4953c680894",
+    "reviewEvidenceRecordSha256": "e81a711a0fc293ddaae4a225d53f4bd872d59c4c9186bce1da65a74a150b1b28",
+    "knownMaterialExploration": true,
+    "finalHoldout": false
+  }
+}
