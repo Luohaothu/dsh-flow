@@ -101,6 +101,7 @@ function parseContextSummary(text: string): { source: string; body: string } {
 }
 const summaryInstruction = (sources: string): string => `请根据以上资料输出完整的“Flow 上下文总结 v1”。正文按资料中的原会话任务视角归档，不把本次总结或合并指令及输出模板当作会话事实。准确保留重要原始标识符、数值及各来源的约束。待执行、待审批和被阻塞的工作及其归属列入“未完成事项与后续步骤”，不能因一次回复或轮次已完成而推断原任务或审批已完成。事实冲突和待核验信息及其来源列入“分歧、风险与待确认信息”，不自行裁决；可引用前节的未完成事项，不能以此替代未完成事项的归档。提炼后续任务需要的关键信息，同一事实归并一次，避免转录无关的通用操作说明。第一行、实际来源行及以下六个章节标题必须原样保留并依次出现；每节在标题下填写对应正文，无内容写“无”，信息不足写“未知”。只输出总结正文，不使用代码围栏，不添加前言；从第一行开始完成全部六节。\n\nFlow 上下文总结 v1\n来源：${sources}\n\n${summaryHeadings.join('\n\n')}`;
 const recoveryInstruction = '会话历史已恢复。Mailbox 和通信关系已重新初始化。历史消息编号在当前 Mailbox 中无效，历史协作者不保证仍然可用。请通过当前 Flow 工具确认目标；用户指令和任务输入已保留。';
+const formatMailboxNotification = (text: string): string => `${text}\n\n当前 Flow 邮箱可用 flow_unread 读取未读消息，或用 flow_read 按该邮箱的消息ID读取对应正文。`;
 const managementWrites = new Set(['set_plugin', 'set_bundle', 'install_bundle', 'remove_bundle', 'set_version_exemption']);
 const describeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const isNotification = (message: UserMessage): boolean => message.source.kind === 'flow' && message.source.purpose === 'notification';
@@ -302,7 +303,7 @@ export class DshHostAdaptor implements HostAdaptor {
             native.inbox.append(pending.target, pending.message); existing.add(pending.message.id);
           }
           native.inject(createUserMessage({ source: { kind: 'flow', purpose: 'notification', priority: 'normal', waitCompletion: false },
-            content: [{ type: 'text', text: recoveryInstruction }] }));
+            content: [{ type: 'text', text: formatMailboxNotification(recoveryInstruction) }] }));
           return { commit: () => { this.assertOpen(); owned!.commit(); } };
         },
       });
@@ -477,8 +478,9 @@ export class DshHostAdaptor implements HostAdaptor {
   }
   async send(agent: HostAgent, message: Message, mode: SendMode = 'followup', purpose: SendPurpose = 'input'): Promise<void> {
     const owned = this.active(agent);
+    const text = typeof message.payload === 'string' ? message.payload : JSON.stringify(message.payload);
     const input = createUserMessage({ source: { kind: 'flow', purpose, priority: message.priority ?? 'normal', waitCompletion: isWaitCompletion(message) },
-      content: [{ type: 'text', text: typeof message.payload === 'string' ? message.payload : JSON.stringify(message.payload) }] });
+      content: [{ type: 'text', text: purpose === 'notification' && !isWaitCompletion(message) ? formatMailboxNotification(text) : text }] });
     if (purpose === 'notification' && isWaitCompletion(message)) {
       owned.completions.set(input.id, input);
       for (const pending of [...owned.native.inbox.nextStep, ...owned.native.inbox.nextTurn]) if (!admissible(pending)) {

@@ -272,7 +272,7 @@ test('C007-03 C035-01 C035-02: cold recovery removes marked notifications and pr
   const resumed = await Agent.resume(f.context, null, sessionID('recover-inputs')), restored = f.native(resumed);
   await delay(5); assert.equal(f.model.requests.length, before);
   const pending = [...restored.inbox.nextTurn, ...restored.inbox.nextStep].map(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''));
-  assert.ok(pending.includes('PENDING-USER')); assert.ok(pending.includes('PENDING-TASK')); assert.ok(!pending.includes('STALE-NOTIFICATION'));
+  assert.ok(pending.includes('PENDING-USER')); assert.ok(pending.includes('PENDING-TASK')); assert.ok(!pending.some(text => text.startsWith('STALE-NOTIFICATION')));
   assert.ok(pending.some(value => value.includes('Mailbox 和通信关系已重新初始化')));
   assert.ok(restored.session.snapshotEvents().some(event => event.type === 'agent/inbox/spliced'), 'old notification cancellation remains in the log');
 });
@@ -397,8 +397,8 @@ test('C007-03 C035-02: actual process checkpoint cold-resumes pending Inbox and 
   assert.equal(f.model.requests.length, 0);
   const pending = [...native.inbox.nextTurn, ...native.inbox.nextStep];
   const contents = pending.flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []));
-  assert.ok(contents.includes('CRASH-USER')); assert.ok(contents.includes('CRASH-TASK')); assert.ok(!contents.includes('STALE-FLOW-NOTICE'));
-  const staleInsertion = native.session.snapshotEvents().find(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.content.some(block => block.type === 'text' && block.text === 'STALE-FLOW-NOTICE')));
+  assert.ok(contents.includes('CRASH-USER')); assert.ok(contents.includes('CRASH-TASK')); assert.ok(!contents.some(text => text.startsWith('STALE-FLOW-NOTICE')));
+  const staleInsertion = native.session.snapshotEvents().find(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'flow' && message.source.purpose === 'notification' && message.content.some(block => block.type === 'text' && block.text.startsWith('STALE-FLOW-NOTICE'))));
   assert.ok(staleInsertion?.type === 'agent/inbox/spliced');
   assert.ok(native.session.snapshotEvents().some(event => event.type === 'agent/inbox/spliced' && event.seq > staleInsertion.seq && event.data.outcome === 'canceled' && event.data.removedCount === 1), 'the actual setup remove is recorded while insertion history remains');
 });
