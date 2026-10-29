@@ -27,8 +27,12 @@ export const assignmentSpecSchema: JsonSchemaNode = objectSchema({
     description: 'JSON Schema for the submitted result. Use an object with supported type, oneOf, properties, required, additionalProperties, items, enum, const, minimum, maximum and annotations, or a boolean schema.',
     oneOf: [{ type: 'boolean' }, { type: 'object' }],
   },
-  materials: { type: 'array', description: 'Copy complete material references returned by flow_team_get or flow_team_read without changing or reconstructing any field.', items: objectSchema({
-    id: stringSchema, sourceId: stringSchema, digest: stringSchema, location: stringSchema, mediaType: stringSchema,
+  materials: { type: 'array', description: 'Optional references to forward: copy complete items from the materials returned by flow_team_get or flow_team_read, unchanged. Put ordinary workspace paths and reading instructions in background. Omit this field or use [] when no references need forwarding.', items: objectSchema({
+    id: { type: 'string', description: 'Opaque admitted reference identity; copy unchanged.' },
+    sourceId: { type: 'string', description: 'Original Session or attachment source identity; copy unchanged.' },
+    digest: { type: 'string', description: 'Digest of the admitted content block, not a workspace file checksum; copy unchanged.' },
+    location: { type: 'string', description: 'Admitted content location, which may be a Session URI rather than a file path; copy unchanged.' },
+    mediaType: { type: 'string', description: 'Admitted content media type; copy unchanged.' },
   }, ['id', 'sourceId', 'digest', 'location', 'mediaType']) },
   resumesAssignmentId: { type: 'string', description: 'Optional archived assignment continued by this new assignment.' },
 }, ['name', 'type', 'background', 'requirements', 'acceptanceCriteria', 'resultSchema']);

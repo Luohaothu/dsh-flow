@@ -129,7 +129,11 @@ export class NativeMaterials {
       const item = decodeSource(JSON.parse(await readFile(join(this.directory, `${ref.id}.json`), 'utf8')));
       source = item; this.sources.set(ref.id, item);
     }
-    if (!same(source.ref, ref)) throw new Error('Material identity, location or digest was altered');
+    if (!same(source.ref, ref)) {
+      const original = source.ref;
+      const changed = (Object.keys(original) as (keyof MaterialRef)[]).filter(field => original[field] !== ref[field]);
+      throw new Error(`Material identity, location or digest was altered (material ${ref.id}; changed fields: ${changed.length ? changed.join(', ') : 'reference structure'}). Copy the complete reference unchanged from flow_team_get or flow_team_read. Its digest describes admitted Session content, not a workspace file checksum. Workspace paths and reading instructions belong in the assignment background; materials may be omitted when no references need forwarding.`);
+    }
     return source;
   }
   async validate(request: AssignmentMaterialRequest, signal?: AbortSignal): Promise<void> {
