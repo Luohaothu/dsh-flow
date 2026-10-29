@@ -13,6 +13,17 @@ const sourceSchema: JsonSchemaNode = { type: 'object', properties: { kind: { typ
 const querySchema: JsonSchemaNode = { type: 'object', properties: { source: sourceSchema, after: number, before: number,
   read: { type: 'boolean' }, summaryIncludes: string, priority: { type: 'string', enum: ['high', 'normal', 'low'] } }, additionalProperties: false };
 const schema = (properties: Record<string, JsonSchemaNode>, required: string[] = []): JsonSchemaNode => ({ type: 'object', properties, required, additionalProperties: false });
+const profileSchema: JsonSchemaNode = schema({
+  role: { ...string, description: 'Nonempty identity instructions for the child.' },
+  name: { ...string, description: 'Nonempty display name.' },
+  permission: { type: 'string', enum: ['read-only', 'workspace-write', 'full-access'], description: 'Must not exceed the parent initial permission.' },
+  model: schema({ provider: string, id: string }, ['provider', 'id']),
+  params: schema({ version: { type: 'integer', enum: [1] }, temperature: number,
+    reasoningEffort: { ...string, description: 'Nonempty host-supported reasoning effort when provided.' },
+    maxTokens: { type: 'integer', description: 'Positive safe integer when provided.' } }, ['version']),
+  hostExtras: { type: 'object', description: 'Optional extra configuration validated by the host adapter.' },
+  sessionID: { description: 'Ignored input; always replaced with a fresh sessionID by this tool.' },
+}, ['role', 'name', 'permission', 'model', 'params']);
 /** A failed installer unwinds only the exact registrations it owns. */
 export function rollbackTools(disposers: (() => void)[], error: unknown): never {
   const failures: unknown[] = [error];
@@ -108,7 +119,7 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
     tool('flow_get_source_priority', 'Read your current rating for a source.', schema({ source: sourceSchema }, ['source']), args => ({ priority: mailbox.getSourcePriority(source(args.source)) }));
     tool('flow_fork', 'Create your direct child from an independent history snapshot.', schema({}), async () => info(await caller.fork()));
     tool('flow_herb', 'Summarize and merge two contexts into your direct child.', schema({ sessionID: string }, ['sessionID']), async args => { yieldCapacity(); return info(await caller.herb(agent(args.sessionID))); });
-    tool('flow_create', 'Create an idle direct child with an explicit profile; optional initmsg supplies its first input. retryOf records the exact instanceId of your failed terminated child; it creates a new instance.', schema({ profile: { type: 'object' }, initmsg: schema(messageFields, ['summary', 'payload']), history: string, retryOf: string }, ['profile']), async args => {
+    tool('flow_create', 'Create an idle direct child with a complete explicit profile; no fields default from the parent. Reuse actual configuration from flow_self, flow_agents or another known Profile when appropriate. sessionID is always replaced with a fresh identity. Optional initmsg supplies its first input. retryOf records the exact instanceId of your failed terminated child; it creates a new instance.', schema({ profile: profileSchema, initmsg: schema(messageFields, ['summary', 'payload']), history: string, retryOf: string }, ['profile']), async args => {
       const profile = snapshotProfile({ ...(args.profile as AgentProfile), sessionID: newSessionID() });
       const initmsg = args.initmsg === undefined ? undefined : outgoing(args.initmsg as Record<string, unknown>), history = args.history as string | undefined;
       return info(await (args.retryOf === undefined ? Agent.create(context, profile, caller, initmsg, history)
