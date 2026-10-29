@@ -106,14 +106,80 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     await writeFile(pending, JSON.stringify({ sessionId, afterUserSeq: seq }), { mode: 0o600 });
     await rename(pending, join(proof, 'finish-request.json'));
   };
-  const stream = async chunks => {
+  const openStream = chunks => {
     const options = { sessionId: mains[0].sessionId, messages: [], tools: [] };
     const next = async function* () { yield* chunks; };
-    for await (const _chunk of handlers.get('llm/stream')(options, next)) {}
+    return handlers.get('llm/stream')(options, next);
   };
+  const stream = async chunks => { for await (const _chunk of openStream(chunks)) {} };
   await until(value => value.mains.length === mainCount && value.mains.every(main => main.userTimeline.length === 1));
-  return { ...mains[0], mains, calls, creates, resolves, evidence, until, requestFinish, stream, initialInputs: () => calls.length };
+  return { ...mains[0], mains, calls, creates, resolves, evidence, until, requestFinish, openStream, stream, initialInputs: () => calls.length };
 }
+
+test('a returned provider stream closes as cancelled and releases settlement only after actual closure', { timeout: 15000 }, async t => {
+  const f = await fixture(t, { userPrompts: undefined, noProgressMs: 15000 });
+  let providerClosed = false;
+  const iterator = f.openStream((async function* () {
+    try { yield { type: 'text-delta', text: 'partial' }; }
+    finally { providerClosed = true; }
+  })());
+  assert.deepEqual(await iterator.next(), { value: { type: 'text-delta', text: 'partial' }, done: false });
+  Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+  f.readback(f.assignments[0]); f.endTurn();
+  const open = await f.until(value => value.observation.taskComplete && value.observation.runningRequests === 1);
+  assert.equal(open.requests[0].status, 'running');
+  assert.equal(open.requests[0].endedAt, undefined);
+  assert.equal(open.observation.qualifying, false);
+  await pause(3300);
+  assert.equal((await f.evidence()).status, 'OBSERVING');
+  assert.equal(providerClosed, false);
+  assert.deepEqual(await iterator.return(), { value: undefined, done: true });
+  const closed = await f.evidence();
+  assert.equal(providerClosed, true);
+  assert.equal(closed.requests[0].status, 'cancelled');
+  assert.equal(typeof closed.requests[0].endedAt, 'number');
+  assert.equal(closed.requests[0].usage, undefined);
+  assert.deepEqual(closed.usageMissingRequests, [1]);
+  const settled = await f.until(value => value.status === 'SETTLED');
+  assert.equal(settled.observation.runningRequests, 0);
+  assert.equal(settled.reason, 'terminal-assignments-read-back');
+});
+
+test('stream closure preserves reported usage and distinguishes provider completion and aborts', { timeout: 5000 }, async t => {
+  await t.test('consumer cancellation keeps partial usage', async t => {
+    const f = await fixture(t);
+    const iterator = f.openStream([{ type: 'usage', usage: { totalTokens: 17 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    await iterator.next();
+    await iterator.return();
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'cancelled');
+    assert.deepEqual(closed.requests[0].usage, { totalTokens: 17 });
+    assert.equal(closed.totalReportedTokens, 17);
+    assert.deepEqual(closed.usageMissingRequests, []);
+  });
+  await t.test('completed provider stream remains completed', async t => {
+    const f = await fixture(t);
+    await f.stream([{ type: 'usage', usage: { totalTokens: 23 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'completed');
+    assert.equal(closed.totalReportedTokens, 23);
+    assert.deepEqual(closed.usageMissingRequests, []);
+  });
+  await t.test('provider abort remains failed with unknown usage', async t => {
+    const f = await fixture(t);
+    const iterator = f.openStream((async function* () {
+      yield { type: 'text-delta', text: 'partial' };
+      throw new DOMException('Provider aborted', 'AbortError');
+    })());
+    await iterator.next();
+    await assert.rejects(iterator.next(), { name: 'AbortError', message: 'Provider aborted' });
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'failed');
+    assert.equal(closed.requests[0].error, 'Provider aborted');
+    assert.equal(typeof closed.requests[0].endedAt, 'number');
+    assert.deepEqual(closed.usageMissingRequests, [1]);
+  });
+});
 
 test('observer treats idle members with a pending assignment as stalled work, not a user wait', { timeout: 5000 }, async t => {
   const f = await fixture(t, { noProgressMs: 700 });

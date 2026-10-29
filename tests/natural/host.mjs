@@ -168,6 +168,7 @@ export function apply(ctx) {
       request.error = String(error?.message ?? error);
       throw error;
     } finally {
+      if (request.status === 'running') request.status = 'cancelled';
       request.endedAt = Date.now();
       evidence.totalReportedTokens = totalTokens();
       evidence.usageMissingRequests = evidence.requests.filter(item => item.status !== 'running' && item.usage?.totalTokens === undefined).map(item => item.number);
