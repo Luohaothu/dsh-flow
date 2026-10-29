@@ -58,7 +58,15 @@ async function fixture(t: Parameters<typeof runtime>[0], unmapped = false, virtu
 test('material provenance rejects forged strings and cross-origin grants; committed assignment grants survive reading and directory reconstruction', async t => {
   const f = await fixture(t), refs = await f.admit([{ type: 'text', text: '真正的输入资料' }]);
   const material = refs[0]!;
-  await assert.rejects(f.service.assign(f.origin, f.run, f.spec([{ ...material, location: '/invented' }]), 'forged'), /altered/);
+  await assert.rejects(f.service.assign(f.origin, f.run, f.spec([{ ...material, location: '/invented' }]), 'forged'), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /altered/);
+    assert.ok(error.message.includes(`material ${material.id}; changed fields: location`));
+    assert.match(error.message, /flow_team_get or flow_team_read/);
+    assert.ok(!error.message.includes(material.digest));
+    assert.ok(!error.message.includes(material.location));
+    return true;
+  });
   assert.equal(f.run.assignments!.list(f.run).length, 0);
   await assert.rejects(f.service.assign(f.origin, f.run, f.spec([{ ...material, id: 'forged' }]), 'forged-id'), /Unknown/);
   const stranger = (await f.host.agents.create({ sessionId: SessionId('stranger'), meta: { cwd: f.directory }, agentOptions: { provider: 'fixture', model: 'model' } })).agent;
