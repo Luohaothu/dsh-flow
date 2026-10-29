@@ -38,6 +38,15 @@ export function packagePath(path: string): string {
   return normalized;
 }
 function parse(document: PatternDocument): { value: Record<string, unknown>; path: string } {
+  if (typeof document !== 'string') {
+    object(document, 'document');
+    if (document.kind !== 'yaml' && document.kind !== 'object') fail('document.kind', 'Expected yaml or object');
+    keys(document, document.kind === 'yaml' ? ['kind', 'text', 'path'] : ['kind', 'value', 'path'], 'document');
+    if (Object.hasOwn(document, 'path') && typeof document.path !== 'string') fail('document.path', 'Expected a package-relative path string');
+    if (document.kind === 'yaml') {
+      if (typeof document.text !== 'string') fail('document.text', 'Expected YAML text');
+    } else object(document.value, 'document.value');
+  }
   const path = packagePath(typeof document === 'string' ? 'pattern.yaml' : document.path ?? 'pattern.yaml');
   let value: unknown;
   if (typeof document !== 'string' && document.kind === 'object') value = document.value;

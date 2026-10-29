@@ -6,6 +6,7 @@ import { createUserMessage, LlmAdapter, ReasoningEffortId, ToolCallId, type Gene
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { DshNativeBridge, type NativeBridgeConfiguration } from '../../../packages/dsh-flow/src/host/native-bridge.js';
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
+import { expandPattern } from '../../../packages/dsh-flow/src/patterns/expand.js';
 import { RunService } from '../../../packages/dsh-flow/src/run/run.js';
 import { RunStore } from '../../../packages/dsh-flow/src/run/store.js';
 import { runState } from '../../../packages/dsh-flow/src/run/internal.js';
@@ -13,7 +14,7 @@ import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { installFlowTools } from '../../../packages/dsh-flow/src/host/tools.js';
 import { installMemberTools } from '../../../packages/dsh-flow/src/host/member-tools.js';
 import PersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl';
-import { rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { runtime, until } from '../../helpers/contract-runtime.js';
 import { enablePluginHost } from '../../helpers/contract-plugin.js';
 import NodePtcRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
@@ -71,6 +72,67 @@ test('main definitions are exact native scope registrations, including existing 
   const forbidden = await f.host.tools.execute({ agent: f.native(root), callId: ToolCallId('forced-release'), name: 'flow_team_release', arguments: { runId: 'anything' }, signal: new AbortController().signal });
   assert.equal(forbidden.isError, true);
   await f.bridge.dispose();
+});
+
+test('member template definitions validate documents and register only in their Run without writing packages', async t => {
+  let workspace = '';
+  const f = await fixture(t, () => ({ cwd: workspace }));
+  workspace = join(f.directory, 'workspace'); await mkdir(workspace);
+  const main = await f.ordinary('pattern-main'); f.bridge.attachRunService(f.service);
+  const first = await f.active(main, 'pattern-first'), other = await f.active(main, 'pattern-other');
+  const native = f.native(first.root); let sequence = 0;
+  native.session.append('turn/start', { turn: 1 });
+  const invoke = async (name: string, args: Record<string, unknown>) => {
+    const callId = ToolCallId(`pattern-call-${++sequence}`);
+    native.session.append('tool/call', { turn: 1, step: sequence, callId, name, arguments: JSON.stringify(args) });
+    return f.host.tools.execute({ agent: native, callId, name, arguments: args, signal: new AbortController().signal });
+  };
+  const document = (id: string) => ({ apiVersion: 'v1', id, description: 'A reusable template', whenToUse: 'Independent work',
+    roles: { worker: { instructions: { file: 'role.md' }, permission: 'read-only' } },
+    root: { instructions: { file: 'root.md' }, workers: { role: 'worker' } } });
+  const assets = { 'role.md': 'Inspect the evidence.', 'root.md': 'Manage the assignment.' };
+  const forms = [
+    { id: 'test/yaml-text', document: JSON.stringify(document('test/yaml-text')) },
+    { id: 'test/yaml-envelope', document: { kind: 'yaml', text: JSON.stringify(document('test/yaml-envelope')), path: 'pattern.yaml' } },
+    { id: 'test/object-envelope', document: { kind: 'object', value: document('test/object-envelope') } },
+  ];
+  for (const form of forms) {
+    const result = await invoke('flow_pattern_define', { document: form.document, assets });
+    assert.equal(result.isError, false, JSON.stringify(result));
+    assert.deepEqual(result.value, { ok: true, patternId: form.id });
+    const resolved = runState(first.run).patternCatalog.resolve(form.id);
+    assert.equal(resolved.ok, true); if (!resolved.ok) throw new Error('Registered template was not found');
+    const expansion = expandPattern(resolved.definition, {}, {}, first.run.defaults, first.root.getProfile());
+    assert.equal(expansion.instructions, 'Manage the assignment.');
+    assert.equal(expansion.nodes[0]!.config.role, 'Inspect the evidence.');
+    assert.equal(expansion.nodes[0]!.config.permission, 'read-only');
+    assert.equal(runState(other.run).patternCatalog.resolve(form.id).ok, false);
+  }
+  for (const invalid of [{ goal: 'Not a standard template' }, { kind: 'other', text: '' }, { kind: 'yaml' }, { kind: 'yaml', text: 42 },
+    { kind: 'object' }, { kind: 'object', value: [], path: 'pattern.yaml' }, { kind: 'object', value: {}, path: 42 },
+    { kind: 'object', value: {}, extra: true }]) {
+    const result = await invoke('flow_pattern_define', { document: invalid });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.match(JSON.stringify(result.content), /document/);
+  }
+  for (const [input, path] of [
+    [{ document: { kind: 'object', value: document('test/bad-assets') }, assets: { 'role.md': 42 } }, 'assets.role.md'],
+    [{ document: { kind: 'object', value: { ...document('test/unknown-field'), goal: 'Custom DSL' } }, assets }, 'pattern.yaml.goal'],
+  ] as const) {
+    const result = await invoke('flow_pattern_define', input);
+    assert.equal(result.isError, false, JSON.stringify(result));
+    assert.ok(result.value && typeof result.value === 'object' && !Array.isArray(result.value));
+    assert.equal(result.value.ok, false);
+    assert.equal((result.value.diagnostics as { path: string }[])[0]!.path, path);
+  }
+  const listing = await invoke('flow_patterns', {});
+  assert.equal(listing.isError, false);
+  assert.deepEqual(listing.value, { ok: true, patterns: forms.map(form => ({ id: form.id, description: 'A reusable template', whenToUse: 'Independent work', parameters: {} })), diagnostics: [] });
+  const later = await f.active(main, 'pattern-later');
+  assert.equal(runState(later.run).patternCatalog.resolve('test/object-envelope').ok, false);
+  assert.deepEqual(await readdir(workspace, { recursive: true }), []);
+  assert.equal(first.root.getChildren().length, 0);
+  assert.equal(f.model.requests.length, 0);
 });
 
 test('real rc.2 calls create idle runs, rejects forged contexts and model caller fields, then revoke all main definitions on dispose', async t => {

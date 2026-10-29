@@ -17,6 +17,16 @@ import { installFlowTools, registerJsonTool, rollbackTools } from './tools.js';
 
 export const stringSchema: JsonSchemaNode = { type: 'string' };
 export const objectSchema = (properties: Record<string, JsonSchemaNode>, required: string[] = []): JsonSchemaNode => ({ type: 'object', properties, required, additionalProperties: false });
+const patternDocumentSchema: JsonSchemaNode = {
+  description: 'Standard v1 template document with apiVersion, namespaced id, description, whenToUse and root; optional parameters, roles and groups. root defines the member tree. roles use instructions and optional configuration such as permission, not arbitrary role-description fields.',
+  oneOf: [
+    { type: 'string', description: 'YAML text containing the standard template definition.' },
+    objectSchema({ kind: { type: 'string', enum: ['yaml'] }, text: stringSchema,
+      path: { type: 'string', description: 'Optional package-relative document path; defaults to pattern.yaml.' } }, ['kind', 'text']),
+    objectSchema({ kind: { type: 'string', enum: ['object'] }, value: { type: 'object', description: 'The standard template definition as JSON data.' },
+      path: { type: 'string', description: 'Optional package-relative document path; defaults to pattern.yaml.' } }, ['kind', 'value']),
+  ],
+};
 export const assignmentSpecSchema: JsonSchemaNode = objectSchema({
   name: { type: 'string', description: 'Short name for this assignment.' },
   type: { type: 'string', description: 'Task category chosen by the sender.' },
@@ -60,7 +70,10 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
     disposers.push(...installFlowTools(scope, context, caller, guard, yieldCapacity));
     tool('flow_team_read', 'Read your Run members, groups and your available material references.', objectSchema({}), async () => ({ ...teamRead(caller), materials: await materials.available(caller) }));
     tool('flow_patterns', 'Read this Run template catalog.', objectSchema({}), () => runState(run()).patternCatalog.list());
-    tool('flow_pattern_define', 'Compile and register a candidate template in this Run.', objectSchema({ document: { oneOf: [{ type: 'string' }, { type: 'object' }] }, assets: { type: 'object' } }, ['document']), args => {
+    tool('flow_pattern_define', 'Compile a standard v1 candidate team template and register it only in this Run. Returns patternId on success or diagnostics on failure. Does not create members or write a persistent pattern.yaml package.', objectSchema({
+      document: patternDocumentSchema,
+      assets: { type: 'object', description: 'Package-relative resource paths mapped to their text contents. Every value must be a string; the compiler validates paths and referenced files.' },
+    }, ['document']), args => {
       const catalog = runState(run()).patternCatalog;
       const compiled = catalog.compile(args.document as PatternDocument, (args.assets ?? {}) as PatternAssets);
       if (!compiled.ok) return compiled;
