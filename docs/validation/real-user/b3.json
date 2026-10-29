@@ -643,8 +643,7 @@
         "event": "not-triggered-operator-missed-window",
         "ui": "basic-final-view-only"
       },
-      "initialBusinessInputMethod": "actual-GUI-after-dedicated-main-only-technical-launch",
-      "technicalLaunchCountsAsBusinessInput": false,
+      "initialBusinessInputMethod": "normal-skill-dispatch-api",
       "observerFinished": false,
       "autonomyProcess": "original-review-delivered-restart-event-not-executed",
       "maximumObservedFlowNodes": 1,
@@ -668,7 +667,9 @@
       "evidenceArchiveSha256": "df3c934a84d4c74086db3034ec51350d30ee77e197c784e6d395d39b23cdaf81",
       "evidenceArchiveManifestSha256": "a7600872cb82421d09f958532346ec88053ea17979e8124913ca79ff892921d2",
       "evidenceArchiveReceiptSha256": "aeb593fbefa594f830c7e42b7fbed6968516dc58547ebe82d3d04cfd36862f20",
-      "evidenceArchiveMembers": 434
+      "evidenceArchiveMembers": 434,
+      "initialGUIKeyboardOrSendCredited": false,
+      "initialDriverIncludesBusinessDispatch": true
     },
     {
       "phase": "exploration",
@@ -787,8 +788,7 @@
         "fullG06Passed": false
       },
       "twoPhaseAccountingSha256": "f05ca354afb656eeb513ed9726235faabc34cd1c0936b7391b19b5ec887a75a9",
-      "initialBusinessInputMethod": "actual-GUI-after-dedicated-main-only-technical-launch",
-      "technicalLaunchCountsAsBusinessInput": false,
+      "initialBusinessInputMethod": "normal-skill-dispatch-api",
       "autonomyProcess": "observed-history-recognition-script-reuse-new-run-and-independent-revision",
       "maximumObservedFlowNodes": 1,
       "templateApplications": 0,
@@ -813,7 +813,9 @@
       "evidenceArchiveSha256": "d46f51ea7d9861d93281e6e8ec23f53971faa59eddd7379c2d1593a0acf7a031",
       "evidenceArchiveManifestSha256": "00ee3e6263f20520c8392cdc44870025b55d131590f161de2ae2d8f512d7bebb",
       "evidenceArchiveReceiptSha256": "c223b07648d7bc58e7a52cbb24a310f91d7f071eac7dbe7ec34e7a37776351cd",
-      "evidenceArchiveMembers": 752
+      "evidenceArchiveMembers": 752,
+      "initialGUIKeyboardOrSendCredited": false,
+      "initialDriverIncludesBusinessDispatch": true
     }
   ],
   "aggregate": {
@@ -1004,15 +1006,19 @@
     "initialBusinessInput": "/agent-team skill with preregistered natural business need",
     "ordinaryRunCount": 8,
     "ordinaryInitialInputMethod": "normal-skill-dispatch-api",
-    "ordinaryInitialInputMethodVerified": "admitted observer is null, plain is false, and original main command result is success",
+    "ordinaryInitialInputMethodVerified": "admitted observer is null, plain is absent/falsey, and original Main command result is success",
     "ordinaryInitialGUIKeyboardOrSendCredited": false,
-    "n16TechnicalLaunch": "dedicated-driver-main-only-technical-launch",
+    "n16TechnicalLaunch": "dedicated-normal-start-driver-with-initial-skill-api-dispatch; restart phase is passive attachment",
     "observedUserEventMethod": "actual-CUA-for-followup-pause-continue-and-page-close-reopen",
     "userSpecifiesRolesHeadcountPatternOrToolSteps": false,
     "fullActualGUIInitialInputPathStillRequiresNewVersionValidation": true,
-    "n16InitialBusinessInputMethod": "actual-GUI-business-message-after-technical-launch",
+    "n16InitialBusinessInputMethod": "normal-skill-dispatch-api",
     "n16Retry02ContinuationInputMethod": "actual-GUI-continue-in-original-main-after-restart",
-    "n16NormalExitMethod": "frozen-technical-driver-trigger-and-normal-AppExit-helper; not a GUI exit click"
+    "n16NormalExitMethod": "frozen-technical-driver-trigger-and-normal-AppExit-helper; not a GUI exit click",
+    "initialApiDispatchRunCount": 10,
+    "allInitialBusinessInputsMethod": "normal-skill-dispatch-api",
+    "allInitialGUIKeyboardOrSendCredited": false,
+    "n16InitialInputMethodVerified": "Both original initial-phase records contain successful main.commandResult; restart phase has no commandResult and consumes the CUA continuation."
   },
   "descriptiveRates": {
     "unit": "logical-exploration-run",
@@ -1078,6 +1084,82 @@
     "reviewedMarkdownSha256": "43852787c3c30bece2f477fe87bf18f86330b82564ac7285043ba477100593b6",
     "reviewedJsonBeforeArchiveMetadataSha256": "f87a258fdd1c099a94c077616d5534dfb0675abe2c083366bfee3c715022e04b",
     "finalMetadataChangeScope": "N16 evidence archive receipts and publication closure flags only; business, resources, source versions, original observer values and method unchanged.",
-    "rootVerifiedArchiveHashes": true
+    "rootVerifiedArchiveHashes": true,
+    "inputMethodErratumRequiresSeparateReview": false,
+    "inputMethodErratumReviewReceiptSha256": "515ccb1a3487dec5aed172eede6aa33b6b1f593c7195c9e3a3237135a7b7e114",
+    "inputMethodErratumReviewedProposalSha256": {
+      "markdown": "d509ae1cb2b518712af868b3f9f35247c4f48a643e1dff580a2a713ae2712995",
+      "json": "ee13fdc2c320dffaa443a9fa8ec139fe70d81884d458dc630e0027c493244034"
+    }
+  },
+  "inputMethodCorrection": {
+    "previousInitialN16GuiClaimWithdrawn": true,
+    "businessResourceAndEventResultsUnchanged": true,
+    "normalInitialApiDispatchRecordedForAllTenRuns": true,
+    "n16RestartContinuationRemainsActualCua": true,
+    "initialUiSendCreditAwardedForAnyRun": false,
+    "reason": "Initial-phase dedicated driver retains automatic normal skill dispatch. Passive restart attachment and its GUI continuation are distinct.",
+    "originalSourceRecordHashes": [
+      {
+        "id": "n07-v13-bd-01",
+        "evidenceSha256": "a49e233107cf372d1fa80c45a2603d69f7452852a924d08c2610c3bb1bc509b7",
+        "admittedScenarioSha256": "6d7785d4a721e5fe4fa1f4348134b9ae126ad0e1fb1d14d9332534cb59d7f3ee",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n07-v13-bd-02",
+        "evidenceSha256": "cabc887ad6ad0baadc463ddc56020a65ebc5e5c9e30853421e552a14e872e12e",
+        "admittedScenarioSha256": "daa1fd82f29a61cbf15fb5f3215171ba1ed1ceddbf9edbc6880afc4d4ff6fa4e",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n12-v13-bd-01",
+        "evidenceSha256": "56802acbf408639a831f532730a035616e9a7ae247e75a7c916c1599c565d2c9",
+        "admittedScenarioSha256": "d6074781a55cf7968cefce628ec4556ce938075959d343a513990373dc0e823c",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n13-v13-bd-01",
+        "evidenceSha256": "20b915a5fe979df4140e8c47210615859192c89e794d8abdbfcd8c13f1f3ef09",
+        "admittedScenarioSha256": "e3a9a61354e0a2bfcdf889f761064d02d92ed4bb01d2081eea0c15a9b58096e2",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n13-v14-bd-01",
+        "evidenceSha256": "514c55e4eb470e508fdec3d7f0aabf64d5f2d1a4e1e13058fbe9b3998699961a",
+        "admittedScenarioSha256": "b5a4ba0829fb482b69b1a6d147b1633266f81a1f6d96d203142f0434e690a57b",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n14a-v14-bd-01",
+        "evidenceSha256": "2a65ee70c5c0c33edd996025d06ecd2bfa9ecf7543b4f76c22fe3c4127a1a4f0",
+        "admittedScenarioSha256": "aa6e3119bd3e1e663634a69d97c58abed740c7f9f6d78d6907eaf15c0136d0a2",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n14b-v14-bd-01",
+        "evidenceSha256": "45bcf91eb295457539743fdf14840642b6310e3464cef65cd96fcd086dfa6a38",
+        "admittedScenarioSha256": "1f701552cea3a8030f944c6fce843ea7a917ddd38057f48ab8cf93fa22231fcb",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n15-v14-bd-01",
+        "evidenceSha256": "b8c20cec6096a42592c02fb2870d4378aec9205a44587204db65050ce2c57067",
+        "admittedScenarioSha256": "71ab5698a8fb983f425798cb4f0c24d02051b28bda0acbe34815c05abaded3b7",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n16-v14-bd-01",
+        "evidenceSha256": "6852266773e0bfcb060b613404cf70acb6613f73c8675be336720c8bcc875980",
+        "admittedScenarioSha256": "b1d88591b087b7bfa9148f3a97b03bbf9a1edca887c68a6f1326de15ddcfd3e6",
+        "normalInitialSkillDispatchApiRecorded": true
+      },
+      {
+        "id": "n16-v14-bd-02",
+        "evidenceSha256": "deb768bf2fa228eace0187318c2dc02e6edea77f3625de1ba0f9823670921208",
+        "admittedScenarioSha256": "70077af5a46a7788e83e5088c5ac37e55a22b31dec08ca3d750301409d10845c",
+        "normalInitialSkillDispatchApiRecorded": true
+      }
+    ]
   }
 }
