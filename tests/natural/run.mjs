@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants, chmodSync, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { constants, chmodSync, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { drainFlow } from './flow-drain.mjs';
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const artifacts = join(root, '.artifacts');
@@ -38,7 +40,7 @@ function exists(path) {
 function writer(directory) {
   const allowed = new Set(['cli.log', 'launch-url.txt', 'process.json']);
   return (name, content, append = false) => {
-    assert.ok(allowed.has(name), 'Unknown runner output');
+    assert.ok(allowed.has(name) || ['flow-drain.json', 'flow-drain-boundary-evidence.json'].includes(name) || /^flow-drain-(registry|snapshot|operation)-[0-9]{4,}\.json$/.test(name), 'Unknown runner output');
     privatePath(directory, 'directory');
     const path = join(directory, name);
     if (exists(path)) privatePath(path, 'file');
@@ -54,7 +56,7 @@ function writer(directory) {
   };
 }
 
-function readEvidence(directory) {
+function readEvidence(directory, raw = false) {
   const path = join(directory, 'evidence.json');
   if (!exists(path)) return;
   privatePath(path, 'file');
@@ -62,7 +64,10 @@ function readEvidence(directory) {
   try {
     const opened = fstatSync(fd), current = lstatSync(path);
     assert.ok(opened.isFile() && opened.dev === current.dev && opened.ino === current.ino, 'Observer evidence identity changed');
-    try { return JSON.parse(readFileSync(fd, 'utf8')); }
+    try {
+      const bytes = readFileSync(fd), value = JSON.parse(bytes.toString('utf8'));
+      return raw ? { bytes, value } : value;
+    }
     catch (error) { if (error instanceof SyntaxError) return; throw error; }
   } finally { closeSync(fd); }
 }
@@ -75,14 +80,17 @@ async function run() {
   assert.ok(!process.env.NATURAL_PROFILE_NAME || process.env.NATURAL_PROFILE_NAME === 'web', 'This runner requires the web profile');
   const port = Number(process.env.NATURAL_PORT ?? 3191);
   const holdMs = Number(process.env.NATURAL_UI_HOLD_MS ?? 0);
+  const drainMs = Number(process.env.NATURAL_FLOW_DRAIN_MS ?? 150_000);
   assert.ok(Number.isInteger(port) && port > 0 && port <= 65535, 'Port must be an integer from 1 through 65535');
   assert.ok(Number.isSafeInteger(holdMs) && holdMs >= 0, 'UI hold must be a nonnegative integer');
+  assert.ok(Number.isSafeInteger(drainMs) && drainMs > 0 && drainMs <= 150_000, 'Flow drain must be a positive integer no greater than 150000');
   const profilePath = privatePath(join(home, 'profiles/web/package.json'), 'file');
   privatePath(join(home, 'profiles/web/cordis.patch.yml'), 'file');
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   assert.ok(profile.dependencies?.['dsh-flow'] && profile.dsh?.profile?.bundles?.includes('dsh-flow'), 'Install Flow through the official plugin manager first');
   const proof = privatePath(process.env.NATURAL_PROOF_DIR, 'directory', true);
-  for (const name of ['evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
+  for (const name of ['evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json', 'flow-drain.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
+  assert.ok(!readdirSync(proof).some(name => name.startsWith('flow-drain')), 'Use a fresh proof directory for every drain');
   chmodSync(proof, 0o700);
   const write = writer(proof);
   const startedAt = Date.now(), stopDeadline = startedAt + scenario.maxDurationMs + 19_000;
@@ -95,9 +103,10 @@ async function run() {
   });
   receipt.pid = child.pid;
   let exitState, closed = false, ioError, interrupted, evidence, holdUntil, launchTail = '', launchSaved = false;
+  const drainAbort = new AbortController();
   const exited = new Promise(resolve => {
-    child.once('exit', (code, signal) => { exitState = { code, signal }; });
-    child.once('error', error => { exitState = { errorCode: error.code ?? 'SPAWN_ERROR' }; });
+    child.once('exit', (code, signal) => { exitState = { code, signal }; drainAbort.abort(); });
+    child.once('error', error => { exitState = { errorCode: error.code ?? 'SPAWN_ERROR' }; drainAbort.abort(); });
     child.once('close', () => { closed = true; resolve(); });
   });
   const signalOwnedProcess = signal => {
@@ -107,6 +116,7 @@ async function run() {
     } catch (error) { if (error.code !== 'ESRCH') throw error; }
   };
   const stop = () => {
+    drainAbort.abort();
     if (closed || receipt.runnerOwnedStop) return;
     receipt.runnerOwnedStop = true;
     receipt.stopRequestedAt = Date.now();
@@ -154,7 +164,27 @@ async function run() {
     receipt.runnerReason = 'observation-read-error';
     receipt.errorCode = error.code ?? error.name;
   } finally {
-    stop();
+    try {
+      if (!exitState && !interrupted && !ioError && ['ABORTED', 'ERROR'].includes(evidence?.status)) {
+        let boundary;
+        for (let attempt = 0; attempt < 5 && !boundary; attempt++) {
+          boundary = readEvidence(proof, true);
+          if (!boundary) await pause(20);
+        }
+        assert.ok(boundary && boundary.value.status === evidence.status && boundary.value.reason === evidence.reason, 'Business boundary changed before drain');
+        const boundaryFile = 'flow-drain-boundary-evidence.json';
+        write(boundaryFile, boundary.bytes);
+        const boundaryEvidence = { file: boundaryFile, sha256: createHash('sha256').update(boundary.bytes).digest('hex'), bytes: boundary.bytes.length, observedAt: Date.now() };
+        const result = await drainFlow({ evidence: boundary.value, boundaryEvidence, origin: `http://127.0.0.1:${port}`, write, signal: drainAbort.signal, timeoutMs: drainMs, refreshEvidence: () => readEvidence(proof) });
+        receipt.flowDrain = { status: result.status, reason: result.reason, receiptFile: 'flow-drain.json', startedAt: result.startedAt, endedAt: result.endedAt };
+      }
+    } catch { receipt.flowDrain = { status: 'pending', reason: 'drain-record-error' }; }
+    finally {
+      if (ioError) receipt.runnerReason = 'private-output-error';
+      else if (interrupted) { receipt.runnerReason = 'runner-interrupted'; receipt.interruptedBy = interrupted; }
+      else if (exitState && !receipt.runnerOwnedStop) receipt.runnerReason = 'host-exited-before-runner-stop';
+      stop();
+    }
     const force = setTimeout(() => {
       if (!closed) { receipt.forced = true; signalOwnedProcess('SIGKILL'); }
     }, 10_000);

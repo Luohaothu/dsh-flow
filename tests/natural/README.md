@@ -34,11 +34,19 @@ node tests/natural/run.mjs
 
 `run.mjs` 固定启动同仓锁定的官方 Web CLI，绑定 `127.0.0.1`，使用 `web` profile。`NATURAL_PORT` 指定端口，默认 `3191`；profile 的连接来源配置须与实际端口一致。runner 不安装插件，不写入模型配置或凭据，也不添加观察器。观察器须先通过上面的正式 profile patch 加载。
 
-每次使用新的证据目录。runner 拒绝已有 `evidence.json`、日志、入口 URL、进程回执、`ui-ack` 或 `finish-request.json` 的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
+每次使用新的证据目录。runner 拒绝已有 `evidence.json`、日志、入口 URL、进程回执、`ui-ack`、`finish-request.json` 或 `flow-drain` 收尾文件的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
 
-runner 在观察器到达 `SETTLED`、`ABORTED` 或 `ERROR` 后保存进程回执并停止自己启动的宿主。先发送 `SIGINT`，十秒内仍未退出再发送 `SIGKILL`。独立的 `process.json` 记录 observer 状态、请求数量、停止时间及实际退出状态。观察未收敛、宿主提前退出、强制终止或记录错误均返回非零退出码。`SETTLED` 的零退出码只表示观察收尾正常，仍须独立验收业务和协作。
+runner 在观察器到达 `SETTLED`、`ABORTED` 或 `ERROR` 后保存进程回执并停止自己启动的宿主。对于仍存活宿主的 `ABORTED` 或 `ERROR`，先执行下面的 Flow 技术排空，再发送 `SIGINT`；十秒内仍未退出再发送 `SIGKILL`。独立的 `process.json` 记录 observer 状态、请求数量、停止时间及实际退出状态。观察未收敛、宿主提前退出、强制终止或记录错误均返回非零退出码。`SETTLED` 的零退出码只表示观察收尾正常，仍须独立验收业务和协作。
 
-需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。整个进程仍受 `maxDurationMs + 30000` 毫秒边界约束。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
+需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。业务观察和界面等待仍受 `maxDurationMs + 30000` 毫秒边界约束；非成功终态的技术排空另有独立窗口。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
+
+观察器完成非成功判界后持续拒绝新模型调用。runner 使用证据中的真实 Dashboard 地址和当前 Web 端口的 Origin，通过公开 stop 接口排空本次专用主会话拥有的 Run。地址必须是字面 `http://127.0.0.1:<port>` authority，使用独立直连，不经过环境代理或跟随重定向。归属同时核对 `backend: dsh`、主会话 ID 和 epoch；排空期间复读 registry，纳入同一归属新登记的 Run，不操作其他主会话或 backend。公开接口采用服务既定停止策略，runner 不添加业务 prompt，也不放宽请求、token 或业务观察预算。
+
+`NATURAL_FLOW_DRAIN_MS` 设置技术排空上限，默认 `150000` 毫秒，可缩短且不能超过该值。POST 的 202 只表示受理；只有同一 operation 完成、Run 到达终态、节点 cleanup complete 且无持久化错误、作业终态和群解散后，才将该 Run 记为技术排空完成。原观察器和每次真实 GET 已见的成员、成员会话、作业归属与群 ID 会累计保全；缺失、重复或身份漂移均不能记为完成，合法新增继续纳入。所有已观测请求也须结束，已知及未知用量继续保留在原始证据中。全部已观测归属 Run 完成后，继续复读 registry 至归属集合稳定一秒；这只描述该观察窗口，独立 OS 物理验收仍须核查宿主与后代是否退出。
+
+排空开始前，`flow-drain-boundary-evidence.json` 按字节保全当时的原始业务证据，其 SHA 和采集时间写入收尾回执；之后原观察器仍可记录在途请求的最终用量。`flow-drain.json` 单独记录 `completed`、`pending` 或 `skipped`，以及独立时间窗口、归属、operation ID、用量观测边界和原始响应文件索引。`flow-drain-{registry|snapshot|operation}-NNNN.json` 保存未经删改的真实 API 响应；token 只留内存，不写 token 响应或 Authorization。Dashboard `RunInfo` 没有 Run cleanup 字段；completed operation 表示公开 stop 已等待 Context 清理和持久提交，节点清理另按真实快照核对。它不能代替持久状态与物理进程验收。
+
+超时、接口错误、epoch 变化、清理失败或中断保留 `pending` 再安全退出；外部 signal 或宿主提前退出会中断排空，不追造终态。`ABORTED`、`ERROR`、原作业状态和业务验收结果不会被技术收尾改写，runner 仍返回非零。原生退出码 130 或 `forced: false` 只描述进程退出，不证明 Flow 清理完成。无 Flow 的失败路径记为 `skipped`，普通 `SETTLED` 路径沿用原来的界面等待和停止方式。
 
 场景文件的结构如下。数量和时限由调用者按批次预算填写，不是产品限额。
 
