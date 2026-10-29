@@ -662,3 +662,44 @@ test('an active stream and continuation never extend the absolute observation de
   await stream.next(); f.advance(2100);
   assert.equal((await f.tick()).reason, 'duration-limit'); await stream.return();
 });
+
+test('an owned cancellation receipt acknowledges that terminal while the replacement still needs actual result readback', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0];
+  old.status = 'cancelled'; old.reason = 'superseded by updated business facts';
+  const replacement = { id: 'replacement', runId: f.runId, parentAssignmentId: null, status: 'submitted', result: { summary: 'latest facts' } };
+  f.assignments.push(replacement);
+  const cancel = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'cancel-old', arguments: JSON.stringify({ runId: f.runId, assignmentId: old.id, reason: old.reason }) });
+  f.answer(cancel, [{ assignmentId: old.id, status: 'cancelled', reason: old.reason }]);
+  assert.equal((await f.tick()).observation.readback, false, 'cancellation cannot acknowledge the replacement result');
+  f.readback(replacement); f.endTurn();
+  const reviewed = await f.tick(); assert.equal(reviewed.observation.readback, true); assert.equal(reviewed.observation.taskComplete, true);
+  f.advance(3001); assert.equal((await f.tick()).status, 'SETTLED');
+});
+
+test('cancellation acknowledgements require the exact owner Run, target, returned status and successful matching tool result', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0]; old.status = 'cancelled';
+  for (const [index, input] of [
+    { runId: 'foreign-run', assignmentId: old.id, response: [{ assignmentId: old.id, status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: 'other-target', response: [{ assignmentId: old.id, status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: 'other-target', status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: old.id, status: 'pending' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: old.id, status: 'cancelled' }], error: 'rejected' },
+    { runId: f.runId, assignmentId: old.id, response: 'cancelled' },
+  ].entries()) {
+    const call = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: `cancel-${index}`, arguments: JSON.stringify({ runId: input.runId, assignmentId: input.assignmentId, reason: 'update' }) });
+    f.answer(call, input.response, input.error);
+    assert.equal((await f.tick()).observation.readback, false, `rejected cancellation evidence ${index}`);
+  }
+});
+
+test('rejected non-object read/cancel arguments cannot hide a later exact cancellation receipt', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0]; old.status = 'cancelled';
+  for (const name of ['flow_team_assignment_read', 'flow_team_assignment_cancel']) for (const value of [null, [], 7, 'invalid', true]) {
+    const call = f.append('tool/call', { name, callId: `invalid-${f.events.length}`, arguments: JSON.stringify(value) });
+    f.answer(call, 'Invalid arguments', 'invalid');
+  }
+  const rejected = await f.tick(); assert.equal(rejected.status, 'OBSERVING'); assert.equal(rejected.observation.readback, false);
+  const call = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'valid-after-rejections', arguments: JSON.stringify({ runId: f.runId, assignmentId: old.id, reason: 'update' }) });
+  f.answer(call, [{ assignmentId: old.id, status: 'cancelled', reason: 'update' }]);
+  assert.equal((await f.tick()).observation.readback, true);
+});

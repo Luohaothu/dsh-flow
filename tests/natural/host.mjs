@@ -177,13 +177,20 @@ export function apply(ctx) {
     }
   })());
   const readBack = (assignment, events, afterUserSeq = -1) => events.some(call => {
-    if (call.type !== 'tool/call' || call.data.name !== 'flow_team_assignment_read' || call.seq <= afterUserSeq) return false;
+    if (call.type !== 'tool/call' || call.seq <= afterUserSeq) return false;
+    const cancellation = call.data.name === 'flow_team_assignment_cancel' && assignment.status === 'cancelled';
+    if (!cancellation && call.data.name !== 'flow_team_assignment_read') return false;
     let args;
     try { args = JSON.parse(call.data.arguments); } catch { return false; }
-    if (args.assignmentId !== assignment.id) return false;
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) return false;
+    if (args.assignmentId !== assignment.id || cancellation && args.runId !== assignment.runId) return false;
     return events.some(event => event.type === 'tool/result' && event.seq > call.seq && event.data.message?.toolCallId === call.data.callId && !event.data.message.isError && event.data.message.content?.some(part => {
       if (part.type !== 'text') return false;
-      try { const value = JSON.parse(part.text); return value.id === assignment.id && value.runId === assignment.runId && value.status === assignment.status; }
+      try {
+        const value = JSON.parse(part.text);
+        if (cancellation) return Array.isArray(value) && value.some(item => item?.assignmentId === assignment.id && item.status === 'cancelled');
+        return value.id === assignment.id && value.runId === assignment.runId && value.status === assignment.status;
+      }
       catch { return false; }
     }));
   });
