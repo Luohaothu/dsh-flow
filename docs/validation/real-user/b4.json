@@ -1,0 +1,646 @@
+{
+  "batch": "B4",
+  "status": "in-progress-draft",
+  "completed": false,
+  "phase": "exploration",
+  "cutoff": "sealed-through-n19-create-v17-bd-01",
+  "scenarioIds": [
+    "N17",
+    "N18",
+    "N19"
+  ],
+  "logicalBusinessRuns": 6,
+  "technicalZeroCallAttempts": [
+    {
+      "id": "n17-v15-bd-01",
+      "classification": "technical-failure-before-business-input",
+      "businessInputAccepted": false,
+      "modelCalls": 0,
+      "reportedTokens": 0,
+      "naturalBusinessCredit": false,
+      "sourceSha256": "f6b665e1f0bed845599a04949c4613862815ec5930d539ab9d8fdd265b770edf"
+    },
+    {
+      "id": "n17-v15-bd-02",
+      "classification": "technical-prelaunch-install-check-failure",
+      "businessInputAccepted": false,
+      "modelCalls": 0,
+      "reportedTokens": 0,
+      "naturalBusinessCredit": false,
+      "sourceSha256": "ae61fe0fdd7d4eeec7a61a06b1c2d32e5195471fb0fad664faff3c070ac87ab6"
+    }
+  ],
+  "runs": [
+    {
+      "id": "n17-v15-bd-03",
+      "phase": "exploration",
+      "scenario": "N17",
+      "version": "v15",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 31,
+      "conservativeAttempts": 31,
+      "reportedTokens": 826412,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": true,
+      "successfulCreator": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "fingerprints": {
+        "resourceSha256": "c9431e01d459d3c383390d11c8f713858582e6a1c6d3a8e8484e2a74e7bd2116",
+        "independentBusinessReportSha256": "9cd065892ee1beed1cff4a6cb6be46c022f523077c39d41a271927f333a8f8a9",
+        "privateArchiveSha256": "fc18eb76f4629cd6ded3804d23895ef801d743d6eec6e4b461a192074a31dc7c",
+        "privateManifestSha256": "f0bbbf3bc6ea8a9766c33b2d807ada37e7698855a95f1f479aabbc8fe8b9887e",
+        "privateArchiveReadbackSha256": "bce59c4f7a98f27e86d075f6cb3e78adb419d79b3417af186169a319dcc03c28"
+      },
+      "business": {
+        "scope": "registered-core-facts",
+        "matched": 11,
+        "total": 11,
+        "independentSourceChecks": {
+          "passed": 18,
+          "total": 18
+        },
+        "qualityLimitation": "An explanatory counterfactual remained unsupported; Main later retained unknown origin instead of accepting it as a verified cause."
+      },
+      "formalDelivery": "submitted-and-Main-readback-and-final",
+      "customPattern": {
+        "discoveryObserved": false,
+        "applicationObserved": false,
+        "goalClosed": false
+      },
+      "configuration": {
+        "normalSaveObserved": true,
+        "oldRunPreservedExistingDefaultObserved": true,
+        "newDefaultAdoptionObserved": false,
+        "catalogOrGuidanceSnapshotGoalClosed": false
+      },
+      "organization": {
+        "runs": 1,
+        "flowNodes": 1,
+        "groups": 0,
+        "nativeHelpers": 0
+      },
+      "technicalClosure": {
+        "originalSevenRefGate": "passed-under-then-frozen-evidence",
+        "wholeAutonomousOrFrozenAcceptanceCredit": false
+      }
+    },
+    {
+      "id": "n18-v15-bd-01",
+      "phase": "exploration",
+      "scenario": "N18",
+      "version": "v15",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 30,
+      "conservativeAttempts": 30,
+      "reportedTokens": 546892,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": true,
+      "successfulCreator": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "fingerprints": {
+        "resourceSha256": "3f84c10d6c750387556abdbff034a61261acbc35b1e5240405ecf6781a259080",
+        "independentBusinessReportSha256": "1e1b9d66be1134f187cfa303b20d4679d134c2d6cca4e0d234407407ed1e820f",
+        "privateArchiveSha256": "397bfb9f1c018517d4c62ef030ae038edfbb9e2f0460b295401f2c601d88d7df",
+        "privateManifestSha256": "563773ba1c2afc1be7d001e71e7844f07d656b7116b3302d891e2c27e9e1f700",
+        "privateArchiveReadbackSha256": "ccdc4b6440928072a235b6540a6d315d502a1511495c37ab0f770a86676abbad"
+      },
+      "business": {
+        "scope": "registered-finite-behavior-cases",
+        "passed": 38,
+        "total": 38,
+        "candidateUnitTests": {
+          "passed": 10,
+          "total": 10
+        },
+        "independentExampleFields": {
+          "matched": 5,
+          "total": 5
+        },
+        "untested": [
+          "unbounded-magnitude-values",
+          "non-default-numeric-contexts"
+        ]
+      },
+      "formalDelivery": "submitted-and-Main-readback-and-final",
+      "customPattern": {
+        "unrelatedPatternAdoptionObserved": false,
+        "explicitDiscoveryComparisonAndRejectionEstablished": false,
+        "goalClosed": false
+      },
+      "organization": {
+        "runs": 1,
+        "flowNodes": 1,
+        "groups": 0,
+        "nativeHelpers": 0
+      },
+      "technicalClosure": {
+        "originalSevenRefGate": "passed-under-then-frozen-evidence",
+        "wholeAutonomousOrFrozenAcceptanceCredit": false
+      }
+    },
+    {
+      "id": "n19-create-v15-bd-01",
+      "phase": "exploration",
+      "scenario": "N19",
+      "version": "v15",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 86,
+      "conservativeAttempts": 86,
+      "reportedTokens": 3002945,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": false,
+      "successfulCreator": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "fingerprints": {
+        "resourceSha256": "835b5df173aadb5cffbf4557e86453b128d30b21188cfacc92ad89337a6e636b",
+        "independentBusinessReportSha256": "654b13e9601cba17949846d857cd4af38349f478aec1f503c8c6322d80efa785",
+        "privateArchiveSha256": "0f17488bed01548121c9cf4e4a8888b0ca8bf1799e0c100ac237a46782150b2d",
+        "privateManifestSha256": "4dd8c732e74ab0cc4d1df14d95700c9c0d3aebe02762a35a99eff91330d8c740",
+        "privateArchiveReadbackSha256": "4faa63e149e0d6bcec651fd798e22ff97c3118d1f15c3dbf96324ef3f2217cae"
+      },
+      "business": {
+        "status": "budget-boundary-aborted",
+        "persistentPackageFormat": "qualified-in-three-public-loader-read-paths",
+        "actualMemberRolesOrPermissionsValidated": false,
+        "ordinaryImportOrNewConversationReuseObserved": false,
+        "limitations": [
+          "No Main final acceptance",
+          "Usage instructions did not establish a complete ordinary user path",
+          "Optional candidate validator depended on creator installation",
+          "Some historical feedback was partially addressed in final sealed files; not all earlier defects persist unchanged"
+        ]
+      },
+      "formalDelivery": "original-assignment-submitted-revision-pending-no-Main-final",
+      "technicalClosure": {
+        "durableRun": "stopping",
+        "flowCleanup": "pending",
+        "physicalRegisteredScope": "no-post-exit-matches-observed",
+        "originalSevenRefGate": "not-established",
+        "prestopFinalOwnedTreeEstablished": false
+      }
+    },
+    {
+      "id": "n19-create-v15-bd-02",
+      "phase": "exploration",
+      "scenario": "N19",
+      "version": "v15",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 106,
+      "conservativeAttempts": 106,
+      "reportedTokens": 5068523,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": false,
+      "successfulCreator": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "fingerprints": {
+        "resourceSha256": "23d9a8726650ceeaf7c64c17b66d5cac25c60693a260505836b5be6a277b1d2a",
+        "independentBusinessReportSha256": "183a9099a6acadefe314c70d1fbc99cb53f566198e16b4c6a86af8e8f7288664",
+        "privateArchiveSha256": "8c01e6f5e02610d56e0273ff66c5581cf61e5d9cc53329e6fb426197ac90a6ce",
+        "privateManifestSha256": "a0a3d8b9d182483338230f749e777fdf3d2f05a3571ab4ebb7c40d70a7d41a00",
+        "privateArchiveReadbackSha256": "7c707b8337ab0f9c7cc2a99831326e68ddd9ed8459e6fd89b92a0b3373325caf"
+      },
+      "business": {
+        "status": "budget-boundary-aborted",
+        "persistentPackageFormat": "not-qualified-by-public-directory-loader",
+        "limitation": "Sealed candidate document was not a loadable persistent package; current-Run registration or self-check is insufficient."
+      },
+      "formalDelivery": "two-submitted-third-cancelled-no-Main-final",
+      "technicalClosure": {
+        "technicalDrain": "completed",
+        "durableRun": "stopped",
+        "flowCleanup": "complete",
+        "originalSevenRefGate": "pending",
+        "finalPrestopOwnedTreeEstablished": false,
+        "recentBudgetSampleIsFinalPrestop": false
+      }
+    },
+    {
+      "id": "n19-create-v16-bd-01",
+      "phase": "exploration",
+      "scenario": "N19",
+      "version": "v16",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 122,
+      "conservativeAttempts": 122,
+      "reportedTokens": 5079731,
+      "unknownUsageNetworkRequests": 1,
+      "unknownUsageRequestNumbers": [
+        57
+      ],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": false,
+      "successfulCreator": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "fingerprints": {
+        "resourceSha256": "9a1e9e3ec131548197fa09e545950919516e86b1db64092a7a5e8a19812b6891",
+        "independentBusinessReportSha256": "24e9932eaa76596a8d92b5895267004f24513be731c2faa52b2924ca71d7d3f9",
+        "privateArchiveSha256": "cc0403b8da592f490d12df21d26933bfd0a6d73bad96881998583e6485d35c16",
+        "privateManifestSha256": "316c88022409ffa8cfa3cb2a9a4748e1697d76641b066a897510445d1428b4b6",
+        "privateArchiveReadbackSha256": "873ce4d43adfae7e6fab69875840b1d13d92f9c74d0cce51ad9a6ee8d6b704c1",
+        "physicalPostExitAuditSha256": "558767b3166b2e7df77736006a88809d0678892d932a13e36ffb292d9172cb79",
+        "fullObservedIdentityUnionSha256": "063c0591d7caa108c3689ec372645f9d18a465fee189af8251cef72f26869709",
+        "samplerReceiptSha256": "648b024ad5f84402c99a368ac59c892b8a5f042b8fef41f9f6d88a0ee70da7a8",
+        "strictPendingDiagnosisSha256": "947d35274a230113e25191b384a7b369d539d3d7c68d8423976903b778ee424e"
+      },
+      "business": {
+        "status": "budget-boundary-aborted",
+        "persistentPackageFormat": "format-qualified-partial-artifacts",
+        "currentPackageCopies": 3,
+        "regularFilesPerCopy": 12,
+        "currentCopiesEqual": true,
+        "usageInstructionOrdinaryEntryQualified": false,
+        "numericZeroBoundary": "source-observation-only-no-actual-public-expansion-or-member-creation",
+        "actualMemberRolesOrPermissionsValidated": false
+      },
+      "formalDelivery": "first-submitted-revision-cancelled-no-Main-final",
+      "technicalClosure": {
+        "technicalDrain": "completed",
+        "durableRun": "stopped",
+        "flowCleanup": "complete",
+        "originalSevenRefGate": "pending",
+        "allObservedIdentityPairs": 27,
+        "commandFingerprintedIdentityPairs": 17,
+        "metadataOnlyIdentityPairs": 10,
+        "historicalIncompleteSamplerFrames": 7,
+        "partialCommandObservations": 10,
+        "samplerJournalFrames": 2379,
+        "samplerStatus": "pending",
+        "lastBeforeStopSample": "actual-completed-periodic-frame",
+        "lastSampleToStopGapMs": 35,
+        "instantaneousFullOwnedTreeEstablished": false,
+        "allArbitraryDetachedResourcesEstablished": false,
+        "postExitAllObservedPidsAbsent": true,
+        "registeredPortsAbsent": 2,
+        "registeredCwdScopesAbsent": 3,
+        "nativeMainLogicalDisposal": "not-established",
+        "observerLogicalDisposal": "not-established",
+        "observerDisposeHookCompleted": "not-established",
+        "strictF6Established": false
+      },
+      "unknownUsage": {
+        "request": 57,
+        "localStatus": "cancelled",
+        "httpStatus": 200,
+        "reportedUsage": null,
+        "countedAsZero": false
+      }
+    },
+    {
+      "id": "n19-create-v17-bd-01",
+      "phase": "exploration",
+      "scenario": "N19",
+      "version": "v17",
+      "initialBusinessInput": "ordinary-GUI-Send-with-user-skill-and-natural-business-request",
+      "monitoredAttempts": 111,
+      "conservativeAttempts": 111,
+      "reportedTokens": 6137196,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "mainFinalDelivered": false,
+      "successfulCreator": false,
+      "creatorR1Qualified": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "business": {
+        "status": "budget-boundary-aborted",
+        "persistentPackageFormat": "qualified-partial-delivery",
+        "staticBusinessRequirements": {
+          "covered": 12,
+          "total": 12,
+          "scope": "static-document-coverage-only"
+        },
+        "regularWorkspaceFiles": 9,
+        "nonRegularEntries": 0,
+        "ordinaryMainBusinessPathImproved": true,
+        "documentationClarifications": [
+          "Template selection actor differs between usage documents",
+          "Result example is not an independent machine JSON Schema",
+          "Parent-directory ordinary-file diagnostics do not prevent valid package resolution"
+        ],
+        "actualGuiImportOrFreshMainReuse": false,
+        "actualParameterExpansion": false,
+        "actualRolePermissionExecution": false
+      },
+      "formalDelivery": {
+        "submittedTopLevelAssignments": 2,
+        "actualMainTerminalReadbacks": 2,
+        "readbackPairs": [
+          {
+            "callSeq": 246,
+            "resultSeq": 247
+          },
+          {
+            "callSeq": 411,
+            "resultSeq": 412
+          }
+        ],
+        "lastMainAssistantSeq": 415,
+        "lastMainMessageContainsTextAndTwoToolCalls": true,
+        "laterNativeStepStartSeq": 421,
+        "nativeHistoryStatus": "running",
+        "genuineFinalMessageEstablished": false,
+        "observerCompletionBooleansDoNotSubstitute": true
+      },
+      "actualMainLoaderRerun": {
+        "callSeq": 416,
+        "resultSeq": 417,
+        "includeBuiltins": false,
+        "packageCandidates": 1,
+        "parentCandidates": 1,
+        "parentDiagnostics": 3,
+        "candidateStillResolves": true,
+        "actualParameterExpansion": false
+      },
+      "technicalClosure": {
+        "technicalDrain": "completed",
+        "durableRun": "stopped",
+        "flowCleanup": "complete",
+        "originalSevenRefGate": "pending",
+        "observedPidStartPairs": 47,
+        "commandFingerprintedPairs": 28,
+        "metadataOnlyPairs": 19,
+        "journalFrames": 1974,
+        "historicalIncompleteFrames": 10,
+        "partialCommandObservations": 19,
+        "lastBeforeStopPeriodicGapMs": 38,
+        "samplerStatus": "pending",
+        "rootObservedScopeMatchesAfterExit": 0,
+        "registeredPortsAbsent": 2,
+        "registeredCwdScopesAbsent": 3,
+        "instantaneousCompleteTreeEstablished": false,
+        "allArbitraryDetachedResourcesEstablished": false,
+        "physicalIdentityCountIsFlowTeamSize": false,
+        "actualCommandToolOutputEmpty": true,
+        "controllerLogIsSeparateSource": true,
+        "controllerLogIsToolStdout": false,
+        "nativeMainLogicalDisposal": "not-established",
+        "observerLogicalDisposal": "not-established",
+        "observerDisposeHookCompleted": "not-established",
+        "strictF6Established": false
+      },
+      "archive": {
+        "sourceFiles": 796,
+        "members": 797,
+        "freshProcessExactByteReadback": true,
+        "selfContained": false
+      },
+      "fingerprints": {
+        "resourceSha256": "ed98c6b6e8d476384b3cf0314de21656d41ace71119c9cc87ce34d524fd374c6",
+        "independentBusinessReportSha256": "bfca9dad79acec06b9c8c05dfcd9505d1b642f93e65919500064e1f8791665aa",
+        "privateArchiveSha256": "5ea6cf9e559500f544bd6fc9e48e207e1ff3899be413a955f22490566b97f7a5",
+        "privateManifestSha256": "380699ec47e44a8ec0a398c68edb1da1684ecc67ed9d9593d1b41f8c2f3d39c6",
+        "privateSealReceiptSha256": "7de162bfee4050c788c9861388f1a3c7eed039e399b6ab61f07f14d4ab12272b",
+        "privateArchiveReadbackSha256": "094c0172bab503cb28a0c9ae7ba76d56777f2a2f5c549e5ccb4f6ace8b0bba96",
+        "rootPostExitAuditSha256": "9794a046866565c0efd0e16c6ff625df32cb0cd2a0400bc2fbddf74b6fc26d40",
+        "strictPendingDiagnosisSha256": "84ca5b04314fcf7ac1acfaf8889b10308558b74a210d1825982c4b5c4cfef1bc"
+      }
+    }
+  ],
+  "resourceSummary": {
+    "monitoredAttempts": 486,
+    "conservativeAttempts": 486,
+    "reportedTokens": 20661699,
+    "unknownUsageNetworkRequests": 1,
+    "lateLocalBoundaryRejects": 0
+  },
+  "globalAtCutoff": {
+    "conservativeAttempts": 2165,
+    "reportedTokens": 73712559,
+    "unknownUsageNetworkRequestsIncludingBaseline": 13,
+    "includesB4": true
+  },
+  "packages": [
+    {
+      "version": "v15",
+      "sourceRevision": "83aee60fefb9542ed5dbc204ad5dd918641f0fab",
+      "tarSha256": "db60c0a7fa39a7f77a629b3f0f9a9d3085a60286df3567ba348993a009d6089c",
+      "packageFiles": 164,
+      "agentTeamSha256": "71ddde39a040256614ebf5da9a8915ec4dd68096e859d3dd795f4be71a25e9f1",
+      "teamStrategySha256": "52bab42d82fa3997fb08e72da483bc0987101ccdcce292aa799637521d11a5a4",
+      "naturalRunsAtCutoff": 4
+    },
+    {
+      "version": "v16",
+      "sourceRevision": "36f314a476f264fb498714fff7d568a3aff8a4b9",
+      "tarSha256": "6f010ccc599282df46bf3609c113c5a5f9a9b1aac60d170cf2a300d734be4172",
+      "packageFiles": 165,
+      "agentTeamSha256": "68aa96815947ce828c4c3234440e2dd458b62a7ff037b2f3820d4d3d7cc21d08",
+      "teamStrategySha256": "a74801fe5e49681c8f785c588e9630482ed4ce2992adcf1647bbc98dccbf0ba9",
+      "naturalRunsAtCutoff": 1
+    },
+    {
+      "version": "v17",
+      "sourceRevision": "a958ad39f6a2cb5e19d752c35900b33241970e73",
+      "tarSha256": "ab6b871566ea246d5e9ce068dbd54c7ae6e9ad7158f590a8ee1cca8d04aaeae8",
+      "packageFiles": 165,
+      "agentTeamSha256": "adbfd93b74dad55e0202966dc8c529c9dd1e7c909af873dc964cfd5f54640c39",
+      "teamStrategySha256": "a74801fe5e49681c8f785c588e9630482ed4ce2992adcf1647bbc98dccbf0ba9",
+      "naturalRunsAtCutoff": 1
+    },
+    {
+      "version": "v18",
+      "sourceRevision": "c0cba744b6a0f662e4f407d2840c6c1f176a8aee",
+      "productTree": "847a6b2694d7cc7643f7de9bee2036d4ca669300",
+      "tarSha256": "ade35546061a92677933cbed16d1ded5f25fac3a8084eca954057f14c14ee1bb",
+      "packageFiles": 165,
+      "sourcePackageComparison": {
+        "exactFiles": 164,
+        "packageJsonOnlyPrepackNormalization": true
+      },
+      "naturalRunsAtCutoff": 0,
+      "phase": "prospective-engineering-only"
+    }
+  ],
+  "engineeringOnly": {
+    "sourceRevision": "a958ad39f6a2cb5e19d752c35900b33241970e73",
+    "fullContracts": {
+      "tests": 737,
+      "passed": 737,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "typecheckTargets": 2,
+    "allRecordedChecksExitZero": true,
+    "receiptSha256": "4390e5653b3ca65d93ea177c3a10340e0ac030821e02eabbcad1710ce24be334",
+    "scope": "Historical a958/v17 engineering receipt; not a statement that the working tree stayed unchanged after case17 archive",
+    "naturalEvaluationCreditAdded": false,
+    "oldGuardReplayedAgainstChangedGuide": false
+  },
+  "publicSourceChanges": [
+    {
+      "commit": "fafd5658bcb29db48a6ca3bf63ca3a4b5baaccb3",
+      "path": "tests/natural/run.mjs",
+      "line": 168,
+      "endLine": 186,
+      "claim": "ABORTED/ERROR boundary is preserved, owned Flow drain precedes stop; incomplete drain remains pending."
+    },
+    {
+      "commit": "fafd5658bcb29db48a6ca3bf63ca3a4b5baaccb3",
+      "path": "tests/natural/flow-drain.mjs",
+      "line": 70,
+      "endLine": 195,
+      "claim": "Independent technical drain receipt and actual registry/snapshot/operation sidecars."
+    },
+    {
+      "commit": "36f314a476f264fb498714fff7d568a3aff8a4b9",
+      "path": "packages/dsh-flow/src/host/member-tools.ts",
+      "line": 20,
+      "endLine": 29,
+      "claim": "Structured YAML/object document wrapper schema for candidate template tool."
+    },
+    {
+      "commit": "36f314a476f264fb498714fff7d568a3aff8a4b9",
+      "path": "packages/dsh-flow/src/host/member-tools.ts",
+      "line": 73,
+      "endLine": 81,
+      "claim": "Successful compile registers only the current Run; no persistent package is written by this tool."
+    },
+    {
+      "commit": "36f314a476f264fb498714fff7d568a3aff8a4b9",
+      "path": "packages/dsh-flow/src/patterns/compiler.ts",
+      "line": 40,
+      "endLine": 58,
+      "claim": "Document wrapper shape and field validation."
+    },
+    {
+      "commit": "36f314a476f264fb498714fff7d568a3aff8a4b9",
+      "path": "packages/dsh-flow/src/patterns/catalog.ts",
+      "line": 86,
+      "endLine": 91,
+      "claim": "Public compile turns failures into diagnostics."
+    },
+    {
+      "commit": "a958ad39f6a2cb5e19d752c35900b33241970e73",
+      "path": "packages/dsh-flow/skills/agent-team/SKILL.md",
+      "line": 33,
+      "endLine": 37,
+      "claim": "Independent artifact acceptance and ordinary user/Main/Flow Root responsibilities."
+    },
+    {
+      "commit": "a958ad39f6a2cb5e19d752c35900b33241970e73",
+      "path": "packages/dsh-flow/skills/team-strategy/references/pattern-authoring.md",
+      "line": 66,
+      "endLine": 82,
+      "claim": "Persistent package, ordinary settings import and skill plus business request; compile is separate from runtime verification."
+    }
+  ],
+  "coverage": {
+    "N17CustomPatternAdoption": "uncovered",
+    "N18ExplicitComparisonAndRejection": "not-established",
+    "N19SuccessfulCreatorAndNewConversationReuse": "not-established-four-creator-failures",
+    "configurationSnapshotGoals": "partial",
+    "X01FullBoundaryMatrix": "unfinished",
+    "wholeUiMatrix": "unfinished",
+    "frozenThreeIndependentRunsCredit": false,
+    "holdoutCredit": false,
+    "readIsolation": "same-UID-exploration-no-strong-read-isolation-credit"
+  },
+  "followup": {
+    "version": "v18",
+    "status": "built-engineering-checked-not-naturally-run",
+    "candidateId": null,
+    "businessOutcome": null,
+    "genuineMainFinal": null,
+    "ordinaryImportAndFreshConversationReuse": null,
+    "actualParametersAndRolePermissions": null,
+    "technicalClosure": null,
+    "uiCoverage": null,
+    "resourceUsage": null,
+    "naturalBusinessLaunched": false,
+    "newModelCalls": 0,
+    "instruction": "Continue the same unfinished batch draft after actual new-run evidence. Preserve every older run under its own original source/package; engineering alone earns no natural success."
+  },
+  "publicDisclosure": "Anonymous scenario/version identifiers, public product symbols, actual aggregate usage and fingerprints only. Original raw evidence remains private.",
+  "prospectiveEngineering": {
+    "version": "v18",
+    "sourceRevision": "c0cba744b6a0f662e4f407d2840c6c1f176a8aee",
+    "productTree": "847a6b2694d7cc7643f7de9bee2036d4ca669300",
+    "guideSha256": "c88589d513f033dd36af968b41e145dc8908a20e054668491eb0d1566bc27e6b",
+    "changedSourceFiles": 1,
+    "fullContracts": {
+      "tests": 737,
+      "passed": 737,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "typecheckTargets": 2,
+    "recordedEngineeringCommandsExitZero": 7,
+    "receiptSha256": "e9b882b86daf4bffc2ae304cb0328128a27c3be85779e266ea600d4dc646e0e4",
+    "independentActualPatchReviewSha256": "2de485be6f1d18f61230679a79e003d5cd0ca60411aaacce57c70934f03e5395",
+    "naturalModelRequests": 0,
+    "newSdkCredit": false,
+    "creatorOrR1Credit": false,
+    "naturalUiCredit": false,
+    "hypothesizedCostReductionVerified": false
+  },
+  "failedCreatorRuns": 4,
+  "successfulCreatorOrR1Runs": 0,
+  "laterBatches": {
+    "B5": "not-executed",
+    "B6": "not-executed",
+    "B7": "not-executed"
+  },
+  "acceptanceCostObservation": {
+    "runId": "n19-create-v17-bd-01",
+    "scopeCosts": {
+      "Main": {
+        "requests": 74,
+        "reportedTokens": 4393525
+      },
+      "Flow": {
+        "requests": 37,
+        "reportedTokens": 1743671
+      },
+      "other-native": {
+        "requests": 0,
+        "reportedTokens": 0
+      }
+    },
+    "mainShareOfWholeReportedPercent": 71.59,
+    "firstReadbackToRevision": {
+      "MainRequests": 28,
+      "MainReportedTokens": 2649485,
+      "shareOfWholeReportedPercent": 43.17
+    },
+    "confirmedScopeMistakes": [
+      "A minified symbol or text miss does not negate the source component export",
+      "Changing includeBuiltins to false cannot disprove the output obtained under the original default condition"
+    ],
+    "causalBoundary": "Stages include legitimate user-path verification and changed materials; no whole-stage cost attribution to those mistakes, counterfactual savings, billing amount or tested v18 speedup.",
+    "reportSha256": "b661d18d5a880a13c15c764796ab3149a550eb384032f34345d86db805cae630"
+  },
+  "evidenceToolTrustBoundary": {
+    "earlierBooleanOnlyCreatorOracleBlockedByIndependentPureControl": true,
+    "noNaturalRunCreditForThatQualification": "none",
+    "correctedBindingRequires": [
+      "actual assistant final message",
+      "latest-input and terminal-readback order",
+      "correct native scope",
+      "same native turn and step completion"
+    ],
+    "correctiveControlAddsNaturalCredit": false
+  },
+  "batchPrDisposition": "one-continuing-Draft-PR-unfinished-batch"
+}
