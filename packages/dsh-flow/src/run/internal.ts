@@ -18,7 +18,7 @@ import type { Agent } from '../core/agent.js';
 import type { Context } from '../core/context.js';
 import type { PatternCatalog } from '../patterns/catalog.js';
 import type { AssignmentService } from '../assignments/service.js';
-import type { AssignmentSnapshot } from '../assignments/types.js';
+import type { AssignmentExecutionFault, AssignmentSnapshot } from '../assignments/types.js';
 import type { Run } from './run.js';
 import type { RunSnapshot } from './types.js';
 import type { RunRecord, RunServiceDependencies, RunStatus } from './types.js';
@@ -29,6 +29,7 @@ export interface RunState {
   initialization: Promise<void>; releasePromise?: Promise<void>; runtimeError?: string; runtimeEndedAt?: number; runtimeStatus?: RunStatus; runtimeCleanup?: RunRecord['cleanup'];
   commit<T>(change: (record: RunRecord) => T, publish?: boolean): T;
   outcome(assignment: AssignmentSnapshot): void;
+  executionFault(fault: AssignmentExecutionFault): void;
   notify(): void;
   afterCommit?(record: RunRecord): void;
 }

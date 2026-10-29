@@ -424,7 +424,9 @@ export class DshHostAdaptor implements HostAdaptor {
       this.releaseCapacity(owned); owned.turn = undefined; owned.admittedTurn = undefined;
       const reason = event.data.reason.kind;
       queueMicrotask(() => {
-        this.emit(owned, { type: 'turn-end', reason: reason === 'error' || reason === 'max-tokens' ? 'failed' : reason === 'aborted' ? 'cancelled' : 'completed' }, event.time);
+        this.emit(owned, { type: 'turn-end', turnId: String(event.data.turn),
+          reason: reason === 'error' || reason === 'max-tokens' ? 'failed' : reason === 'aborted' ? 'cancelled' : 'completed',
+          ...(event.data.reason.kind === 'error' ? { error: event.data.reason.error.message } : {}) }, event.time);
         if (owned.close?.phase === 'after-turn') this.cleanup(owned);
       });
     }

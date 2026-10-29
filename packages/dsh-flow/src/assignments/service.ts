@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { Agent } from '../core/agent.js';
 import { assertNoPendingConstruction } from '../core/construction.js';
-import { getAgentInstanceId } from '../core/observation.js';
+import { getAgentInstanceId, observeCore, type CoreObservation } from '../core/observation.js';
 import { agentControl } from '../core/internals.js';
 import { trustedSystemMessage } from '../core/message.js';
 import { Run } from '../run/run.js';
 import { runState, type RunState } from '../run/internal.js';
 import { trustedCall } from './internal.js';
 import { assertJson, compileSchema, digestJson } from './schema.js';
-import { Assignment, type AssignmentActor, type AssignmentArchiveReadResult, type AssignmentID, type AssignmentOutcome, type AssignmentQuery, type AssignmentRequest, type AssignmentSnapshot, type AssignmentSpec, type AssignmentSubmission, type SubmissionReceipt } from './types.js';
+import { Assignment, type AssignmentActor, type AssignmentArchiveReadResult, type AssignmentExecutionFault, type AssignmentID, type AssignmentOutcome, type AssignmentQuery, type AssignmentRequest, type AssignmentSnapshot, type AssignmentSpec, type AssignmentSubmission, type SubmissionReceipt } from './types.js';
 
 interface Binding { handle: Assignment; sender: Agent | Run; recipient: Agent }
+interface RecipientTurn { epoch: number; open: boolean; error?: string; notified: Set<string> }
 function text(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function nonempty(value: unknown, name: string): asserts value is string { if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${name} must be nonempty`); }
 function actorOf(actor: Agent | Run): AssignmentActor {
@@ -23,6 +24,8 @@ export class AssignmentService {
   private readonly bindings = new Map<AssignmentID, Binding>();
   private readonly delivered = new Set<AssignmentID>();
   private readonly delivering = new Set<AssignmentID>();
+  private readonly recipientTurns = new WeakMap<Agent, RecipientTurn>();
+  private stopExecutionObserver: () => void = () => {};
   constructor(private readonly run: Run) {
     this.state = runState(run);
     if (this.state.assignments) throw new Error('Run already has an AssignmentService');
@@ -42,6 +45,7 @@ export class AssignmentService {
     });
     for (const agent of this.state.context.list()) if (agent instanceof Agent && agent.getStatus() === 'terminated') this.terminate(agent);
     for (const binding of this.bindings.values()) if (binding.recipient.getStatus() === 'terminated') this.terminate(binding.recipient);
+    this.stopExecutionObserver = observeCore(this.state.context, event => this.observeExecution(event));
   }
   resolve(id: AssignmentID): Assignment {
     const binding = this.bindings.get(id);
@@ -211,6 +215,7 @@ export class AssignmentService {
   }
   /** Cancels pending work before the owning Run releases its Context. */
   stop(reason: string): void {
+    this.stopExecutionObserver();
     const changed = this.state.commit(draft => {
       const records: AssignmentSnapshot[] = [];
       for (const record of Object.values(draft.assignments)) if (record.status === 'pending') { record.status = 'cancelled'; record.reason = reason; records.push(structuredClone(record)); }
@@ -239,6 +244,44 @@ export class AssignmentService {
     if (binding.sender instanceof Agent && this.isActive(binding.sender)) {
       try { binding.sender.recvMessage(trustedSystemMessage('作业状态更新', { runId: this.run.id, assignmentId: record.id, status: record.status, query: 'flow_assignment_read' })); }
       catch (error) { this.state.runtimeError = text(error); this.state.notify(); }
+    }
+  }
+  private observeExecution(observation: Readonly<CoreObservation>): void {
+    if (observation.type === 'context-release' && observation.phase === 'started') { this.stopExecutionObserver(); return; }
+    if (observation.type !== 'host-event' && !(observation.type === 'agent-status' && observation.status === 'running')) return;
+    const agent = observation.agent;
+    let turn = this.recipientTurns.get(agent);
+    if (!turn) { turn = { epoch: 0, open: false, notified: new Set() }; this.recipientTurns.set(agent, turn); }
+    if (observation.type === 'agent-status' || observation.event.type === 'status' && observation.event.status === 'running') {
+      if (!turn.open) { turn.open = true; turn.epoch++; delete turn.error; }
+      return;
+    }
+    const event = observation.event;
+    if (event.type === 'error') { turn.error = event.message; return; }
+    if (event.type !== 'turn-end') return;
+    const error = event.error ?? turn.error ?? 'Recipient execution turn failed';
+    turn.open = false; delete turn.error;
+    if (event.reason !== 'failed') return;
+    const key = event.turnId === undefined ? `${turn.epoch}:${event.timestamp}` : `native:${event.turnId}`;
+    if (turn.notified.has(key)) return;
+    turn.notified.add(key);
+    if (!this.state.accepting || this.state.record.status !== 'active' || !this.isActive(agent)) return;
+    const senders = new Map<Agent | Run, string[]>();
+    for (const record of Object.values(this.state.record.assignments)) {
+      const binding = this.bindings.get(record.id);
+      if (record.status !== 'pending' || binding?.recipient !== agent || !this.delivered.has(record.id) && !this.delivering.has(record.id)) continue;
+      if (binding.sender instanceof Agent && !this.isActive(binding.sender)) continue;
+      const ids = senders.get(binding.sender) ?? []; ids.push(record.id); senders.set(binding.sender, ids);
+    }
+    for (const [sender, assignmentIds] of senders) {
+      const fault: AssignmentExecutionFault = { runId: this.run.id, recipientSessionID: agent.getProfile().sessionID,
+        recipientInstanceId: getAgentInstanceId(agent), assignmentIds, timestamp: event.timestamp,
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }), error };
+      if (sender === this.run) this.state.executionFault(fault);
+      else if (sender instanceof Agent) {
+        try { sender.recvMessage(trustedSystemMessage('作业执行轮次失败', { ...fault, query: 'flow_assignment_read', instruction: '这些作业在该轮失败时尚未结束；读取当前状态后决定继续沟通、取消或重派。' })); }
+        catch (deliveryError) { this.state.runtimeError = text(deliveryError); this.state.notify(); }
+      }
     }
   }
   private notifyCancelled(record: AssignmentSnapshot): void {

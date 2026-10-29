@@ -21,7 +21,7 @@ import type { Run, RunService } from '../run/run.js';
 import type { AssignmentMaterialRequest, HostOrigin, RunDefaults } from '../run/types.js';
 import type { PatternCatalog } from '../patterns/catalog.js';
 import type { PatternRoleRequirements } from '../patterns/types.js';
-import type { AssignmentSnapshot } from '../assignments/types.js';
+import type { AssignmentExecutionFault, AssignmentSnapshot } from '../assignments/types.js';
 import { DshHostAdaptor } from './dsh-adaptor.js';
 import { ExecutionCapacity } from './capacity.js';
 import { NativePreparation } from './provisioning.js';
@@ -32,7 +32,10 @@ import type { NativeHistory } from '../native/history.js';
 import { installMainTools } from './main-tools.js';
 import { installMemberTools } from './member-tools.js';
 
-declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'flow-outcome': { kind: 'flow-outcome'; runId: string; assignmentId: string } } }
+declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap {
+  'flow-outcome': { kind: 'flow-outcome'; runId: string; assignmentId: string };
+  'flow-execution-fault': { kind: 'flow-execution-fault'; runId: string; recipientInstanceId: string };
+} }
 export interface NativeBridgeConfiguration { defaults?: RunDefaults; cwd?: string; rootRole?: string; cleanup?: { gracefulTimeoutMs: number; immediateTimeoutMs: number } }
 export interface DshNativeBridgeOptions {
   history?: NativeHistory;
@@ -177,13 +180,26 @@ export class DshNativeBridge {
     if (failures.length) throw new AggregateError(failures, 'Native main bindings failed to release');
   }
   async onTopLevelOutcome(origin: HostOrigin, run: Run, assignment: AssignmentSnapshot): Promise<void> {
+    const main = await this.originatingMain(origin);
+    main.followup(createUserMessage({ source: { kind: 'flow-outcome', runId: run.id, assignmentId: assignment.id }, content: [{ type: 'text', text: JSON.stringify({ runId: run.id, assignmentId: assignment.id, status: assignment.status, query: 'flow_team_assignment_read' }) }] }));
+  }
+  async onTopLevelExecutionFault(origin: HostOrigin, run: Run, fault: AssignmentExecutionFault): Promise<void> {
+    const owner = this.runOrigins.get(run);
+    if (!owner || owner.backend !== origin.backend || owner.callerSessionId !== origin.callerSessionId || fault.runId !== run.id) throw new Error('Execution fault origin does not own this Run');
+    if (run.status !== 'active') return;
+    const main = await this.originatingMain(origin);
+    if (run.status !== 'active') return;
+    main.followup(createUserMessage({ source: { kind: 'flow-execution-fault', runId: run.id, recipientInstanceId: fault.recipientInstanceId },
+      content: [{ type: 'text', text: JSON.stringify({ ...fault, query: 'flow_team_assignment_read', instruction: '接收者的执行轮次失败；所列作业在失败时尚未结束。读取当前状态后决定继续、取消或重派。' }) }] }));
+  }
+  private async originatingMain(origin: HostOrigin): Promise<NativeAgent> {
     this.controller.signal.throwIfAborted();
     if (!this.host.get('sessionController')) throw new Error('Native SessionController is required for outcome delivery');
     const resolved = await this.host.sessionController.resolveAgent(SessionId(origin.callerSessionId));
     this.controller.signal.throwIfAborted();
     if ('error' in resolved) throw new Error(`Could not restore originating session: ${resolved.error.message}`);
     if (!this.isOrdinary(resolved.agent) || resolved.agent.session.id !== origin.callerSessionId) throw new Error('Originating native Session is not live');
-    resolved.agent.followup(createUserMessage({ source: { kind: 'flow-outcome', runId: run.id, assignmentId: assignment.id }, content: [{ type: 'text', text: JSON.stringify({ runId: run.id, assignmentId: assignment.id, status: assignment.status, query: 'flow_team_assignment_read' }) }] }));
+    return resolved.agent;
   }
   private seed(origin: HostOrigin): OriginSeed { const seed = this.seeds.get(origin); if (!seed) throw new Error('Origin was not issued by this NativeBridge'); return seed; }
   dispose(): Promise<void> {
