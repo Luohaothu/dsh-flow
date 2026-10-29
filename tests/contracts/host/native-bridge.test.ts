@@ -96,6 +96,25 @@ test('real rc.2 calls create idle runs, rejects forged contexts and model caller
   assert.equal(run.status, 'stopped');
 });
 
+test('main creation keeps task metadata out of defaults before storing a run', async t => {
+  const f = await fixture(t), main = await f.ordinary('defaults-boundary-main');
+  f.bridge.attachRunService(f.service);
+  for (const field of ['strategy', 'locale', 'objective', 'goal']) {
+    const start = main.session.snapshotEvents().length;
+    let called = false;
+    f.model.script = () => {
+      if (called) return 'DONE';
+      called = true; return { tool: 'flow_team_create', args: { defaults: { [field]: 'task metadata' }, requestId: field } };
+    };
+    main.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `create with ${field}` }] }));
+    await main.whenIdle();
+    const result = main.session.snapshotEvents().slice(start).find(event => event.type === 'tool/result');
+    assert.ok(result?.type === 'tool/result'); assert.equal(result.data.message.isError, true);
+    assert.ok(result.data.message.content.some(block => block.type === 'text' && block.text.includes(`Unknown run default ${field}`)));
+    assert.equal(f.service.list(f.bridge.createOrigin(main)).length, 0);
+  }
+});
+
 test('origin seeds retain creation-time model/cwd/defaults while later origins capture changed request headers', async t => {
   const f = await fixture(t), main = await f.ordinary('snapshot-main');
   await enablePluginHost(f.host, f.directory);
