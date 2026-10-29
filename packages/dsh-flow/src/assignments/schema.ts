@@ -60,7 +60,7 @@ function invalidSchema(path: string, reason: string): never {
 function compileNode(schema: JsonValue, path: string): SchemaNode {
   if (typeof schema === 'boolean') return schema;
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return invalidSchema(path, 'expected an object or boolean schema');
-  for (const key of Object.keys(schema)) if (!keywords.has(key)) throw new TypeError(`Unsupported schema keyword ${pointer(path, key)}`);
+  for (const key of Object.keys(schema)) if (!keywords.has(key)) throw new TypeError(`Unsupported schema keyword ${pointer(path, key)}. Declare object fields inside properties, with a schema for each field. Supported keywords: ${[...keywords].join(', ')}.`);
   for (const key of ['title', 'description', '$comment']) {
     if (Object.hasOwn(schema, key) && typeof schema[key] !== 'string') invalidSchema(pointer(path, key), 'expected a string annotation');
   }

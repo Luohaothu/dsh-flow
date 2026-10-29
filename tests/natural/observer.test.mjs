@@ -609,3 +609,56 @@ test('default continuation permits the existing assignment to finish or cancel a
     assert.equal(settled.snapshots[0].assignments[0].id, 'assignment-1');
   });
 });
+
+async function clockedFixture(t, overrides = {}) {
+  const realInterval = globalThis.setInterval;
+  let tick;
+  globalThis.setInterval = callback => { tick = callback; return realInterval(() => {}, 3_600_000); };
+  let f;
+  try { f = await fixture(t, { userPrompts: undefined, noProgressMs: 1000, maxDurationMs: 10000, ...overrides }); }
+  finally { globalThis.setInterval = realInterval; }
+  let now = (await f.evidence()).startedAt;
+  const realNow = Date.now;
+  Date.now = () => now;
+  t.after(() => { Date.now = realNow; });
+  return { ...f, advance: ms => { now += ms; }, tick: async () => { tick(); return f.evidence(); } };
+}
+
+test('a long stream gets one bounded tool continuation; successful work starts a new progress window', async t => {
+  const f = await clockedFixture(t), stream = f.openStream([{ type: 'text-delta', text: 'working' }]);
+  await stream.next(); f.advance(1500);
+  assert.equal((await f.tick()).status, 'OBSERVING');
+  await stream.next();
+  const call = f.append('tool/call', { name: 'write', callId: 'write-after-stream', arguments: '{"path":"output.txt"}' });
+  const handoff = await f.tick();
+  assert.equal(handoff.status, 'OBSERVING'); assert.equal(handoff.observation.runningRequests, 0);
+  assert.equal(handoff.noProgressContinuation.until, handoff.updatedAt + 1000);
+  f.advance(9); f.answer(call, 'written');
+  const progressed = await f.tick();
+  assert.equal(progressed.status, 'OBSERVING'); assert.equal(progressed.lastProgressAt, progressed.updatedAt);
+  assert.equal(progressed.noProgressContinuation, undefined);
+  f.advance(1001);
+  const stopped = await f.tick();
+  assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.observation.runningRequests, 0);
+});
+
+test('errors, queries and another long generation cannot renew the same no-progress continuation', async t => {
+  const f = await clockedFixture(t), firstStream = f.openStream([{ type: 'text-delta', text: 'first' }]);
+  await firstStream.next(); f.advance(1500); await f.tick(); await firstStream.next();
+  const handoff = await f.tick(), originalProgress = handoff.lastProgressAt, until = handoff.noProgressContinuation.until;
+  f.advance(400);
+  const query = f.append('tool/call', { name: 'flow_team_get', callId: 'query', arguments: '{}' }); f.answer(query, 'same');
+  const error = f.append('tool/call', { name: 'flow_team_assign', callId: 'invalid-schema', arguments: '{}' }); f.answer(error, 'Unsupported schema keyword', 'invalid');
+  const unchanged = await f.tick(); assert.equal(unchanged.lastProgressAt, originalProgress); assert.equal(unchanged.noProgressContinuation.until, until);
+  const secondStream = f.openStream([{ type: 'text-delta', text: 'second' }]); await secondStream.next();
+  f.advance(700); assert.equal((await f.tick()).status, 'OBSERVING'); await secondStream.next();
+  const stopped = await f.tick();
+  assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.lastProgressAt, originalProgress);
+  assert.equal(stopped.noProgressContinuation.until, until); assert.equal(stopped.observation.runningRequests, 0);
+});
+
+test('an active stream and continuation never extend the absolute observation deadline', async t => {
+  const f = await clockedFixture(t, { maxDurationMs: 2000 }), stream = f.openStream([{ type: 'text-delta', text: 'working' }]);
+  await stream.next(); f.advance(2100);
+  assert.equal((await f.tick()).reason, 'duration-limit'); await stream.return();
+});

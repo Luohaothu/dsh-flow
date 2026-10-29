@@ -129,7 +129,7 @@ export function apply(ctx) {
   const first = mains[0].record;
   const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: first.prompt, userPrompts: first.userPrompts, userTimeline: [], checkpoints: [], awaitingUser: false, workspace: first.workspace, completion: operator ? 'operator' : 'auto', mains: mains.map(main => main.record), operatorRequests: [], limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
   const archived = new Map(), operatorRequests = new Map(), seenProgress = new Set();
-  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false;
+  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, continuationEpoch, continuationUntil;
   const save = () => { evidence.updatedAt = Date.now(); proof.write(evidence); };
   const finish = (status, reason, details) => {
     if (finished) return;
@@ -285,10 +285,20 @@ export function apply(ctx) {
       evidence.checkpoints = mains.flatMap(main => main.record.checkpoints.map(checkpoint => ({ sessionId: main.record.sessionId, ...checkpoint })));
       evidence.awaitingUser = mains.some(main => main.record.awaitingUser) && mains.every(main => main.record.awaitingUser || main.record.observation.qualifying);
       evidence.lastProgressAt = lastProgressAt;
-      if (!evidence.awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) return finish('ABORTED', 'no-progress');
       const qualifying = mains.every(main => main.record.observation.qualifying);
       stableSince = qualifying ? stableSince ?? now : undefined;
       evidence.observation = mains.length === 1 ? { ...first.observation, stableSince } : { idle: mains.every(main => main.record.observation.idle), ended: mains.every(main => main.record.observation.ended), runningRequests, awaitingUser: evidence.awaitingUser, stableSince };
+      if (continuationEpoch !== lastProgressAt) { continuationEpoch = undefined; continuationUntil = undefined; }
+      if (!evidence.awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) {
+        if (continuationEpoch === undefined) {
+          continuationEpoch = lastProgressAt;
+          const endedAt = Math.max(0, ...evidence.requests.map(request => request.endedAt ?? 0));
+          const grace = Math.min(1000, scenario.noProgressMs);
+          if (endedAt > lastProgressAt && now - endedAt < grace) continuationUntil = endedAt + grace;
+        }
+        evidence.noProgressContinuation = continuationUntil === undefined ? undefined : { progressAt: continuationEpoch, until: continuationUntil };
+        if (!(now < continuationUntil)) return finish('ABORTED', 'no-progress');
+      } else evidence.noProgressContinuation = undefined;
       save();
       if (stableSince !== undefined && now - stableSince >= 3000) finish('SETTLED', operator ? 'operator-finish-after-terminal-readback' : scenario.plain ? 'plain-main-ended' : 'terminal-assignments-read-back');
     } catch (error) { finish('ERROR', 'observer-error', String(error?.stack ?? error)); }
