@@ -3036,7 +3036,9 @@
       "https://github.com/Luohaothu/dsh-flow/issues/29",
       "https://github.com/Luohaothu/dsh-flow/issues/30",
       "https://github.com/Luohaothu/dsh-flow/issues/31",
-      "https://github.com/Luohaothu/dsh-flow/issues/33"
+      "https://github.com/Luohaothu/dsh-flow/issues/33",
+      "https://github.com/Luohaothu/dsh-flow/issues/34",
+      "https://github.com/Luohaothu/dsh-flow/issues/35"
     ],
     "featureBacklogIssues": [
       "https://github.com/Luohaothu/dsh-flow/issues/26"
@@ -3061,7 +3063,9 @@
       29,
       30,
       31,
-      33
+      33,
+      34,
+      35
     ],
     "ciInvestigationIssue": 32,
     "newBusinessModelRequests": 0,
@@ -3096,6 +3100,26 @@
         "contracts": "SUCCESS"
       }
     ],
-    "ciFailureCause": "Issue 32 remains a test diagnosis and stability finding; neither a product race nor a pure timeout cause was established."
+    "ciFailureCause": "Issue 32 remains a test diagnosis and stability finding; neither a product race nor a pure timeout cause was established.",
+    "mergedBatchPullRequests": [
+      {
+        "number": 18,
+        "mergeCommit": "24a3efe697eaae7dbf58db0a55c8a41918fdc88c"
+      }
+    ],
+    "shutdownEvidenceReaderRegression": {
+      "sourceCommit": "02be76430c65f8fe071d683e2942bbac3f145afa",
+      "tests": 134,
+      "passed": 134,
+      "externalBusinessModelRequests": 0,
+      "businessBytesAndScoreUnchanged": true
+    },
+    "nativeToolSourceRegression": {
+      "sourceCommit": "207c28efc699eae17220600548ca72b3355b1686",
+      "tests": 78,
+      "passed": 78,
+      "externalBusinessModelRequests": 0,
+      "historicalCasesReclassified": false
+    }
   }
 }
