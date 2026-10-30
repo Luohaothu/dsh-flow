@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "scope": "Post-P7 deterministic design amendments for the first bug-fix wave. Phase receipts, original coverage check IDs and private baseline archive fingerprints remain historical and unchanged.",
+  "revisions": [
+    {
+      "id": "W1-24",
+      "issue": "https://github.com/Luohaothu/dsh-flow/issues/24",
+      "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/27",
+      "implementationCommit": "af8f26dd4060c6a9fe1dc72735af231a624d647f",
+      "designSha256": "4736a01216966c2dadc626a346c5626bbc28930321ce46866aba22f6550aee0c",
+      "scenarios": ["C058-02"],
+      "change": "A group has one frame and one label when its combined visible-member bounds preserve 24px padding and 8px clearance from nonmembers. Otherwise the existing segmented fallback remains. The label follows the topmost visible member.",
+      "regressions": [
+        {
+          "path": "tests/contracts/ui/geometry.test.ts",
+          "cases": [
+            "one group spanning a root and three branches has one padded frame",
+            "a clear cross-branch group merges even when other visible Agents are not members",
+            "a combined group frame requires at least 8px clearance from nonmembers"
+          ]
+        },
+        {
+          "path": "tests/contracts/ui/group-frame.test.ts",
+          "cases": ["one real four-member Group renders one frame through resizing, card growth and folding"]
+        }
+      ],
+      "checks": [
+        { "command": "python3 scripts/verify-alignment.py", "exitCode": 0, "contracts": 85, "scenarios": 234, "restoredFiles": null },
+        { "command": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'", "exitCode": 0, "passed": 8 },
+        { "command": "node --import tsx --test tests/contracts/ui/geometry.test.ts tests/contracts/ui/group-frame.test.ts", "exitCode": 0, "passed": 10 }
+      ],
+      "evidenceScope": "The browser regression uses actual Core Group and DashboardProjector data with four nodes and real React/Chrome measurements, resize, growth, folding and group selection. It is a local deterministic fixture with no external model requests. These results do not replace P6/P7 historical verification or claim a new business-model run. Remote CI for the amended PR remains a separate result."
+    }
+  ]
+}
