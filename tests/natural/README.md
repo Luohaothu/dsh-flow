@@ -267,3 +267,16 @@ usage 使用最新请求的累计值，按请求重算已报告合计，不与�
 `raw-session-native.mjs` 是这条检查的实际消费流程。`createRawSessionNativeCapture({ ctx, scope, readObserver, loadEvidence, verifySdkEvidence })` 从 SDK 只读 facade 采集四种来源，保留 observer 子集和完整 SDK 证据；`assembleRawSessionSetup` 重新核验原始记录并生成 setup，`assertRawSessionSetupZero` 再次从原始来源重建视图后检查零值。外部 v2 采集入口、Root assembler 和 gate 消费这两个公开模块的同字节副本，不以子集列表替代正文。读取抛出 `null / false / 0 / ''` 时也保留原始失败；随后关闭读句柄再失败，会同时保留两项错误。
 
 SDK loader/profile 检查由锁定环境的 `verifySdkEvidence` 必需注入，采集和组装分别调用。它须先核验实际 owner 原件与独立冻结 pins，再返回 `natural-sdk-source-verification/v1`：同一 scope、SDK JSON 子记录 SHA、observer entry/closure SHA 和初始化原件 SHA。缺失、返回布尔值、错 scope 或错原件 SHA 均不能形成 complete 证据；无验证器默认值。调用方还须以安全文件读取固定外层原件的原始字节与来源，并独立核验物理请求账和实际执行资格；子记录 SHA 不替代这些检查。组合回归为 `node --test tests/natural/raw-session-evidence.test.mjs tests/natural/raw-session-native.test.mjs`，使用一致的合成 source/pin 记录覆盖实际 producer → assembler → gate，不启动 SDK、界面或模型。
+
+
+## 分阶段物理创建与模型通道
+
+Refs #43。`physical-container.mjs` 将创建前可固定的 case/namespace token、nonce、本地镜像、非 Root 身份、network none 和五个独立卷编译为精确创建参数，使用 `--pull never`。绑定读取实际 create/inspect 原件，验证完整物理 ID、labels/image/UID、五卷与 Root 同 Source 映射，并要求容器仍是 created、Pid 0、未启动的零时间状态；绑定不提供 SDK 或业务资格。
+
+`staged-model-socket.mjs` 让同一个 Unix server 先处于 bootstrap：仅正确 case bearer 的技术 health 可用，reserve/map/model 全部拒绝，未创建预算 authority 或上游 transport。Root 的实际来源验证通过后，`promote` 等待同步或异步验证器完成，以当前能力提升同一 socket/inode。异步拒绝不准入；Host 集合和 socket 基线均防止外部 mutation。安装须确保无候选写权限的父链及 socket 实际 UID/GID/mode；同 UID 的本地 socket 控制不能代替 Linux Root→非 Root 的实际读回。
+
+## Root scope 的环境引用
+
+Refs #45。`root-scope-environment.mjs` 为实际 SDK 启动和固定 overlay 入口共用同一验证流程。启动在 SDK import 前拒绝已有 `ROOT_NATIVE_EXPORT_SCOPE_REF`，以必需的 pinned JSON reader 核 Root0/GID0/0444 引用、原始字节 SHA、读取回执和八字段身份，再发布唯一环境引用；入口重新验证后加载同一 scope。overlay 固定环境名与身份，完整 overlay 摘要先算出，再生成 scope 摘要，避免 overlay 与 scope 的互相摘要依赖。调用方仍须以安全文件读取核父链、文件所有者和实际字节，不能用恒真验证器替代。
+
+新装配中的 physical、bootstrap、SDK boot 和 env-entry 实际消费这三个公开模块的同字节副本，并固定完整依赖闭包。运行 `node --test tests/natural/physical-container.test.mjs tests/natural/staged-model-socket.test.mjs tests/natural/root-scope-environment.test.mjs`。29 项纯回归使用合成 Docker 原件和本机技术 Unix HTTP，覆盖未启动状态、跨身份/卷错误、异步拒绝、socket/Host mutation、环境继承、错 scope 和原字节替换；不运行 Docker、SDK、浏览器或模型，不授予实际准入或业务信用。

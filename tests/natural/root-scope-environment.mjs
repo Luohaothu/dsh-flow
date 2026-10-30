@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+export const ROOT_SCOPE_ENV='ROOT_NATIVE_EXPORT_SCOPE_REF';
+export const ROOT_SCOPE_KEYS=Object.freeze(['caseId','candidateId','namespaceId','containerId','imageId','generationId','nativeObserverSourceSha256','accountingScope']);
+const digest=raw=>createHash('sha256').update(raw).digest('hex');
+function load(reference,identity,readJson){
+ assert.equal(typeof readJson,'function','Actual pinned JSON reader is required');assert.equal(reference.expectedUid,0);assert.equal(reference.expectedGid,0);assert.deepEqual(reference.allowedModes,[0o444]);assert.match(reference.expectedSha256,/^[a-f0-9]{64}$/u);for(const key of['file','trustedRoot'])assert.ok(typeof reference[key]==='string'&&path.isAbsolute(reference[key])&&path.normalize(reference[key])===reference[key]);assert.ok(reference.file.startsWith(reference.trustedRoot+path.sep));assert.deepEqual(Object.keys(identity).sort(),[...ROOT_SCOPE_KEYS].sort());
+ const loaded=readJson(reference);assert.ok(Buffer.isBuffer(loaded.raw));assert.equal(digest(loaded.raw),reference.expectedSha256);assert.deepEqual(JSON.parse(loaded.raw),loaded.value);assert.equal(loaded.receipt.sha256,reference.expectedSha256);for(const key of ROOT_SCOPE_KEYS){assert.ok(typeof identity[key]==='string'&&identity[key]);assert.equal(loaded.value[key],identity[key],'Root scope '+key+' differs');}return{reference:structuredClone(reference),value:loaded.value,receipt:loaded.receipt};
+}
+export function initializeRootScopeEnvironment({environment,reference,identity,readJson}){assert.ok(environment&&typeof environment==='object');assert.ok(!Object.hasOwn(environment,ROOT_SCOPE_ENV),'Ambient native scope reference forbidden');const loaded=load(reference,identity,readJson);environment[ROOT_SCOPE_ENV]=JSON.stringify(loaded.reference);return loaded;}
+export function readRootScopeEnvironment({environment,identity,readJson}){assert.ok(environment&&typeof environment==='object');assert.equal(typeof environment[ROOT_SCOPE_ENV],'string','Root boot scope reference missing');return load(JSON.parse(environment[ROOT_SCOPE_ENV]),identity,readJson);}
