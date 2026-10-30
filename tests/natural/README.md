@@ -257,3 +257,9 @@ usage 使用最新请求的累计值，按请求重算已报告合计，不与�
 `root-owned-copy.mjs` 为回执、控制文件、pointer 与停止 marker 生成指定物理容器的默认 stdin 写入及默认 raw-tar 读回参数。tar 输入声明 UID/GID 为 0 不能替代实际读回；调用方解析原始 tar 后，仍须核验唯一普通文件、名称、Root UID/GID、0444 模式和冻结原字节 SHA。pointer 的临时文件须先读回通过，再交原有 Root 发布器原子替换，最终 pointer 也须读回。普通业务目录沿用各自复制契约。
 
 纯回归通过保留真实所有者差异的后端语义控制验证：相同 Root tar 输入经旧 archive 写入后读回非 Root，必须被拒绝；默认写入通过相同守卫。运行 `node --test tests/natural/root-owned-copy.test.mjs`。这不授予任何 Docker CLI/镜像实际资格，目标环境仍须重新执行写入与读回探针。
+
+## SDK 会话原始来源
+
+`raw-session-evidence.mjs` 为完整 setup 零值检查分别采集 Agent、session service、统一 query 与 persisted 正文。当前锁定 SDK 的同实例适配使用 `snapshotEvents(0, seq)`，保留 `firstLiveSeq` 和继承切点，检查整个前缀。该同步 API 已标 deprecated，适配仅用于 SDK `0.2.0-rc.2` 的测试取证；未知版本记为 unknown，不作为新增产品调用或未来兼容承诺。统一 query 的 live 优先视图不能代替其他来源；persisted 使用 `open(id, 'read')` 和 `handle.read(0)`，并在 `finally` 关闭读句柄，不恢复会话、不取得写所有权、不追加 cold-read 合成事件。前后列表、不可变身份、完整连续日志及读取失败均保留，缺源、变化或错误记为 unknown，不能变成零。
+
+`assertRawSessionZero` 重算原始来源，拒绝任一来源的 request header 或业务事件。计数表示来源中的观测条目，重复出现在两个日志里的请求不计为两次物理模型尝试。SDK 只读接口返回有效连续前缀，这不证明损坏物理尾字节不存在。运行 `node --test tests/natural/raw-session-evidence.test.mjs`；其中包含同 ID live 空、persisted 有 request header 的反例。装配须实际消费固定 SHA 的 helper 和新采集原件；既有 observer 子集、helper 回归或预备清单均不授予完整 SDK、业务或物理关闭资格。
