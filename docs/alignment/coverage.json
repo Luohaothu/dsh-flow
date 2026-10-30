@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "authority": "../design/design.md",
-  "designSha256": "39b2b4585671ed939ccbab9a6515de25d0d6fe703a79aebfa0e9d6e0746571c6",
+  "designSha256": "4736a01216966c2dadc626a346c5626bbc28930321ce46866aba22f6550aee0c",
   "contracts": 85,
   "scenarios": 234,
   "traceability": {
@@ -5185,7 +5185,7 @@
       "phase": "P6",
       "module": "UI 树、连线和群几何",
       "designSection": "整体布局与树形画布",
-      "expectation": "群框在卡/线下，圆角12px，联合可见成员边界四边扩24px，外缘距非成员至少8px；GroupID/图标/人数在顶边，跨分支分段同 ID，折叠标隐藏人数。",
+      "expectation": "群框在卡/线下，圆角12px，可见成员联合边界四边扩24px，外缘距非成员至少8px；GroupID、图标和成员数嵌在顶部边框，整体框可成立时同一群只绘制一个框和标签，受非成员阻挡或无法保留间距时分段同 ID，标签靠近最上方可见成员，折叠标隐藏人数。",
       "method": "semantic-source-and-test-map",
       "status": "evidence-linked",
       "sources": [
@@ -5205,9 +5205,13 @@
           ]
         }
       ],
-      "commands": "node --import tsx --test tests/contracts/ui/geometry.test.ts",
-      "verificationRecord": "p6-verification.json",
-      "scope": "Manual owner mapping: inspect the listed assertions against this whole expectation; shared files serve several scenarios. No test-count-to-scenario-count equivalence. Pixel/timing clauses use source/static + prior production inspection; not a new automated pixel certification."
+      "commands": "node --import tsx --test tests/contracts/ui/geometry.test.ts tests/contracts/ui/group-frame.test.ts",
+      "verificationRecord": "wave-one-verification.json",
+      "scope": "Original case IDs retain P6 traceability. W1-24 records the current combined-frame requirement and its new geometry and real Core/React browser regressions; the P6/P7 receipts are historical evidence, not a claim that this revision was executed then.",
+      "historicalVerificationRecords": [
+        "p6-verification.json"
+      ],
+      "revisionId": "W1-24"
     },
     {
       "id": "C058-03",

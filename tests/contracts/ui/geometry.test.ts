@@ -16,6 +16,31 @@ test('560px uses measured-height branches, 559px uses preorder and 32px indentat
   assert.equal(narrow.cards.get('a')!.x - narrow.cards.get('r')!.x, 32); assert.equal(narrow.cards.get('deep')!.x - narrow.cards.get('a')!.x, 32); assert.ok(narrow.cards.get('b')!.y > narrow.cards.get('deep')!.y);
   const resized = layoutTree(visible, new Map([...heights, ['a', 300]]), 560, []); assert.equal(resized.cards.get('deep')!.y, wide.cards.get('deep')!.y + 90);
 });
+test('one group spanning a root and three branches has one padded frame', () => {
+  const nodes = [card('r'), card('a', 'r'), card('b', 'r'), card('c', 'r')], groups = [group('g', ['r', 'a', 'b', 'c'])];
+  const visible = visibleTree(nodes, new Set()), heights = new Map([['r', 160], ['a', 180], ['b', 190], ['c', 200]]);
+  const geometry = layoutTree(visible, heights, 1080, groups), frames = groupSegments(groups, visible, geometry.cards, nodes, true);
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0]!.rect, { x: 104, y: 8, width: 872, height: 448 });
+  assert.equal(frames[0]!.hidden, 0);
+});
+test('a clear cross-branch group merges even when other visible Agents are not members', () => {
+  const nodes = [card('r'), card('a', 'r'), card('b', 'r'), card('c', 'r')], groups = [group('g', ['a', 'b'])];
+  const visible = visibleTree(nodes, new Set()), geometry = layoutTree(visible, new Map([['r', 160], ['a', 180], ['b', 190], ['c', 200]]), 1080, groups);
+  const frames = groupSegments(groups, visible, geometry.cards, nodes, true);
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0]!.rect, { x: 104, y: 208, width: 568, height: 238 });
+});
+test('a combined group frame requires at least 8px clearance from nonmembers', () => {
+  const nodes = [card('r'), card('a', 'r'), card('b', 'r')], groups = [group('g', ['a', 'b'])], visible = visibleTree(nodes, new Set());
+  const cards = new Map([['r', { x: 200, y: -132, width: 100, height: 100 }], ['a', { x: 0, y: 0, width: 100, height: 100 }], ['b', { x: 300, y: 300, width: 100, height: 100 }]]);
+  const clear = groupSegments(groups, visible, cards, nodes, true);
+  assert.equal(clear.length, 1);
+  assert.deepEqual(clear[0]!.rect, { x: -24, y: -24, width: 448, height: 448 });
+  cards.set('r', { x: 200, y: -131, width: 100, height: 100 });
+  const obstructed = groupSegments(groups, visible, cards, nodes, true);
+  assert.equal(obstructed.length, 2);
+});
 test('cross-branch groups split around nonmembers with 24px padding and preserve hidden membership labels', () => {
   const nodes = [card('r'), card('a', 'r'), card('gap', 'a'), card('c', 'gap'), card('b', 'r')], groups = [group('g', ['a', 'c', 'b'])], visible = visibleTree(nodes, new Set()), geometry = layoutTree(visible, new Map(), 800, groups), frames = groupSegments(groups, visible, geometry.cards, nodes, true);
   assert.equal(frames.length, 3); for (const frame of frames) { assert.equal(frame.rect.width, 264); const member = ['a', 'c', 'b'].map(id => geometry.cards.get(id)!).find(rect => rect.x - 24 === frame.rect.x && rect.y - 24 === frame.rect.y); assert.ok(member); }

@@ -5,7 +5,7 @@ import type { Viewport } from './types.js';
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface TreeGeometry { cards: Map<string, Rect>; width: number; height: number }
 export interface Relation { id: string; from: string; to: string; path: string; firstLevel: boolean }
-export interface GroupSegment { key: string; group: GroupView; rect: Rect; hidden: number }
+export interface GroupSegment { key: string; group: GroupView; rect: Rect; hidden: number; labelX?: number }
 export function union(rects: readonly Rect[]): Rect { if (!rects.length) return { x: 0, y: 0, width: 0, height: 0 }; const x = Math.min(...rects.map(r => r.x)), y = Math.min(...rects.map(r => r.y)); return { x, y, width: Math.max(...rects.map(r => r.x + r.width)) - x, height: Math.max(...rects.map(r => r.y + r.height)) - y }; }
 export function layoutTree(visible: readonly VisibleNode[], heights: ReadonlyMap<string, number>, availableWidth: number, groups: readonly GroupView[], list = false): TreeGeometry {
   const cards = new Map<string, Rect>(), height = (id: string) => heights.get(id) ?? 170;
@@ -35,7 +35,23 @@ export function groupSegments(groups: readonly GroupView[], visible: readonly Vi
   const result: GroupSegment[] = [], visibleIds = new Set(visible.map(item => item.node.id));
   for (const group of groups.filter(group => !group.dissolved)) {
     const hidden = group.members.filter(id => !visibleIds.has(id) && visibleAncestor(id, visibleIds, nodes)).length;
-    const members = new Set(group.members), buckets = new Map<string, VisibleNode[]>();
+    const members = new Set(group.members);
+    const memberRects = visible.flatMap(item => { const rect = cards.get(item.node.id); return members.has(item.node.id) && rect ? [rect] : []; });
+    if (memberRects.length) {
+      const box = union(memberRects), frame = { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 };
+      const obstructed = visible.some(item => {
+        const rect = cards.get(item.node.id);
+        return !members.has(item.node.id) && rect !== undefined
+          && frame.x < rect.x + rect.width + 8 && frame.x + frame.width + 8 > rect.x
+          && frame.y < rect.y + rect.height + 8 && frame.y + frame.height + 8 > rect.y;
+      });
+      if (!obstructed) {
+        const top = memberRects.reduce((first, rect) => rect.y < first.y || rect.y === first.y && rect.x < first.x ? rect : first);
+        result.push({ key: `${group.id}/0`, group, hidden, rect: frame, labelX: top.x - 12 });
+        continue;
+      }
+    }
+    const buckets = new Map<string, VisibleNode[]>();
     for (const item of visible) { const key = wide ? item.branchId : 'all', list = buckets.get(key) ?? []; list.push(item); buckets.set(key, list); }
     let segment = 0;
     for (const items of buckets.values()) { let run: Rect[] = []; const flush = () => { if (!run.length) return; const box = union(run); result.push({ key: `${group.id}/${segment++}`, group, hidden, rect: { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 } }); run = []; }; for (const item of items) { if (members.has(item.node.id)) { const rect = cards.get(item.node.id); if (rect) run.push(rect); } else flush(); } flush(); }
