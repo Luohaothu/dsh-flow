@@ -266,4 +266,36 @@ usage 使用最新请求的累计值，按请求重算已报告合计，不与�
 
 `raw-session-native.mjs` 是这条检查的实际消费流程。`createRawSessionNativeCapture({ ctx, scope, readObserver, loadEvidence, verifySdkEvidence })` 从 SDK 只读 facade 采集四种来源，保留 observer 子集和完整 SDK 证据；`assembleRawSessionSetup` 重新核验原始记录并生成 setup，`assertRawSessionSetupZero` 再次从原始来源重建视图后检查零值。外部 v2 采集入口、Root assembler 和 gate 消费这两个公开模块的同字节副本，不以子集列表替代正文。读取抛出 `null / false / 0 / ''` 时也保留原始失败；随后关闭读句柄再失败，会同时保留两项错误。
 
+实际采集器仅在第一次成功时保存 SDK loader/profile 初始化原件，后续 capture 重用该记录并重验其绑定；初次完整 setup 先于普通 UI 操作。该记录证明初始化来源，不宣称候选可编辑的 profile 工作副本在整个运行期不变，也不以工作副本回填 Root 原始输入。
+
 SDK loader/profile 检查由锁定环境的 `verifySdkEvidence` 必需注入，采集和组装分别调用。它须先核验实际 owner 原件与独立冻结 pins，再返回 `natural-sdk-source-verification/v1`：同一 scope、SDK JSON 子记录 SHA、observer entry/closure SHA 和初始化原件 SHA。缺失、返回布尔值、错 scope 或错原件 SHA 均不能形成 complete 证据；无验证器默认值。调用方还须以安全文件读取固定外层原件的原始字节与来源，并独立核验物理请求账和实际执行资格；子记录 SHA 不替代这些检查。组合回归为 `node --test tests/natural/raw-session-evidence.test.mjs tests/natural/raw-session-native.test.mjs`，使用一致的合成 source/pin 记录覆盖实际 producer → assembler → gate，不启动 SDK、界面或模型。
+
+
+
+## 分阶段物理创建与模型通道
+
+Refs #43、#48、#50、#53、#54、#58。`physical-container.mjs` 固定本地镜像、非 Root 身份、network none、nonce labels 和五个独立卷，以递归冻结的计划共享 create 参数与 bind 预期。绑定核原始 create/inspect 回执，并要求容器仍是 created、Pid 0、未启动的零时间状态。原调用输入后改、嵌套身份、argv 或卷映射修改都不能改变计划。
+
+`staged-model-socket.mjs` 只监听一次 Unix socket：bootstrap 及异步准入等待期间均提供本 case 的认证 health，以 409 拒绝 reserve/map/model；Root 验证完成后提升同一 handler/inode。请求 body 有独立有限期限，完整请求后的有效长响应继续排空；未进入有效响应的遗留连接在有限 grace 后技术终止。发生协议解析失败、请求 body、遗留连接终止或完整请求之后的提前响应关闭会记录计数、明确拒绝 normal closure，不作为业务或 F6 证据。实际安装仍须核无候选写权限的父链、跨 UID 的 socket owner/mode，局部同 UID 控制不能代替这些读回。
+
+## Root scope 的环境引用
+
+Refs #45、#47、#49。`root-scope-environment.mjs` 使 overlay 固定环境名，按 overlay → scope → Root boot reference 顺序冻结。SDK import 前从外层物理字段、显式 candidateId 和冻结 observer entry/closure 推导八字段期望，拒绝只在内部自洽的另一 case 引用。必需的 pinned JSON reader 核原始字节与来源，模块保留首次成功初始化的完整 reference 和身份；入口必须由同一 canonical 模块实例重读同一原件。相同八字段但另一文件、同 SHA 异路径、删除环境后重绑、克隆环境或修改返回的 reference 均不能替换首次绑定。实际安装与 Node loader 的同实例原件仍须验证，不能把摘要放回 overlay。
+
+## 停止输入与浏览器日志
+
+Refs #51、#56。`root-stop-reader.mjs` 被真实停止适配消费，固定 source/binding/stopTar 三份输入及分角色的 Root 边界策略。源码允许 Root0 的只读父链，binding/tar 保持 owner-only；文件 UID/GID、模式、nlink、不可替换 fd、读前后稳定、原 SHA 和显式 forbidden 边界均保留，根目录与尾斜杠不能绕过排除策略。实际装配与最终重放都重读 source/binding/stopTar，不能仅凭 DTO 中保留的 SHA 接受已改写原件；默认使用 OS 文件读取，合成 FS 控制显式注入。合成 FS 控制不授予 Linux Root0 读取或实际停止资格。
+
+Refs #52。`browser-log-reader.mjs` 仅允许非空 pinned browser-close DTO 指定的 stdout/stderr leaf 为空，按真实零字节及 SHA 返回。JSON 与其他角色继续拒空，父链、所有者、模式、链接、fd 稳定和边界检查不放宽。生产默认 Root0；实际自 UID 文件控制只证明文件读取行为，不充当 Root0、浏览器或正常关闭证明。
+
+Refs #55。`sdk-close-binding.mjs` 提供最终关闭重放所需的断言，以初始 Root 进程来源的 PID/birth 为期望，同时核 native-peer、peer-exit 的唯一 SDK 行和 bridge-closed 的 SDK PID、UID/GID 及出生标识；缺失或矛盾均拒绝。它不返回资格布尔值，合成字段控制不代替实际 OS 原件。
+
+Refs #57、#61。`archive-paths.mjs` 区分规范 POSIX 绝对路径与相对归档名，保留合法的 `.artifacts` 隐藏组件，拒绝点路径、父目录、空组件、反斜杠和控制字符。USTAR 读取要求精确 magic/version、checksum、UTF-8、完整 ASCII 八进制字段（含 mtime；设备号存在时须为完整 ASCII 八进制，普通文件和目录均允许全 NUL 缺省）及其 NUL 后 padding、数据 padding 和 terminator，只接受普通文件与无正文目录，拒绝链接、特殊类型和重复路径。源码安装包与实际停止消费者共用同字节 parser，所有者、模式与原字节 SHA 继续由各自角色校验。实际编译布局的回归控制与既有 file-only tar 的只读兼容检查，不授予新环境的 SDK 或正常关闭资格。
+
+Refs #59。`case-shutdown.mjs` 将自然停止与通道关闭按顺序执行：等待 owning driver 的明确完成回执后，再调用模型通道关闭；pending、未知或拒绝不触发后一步。通道结果还须为明确 closed 且 normal 的 staged socket 回执。显式 never-started 路径不授予 SDK 关闭资格，不能把尚未创建 driver 当作准备阶段没有资源。Promise barrier 控制验证先后关系，实际浏览器、SDK、peer/ACK 和请求结算仍须独立读回。
+
+Refs #60、#62。`profile-seed.mjs` 分别保留 SDK owning package 的 `installationAnchor` 与 workspace 的 `installationLookupAnchor` 及各自 Root source pin。profile 自然祖先查找检查使用 workspace，SDK context 和 owner 核对继续使用 SDK anchor。准备与安装拒绝缺源、异文件、候选 owner、候选可写或无关 lookup anchor；prepare 与 install 必须使用同一 canonical 模块中的原计划；模块私有副本固定三文件角色、目录、原字节及 pins，未知/克隆/删增或重新核 SHA 的变更在任何写入前拒绝，实际写入只用保留的原件。Root 原始 primary 输入位于可替换 profile 之外，保留独立 source pin；工作 patch 的初始 Root UID/0444 读回不代表运行中不可替换。profile 父目录归候选 UID，普通 settingsSave 可通过原 SDK 的 atomic rename 更新工作副本。Node 查找路径与合成安装控制不代表包入口已执行；实际安装后仍须从独立冻结来源核三锚 owner 和完整产品文件。
+
+Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安装代码 manifest 与 Root 私域核账树，拒绝 case 卷覆盖或物理别名（包括已声明与额外挂载）。历史 read-set 固定原始字节、完整目录选择和已记录的不存在路径；Linux 路径/UID 引用索引单独校核，不改写业务原件。外部 native reader 对完整原始与迁移后 usage 作独立重放，保留全局尝试数、未知用量和 writer inventory 约束。合成角色控制及实际自 UID 文件重放不授予 Linux Root0 安装、唯一 writer、SDK 或业务资格。
+
+公开仓库包含上述 helper 及其回归；本地外部测试装配、启动、准入和关闭消费者使用同字节副本，消费者实现与原始执行材料不在公开 checkout 中。运行 `node --test tests/natural/*.test.mjs`；新回归包含合成物理原件、技术 Unix HTTP 和实际自 UID 文件读回。纯控制和 source 清单不授予真实 SDK、UI、模型、业务或 F6 资格；实际安装、加载、普通 UI 操作、全流程关闭与物理回执继续作为下一波准入条件。
