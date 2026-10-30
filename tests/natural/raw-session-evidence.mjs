@@ -92,14 +92,14 @@ export async function collectRawSessionEvidence({agents,sessions,sessionQuery,se
   for(const listed of Array.isArray(result.sources.persisted.before)?result.sources.persisted.before:[]){
     const sessionId=listed?.header?.id;if(typeof sessionId!=='string'||!sessionId)continue;
     await capture('persisted-read',async()=>{
-      const handle=await sessionPersistence.open(sessionId,'read');let row,readError;
+      const handle=await sessionPersistence.open(sessionId,'read');let row,readFailed=false;
       try{
         assert.equal(handle.id,sessionId);assert.equal(handle.access,'read');headers(handle.header,listed.header);
         const read=await handle.read(0);
         row={sessionId,header:clone(handle.header),inheritedEventCount:handle.inheritedEventCount,access:handle.access,readOffset:0,eventState:read.eventState,events:clone(read.events),syntheticClosersApplied:false,closeSucceeded:false};
         result.sources.persisted.logs.push(row);
-      }catch(error){readError=error;throw error;}
-      finally{try{await handle.close();if(row)row.closeSucceeded=true;}catch(error){if(readError)result.errors.push(errorRecord('persisted-close',error,sessionId));else throw error;}}
+      }catch(error){readFailed=true;throw error;}
+      finally{try{await handle.close();if(row)row.closeSucceeded=true;}catch(error){if(readFailed)result.errors.push(errorRecord('persisted-close',error,sessionId));else throw error;}}
     },sessionId);
   }
   for(const[name,list]of listing)result.sources[name].after=await capture(name+'-list-after',async()=>clone(await list()));
