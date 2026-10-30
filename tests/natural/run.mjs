@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { constants, chmodSync, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAgentsHome } from './isolation.mjs';
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const artifacts = join(root, '.artifacts');
@@ -69,6 +70,7 @@ function readEvidence(directory) {
 
 async function run() {
   const home = privatePath(process.env.DSH_HOME, 'directory');
+  const agentsHome = assertAgentsHome(process.env.DSH_AGENTS_HOME, home, artifacts);
   const scenarioFile = privatePath(process.env.NATURAL_SCENARIO_FILE, 'file');
   const scenario = JSON.parse(readFileSync(scenarioFile, 'utf8'));
   assert.ok(Number.isSafeInteger(scenario.maxDurationMs) && scenario.maxDurationMs > 0 && scenario.maxDurationMs <= 2_147_453_647, 'Scenario duration must be a positive bounded integer');
@@ -82,7 +84,7 @@ async function run() {
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   assert.ok(profile.dependencies?.['dsh-flow'] && profile.dsh?.profile?.bundles?.includes('dsh-flow'), 'Install Flow through the official plugin manager first');
   const proof = privatePath(process.env.NATURAL_PROOF_DIR, 'directory', true);
-  for (const name of ['evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
+  for (const name of ['evidence.json', 'shutdown-evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
   chmodSync(proof, 0o700);
   const write = writer(proof);
   const startedAt = Date.now(), stopDeadline = startedAt + scenario.maxDurationMs + 19_000;
@@ -91,7 +93,7 @@ async function run() {
   const child = spawn(process.execPath, [cli, 'web', '--host', '127.0.0.1', '--port', String(port), '--no-open'], {
     cwd: root,
     detached: process.platform !== 'win32',
-    env: { ...process.env, DSH_HOME: home, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof },
+    env: { ...process.env, DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof },
   });
   receipt.pid = child.pid;
   let exitState, closed = false, ioError, interrupted, evidence, holdUntil, launchTail = '', launchSaved = false;
