@@ -1,0 +1,160 @@
+{
+  "scope": "B0 calibration only; no autonomous collaboration claim",
+  "baseline": "0a92333faf3ba7afd74769b5909ce7deaef98848",
+  "packageSha256": "93c05f8ff662c87a9b2626f6f068d85635e1cb1691c5fc3e97dcad5ec74a658b",
+  "lockSha256": "a316a6414999f24db00c49a290875217d958e7eb358102a95bc85598b4225936",
+  "attempts": [
+    {
+      "id": "calibration-A",
+      "alias": "A",
+      "classification": "environment-interference",
+      "recordedRequests": 4,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "f6fa7554991c92b9575a28e8fbc2cbd151329d9358616ea68bebc595baeda588",
+      "globalSkillEntries": 221,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "glob",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 1,
+      "finalAnswerVerified": false
+    },
+    {
+      "id": "calibration-B",
+      "alias": "B",
+      "classification": "host-start-failed",
+      "recordedRequests": 0,
+      "evidenceSha256": null
+    },
+    {
+      "id": "calibration-v2-A",
+      "alias": "A",
+      "classification": "global-skills-present",
+      "recordedRequests": 3,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "921fc983e06379127a88a95f624de599f7bbc784eefd06751b4a4b96ffb0e650",
+      "globalSkillEntries": 221,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": false
+    },
+    {
+      "id": "calibration-v2-B",
+      "alias": "B",
+      "classification": "global-skills-present",
+      "recordedRequests": 3,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "02d12f68a18c8bdb613357ba5aad0f5ffaddd54e3f4f4170aa53fe1d6f043bb6",
+      "globalSkillEntries": 221,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": false
+    },
+    {
+      "id": "calibration-v3-A",
+      "alias": "A",
+      "classification": "calibrated",
+      "recordedRequests": 3,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "062bab3e4b1b811a5ce20938e6df9f858e3f9908e2755415221e7ffe193f549d",
+      "globalSkillEntries": 0,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": true
+    },
+    {
+      "id": "calibration-v3-B",
+      "alias": "B",
+      "classification": "calibrated",
+      "recordedRequests": 3,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "3a7bf48d98941abcd309fab9b1bdd05563a5c2fb3bd0cbc84d0e2e3df84a9820",
+      "globalSkillEntries": 0,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": true
+    },
+    {
+      "id": "calibration-v3-C",
+      "alias": "C",
+      "classification": "unsupported-configuration",
+      "recordedRequests": 1,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "fecdf43521c447a30aea9bb2b2fe638475bc24fd3d4ebb4b17f8a9540d435d9b",
+      "globalSkillEntries": 0,
+      "sdkOwners": 9,
+      "tools": [],
+      "successfulToolResults": 0,
+      "toolErrors": 0,
+      "finalAnswerVerified": false
+    },
+    {
+      "id": "calibration-v3-D",
+      "alias": "D",
+      "classification": "calibrated",
+      "recordedRequests": 3,
+      "observerSha256": "d124f4df775e390ae96df1c59f43d8148f8d425ba692bc87f0245a9c85c8261f",
+      "evidenceSha256": "29bd7d2285c491298d6d065b194ac9be145a96a3a63970faa36d5819e21f06fc",
+      "globalSkillEntries": 0,
+      "sdkOwners": 9,
+      "tools": [
+        "glob",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": true
+    },
+    {
+      "id": "calibration-v4-C",
+      "alias": "C",
+      "classification": "calibrated",
+      "recordedRequests": 3,
+      "observerSha256": "6069a205f4313e56f2fde16044241247adbfa867fa57bf3c982fa876aaa0408f",
+      "evidenceSha256": "16084ade0543d749f9220484080d64d6c79ccbdfbeec893775efede28f5ae4cf",
+      "globalSkillEntries": 0,
+      "sdkOwners": 9,
+      "tools": [
+        "bash",
+        "read"
+      ],
+      "successfulToolResults": 2,
+      "toolErrors": 0,
+      "finalAnswerVerified": true
+    }
+  ],
+  "recordedRequests": 23,
+  "calibratedAliases": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "knownGaps": [
+    "Natural business and collaboration coverage remain incomplete.",
+    "Final frozen-version and holdout validation have not started."
+  ]
+}
