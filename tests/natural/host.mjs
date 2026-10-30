@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertAgentsHome, inspectGlobalSkills } from './isolation.mjs';
-import { assignmentReadBack as readBack } from './readback.mjs';
+import { assignmentReadBack as readBack, nativeToolCallForResult } from './readback.mjs';
 
 export const name = 'flow-natural-observer';
 export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands', 'skills'];
@@ -318,7 +318,7 @@ export function apply(ctx) {
       ];
       for (const history of evidence.histories) for (const event of history.events) {
         if (event.type !== 'tool/result' || event.data.message?.isError) continue;
-        const call = history.events.find(item => item.type === 'tool/call' && item.data.callId === event.data.message?.toolCallId);
+        const call = nativeToolCallForResult(history.events, event);
         if (call && !queries.test(call.data.name)) semantic.push(['tool-result', history.sessionId, call.data.name, call.data.arguments, event.data.message.content]);
       }
       for (const item of semantic) {

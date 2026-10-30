@@ -716,3 +716,31 @@ test('rejected non-object read/cancel arguments cannot hide a later exact cancel
   f.answer(call, [{ assignmentId: old.id, status: 'cancelled', reason: 'update' }]);
   assert.equal((await f.tick()).observation.readback, true);
 });
+
+test('progress uses the causal query call and does not extend no-progress after a failed cancellation reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const cancelled = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id, reason: '' }) });
+  f.answer(cancelled, 'Cancellation reason must be nonempty', 'rejected');
+  const query = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id }) });
+  f.answer(query, f.assignments[0]);
+  const current = await f.tick();
+  assert.equal(current.lastProgressAt, baseline.lastProgressAt);
+  assert.deepEqual(current.progress, baseline.progress);
+  f.advance(baseline.lastProgressAt + 5001 - current.updatedAt);
+  assert.equal((await f.tick()).reason, 'no-progress');
+});
+
+test('progress uses the causal write call and records successful work after a failed read reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const failed = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: 'wrong-run', assignmentId: f.assignments[0].id }) });
+  f.answer(failed, 'Assignment is not bound to this run', 'rejected');
+  const written = f.append('tool/call', { name: 'fixture_write_file', callId: 'reused', arguments: '{}' });
+  f.answer(written, { written: true });
+  const current = await f.tick();
+  assert.ok(current.lastProgressAt > baseline.lastProgressAt);
+  assert.equal(current.lastProgressAt, current.updatedAt);
+  assert.equal(current.progress.length, baseline.progress.length + 1);
+  assert.equal(current.progress.at(-1).kind, 'tool-result');
+});

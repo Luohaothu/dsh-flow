@@ -6,7 +6,7 @@ import { register } from 'tsx/esm/api';
 import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model';
 import { createUserMessage, ToolCallId, ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { assignmentReadBack } from './readback.mjs';
+import { assignmentReadBack, nativeToolCallForResult } from './readback.mjs';
 
 const loader = register({ namespace: 'natural-readback-sdk' });
 const { runtime } = await loader.import('../helpers/contract-runtime.ts', import.meta.url);
@@ -18,7 +18,7 @@ const { runState } = await loader.import('../../packages/dsh-flow/src/run/intern
 const { registerJsonTool } = await loader.import('../../packages/dsh-flow/src/host/tools.ts', import.meta.url);
 test.after(() => loader.unregister());
 
-async function nativeHistory(t, { kind, succeeds, reuse = true, splitTurns = false }) {
+async function nativeHistory(t, { kind, succeeds, reuse = true, splitTurns = false, following = 'material' }) {
   const f = await runtime(t, { persistence: false });
   await f.host.plugin(AgentDefaultModel, { provider: 'fixture', model: 'model', reasoningEffort: 'medium' });
   const catalog = new PatternCatalog({ includeBuiltins: false });
@@ -41,13 +41,18 @@ async function nativeHistory(t, { kind, succeeds, reuse = true, splitTurns = fal
   await writeFile(material, JSON.stringify(kind === 'cancel' ? outcomes : snapshot));
   t.after(registerJsonTool(main.ctx, 'fixture_read_json_file', 'Read a local JSON material file.', { type: 'object', properties: {}, additionalProperties: false },
     async () => JSON.parse(await readFile(material, 'utf8'))));
+  const progressFile = join(f.directory, 'progress.txt');
+  t.after(registerJsonTool(main.ctx, 'fixture_write_file', 'Write a local output file.', { type: 'object', properties: {}, additionalProperties: false },
+    async () => { await writeFile(progressFile, 'fixture progress'); return { written: true }; }));
   let mainRequests = 0;
   f.model.stream = async function* (options) {
     this.requests.push(options);
     const index = options.sessionId === main.session.id ? mainRequests++ : -1;
-    const name = index === 0 ? `flow_team_assignment_${kind}` : index === (splitTurns ? 2 : 1) ? 'fixture_read_json_file' : undefined;
+    const name = index === 0 ? `flow_team_assignment_${kind}` : index === (splitTurns ? 2 : 1)
+      ? following === 'query' ? 'flow_team_assignment_read' : following === 'write' ? 'fixture_write_file' : 'fixture_read_json_file' : undefined;
     const args = index === 0 ? { runId: kind === 'read' && !succeeds ? other.id : run.id, assignmentId: assignment.id,
-      ...(kind === 'cancel' ? { reason: succeeds ? 'valid fixture cancellation' : '' } : {}) } : {};
+      ...(kind === 'cancel' ? { reason: succeeds ? 'valid fixture cancellation' : '' } : {}) }
+      : following === 'query' ? { runId: run.id, assignmentId: assignment.id } : {};
     const id = ToolCallId(index === 0 || reuse ? 'reused-call' : 'unrelated-call');
     const block = name ? { type: 'tool-call', id, name, arguments: JSON.stringify(args) } : { type: 'text', text: 'DONE' };
     yield { type: 'block-start', index: 0, blockType: block.type };
@@ -69,7 +74,21 @@ async function nativeHistory(t, { kind, succeeds, reuse = true, splitTurns = fal
   assert.equal(calls[1].data.turn, splitTurns ? 2 : 1);
   assert.deepEqual(results.map(event => event.sourceEventSeqs), calls.map(event => [event.seq]));
   assert.equal(f.model.requests.every(request => request.provider === 'fixture'), true);
+  if (following === 'write') assert.equal(await readFile(progressFile, 'utf8'), 'fixture progress');
   return { assignment: snapshot, events, calls, results, latestUserSeq: events.filter(event => event.type === 'user/message' && event.data.source.kind === 'user').at(-1).seq };
+}
+
+for (const reuse of [false, true]) {
+  test(`actual SDK query after failed cancellation keeps its own progress classification with ${reuse ? 'reused' : 'distinct'} ID`, async t => {
+    const f = await nativeHistory(t, { kind: 'cancel', succeeds: false, reuse, following: 'query' });
+    assert.equal(f.calls[0].data.name, 'flow_team_assignment_cancel');
+    assert.equal(nativeToolCallForResult(f.events, f.results[1])?.data.name, 'flow_team_assignment_read');
+  });
+  test(`actual SDK completed file write after failed read keeps its own progress classification with ${reuse ? 'reused' : 'distinct'} ID`, async t => {
+    const f = await nativeHistory(t, { kind: 'read', succeeds: false, reuse, following: 'write' });
+    assert.equal(f.calls[0].data.name, 'flow_team_assignment_read');
+    assert.equal(nativeToolCallForResult(f.events, f.results[1])?.data.name, 'fixture_write_file');
+  });
 }
 
 for (const kind of ['read', 'cancel']) {
@@ -92,6 +111,8 @@ for (const kind of ['read', 'cancel']) {
 test('actual SDK readback fails closed when native result identity is missing or conflicting', async t => {
   const f = await nativeHistory(t, { kind: 'read', succeeds: true });
   for (const [name, corrupt] of [
+    ['call sequence negative', (call, result) => { call.seq = -1; result.sourceEventSeqs = [-1]; }],
+    ['call arguments missing', call => { delete call.data.arguments; }],
     ['call turn missing', call => { delete call.data.turn; }],
     ['call step missing', call => { delete call.data.step; }],
     ['result turn missing', (_call, result) => { delete result.data.turn; }],
@@ -112,5 +133,6 @@ test('actual SDK readback fails closed when native result identity is missing or
     const events = structuredClone(f.events), calls = events.filter(event => event.type === 'tool/call'), result = events.find(event => event.type === 'tool/result');
     corrupt(calls[0], result, calls);
     assert.equal(assignmentReadBack(f.assignment, events), false, name);
+    assert.equal(nativeToolCallForResult(events, result), undefined, name);
   }
 });
