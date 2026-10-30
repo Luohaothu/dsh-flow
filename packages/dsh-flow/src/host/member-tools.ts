@@ -70,7 +70,7 @@ export function installMemberTools(scope: DshContext, binding: NativeFlowBinding
     disposers.push(...installFlowTools(scope, context, caller, guard, yieldCapacity));
     tool('flow_team_read', 'Read your Run members, groups and your available material references.', objectSchema({}), async () => ({ ...teamRead(caller), materials: await materials.available(caller) }));
     tool('flow_patterns', 'Read this Run template catalog.', objectSchema({}), () => runState(run()).patternCatalog.list());
-    tool('flow_pattern_define', 'Compile a standard v1 candidate team template and register it only in this Run. Returns patternId on success or diagnostics on failure. Does not create members or write a persistent pattern.yaml package.', objectSchema({
+    tool('flow_pattern_define', 'Compile a standard v1 candidate team template and register it only in this Run. Returns patternId on success or diagnostics on failure. Does not create members or write a persistent pattern.yaml package. For cross-session reuse, save the complete pattern.yaml package and configure its directory in the dsh-flow plugin settings under 模式包来源, field 模式目录 (patternSources). New Runs load these sources. In a new Main session, users select the /agent-team skill and provide business requirements; the Flow root selects the template and organizes members.', objectSchema({
       document: patternDocumentSchema,
       assets: { type: 'object', description: 'Package-relative resource paths mapped to their text contents. Every value must be a string; the compiler validates paths and referenced files.' },
     }, ['document']), args => {
