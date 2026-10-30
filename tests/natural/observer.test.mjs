@@ -114,12 +114,12 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     await writeFile(pending, JSON.stringify({ sessionId, afterUserSeq: seq }), { mode: 0o600 });
     await rename(pending, join(proof, 'finish-request.json'));
   };
-  const openStream = chunks => {
-    const options = { sessionId: mains[0].sessionId, messages: [], tools: [] };
+  const openStream = (chunks, sessionId = mains[0].sessionId) => {
+    const options = { sessionId, messages: [], tools: [] };
     const next = async function* () { yield* chunks; };
     return handlers.get('llm/stream')(options, next);
   };
-  const stream = async chunks => { for await (const _chunk of openStream(chunks)) {} };
+  const stream = async (chunks, sessionId) => { for await (const _chunk of openStream(chunks, sessionId)) {} };
   await until(value => value.mains.length === mainCount && value.mains.every(main => main.userTimeline.length === 1));
   return { ...mains[0], mains, calls, creates, resolves, evidence, until, requestFinish, openStream, stream, initialInputs: () => calls.length };
 }
@@ -623,12 +623,12 @@ test('default continuation permits the existing assignment to finish or cancel a
   });
 });
 
-async function clockedFixture(t, overrides = {}) {
+async function clockedFixture(t, overrides = {}, mainCount = 1) {
   const realInterval = globalThis.setInterval;
   let tick;
   globalThis.setInterval = callback => { tick = callback; return realInterval(() => {}, 3_600_000); };
   let f;
-  try { f = await fixture(t, { userPrompts: undefined, noProgressMs: 1000, maxDurationMs: 10000, ...overrides }); }
+  try { f = await fixture(t, { userPrompts: undefined, noProgressMs: 1000, maxDurationMs: 10000, ...overrides }, mainCount); }
   finally { globalThis.setInterval = realInterval; }
   let now = (await f.evidence()).startedAt;
   const realNow = Date.now;
@@ -668,6 +668,78 @@ test('errors, queries and another long generation cannot renew the same no-progr
   const stopped = await f.tick();
   assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.lastProgressAt, originalProgress);
   assert.equal(stopped.noProgressContinuation.until, until); assert.equal(stopped.observation.runningRequests, 0);
+});
+
+test('finite-budget continuation cannot be opened by a failed latest request or borrow an older request from its session', async t => {
+  for (const earlier of ['none', 'completed-before-failure', 'completed-after-failure']) await t.test(earlier, async t => {
+    const f = await clockedFixture(t);
+    const old = earlier === 'none' ? undefined : f.openStream([{ type: 'text-delta', text: 'earlier' }]);
+    if (old) await old.next();
+    f.advance(1200);
+    if (earlier === 'completed-before-failure') await old.next();
+    const failed = f.openStream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    await failed.next(); f.advance(100); await failed.next();
+    if (earlier === 'completed-after-failure') { f.advance(50); await old.next(); }
+    const stopped = await f.tick();
+    assert.equal(stopped.requests.at(-1).status, 'failed');
+    assert.equal(stopped.observation.runningRequests, 0);
+    assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.noProgressContinuation, undefined);
+  });
+});
+
+test('finite-budget continuation keeps an independent session handoff without borrowing a failed session timestamp', async t => {
+  for (const successLast of [false, true]) await t.test(successLast ? 'success-finishes-last' : 'failure-finishes-last', async t => {
+    const f = await clockedFixture(t, {}, 2), successful = f.mains[1];
+    const success = f.openStream([{ type: 'text-delta', text: 'other Main' }], successful.sessionId);
+    const failed = f.openStream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    await success.next(); await failed.next(); f.advance(1200);
+    await (successLast ? failed : success).next(); f.advance(100);
+    await (successLast ? success : failed).next();
+    const handoff = await f.tick(), request = handoff.requests.find(item => item.sessionId === successful.sessionId);
+    assert.equal(handoff.status, 'OBSERVING'); assert.equal(request.status, 'completed');
+    assert.equal(handoff.noProgressContinuation.until, request.endedAt + 1000);
+    f.advance(handoff.noProgressContinuation.until - handoff.updatedAt);
+    assert.equal((await f.tick()).reason, 'no-progress');
+  });
+});
+
+test('finite-budget continuation revokes an existing session handoff after failure without restoring it on a new generation', async t => {
+  for (const recover of [false, true]) await t.test(recover ? 'failed-then-completed-before-poll' : 'failed', async t => {
+    const f = await clockedFixture(t, { maxRequests: 4 }), firstStream = f.openStream([{ type: 'text-delta', text: 'first' }]);
+    await firstStream.next(); f.advance(1200); await firstStream.next();
+    const granted = await f.tick(), originalProgress = granted.lastProgressAt;
+    assert.equal(granted.noProgressContinuation.until, granted.updatedAt + 1000);
+    f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    if (recover) { f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]); }
+    const stopped = await f.tick();
+    assert.equal(stopped.lastProgressAt, originalProgress); assert.ok(stopped.updatedAt < granted.noProgressContinuation.until);
+    assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.noProgressContinuation, undefined);
+  });
+});
+
+test('finite-budget continuation preserves only the independent original deadline after another Main fails', async t => {
+  const f = await clockedFixture(t, { maxRequests: 5 }, 2), other = f.mains[1];
+  const firstStream = f.openStream([{ type: 'text-delta', text: 'later-ending Main' }]);
+  const otherStream = f.openStream([{ type: 'text-delta', text: 'independent Main' }], other.sessionId);
+  await firstStream.next(); await otherStream.next(); f.advance(1200); await otherStream.next();
+  f.advance(100); await firstStream.next();
+  const granted = await f.tick(), ownUntil = granted.requests.find(request => request.sessionId === other.sessionId).endedAt + 1000;
+  assert.equal(granted.noProgressContinuation.until, granted.updatedAt + 1000);
+  f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+  const retained = await f.tick(); assert.equal(retained.status, 'OBSERVING');
+  assert.equal(retained.noProgressContinuation.until, ownUntil); assert.ok(ownUntil < granted.noProgressContinuation.until);
+  f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'stop' } }], other.sessionId);
+  const repeated = await f.tick(); assert.equal(repeated.status, 'OBSERVING');
+  assert.equal(repeated.noProgressContinuation.until, ownUntil);
+  f.advance(ownUntil - repeated.updatedAt); assert.equal((await f.tick()).reason, 'no-progress');
+});
+
+test('finite-budget continuation preserves a normal consumer-return handoff', async t => {
+  const f = await clockedFixture(t), stream = f.openStream([{ type: 'text-delta', text: 'tool handoff' }]);
+  await stream.next(); f.advance(1500); await stream.return();
+  const handoff = await f.tick();
+  assert.equal(handoff.requests[0].status, 'cancelled'); assert.equal(handoff.requests[0].error, undefined);
+  assert.equal(handoff.status, 'OBSERVING'); assert.equal(handoff.noProgressContinuation.until, handoff.updatedAt + 1000);
 });
 
 test('an active stream and continuation never extend the absolute observation deadline', async t => {
