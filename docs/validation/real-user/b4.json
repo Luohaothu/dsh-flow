@@ -3,13 +3,13 @@
   "status": "in-progress-draft",
   "completed": false,
   "phase": "exploration",
-  "cutoff": "sealed-through-n19-create-v18-bd-01",
+  "cutoff": "closed-results-through-n19-create-v18-dd-01; separate-v19-natural-run-in-progress",
   "scenarioIds": [
     "N17",
     "N18",
     "N19"
   ],
-  "logicalBusinessRuns": 7,
+  "logicalBusinessRuns": 8,
   "technicalZeroCallAttempts": [
     {
       "id": "n17-v15-bd-01",
@@ -589,18 +589,171 @@
         "privateArchiveReadbackSha256": "5f4c7a5fd8120399735e4b956ca4ece4ccfcc3e5bddda40c0c595fdecb7eb05e",
         "resourceSha256": "eb0dfe5b4a7e76ed4d8e4af24bf909ffc05d9d677e933c5046b2c1adda824fe0"
       }
+    },
+    {
+      "id": "n19-create-v18-dd-01",
+      "publicLabel": "N19 v18-02",
+      "phase": "exploration",
+      "scenario": "N19",
+      "version": "v18",
+      "explorationControl": {
+        "changedAxis": "Main runtime configuration",
+        "sameProductPackage": true,
+        "sameOriginalBusinessInputAndMaterials": true,
+        "singleRunDoesNotEstablishCausalEfficiencyGain": true
+      },
+      "initialBusinessInput": "ordinary-ui-skill-plus-natural-request",
+      "acceptedInitialBusinessInputs": 1,
+      "monitoredAttempts": 46,
+      "conservativeAttempts": 46,
+      "reportedTokens": 1000103,
+      "unknownUsageNetworkRequests": 0,
+      "unknownUsageRequestNumbers": [],
+      "lateLocalBoundaryRejects": 0,
+      "afterBoundaryNetworkRequests": 0,
+      "mainFinalDelivered": true,
+      "successfulCreator": false,
+      "creatorR1Qualified": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "business": {
+        "status": "normal-settled-independent-business-acceptance-failed",
+        "independentAcceptancePassed": false,
+        "regularWorkspaceFiles": 13,
+        "nonRegularEntries": 0,
+        "originalOrdinaryMaterialFiles": 2,
+        "originalOrdinaryMaterialsUnchanged": true,
+        "actualGuiImportOrFreshMainReuse": false,
+        "actualCurrentRunDefinition": true,
+        "actualCurrentRunApplication": true,
+        "currentRunRegistrationIsPersistentImport": false,
+        "actualRolePermissionExecution": false,
+        "completeParameterBoundaryMatrix": false,
+        "requiredDeliveryDefects": [
+          "Ordinary import instructions invent a skill menu and omit the actual persistent host settings route.",
+          "AI role approval duties conflict with the original prohibition on approving for the business; actual agent approval was not observed.",
+          "A reporter instruction names a required report template absent under that name; Main identified the mismatch but treated correction as optional and awaited renewed confirmation while declaring acceptance."
+        ],
+        "actualAgentBusinessApprovalObserved": false,
+        "optionalHeadcountExamplesWithDefaultsAloneFailed": false
+      },
+      "formalDelivery": {
+        "actualMainTerminalReadbackPair": {
+          "callSeq": 59,
+          "resultSeq": 60
+        },
+        "lastMainAssistantSeq": 104,
+        "lastMainStepEndSeq": 105,
+        "lastMainCompletedTurnEndSeq": 106,
+        "genuineFinalBusinessDeliveryEstablished": true,
+        "independentBusinessAcceptancePassed": false,
+        "completedTurnIsNotByItselfBusinessAcceptance": true
+      },
+      "actualCurrentRunApplication": {
+        "defineSucceeded": true,
+        "applySucceeded": true,
+        "totalFlowNodes": 4,
+        "newMembersCreated": 3,
+        "newMemberModelRequests": 0,
+        "memberBusinessOrPermissionExecutionCredit": false
+      },
+      "publicCatalogEvidence": {
+        "packageDirectoryCandidates": 1,
+        "packageDirectoryDiagnostics": 0,
+        "packageDirectoryResolveSucceeded": true,
+        "documentAssetsCompileSucceeded": true,
+        "parentDirectoryCandidates": 1,
+        "parentDirectoryDiagnostics": 8,
+        "parentDirectoryResolveSucceeded": true,
+        "scope": "Structure evidence only; does not establish ordinary import, reuse, business acceptance or role execution."
+      },
+      "acceptanceCostObservation": {
+        "scopeCosts": {
+          "Main": {
+            "requests": 14,
+            "reportedTokens": 253316
+          },
+          "Flow": {
+            "requests": 32,
+            "reportedTokens": 746787
+          }
+        },
+        "mainShareOfWholeReportedPercent": 25.33,
+        "causalEfficiencyImprovementEstablished": false,
+        "scope": "One exploration contrast with business acceptance failure; no general efficiency gain, counterfactual savings or billing amount is established."
+      },
+      "technicalClosure": {
+        "normalTermination": "SETTLED",
+        "normalUiDisbandObserved": true,
+        "flowDrainFilePresent": false,
+        "durableRun": "stopped",
+        "flowCleanup": "complete",
+        "terminalFlowNodes": 4,
+        "terminalFlowNodeStatus": "terminated",
+        "testTabClosed": true,
+        "observedPidStartPairs": 4,
+        "commandFingerprintedPairs": 2,
+        "metadataOnlyPairs": 2,
+        "journalFrames": 4004,
+        "historicalIncompleteFrames": 2,
+        "partialCommandObservations": 2,
+        "lastBeforeStopPeriodicGapMs": 64,
+        "samplerStatus": "pending",
+        "rootObservedScopeMatchesAfterExit": 0,
+        "rootObservationErrors": 0,
+        "registeredPortsAbsent": 2,
+        "registeredCwdScopesAbsent": 3,
+        "instantaneousCompleteTreeEstablished": false,
+        "allArbitraryDetachedResourcesEstablished": false,
+        "physicalIdentityCountIsFlowTeamSize": false,
+        "actualCommandToolOutputEmpty": true,
+        "controllerLogIsSeparateSource": true,
+        "controllerLogIsToolStdout": false,
+        "nativeOwnerExitCode": 130,
+        "nativeOwnerExitSignal": null,
+        "forcedNativeStop": false,
+        "runnerCommandExitCode": 0,
+        "externalSamplerCommandExitCode": 1,
+        "nativeSdkLogicalDisposal": "not-established",
+        "nativeMainLogicalDisposal": "not-established",
+        "observerLogicalDisposal": "not-established",
+        "observerDisposeHookCompleted": "not-established",
+        "strictF6Established": false,
+        "strictClosureEvidence": "not-established"
+      },
+      "archive": {
+        "status": "sealed-and-root-fresh-process-exact-byte-readback-passed",
+        "sourceFiles": 399,
+        "members": 400,
+        "freshProcessExactByteReadback": true,
+        "selfContained": false
+      },
+      "fingerprints": {
+        "actualCaseSha256": "54f4128a2bb672bd2f5cde42d8ac948ccb4269631ca2df4bdbcff3ead47a63af",
+        "resourceSha256": "0ec86f2af45b2848a0fa10a6f74ba54df56566ddc6a4d79643665ffa0f2100a6",
+        "independentBusinessAcceptanceSha256": "eb5b2aa5f6300fc0a47e0f06ce7e80d28f290ac33192742c76a83b77ce3048ae",
+        "businessSealManifestSha256": "1a0a2fe1370af05a85770de2d9e9f8b9a2b948064858889d31b29f93b053228a",
+        "mainFinalPhaseSummarySha256": "ce36b602e58e6371bffd2c2dd25a68484e98025f4a6cae701e99e6753f610930",
+        "rootPostExitAuditSha256": "f26e3d2f0e1bf3ce61b1f77d5dffe064cf2618e3267293fc86c0dee65a20b1c7",
+        "samplerReceiptSha256": "57efcf4dba0d521e3d8a2fbaae8b9dc28f8b8431211e40a64f8ce2d20c0c33aa",
+        "privateArchiveSha256": "24958b3bec00ce6ca205591a1098b2e1bfb34e982eb2ded46298f5181acba145",
+        "privateManifestSha256": "12d770c1f5eb81b977532056241dbea3d43f580adc28b3879f51a1ef2df86090",
+        "privateSealReceiptSha256": "3ff7143777b60aa927c08abdd2ed51714d1a1a55f1bc0bb170661bb9e172e39f",
+        "privateArchiveReadbackSha256": "de73ae6d0d4b3bff7e9683cd9fef102cd57c620704c4efc6725af7b0954766c9"
+      }
     }
   ],
   "resourceSummary": {
-    "monitoredAttempts": 617,
-    "conservativeAttempts": 617,
-    "reportedTokens": 26678569,
+    "monitoredAttempts": 663,
+    "conservativeAttempts": 663,
+    "reportedTokens": 27678672,
     "unknownUsageNetworkRequests": 1,
     "lateLocalBoundaryRejects": 0
   },
   "globalAtCutoff": {
-    "conservativeAttempts": 2296,
-    "reportedTokens": 79729429,
+    "conservativeAttempts": 2342,
+    "reportedTokens": 80729532,
     "unknownUsageNetworkRequestsIncludingBaseline": 13,
     "includesB4": true
   },
@@ -642,10 +795,23 @@
         "exactFiles": 164,
         "packageJsonOnlyPrepackNormalization": true
       },
-      "naturalRunsAtCutoff": 1,
+      "naturalRunsAtCutoff": 2,
       "phase": "exploration",
       "actualInstallationVerifiedFiles": 165,
       "actualInstallationVerifiedSdkOwners": 10
+    },
+    {
+      "version": "v19",
+      "sourceRevision": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
+      "productTree": "4545de2922d236a5667ae4159345055744a6c095",
+      "tarSha256": "50a5f12943b604dd838d7c0b367fd3138d19cf0d5c0d0a735cbc15c8c4b263b4",
+      "packageFiles": 165,
+      "naturalRunsAtCutoff": 0,
+      "phase": "engineering-and-package-only",
+      "buildExitCode": 0,
+      "packExitCode": 0,
+      "buildReceiptSha256": "450dbe71f01c4300ac45f93e65624c5d2238a5ce99994a071dec84614bf8d2be",
+      "naturalRetestPerformed": false
     }
   ],
   "engineeringOnly": {
@@ -720,12 +886,26 @@
       "line": 66,
       "endLine": 82,
       "claim": "Persistent package, ordinary settings import and skill plus business request; compile is separate from runtime verification."
+    },
+    {
+      "commit": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
+      "path": "packages/dsh-flow/skills/agent-team/SKILL.md",
+      "line": 29,
+      "endLine": 29,
+      "claim": "Replace the existing acceptance paragraph: required defects require authorized formal rework, role names grant no human approval authority, and unresolved issues remain explicit."
+    },
+    {
+      "commit": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
+      "path": "packages/dsh-flow/src/host/member-tools.ts",
+      "line": 73,
+      "endLine": 73,
+      "claim": "Existing define tool description states current-Run scope, complete persistent package, actual host patternSources settings and ordinary Main/Flow responsibilities; schema and logic unchanged."
     }
   ],
   "coverage": {
     "N17CustomPatternAdoption": "uncovered",
     "N18ExplicitComparisonAndRejection": "not-established",
-    "N19SuccessfulCreatorAndNewConversationReuse": "not-established-five-creator-failures",
+    "N19SuccessfulCreatorAndNewConversationReuse": "not-established-six-creator-failures",
     "configurationSnapshotGoals": "partial",
     "X01FullBoundaryMatrix": "unfinished",
     "wholeUiMatrix": "unfinished",
@@ -734,9 +914,12 @@
     "readIsolation": "same-UID-exploration-no-strong-read-isolation-credit"
   },
   "followup": {
-    "version": "v18",
-    "status": "planned-main-only-environment-control-not-launched",
-    "candidateId": null,
+    "version": "v19",
+    "status": "natural-retest-in-progress-not-graded",
+    "sourceRevision": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
+    "productTree": "4545de2922d236a5667ae4159345055744a6c095",
+    "tarSha256": "50a5f12943b604dd838d7c0b367fd3138d19cf0d5c0d0a735cbc15c8c4b263b4",
+    "candidateId": "n19-create-v19-dd-01",
     "businessOutcome": null,
     "genuineMainFinal": null,
     "ordinaryImportAndFreshConversationReuse": null,
@@ -744,12 +927,12 @@
     "technicalClosure": null,
     "uiCoverage": null,
     "resourceUsage": null,
-    "naturalBusinessLaunched": false,
-    "newModelCalls": 0,
-    "instruction": "Keep v18, original business materials and input. Change only the Main runtime configuration in a new isolated run. No outcome or improvement is established before execution."
+    "naturalBusinessLaunched": true,
+    "newModelCalls": null,
+    "instruction": "A separate v19 case has started through the ordinary GUI using the unchanged original materials and business requirement. It is in progress and excluded from the eight closed-run totals; no outcome or creator/reuse qualification is inferred."
   },
   "publicDisclosure": "Anonymous scenario/version identifiers, public product symbols, actual aggregate usage and fingerprints only. Original raw evidence remains private.",
-  "failedCreatorRuns": 5,
+  "failedCreatorRuns": 6,
   "successfulCreatorOrR1Runs": 0,
   "laterBatches": {
     "B5": "not-executed",
@@ -828,5 +1011,36 @@
     "modelCallsAdded": 0,
     "reportedTokensAdded": 0,
     "distinctFromEarlierTwoTechnicalCases": true
+  },
+  "v19EngineeringBeforeNaturalRun": {
+    "version": "v19",
+    "sourceRevision": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
+    "productTree": "4545de2922d236a5667ae4159345055744a6c095",
+    "changedSourceFiles": 2,
+    "changedFiles": [
+      "packages/dsh-flow/skills/agent-team/SKILL.md",
+      "packages/dsh-flow/src/host/member-tools.ts"
+    ],
+    "scope": "Generic independent business acceptance, authorized reversible rework and real persistent pattern settings guidance only. No tool schema, function logic or failed sample was rewritten.",
+    "fullContracts": {
+      "tests": 737,
+      "passed": 737,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "typecheckTargets": 2,
+    "recordedEngineeringCommandsExitZero": 7,
+    "receiptSha256": "c03415a3e760d0fccbc2036244283f340e5cb45407cd98a841aecd9c2dd059b3",
+    "buildReceiptSha256": "450dbe71f01c4300ac45f93e65624c5d2238a5ce99994a071dec84614bf8d2be",
+    "packageFiles": 165,
+    "tarSha256": "50a5f12943b604dd838d7c0b367fd3138d19cf0d5c0d0a735cbc15c8c4b263b4",
+    "buildExitCode": 0,
+    "packExitCode": 0,
+    "naturalModelRequestsPerformedByEngineeringChecks": 0,
+    "naturalRetestPerformed": false,
+    "naturalEvaluationCreditAdded": false,
+    "creatorOrR1Credit": false,
+    "hypothesizedCostReductionVerified": false
   }
 }
