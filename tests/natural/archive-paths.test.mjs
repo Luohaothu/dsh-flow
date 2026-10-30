@@ -40,3 +40,7 @@ test('archive refuses a prefix traversal, data-bearing directory, checksum, padd
 });
 
 test('archive requires exact USTAR version 00 even when the checksum is valid',()=>{for(const version of['01','  ','\0\0'])assert.throws(()=>readCanonicalUstar(archive([{name:'member',version}])));});
+
+function updateChecksum(bytes){bytes.fill(32,148,156);bytes.write(bytes.subarray(0,512).reduce((sum,byte)=>sum+byte,0).toString(8).padStart(6,'0')+'\0 ',148,8,'ascii');}
+for(const [name,start]of[['mode',100],['uid',108],['gid',116],['size',124],['checksum',148]])test('numeric '+name+' field refuses data after its NUL even with a valid checksum',()=>{const bytes=archive([{name:'file'}]);if(name==='checksum'){bytes[155]=120;}else{bytes[start]=48;bytes[start+1]=0;bytes[start+2]=120;updateChecksum(bytes);}assert.throws(()=>readCanonicalUstar(bytes),/Tar number has data after NUL/);});
+test('numeric fields require ASCII octal digits and space padding',()=>{for(const byte of[10,0xa0,0xb0,56]){const bytes=archive([{name:'file'}]);bytes[108]=byte;updateChecksum(bytes);assert.throws(()=>readCanonicalUstar(bytes),/Unsupported tar number/);}const spaces=archive([{name:'file'}]);spaces.fill(32,108,116);spaces[108]=48;spaces[109]=0;updateChecksum(spaces);assert.equal(readCanonicalUstar(spaces)[0].uid,0);});
