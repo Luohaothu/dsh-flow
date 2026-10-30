@@ -299,3 +299,12 @@ Refs #60、#62。`profile-seed.mjs` 分别保留 SDK owning package 的 `install
 Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安装代码 manifest 与 Root 私域核账树，拒绝 case 卷覆盖或物理别名（包括已声明与额外挂载）。历史 read-set 固定原始字节、完整目录选择和已记录的不存在路径；Linux 路径/UID 引用索引单独校核，不改写业务原件。外部 native reader 对完整原始与迁移后 usage 作独立重放，保留全局尝试数、未知用量和 writer inventory 约束。合成角色控制及实际自 UID 文件重放不授予 Linux Root0 安装、唯一 writer、SDK 或业务资格。
 
 公开仓库包含上述 helper 及其回归；本地外部测试装配、启动、准入和关闭消费者使用同字节副本，消费者实现与原始执行材料不在公开 checkout 中。运行 `node --test tests/natural/*.test.mjs`；新回归包含合成物理原件、技术 Unix HTTP 和实际自 UID 文件读回。纯控制和 source 清单不授予真实 SDK、UI、模型、业务或 F6 资格；实际安装、加载、普通 UI 操作、全流程关闭与物理回执继续作为下一波准入条件。
+
+
+## 历史计账与新测试域
+
+历史 current 指针作为归档保留，累计用量沿用原始 epoch。新 Root 域有独立 current 索引，绑定本次 namespace、generation、镜像、实际进程和源码采集；域内既有写入者仍由原 StrictV3 校验。历史进程范围、未观察到的工具写入者、模型加载路径、未知用量与 F6 均保留 unknown。 历史核查只观察来源中已知 PID 和直接 PPID；观察到的 PGID 不等于独占归属，也不以 PID 推断 PGID，不据此还原所有组或后代的关闭。
+
+这些中性来源校验器只建立角色策略，不启动 SDK、创建 authority、发送模型 HTTP，也不授予业务资格。实际 Root 调用方还须绑定当前 Linux Root 进程与 source manifest，并保留逐 case 隔离、唯一 TLS 出口和 HTTP 前持久化记账。元数据核查保留完整原文，支持 BSD 的有符号 UID。
+
+专项控制：`node --test tests/natural/writer-domain-cutover.test.mjs`。
