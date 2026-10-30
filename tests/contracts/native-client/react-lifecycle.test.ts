@@ -14,7 +14,9 @@ test('Native React hook keeps its Client across Run changes, cancels old HTTP/SS
     import {useEffect} from 'react';
     import {createRoot} from 'react-dom/client';
     import {useDashboard} from './packages/dsh-flow/src/native/client.tsx';
-    const clients=[],observations=[],pair={};
+    const clients=[],observations=[],pair={},requests=[];
+    const originalFetch=globalThis.fetch.bind(globalThis);
+    globalThis.fetch=(url,init)=>{requests.push({path:new URL(String(url)).pathname,signal:init?.signal});return originalFetch(url,init);};
     let current;
     function Probe({address,runId,label='single'}) {
       const value=useDashboard(address,runId);
@@ -26,7 +28,7 @@ test('Native React hook keeps its Client across Run changes, cancels old HTTP/SS
     const root=createRoot(document.getElementById('root'));
     window.__probe={render:(address,runId)=>root.render(<Probe address={address} runId={runId}/>),read:()=>current,
       renderPair:(address,first)=>root.render(<>{first&&<Probe key='first' label='first' address={address} runId='runA'/>}<Probe key='second' label='second' address={address} runId='runB'/></>),pair:()=>pair,
-      observations:()=>observations,clients:()=>clients.map(c=>c.getState().connection),close:()=>root.unmount()};
+      requests:()=>requests.map(({path,signal})=>({path,aborted:signal?.aborted??false})),observations:()=>observations,clients:()=>clients.map(c=>c.getState().connection),close:()=>root.unmount()};
   ` }, write: false, bundle: true, format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
   const script = compiled.outputFiles[0]!.text;
   const streams = new Map<ServerResponse, string>(), reads = new Map<string, number>();
@@ -62,7 +64,7 @@ test('Native React hook keeps its Client across Run changes, cancels old HTTP/SS
   await page.goto(origin);
   const render = async (prefix: string, id: string) => { await page.evaluate(({ base, runId }) => (window as unknown as { __probe: { render(address: string, runId: string): void } }).__probe.render(base, runId), { base: `${origin}/${prefix}`, runId: id }); };
   const waitRun = (id: string) => page.waitForFunction(runId => (window as unknown as { __probe: { read(): ProbeState } }).__probe.read()?.snapshotRunId === runId, id, { timeout: 2_000 });
-  const until = async (condition: () => boolean) => { const deadline = Date.now() + 2_000; while (!condition()) { if (Date.now() > deadline) throw new Error('React transport resources did not settle'); await new Promise(resolve => setTimeout(resolve, 10)); } };
+  const until = async (condition: () => boolean, timeout = 2_000) => { const deadline = Date.now() + timeout; while (!condition()) { if (Date.now() > deadline) throw new Error(`React transport resources did not settle; remaining SSE: ${JSON.stringify([...streams.values()])}`); await new Promise(resolve => setTimeout(resolve, 10)); } };
   await render('one', 'runA'); await waitRun('runA');
   const initial = await page.evaluate<ProbeState>('window.__probe.read()');
   await until(() => [...streams.values()].includes('/one/api/runs/runA/events'));
@@ -92,7 +94,12 @@ test('Native React hook keeps its Client across Run changes, cancels old HTTP/SS
   assert.equal(clientStates[pair.first!.id], 'disposed'); assert.notEqual(clientStates[pair.second!.id], 'disposed');
   const observations = await page.evaluate<Array<ProbeState & { requested: string | null }>>('window.__probe.observations()');
   assert.ok(observations.every(item => item.snapshotRunId === null || item.snapshotRunId === item.requested), 'a new Run must never paint the old Run snapshot');
-  await page.evaluate('window.__probe.close()'); await until(() => streams.size === 0);
+  await page.evaluate('window.__probe.close()');
   assert.ok((await page.evaluate<string[]>('window.__probe.clients()')).every(state => state === 'disposed'));
+  const requests = await page.evaluate<Array<{ path: string; aborted: boolean }>>('window.__probe.requests()');
+  const sse = requests.filter(request => request.path.endsWith('/events'));
+  assert.ok(sse.length > 0);
+  assert.deepEqual(sse.filter(request => !request.aborted), [], 'unmount must immediately abort every owned SSE request');
+  await until(() => streams.size === 0, 5_000);
   assert.deepEqual(errors, []);
 });

@@ -98,7 +98,7 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
     tool('flow_self', 'Read your profile, state and direct logical relations.', schema({}), () => info(caller));
     tool('flow_agents', 'List active Agents in your Flow Context.', schema({}), () => context.list(value => value instanceof Agent).map(value => info(value as Agent)));
     tool('flow_send', 'Send a message; the receiver chooses its priority.', schema({ sessionID: string, ...messageFields }, ['sessionID', 'summary', 'payload']), args => agent(args.sessionID).recvMessage(outgoing(args)));
-    tool('flow_wait', 'Register a mailbox condition and end this turn immediately, or return an existing match. timeout is milliseconds.',
+    tool('flow_wait', 'Match unread mailbox messages from any source, including System assignment status updates, using query. Return an existing match as metadata without marking it read; otherwise register the condition and end this turn immediately. timeout is milliseconds.',
       schema({ query: querySchema, timeout: number }, ['timeout']), (args, execution) => {
         const result = caller.wait(query(args.query), args.timeout as number);
         if (result.kind === 'registered') { yieldCapacity(); execution.concludeTurn(); return result; }

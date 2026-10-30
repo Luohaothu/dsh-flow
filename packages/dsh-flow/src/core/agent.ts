@@ -271,7 +271,7 @@ export class Agent {
   }
   private findMatch(record: WaitRecord): MessageMeta | null {
     for (;;) {
-      const candidates = this.mailbox.query(message => !message.read && sourceAgent(message.source) !== null).filter(meta => !record.examined.has(meta.id));
+      const candidates = this.mailbox.query(message => !message.read).filter(meta => !record.examined.has(meta.id));
       if (!candidates.length) return null;
       for (const candidate of candidates) {
         if (this.pendingWait !== record || this.closing) return null;

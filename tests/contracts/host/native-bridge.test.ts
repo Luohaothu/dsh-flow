@@ -223,6 +223,60 @@ test('native member submission has a durable transport key and histories remain 
   await f.bridge.dispose();
 });
 
+for (const timing of ['existing', 'later'] as const) {
+  test(`${timing} AssignmentService System result notifications complete native flow_wait`, async t => {
+    const f = await fixture(t), main = await f.ordinary(`wait-${timing}-main`); f.bridge.attachRunService(f.service);
+    const { run, root } = await f.active(main), native = f.native(root), assignments = run.assignments!;
+    const spec = { name: 'result', type: 'test', background: '', requirements: 'submit', acceptanceCriteria: 'valid', resultSchema: true };
+    const top = await assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec }, 'top');
+    const child = await Agent.create(run.context!, { ...root.getProfile(), sessionID: newSessionID(), name: 'result-member' }, root);
+    const job = await assignments.prepare({ sender: root, recipient: child, parentAssignment: top, spec }, 'child');
+    const submit = async () => {
+      let submitted = false;
+      f.model.script = () => {
+        if (submitted) return 'AFTER-SUBMISSION'; submitted = true;
+        return { tool: 'flow_submit', args: { assignmentId: job.id, result: { answer: 'ok' }, continuingChildren: [] } };
+      };
+      f.native(child).followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'SUBMIT' }] }));
+      await f.native(child).whenIdle();
+      assert.equal(assignments.read(root, job).status, 'submitted');
+    };
+    if (timing === 'existing') { await submit(); await native.whenIdle(); }
+    const starts = native.session.snapshotEvents().filter(event => event.type === 'turn/start').length;
+    const requests = f.model.requests.length;
+    let waited = false;
+    f.model.script = () => {
+      if (waited) return 'AFTER-WAIT'; waited = true;
+      return { tool: 'flow_wait', args: { query: { source: { kind: 'system' }, read: false, summaryIncludes: '作业状态更新' }, timeout: 5_000 } };
+    };
+    native.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'WAIT-FOR-ASSIGNMENT' }] }));
+    await native.whenIdle();
+    if (timing === 'later') {
+      assert.equal(root.hasPendingWait(), true); assert.equal(f.model.requests.length - requests, 1, 'registered flow_wait concludes its native turn');
+      assert.ok(native.session.snapshotEvents().some(event => event.type === 'tool/result' && JSON.stringify(event).includes('registered')));
+      root.recvMessage({ source: { kind: 'system' }, timestamp: Date.now(), read: false, read_timestamp: null, summary: 'Unrelated System', payload: 'defer' });
+      root.recvMessage({ source: { kind: 'user' }, timestamp: Date.now(), read: false, read_timestamp: null, summary: 'Unrelated User', payload: 'defer' });
+      await native.whenIdle(); assert.equal(root.hasPendingWait(), true); assert.equal(f.model.requests.length - requests, 1);
+      await submit();
+      await until(() => !root.hasPendingWait(), 'the actual submitted System notification must complete the pending wait');
+      await native.whenIdle();
+      assert.equal(native.session.snapshotEvents().filter(event => event.type === 'turn/start').length - starts, 2);
+      assert.ok(f.model.requests.slice(requests).some(options => {
+        const resumed = options.messages.flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])).join('\n');
+        return resumed.includes('WAIT-FOR-ASSIGNMENT') && resumed.includes('等待已匹配') && resumed.includes('作业状态更新');
+      }), 'the native root resumes with the actual assignment completion hint');
+    } else {
+      assert.equal(root.hasPendingWait(), false); assert.equal(f.model.requests.length - requests, 2);
+      assert.equal(native.session.snapshotEvents().filter(event => event.type === 'turn/start').length - starts, 1, 'an existing match keeps the current native turn');
+      assert.ok(native.session.snapshotEvents().some(event => event.type === 'tool/result' && JSON.stringify(event).includes('matched')));
+    }
+    const notice = root.getMailbox().query(message => message.summary === '作业状态更新' && JSON.stringify(message.payload).includes(job.id));
+    assert.equal(notice.length, 1); assert.deepEqual(notice[0]!.source, { kind: 'system' });
+    assert.equal(notice[0]!.read, false); assert.equal(root.hasPendingWait(), false);
+    await f.bridge.dispose();
+  });
+}
+
 test('top-level outcomes use the original native followup while idle, busy and cold; missing sessions fail explicitly', async t => {
   const f = await fixture(t); await enablePluginHost(f.host, f.directory);
   const handle = await f.host.agents.create({ sessionId: SessionId('outcome-origin'), meta: { cwd: f.directory }, agentOptions: { provider: 'fixture', model: 'model', reasoningEffort: ReasoningEffortId('medium') } });
