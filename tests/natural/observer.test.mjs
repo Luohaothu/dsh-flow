@@ -637,6 +637,100 @@ async function clockedFixture(t, overrides = {}, mainCount = 1) {
   return { ...f, advance: ms => { now += ms; }, tick: async () => { tick(); return f.evidence(); } };
 }
 
+function beginMainStep(f, turn = 1) {
+  f.append('turn/start', { turn });
+  return f.append('step/start', { turn, step: 1 });
+}
+function settleMainStep(f, { turn = 1, attempt = false, interrupted = false, content = [], reason = 'completed' } = {}) {
+  f.append(attempt ? 'assistant/attempt' : 'assistant/message', { turn, step: 1, stream: [],
+    ...(attempt ? {} : { message: { content }, ...(interrupted ? { interrupted: true } : {}) }) });
+  f.append('step/end', { turn, step: 1 });
+  f.append('turn/end', { turn, reason: { kind: reason } });
+}
+
+test('latest Main failure cannot settle terminal readback or record a completed pause', async t => {
+  for (const pause of [false, true]) for (const outcome of ['timeout', 'cancelled', 'interrupted', 'request-only']) await t.test(`${pause ? 'pause' : 'final'} ${outcome}`, async t => {
+    const f = await clockedFixture(t, { userPrompts: pause ? [first, first] : undefined, noProgressMs: 7000 });
+    Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+    f.readback(f.assignments[0]); beginMainStep(f);
+    if (outcome === 'timeout' || outcome === 'request-only') await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { code: 'TIMEOUT', message: 'fixture timeout' } } }]);
+    else {
+      const stream = f.openStream([{ type: 'text-delta', text: 'partial' }]);
+      await stream.next(); await stream.return();
+    }
+    settleMainStep(f, { attempt: outcome === 'timeout' || outcome === 'cancelled', interrupted: outcome === 'interrupted',
+      content: outcome === 'interrupted' ? [{ type: 'text', text: 'partial' }] : [], reason: outcome === 'request-only' ? 'completed' : outcome === 'timeout' ? 'error' : 'aborted' });
+    const failed = await f.tick();
+    assert.equal(failed.observation.taskComplete, true); assert.equal(failed.observation.ended, true);
+    assert.ok(failed.observation.generationFailure); assert.equal(failed.observation.qualifying, false);
+    assert.equal(failed.awaitingUser, false); assert.deepEqual(failed.checkpoints, []);
+    f.advance(3001); assert.equal((await f.tick()).status, 'OBSERVING');
+    f.advance(4000); assert.equal((await f.tick()).reason, 'no-progress');
+  });
+});
+
+test('a new successful Main turn supersedes its failed or cancelled generation', async t => {
+  for (const cancelled of [false, true]) await t.test(cancelled ? 'cancelled' : 'failed', async t => {
+    const f = await clockedFixture(t, { noProgressMs: 7000 });
+    Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } }); f.readback(f.assignments[0]);
+    beginMainStep(f);
+    if (cancelled) { const stream = f.openStream([{ type: 'text-delta', text: 'partial' }]); await stream.next(); await stream.return(); }
+    else await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    settleMainStep(f, { attempt: true, reason: cancelled ? 'aborted' : 'error' });
+    assert.equal((await f.tick()).observation.qualifying, false);
+    const start = beginMainStep(f, 2);
+    await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]); settleMainStep(f, { turn: 2 });
+    const recovered = await f.tick();
+    assert.equal(recovered.requests.at(-1).afterEventSeq, start.seq);
+    assert.equal(recovered.observation.generationFailure, undefined); assert.equal(recovered.observation.qualifying, true);
+    f.advance(3001); assert.equal((await f.tick()).status, 'SETTLED');
+  });
+});
+
+test('empty or presented success and consumer-return cancellation retain successful settlement', async t => {
+  for (const delivery of ['empty', 'present', 'consumer-return']) await t.test(delivery, async t => {
+    const f = await clockedFixture(t, { noProgressMs: 7000 });
+    Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } }); f.readback(f.assignments[0]);
+    beginMainStep(f);
+    if (delivery === 'consumer-return') { const stream = f.openStream([{ type: 'text-delta', text: 'partial' }]); await stream.next(); await stream.return(); }
+    else await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]);
+    const content = delivery === 'present' ? [{ type: 'tool-call', name: 'present', id: 'present', arguments: '{}' }] : [];
+    if (delivery === 'present') {
+      f.append('assistant/message', { turn: 1, step: 1, message: { content }, stream: [] });
+      const call = f.append('tool/call', { turn: 1, step: 1, name: 'present', callId: 'present', arguments: '{}' }); f.answer(call, { presented: true });
+      f.append('step/end', { turn: 1, step: 1 }); f.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+    } else settleMainStep(f, { content });
+    const complete = await f.tick();
+    assert.equal(complete.requests[0].status, delivery === 'consumer-return' ? 'cancelled' : 'completed');
+    assert.equal(complete.observation.generationFailure, undefined); assert.equal(complete.observation.qualifying, true);
+    f.advance(3001); assert.equal((await f.tick()).status, 'SETTLED');
+  });
+});
+
+test('request input binding uses current native seq and rejects missing or unresolvable event anchors', async t => {
+  for (const anchor of ['missing', 'unresolvable', 'current-input']) await t.test(anchor, async t => {
+    const f = await clockedFixture(t, { userPrompts: [first, first], noProgressMs: 7000 });
+    Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } }); f.readback(f.assignments[0]);
+    const user = f.user(first), start = beginMainStep(f);
+    const snapshotEvents = f.main.session.snapshotEvents;
+    if (anchor !== 'current-input') f.main.session.snapshotEvents = () => anchor === 'missing' ? [] : [...f.events, { seq: 1000000 }];
+    try { await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]); }
+    finally { f.main.session.snapshotEvents = snapshotEvents; }
+    settleMainStep(f);
+    const bound = await f.tick();
+    assert.equal(bound.observation.lastInputSeq, user.seq);
+    if (anchor === 'current-input') {
+      assert.equal(bound.requests[0].afterEventSeq, start.seq); assert.equal(bound.observation.qualifying, true);
+    } else {
+      assert.equal(bound.observation.generationFailure, 'request-unbound'); assert.equal(bound.observation.qualifying, false);
+      f.advance(3001); assert.equal((await f.tick()).status, 'OBSERVING');
+      beginMainStep(f, 2); await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]); settleMainStep(f, { turn: 2 });
+      assert.equal((await f.tick()).observation.qualifying, true);
+    }
+    f.advance(3001); assert.equal((await f.tick()).status, 'SETTLED');
+  });
+});
+
 test('a long stream gets one bounded tool continuation; successful work starts a new progress window', async t => {
   const f = await clockedFixture(t), stream = f.openStream([{ type: 'text-delta', text: 'working' }]);
   await stream.next(); f.advance(1500);

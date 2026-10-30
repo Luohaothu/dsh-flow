@@ -16,7 +16,13 @@ export function installMainTools(native: NativeAgent, bridge: DshNativeBridge, s
   };
   const runFields = { runId: stringSchema }, assignmentFields = { ...runFields, assignmentId: stringSchema };
   try {
-    tool('flow_team_create', 'Create an idle Flow team; returns starting immediately. Dispatch tasks separately after it becomes active.', objectSchema({ defaults: { type: 'object' }, requestId: stringSchema }, ['requestId']), (args, execution) => {
+    tool('flow_team_create', 'Create an idle Flow team; returns starting immediately. Dispatch tasks separately after it becomes active.', objectSchema({ defaults: {
+      type: 'object', description: 'Optional creation-time configuration overrides. Configuration resolves from the current session, '
+        + 'then matching host configuration defaults, then these explicit overrides; omit to use the resolved session and host defaults. '
+        + 'Supported fields: model { provider: nonempty string, id: nonempty string }; params { version: 1, temperature?: finite number, reasoningEffort?: nonempty host-supported string, maxTokens?: positive safe integer }; '
+        + 'permission (read-only | workspace-write | full-access, within trusted host authority); hostExtras { dsh?: { stop?: string[] } }; preset (nonempty preset ID); skills (additional valid skill-name strings). '
+        + 'Supplied fields replace inherited fields; params must include version: 1. Put task goals and requirements in the separate flow_team_assign spec.',
+    }, requestId: stringSchema }, ['requestId']), (args, execution) => {
       const origin = bridge.createOrigin(native, execution), run = service.create(origin, (args.defaults ?? {}) as RunDefaults, args.requestId as string);
       bridge.rememberRun(run, origin); return { runId: run.id, status: run.status };
     });

@@ -51,6 +51,20 @@ function nativeQuestionHistory(events) {
   return { questions, boundaries };
 }
 
+function mainGenerationFailure(events, requests, sessionId, afterSeq) {
+  if (afterSeq === undefined) return;
+  const end = events.findLast(event => event.type === 'turn/end' && event.seq > afterSeq);
+  const settlement = events.findLast(event => event.seq > afterSeq && (event.type === 'assistant/message' || event.type === 'assistant/attempt'));
+  if (settlement?.type === 'assistant/attempt') return 'assistant-attempt';
+  if (settlement?.data.interrupted) return 'interrupted-message';
+  const reason = end?.data.reason.kind;
+  if (['error', 'max-tokens', 'interrupted'].includes(reason)) return `turn-${reason}`;
+  if (reason === 'aborted' && events.some(event => event.type === 'step/start' && event.seq < end.seq && event.data.turn === end.data.turn)) return 'aborted-work-turn';
+  const request = requests.findLast(request => request.sessionId === sessionId);
+  if (request && (!Number.isSafeInteger(request.afterEventSeq) || !events.some(event => event.seq === request.afterEventSeq))) return 'request-unbound';
+  if (request?.afterEventSeq >= afterSeq && request.status === 'failed') return 'request-failed';
+}
+
 function privateWriter(directory) {
   const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
   const artifacts = join(root, '.artifacts');
@@ -214,7 +228,8 @@ export function apply(ctx) {
       finish('ABORTED', totalTokens() >= scenario.maxTotalTokens ? 'total-token-budget' : 'request-budget');
       throw new Error('Natural observation boundary reached');
     }
-    const request = { number: evidence.requests.length + 1, sessionId: options.sessionId, provider: options.provider, model: options.model, startedAt: Date.now(), promptSha256: fingerprint(options.messages), tools: options.tools?.map(tool => tool.name), maxTokens: options.maxTokens, status: 'running' };
+    const afterEventSeq = ctx.agents.list().find(agent => agent.session.id === options.sessionId)?.session.snapshotEvents().at(-1)?.seq;
+    const request = { number: evidence.requests.length + 1, sessionId: options.sessionId, afterEventSeq, provider: options.provider, model: options.model, startedAt: Date.now(), promptSha256: fingerprint(options.messages), tools: options.tools?.map(tool => tool.name), maxTokens: options.maxTokens, status: 'running' };
     evidence.requests.push(request);
     save();
     try {
@@ -276,13 +291,14 @@ export function apply(ctx) {
         const lastInputSeq = record.inputBoundaryTimeline.at(-1)?.seq;
         const pendingQuestions = record.questionTimeline.filter(question => question.state === 'pending').map(question => question.callId);
         const ended = lastInputSeq !== undefined && events.some(event => event.type === 'turn/end' && event.seq > lastInputSeq);
+        const generationFailure = mainGenerationFailure(events, evidence.requests, record.sessionId, lastInputSeq);
         const terminalAssignments = snapshots.flatMap(snapshot => snapshot.assignments).filter(assignment => assignment.parentAssignmentId === null && assignment.status !== 'pending');
         const readback = terminalAssignments.every(assignment => readBack(assignment, events));
         const taskComplete = terminalAssignments.length > 0 && readback && snapshots.every(snapshot => snapshot.assignments.every(assignment => assignment.status !== 'pending'));
         const previousUserSeq = record.userTimeline.at(-2)?.seq;
         const checkpoint = record.checkpoints.findLast(value => value.userEventSeq === previousUserSeq && value.taskComplete && value.sequential);
         const sequential = !record.requireNewTerminalAfterUserWait || previousUserSeq === undefined || !!checkpoint && terminalAssignments.some(assignment => !checkpoint.terminalAssignmentIds.includes(assignment.id) && readBack(assignment, events, lastUserSeq));
-        record.observation = { idle, ended, runningRequests, lastInputSeq, pendingQuestions, matchedUserPrompts: matched.length, expectedUserPrompts: record.userPrompts.length, terminalAssignments: terminalAssignments.map(assignment => assignment.id), readback, taskComplete, sequential, sequentialBaselineMissing: record.requireNewTerminalAfterUserWait && previousUserSeq !== undefined && !checkpoint };
+        record.observation = { idle, ended, generationFailure, runningRequests, lastInputSeq, pendingQuestions, matchedUserPrompts: matched.length, expectedUserPrompts: record.userPrompts.length, terminalAssignments: terminalAssignments.map(assignment => assignment.id), readback, taskComplete, sequential, sequentialBaselineMissing: record.requireNewTerminalAfterUserWait && previousUserSeq !== undefined && !checkpoint };
         const inputBoundaryCount = record.inputBoundaryTimeline.length;
         if (inputBoundaryCount !== main.inputBoundaryCount || record.awaitingUser && !(pendingQuestions.length || idle && ended)) lastProgressAt = now;
         main.inputBoundaryCount = inputBoundaryCount;
@@ -304,12 +320,12 @@ export function apply(ctx) {
         const operatorFinished = !!request && request.afterUserSeq === observation.lastInputSeq && observation.pendingQuestions.length === 0;
         const inputsReceived = operator ? observation.matchedUserPrompts > 0 && operatorFinished : observation.matchedUserPrompts === record.userPrompts.length;
         const previouslyAwaiting = record.awaitingUser;
-        record.awaitingUser = record.userTimeline.length > 0 && (observation.pendingQuestions.length > 0 || !inputsReceived && observation.idle && observation.ended && (record.userTurnBoundary === 'main-idle' || observation.taskComplete && observation.sequential));
+        record.awaitingUser = record.userTimeline.length > 0 && (observation.pendingQuestions.length > 0 || !inputsReceived && observation.idle && observation.ended && !observation.generationFailure && (record.userTurnBoundary === 'main-idle' || observation.taskComplete && observation.sequential));
         if (previouslyAwaiting && !record.awaitingUser) lastProgressAt = now;
         if (record.awaitingUser && observation.pendingQuestions.length === 0 && !record.checkpoints.some(checkpoint => checkpoint.lastInputSeq === observation.lastInputSeq)) record.checkpoints.push({ afterPromptCount: record.userTimeline.length, userEventSeq: lastUserSeq, lastInputSeq: observation.lastInputSeq, lastActualUserSeq: record.actualUserTimeline.at(-1)?.seq, observedAt: now, taskComplete: observation.taskComplete, sequential: observation.sequential, terminalAssignmentIds: [...observation.terminalAssignments] });
         observation.awaitingUser = record.awaitingUser;
         observation.operatorFinished = operator ? operatorFinished : undefined;
-        observation.qualifying = inputsReceived && observation.pendingQuestions.length === 0 && observation.idle && observation.ended && observation.sequential && (scenario.plain || observation.taskComplete);
+        observation.qualifying = inputsReceived && observation.pendingQuestions.length === 0 && observation.idle && observation.ended && !observation.generationFailure && observation.sequential && (scenario.plain || observation.taskComplete);
       }
       const semantic = [
         ...evidence.snapshots.flatMap(snapshot => snapshot.assignments.map(assignment => ['assignment', assignment.id, assignment.status, assignment.result, assignment.reason])),
