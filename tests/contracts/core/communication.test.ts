@@ -107,6 +107,66 @@ test('C015-02 C015-03 registered wait is immediate, valid only once and uses a f
   assert.throws(() => a.wait(() => true, 100)); assert.equal(a.hasPendingWait(), true);
 });
 
+for (const kind of ['system', 'user'] as const) {
+  test(`an existing unread ${kind} message can match an explicit wait without reading its body`, async t => {
+    const { ctx, host, a } = await setup(); t.after(() => ctx.dispose());
+    const source = { kind };
+    const readId = a.getMailbox().put(message('MATCH already read', source)); assert.ok(readId);
+    a.getMailbox().get(readId);
+    host.status(a, 'running'); a.recvMessage(message('MATCH unread', source, 2, { private: 'keep in Mailbox' }));
+    const result = a.wait(m => m.summary.includes('MATCH'), 500);
+    assert.equal(result.kind, 'matched');
+    if (result.kind !== 'matched') return;
+    assert.equal(result.message.summary, 'MATCH unread'); assert.deepEqual(result.message.source, source);
+    assert.equal('payload' in result.message, false); assert.equal(a.getMailbox().peak(result.message.id)?.read, false);
+    host.turnEnd(a); await flush(); assert.equal(host.sent.length, 0);
+  });
+
+  test(`a later ${kind} match preserves unrelated messages and cancels only its own deadline`, async t => {
+    const { ctx, host, a } = await setup();
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 40_000 });
+    t.after(async () => { await ctx.dispose(); t.mock.timers.reset(); });
+    const source = { kind }; a.getMailbox().setSourcePriority(source, 'low');
+    assert.deepEqual(a.wait(m => m.summary === 'MATCH', 100), { kind: 'registered' });
+    a.recvMessage(message('unrelated System', { kind: 'system' }));
+    a.recvMessage(message('unrelated User', { kind: 'user' }));
+    await flush(); assert.equal(a.hasPendingWait(), true); assert.equal(host.sent.length, 0);
+    a.recvMessage(message('MATCH', source)); await flush();
+    assert.equal(a.hasPendingWait(), false); assert.equal(host.sent.length, 1);
+    assert.equal(host.sent[0]!.mode, 'followup'); assert.equal(host.sent[0]!.message.summary, '等待完成');
+    assert.ok(text(host).includes('MATCH')); assert.ok(a.getMailbox().query().every(meta => !meta.read));
+    host.status(a, 'idle'); host.turnEnd(a); await flush();
+    assert.deepEqual(a.wait(m => m.summary === 'NEXT', 1_000), { kind: 'registered' });
+    t.mock.timers.tick(100); await flush();
+    assert.equal(a.hasPendingWait(), true); assert.equal(host.sent.length, 1);
+  });
+}
+
+test('System standby notifications and unrelated high User messages retain their ordinary scheduling', async t => {
+  const { ctx, host, a } = await setup(); t.after(() => ctx.dispose());
+  a.recvMessage(message('System while idle', { kind: 'system' })); await flush();
+  assert.equal(host.sent.length, 1); assert.equal(host.sent[0]!.message.summary, '收件箱通知');
+  assert.equal(host.sent[0]!.mode, 'followup'); assert.equal(a.hasPendingWait(), false);
+  host.status(a, 'idle'); host.turnEnd(a); await flush();
+  a.getMailbox().setSourcePriority({ kind: 'user' }, 'high'); a.wait(m => m.summary === 'MATCH', 5_000);
+  a.recvMessage(message('unrelated urgent User', { kind: 'user' })); await flush();
+  assert.equal(host.sent.length, 2); assert.equal(host.sent[1]!.mode, 'steer'); assert.equal(a.hasPendingWait(), true);
+  host.status(a, 'idle'); host.turnEnd(a); await flush();
+  assert.equal(a.getStatus(), 'waiting'); assert.equal(a.hasPendingWait(), true); assert.equal(host.sent.length, 2);
+});
+
+test('a reentrant User arrival during a System predicate is matched in the same atomic scan', async t => {
+  const { ctx, host, a } = await setup(); t.after(() => ctx.dispose());
+  host.status(a, 'running'); a.recvMessage(message('existing System', { kind: 'system' }));
+  let injected = false;
+  const result = a.wait(m => {
+    if (!injected) { injected = true; a.recvMessage(message('MATCH User', { kind: 'user' })); }
+    return m.summary === 'MATCH User';
+  }, 5_000);
+  assert.equal(result.kind, 'matched'); assert.equal(a.hasPendingWait(), false);
+  assert.equal(a.getMailbox().count(), 2); assert.ok(a.getMailbox().query().every(meta => !meta.read));
+});
+
 test('C004-01 C017-01 unrelated high notification temporarily runs without clearing the original wait', async t => {
   const { ctx, host, a, b, c } = await setup(); t.after(() => ctx.dispose());
   a.getMailbox().setSourcePriority(c, 'high');
