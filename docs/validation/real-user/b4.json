@@ -3038,7 +3038,8 @@
       "https://github.com/Luohaothu/dsh-flow/issues/31",
       "https://github.com/Luohaothu/dsh-flow/issues/33",
       "https://github.com/Luohaothu/dsh-flow/issues/34",
-      "https://github.com/Luohaothu/dsh-flow/issues/35"
+      "https://github.com/Luohaothu/dsh-flow/issues/35",
+      "https://github.com/Luohaothu/dsh-flow/issues/36"
     ],
     "featureBacklogIssues": [
       "https://github.com/Luohaothu/dsh-flow/issues/26"
@@ -3065,7 +3066,8 @@
       31,
       33,
       34,
-      35
+      35,
+      36
     ],
     "ciInvestigationIssue": 32,
     "newBusinessModelRequests": 0,
@@ -3105,6 +3107,14 @@
       {
         "number": 18,
         "mergeCommit": "24a3efe697eaae7dbf58db0a55c8a41918fdc88c"
+      },
+      {
+        "number": 19,
+        "mergeCommit": "e16d1083bb7428e240e71b5bad9a42f6b2623039"
+      },
+      {
+        "number": 21,
+        "mergeCommit": "736cf5f0cb39c71033cd3a612b7708738bcacc22"
       }
     ],
     "shutdownEvidenceReaderRegression": {
@@ -3120,6 +3130,42 @@
       "passed": 78,
       "externalBusinessModelRequests": 0,
       "historicalCasesReclassified": false
-    }
+    },
+    "finiteContinuationRegression": {
+      "issue": 36,
+      "sourceCommit": "6911c32e8c41c7392b287590bd907bda16429c3e",
+      "focusedChecks": 12,
+      "focusedPassed": 12,
+      "fullNaturalChecks": 90,
+      "fullNaturalPassed": 90,
+      "scope": "Historical finite-budget observer controls only; unlimited business policy and historical results unchanged.",
+      "externalBusinessModelRequests": 0
+    },
+    "stackIntegrationRegression": {
+      "sourceCommit": "6a5569866031b78761a16b1c2eb66f7b0a3c05ea",
+      "b3NaturalChecks": 110,
+      "b3NaturalPassed": 110,
+      "b4NaturalChecks": 180,
+      "b4NaturalPassed": 180,
+      "scope": "Local infrastructure integration only; no new business model requests or frozen acceptance."
+    },
+    "localProductChecksBeforeFinalBaseSync": [
+      {
+        "pullRequest": 27,
+        "head": "0c5d72d070c75f20818705e7b95a010833d37238",
+        "contractsPassed": 748,
+        "contractsChecks": 748,
+        "focusedUiPassed": 10,
+        "focusedUiChecks": 10
+      },
+      {
+        "pullRequest": 28,
+        "head": "86d19b548fde3b8898b4828501131a7c31437da5",
+        "contractsPassed": 756,
+        "contractsChecks": 756,
+        "focusedWaitPassed": 60,
+        "focusedWaitChecks": 60
+      }
+    ]
   }
 }
