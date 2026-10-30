@@ -30,6 +30,118 @@
         { "command": "node --import tsx --test tests/contracts/ui/geometry.test.ts tests/contracts/ui/group-frame.test.ts", "exitCode": 0, "passed": 10 }
       ],
       "evidenceScope": "The browser regression uses actual Core Group and DashboardProjector data with four nodes and real React/Chrome measurements, resize, growth, folding and group selection. It is a local deterministic fixture with no external model requests. These results do not replace P6/P7 historical verification or claim a new business-model run. Remote CI for the amended PR remains a separate result."
+    },
+    {
+      "id": "W1-25",
+      "issue": "https://github.com/Luohaothu/dsh-flow/issues/25",
+      "pullRequest": "https://github.com/Luohaothu/dsh-flow/pull/28",
+      "dependsOn": [
+        "W1-24"
+      ],
+      "implementationCommit": "d40cb9512a7a3090df8eec6a15ddeb449c2070da",
+      "designSha256": "41e79b4d024105578266b076f800be79eb0d2121af6c9bfe474e6fa9df7fc81c",
+      "scenarios": [
+        "C015-01",
+        "C015-02"
+      ],
+      "change": "Explicit wait checks every unread Mailbox source, including User and System assignment status updates. Predicate, deadline, priority, reentry and ordinary standby notification paths retain their existing contracts. No new waiting API is introduced.",
+      "regressions": [
+        {
+          "path": "tests/contracts/core/communication.test.ts",
+          "cases": [
+            "an existing unread system message can match an explicit wait without reading its body",
+            "a later system match preserves unrelated messages and cancels only its own deadline",
+            "an existing unread user message can match an explicit wait without reading its body",
+            "a later user match preserves unrelated messages and cancels only its own deadline",
+            "System standby notifications and unrelated high User messages retain their ordinary scheduling",
+            "a reentrant User arrival during a System predicate is matched in the same atomic scan"
+          ]
+        },
+        {
+          "path": "tests/contracts/host/native-bridge.test.ts",
+          "cases": [
+            "existing AssignmentService System result notifications complete native flow_wait",
+            "later AssignmentService System result notifications complete native flow_wait"
+          ],
+          "scope": "Real prepare, native flow_submit with explicit continuingChildren, trusted System inbox notification, native flow_wait matched/registered, concludeTurn and resumed native execution. The LLM adapter is deterministic."
+        }
+      ],
+      "ciSupplement": {
+        "issue": "https://github.com/Luohaothu/dsh-flow/issues/32",
+        "path": "tests/contracts/native-client/react-lifecycle.test.ts",
+        "change": "After final React unmount, assert every Client is disposed and every issued SSE request signal is aborted. Then wait up to 5 seconds for server response close and require zero remaining connections; failures list remaining SSE paths.",
+        "causeStatus": "The prior CI timeout is not reproduced locally. These results establish neither a product race nor a pure timeout cause. Remote CI for this amended source remains pending."
+      },
+      "checks": [
+        {
+          "command": "python3 scripts/verify-alignment.py",
+          "exitCode": 0,
+          "contracts": 85,
+          "scenarios": 234,
+          "restoredFiles": null
+        },
+        {
+          "command": "python3 -B -m unittest discover -s tests/alignment -p 'test_*.py'",
+          "exitCode": 0,
+          "passed": 8
+        },
+        {
+          "command": "node --import tsx --test tests/contracts/core/communication.test.ts tests/contracts/host/native-bridge.test.ts tests/contracts/host/dsh-runtime.test.ts tests/contracts/assignments/service.test.ts tests/contracts/native-client/react-lifecycle.test.ts",
+          "exitCode": 0,
+          "passed": 100
+        },
+        {
+          "command": "pnpm typecheck",
+          "exitCode": 0
+        },
+        {
+          "command": "node --check tests/live/runner.mjs",
+          "exitCode": 0
+        },
+        {
+          "command": "node --check tests/live/host.mjs",
+          "exitCode": 0
+        },
+        {
+          "command": "node --test tests/live/path-guard.test.mjs",
+          "exitCode": 0,
+          "passed": 18
+        },
+        {
+          "command": "node --test tests/live/endpoint-policy.test.mjs",
+          "exitCode": 0,
+          "passed": 19
+        },
+        {
+          "command": "pnpm test",
+          "exitCode": 0,
+          "passed": 749
+        },
+        {
+          "command": "pnpm test:schema",
+          "exitCode": 0,
+          "cases": 108,
+          "mismatches": 0
+        },
+        {
+          "command": "pnpm test:patterns-package",
+          "exitCode": 0,
+          "packages": 14,
+          "matchingAssetFiles": 14,
+          "matchingSkillFiles": 3,
+          "builtFromSource": true,
+          "runtimeDependencyOnly": true
+        },
+        {
+          "command": "pnpm test:native-api",
+          "exitCode": 0
+        },
+        {
+          "command": "pnpm docs:build",
+          "exitCode": 0
+        }
+      ],
+      "evidenceScope": "Local deterministic contracts and CI commands are separate from the archived natural business cases and remote CI. No external model requests or new business wave occurred. Earlier P1/P7 receipts, W1-24 and private baseline archive metadata retain their original scope."
     }
   ]
 }

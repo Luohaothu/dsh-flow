@@ -1,5 +1,5 @@
 {
-  "designSha256": "4736a01216966c2dadc626a346c5626bbc28930321ce46866aba22f6550aee0c",
+  "designSha256": "41e79b4d024105578266b076f800be79eb0d2121af6c9bfe474e6fa9df7fc81c",
   "contracts": [
     {
       "id": "C001",
@@ -307,16 +307,16 @@
       "module": "Agent wait 登记",
       "section": "主动等待模型",
       "phase": "P1",
-      "requirement": "等待使用结构化条件转换的只读回调，检查现有未读匹配和登记原子完成。",
+      "requirement": "显式等待使用结构化条件转换的只读回调，匹配 Mailbox 中任意来源的未读消息，检查已有匹配与登记原子完成。",
       "scenarios": [
         {
           "id": "C015-01",
-          "expectation": "已有匹配未读点对点或 AgentInGroup 消息时返回 matched 元信息，不标记正文已读，完成该消息未提交通知并保持轮次。",
+          "expectation": "已有符合条件的未读 Agent、AgentInGroup、User 或 System 消息（包括作业状态更新）时返回 matched 元信息，不标记正文已读，完成该消息未提交通知并保持轮次。",
           "level": "contract"
         },
         {
           "id": "C015-02",
-          "expectation": "没有匹配时返回 registered，等待工具立即成功结束当前轮次；检查与登记之间到达的合格消息不会遗漏。",
+          "expectation": "没有匹配时返回 registered，等待工具立即成功结束当前轮次；随后成功入箱的 Agent、AgentInGroup、User 或 System 消息按条件匹配，检查与登记之间到达的合格消息不会遗漏。",
           "level": "contract"
         },
         {

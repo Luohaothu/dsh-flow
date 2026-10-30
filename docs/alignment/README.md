@@ -156,3 +156,4 @@ P7 之后的已批准设计修订继续同步 `baseline.design.mainSha256`、`co
 [第一轮修订验证](wave-one-verification.json)记录新增回归及其范围。覆盖索引保留原检查 ID，并为修订场景指向本轮记录及原历史回执；旧 P6/P7 结果不作为新增预期已经验证的证据。
 
 - [PR27](https://github.com/Luohaothu/dsh-flow/pull/27) 对应 `W1-24`：整体群框能保留成员留白与非成员间距时，同一群优先显示一个框；受阻时继续分段。
+- [PR28](https://github.com/Luohaothu/dsh-flow/pull/28) 对应 `W1-25`：显式等待按条件匹配邮箱中所有来源的未读消息，包括 User、System 作业状态更新。其 [#32](https://github.com/Luohaothu/dsh-flow/issues/32) 测试补充先断言真实取消，再等待服务端连接归零；本地通过尚不能确定原 CI 失败原因。

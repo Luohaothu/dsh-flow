@@ -1053,7 +1053,7 @@
     "mismatches": []
   },
   "design": {
-    "mainSha256": "4736a01216966c2dadc626a346c5626bbc28930321ce46866aba22f6550aee0c",
+    "mainSha256": "41e79b4d024105578266b076f800be79eb0d2121af6c9bfe474e6fa9df7fc81c",
     "localSha256": "1833479c192da86ae36897c0327e1ae06d441f2ce1f6fa3ff627fb72d61901f5",
     "difference": "Only local line 1732 describes restarting the whole run. The shared explicit persistent-team contracts govern; merged main already uses reuse/create then assign. No design change in P0."
   },
