@@ -54,6 +54,7 @@ export class FlowPlugin {
       initialize: (run, defaults, context, origin) => this.bridge.initialize(run, defaults, context, origin),
       validateMaterials: request => this.bridge.validateMaterials(request),
       onTopLevelOutcome: (origin, run, assignment) => this.bridge.onTopLevelOutcome(origin, run, assignment),
+      onTopLevelExecutionFault: (origin, run, fault) => this.bridge.onTopLevelExecutionFault(origin, run, fault),
     };
     this.runs = new RunService(this.dependencies);
   }

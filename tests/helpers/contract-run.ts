@@ -22,7 +22,7 @@ type Origin = Parameters<RunService['create']>[0];
 type StoreOptions = NonNullable<ConstructorParameters<typeof RunStore>[1]>;
 type FaultStage = Parameters<NonNullable<StoreOptions['fault']>>[0];
 export type RunBinding = { context: Context; host: ContractHost; root: Agent };
-export type RunFixtureOptions = Partial<Pick<ServiceOptions, 'validateMaterials' | 'onTopLevelOutcome' | 'patternCatalog' | 'patternRoleProvisioner'>> & {
+export type RunFixtureOptions = Partial<Pick<ServiceOptions, 'validateMaterials' | 'onTopLevelOutcome' | 'onTopLevelExecutionFault' | 'patternCatalog' | 'patternRoleProvisioner'>> & {
   directory?: string;
   originDefaults?: Defaults | ServiceOptions['getOriginDefaults'];
   onInitialize?: (run: Run, defaults: Defaults, environment: Omit<RunBinding, 'root'>) => Promise<void> | void;
@@ -81,6 +81,7 @@ export async function runFixture(t: TestContext, options: RunFixtureOptions = {}
     },
     ...(options.validateMaterials === undefined ? {} : { validateMaterials: options.validateMaterials }),
     ...(options.onTopLevelOutcome === undefined ? {} : { onTopLevelOutcome: options.onTopLevelOutcome }),
+    ...(options.onTopLevelExecutionFault === undefined ? {} : { onTopLevelExecutionFault: options.onTopLevelExecutionFault }),
   });
   t.after(async () => {
     fault = undefined;

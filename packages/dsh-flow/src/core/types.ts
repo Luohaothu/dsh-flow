@@ -61,7 +61,7 @@ export interface ContextSummary { summary: string; usage: Usage[] }
 export type HostEvent = { agent: HostAgent; timestamp: Timestamp } & (
   | { type: 'status'; status: 'idle' | 'running' }
   | { type: 'output'; text: string }
-  | { type: 'turn-end'; reason: 'completed' | 'cancelled' | 'failed' }
+  | { type: 'turn-end'; reason: 'completed' | 'cancelled' | 'failed'; turnId?: string; error?: string }
   | { type: 'error'; message: string }
   | { type: 'auto-reject'; message: string }
   | { type: 'usage'; usage: Usage }

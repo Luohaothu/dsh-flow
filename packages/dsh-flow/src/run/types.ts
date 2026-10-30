@@ -1,7 +1,7 @@
 import type { Agent } from '../core/agent.js';
 import type { Context } from '../core/context.js';
 import type { AgentProfile } from '../core/types.js';
-import type { Assignment, AssignmentArchiveReadResult, AssignmentSnapshot, AssignmentSpec, MaterialRef, SubmissionReceipt } from '../assignments/types.js';
+import type { Assignment, AssignmentArchiveReadResult, AssignmentExecutionFault, AssignmentSnapshot, AssignmentSpec, MaterialRef, SubmissionReceipt } from '../assignments/types.js';
 import type { Run } from './run.js';
 import type { PatternCatalog } from '../patterns/catalog.js';
 import type { PatternRoleProvisioner } from '../patterns/types.js';
@@ -37,6 +37,7 @@ export interface RunServiceDependencies {
   initialize(run: Run, defaults: RunDefaults, context: Context, origin: HostOrigin): Promise<Agent>;
   validateMaterials?(request: AssignmentMaterialRequest): Promise<void>;
   onTopLevelOutcome?(origin: HostOrigin, run: Run, assignment: AssignmentSnapshot): void | Promise<void>;
+  onTopLevelExecutionFault?(origin: HostOrigin, run: Run, fault: AssignmentExecutionFault): void | Promise<void>;
 }
 export type ArchiveReader = (id: string) => AssignmentArchiveReadResult;
 export type TopLevelAssignmentSpec = AssignmentSpec;

@@ -38,21 +38,23 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     await mkdir(workspace);
     const sessionId = index ? `main-${index + 1}` : 'main', runId = index ? `run-${index + 1}` : 'run';
     const events = [], assignments = [{ id: `assignment-${index + 1}`, runId, parentAssignmentId: null, status: 'pending' }];
+    let turn = 1, step = 0;
     const append = (type, data) => {
+      if (type === 'tool/call') data = { turn, step: ++step, ...data };
       const event = { seq: events.length + 1, time: Date.now(), type, data };
       events.push(event);
       return event;
     };
     const user = (text, source = { kind: 'user' }) => append('user/message', { source, content: [{ type: 'text', text }] });
-    const endTurn = () => append('turn/end', { reason: { kind: 'completed' } });
+    const endTurn = () => { const event = append('turn/end', { turn, reason: { kind: 'completed' } }); turn++; step = 0; return event; };
     const readback = (assignment, returned = assignment) => {
       const callId = `read-${events.length}`;
-      append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ assignmentId: assignment.id }) });
-      append('tool/result', { message: { toolCallId: callId, isError: false, content: [{ type: 'text', text: JSON.stringify({ id: returned.id, runId: returned.runId, status: returned.status, result: returned.result }) }] } });
+      const call = append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ runId: assignment.runId, assignmentId: assignment.id }) });
+      return answer(call, { id: returned.id, runId: returned.runId, status: returned.status, result: returned.result });
     };
-    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { turn: 1, step: 6, name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
+    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
     const answer = (call, value, error) => {
-      const result = append('tool/result', { turn: 1, step: 6, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error }) });
+      const result = append('tool/result', { turn: call.data.turn, step: call.data.step, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error: typeof error === 'string' ? { message: error } : error }) });
       result.sourceEventSeqs = [call.seq]; result.surfaceOp = 'append';
       return result;
     };
@@ -112,14 +114,80 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     await writeFile(pending, JSON.stringify({ sessionId, afterUserSeq: seq }), { mode: 0o600 });
     await rename(pending, join(proof, 'finish-request.json'));
   };
-  const stream = async chunks => {
-    const options = { sessionId: mains[0].sessionId, messages: [], tools: [] };
+  const openStream = (chunks, sessionId = mains[0].sessionId) => {
+    const options = { sessionId, messages: [], tools: [] };
     const next = async function* () { yield* chunks; };
-    for await (const _chunk of handlers.get('llm/stream')(options, next)) {}
+    return handlers.get('llm/stream')(options, next);
   };
+  const stream = async (chunks, sessionId) => { for await (const _chunk of openStream(chunks, sessionId)) {} };
   await until(value => value.mains.length === mainCount && value.mains.every(main => main.userTimeline.length === 1));
-  return { ...mains[0], mains, calls, creates, resolves, evidence, until, requestFinish, stream, initialInputs: () => calls.length };
+  return { ...mains[0], mains, calls, creates, resolves, evidence, until, requestFinish, openStream, stream, initialInputs: () => calls.length };
 }
+
+test('a returned provider stream closes as cancelled and releases settlement only after actual closure', { timeout: 15000 }, async t => {
+  const f = await fixture(t, { userPrompts: undefined, noProgressMs: 15000 });
+  let providerClosed = false;
+  const iterator = f.openStream((async function* () {
+    try { yield { type: 'text-delta', text: 'partial' }; }
+    finally { providerClosed = true; }
+  })());
+  assert.deepEqual(await iterator.next(), { value: { type: 'text-delta', text: 'partial' }, done: false });
+  Object.assign(f.assignments[0], { status: 'submitted', result: { complete: true } });
+  f.readback(f.assignments[0]); f.endTurn();
+  const open = await f.until(value => value.observation.taskComplete && value.observation.runningRequests === 1);
+  assert.equal(open.requests[0].status, 'running');
+  assert.equal(open.requests[0].endedAt, undefined);
+  assert.equal(open.observation.qualifying, false);
+  await pause(3300);
+  assert.equal((await f.evidence()).status, 'OBSERVING');
+  assert.equal(providerClosed, false);
+  assert.deepEqual(await iterator.return(), { value: undefined, done: true });
+  const closed = await f.evidence();
+  assert.equal(providerClosed, true);
+  assert.equal(closed.requests[0].status, 'cancelled');
+  assert.equal(typeof closed.requests[0].endedAt, 'number');
+  assert.equal(closed.requests[0].usage, undefined);
+  assert.deepEqual(closed.usageMissingRequests, [1]);
+  const settled = await f.until(value => value.status === 'SETTLED');
+  assert.equal(settled.observation.runningRequests, 0);
+  assert.equal(settled.reason, 'terminal-assignments-read-back');
+});
+
+test('stream closure preserves reported usage and distinguishes provider completion and aborts', { timeout: 5000 }, async t => {
+  await t.test('consumer cancellation keeps partial usage', async t => {
+    const f = await fixture(t);
+    const iterator = f.openStream([{ type: 'usage', usage: { totalTokens: 17 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    await iterator.next();
+    await iterator.return();
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'cancelled');
+    assert.deepEqual(closed.requests[0].usage, { totalTokens: 17 });
+    assert.equal(closed.totalReportedTokens, 17);
+    assert.deepEqual(closed.usageMissingRequests, []);
+  });
+  await t.test('completed provider stream remains completed', async t => {
+    const f = await fixture(t);
+    await f.stream([{ type: 'usage', usage: { totalTokens: 23 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'completed');
+    assert.equal(closed.totalReportedTokens, 23);
+    assert.deepEqual(closed.usageMissingRequests, []);
+  });
+  await t.test('provider abort remains failed with unknown usage', async t => {
+    const f = await fixture(t);
+    const iterator = f.openStream((async function* () {
+      yield { type: 'text-delta', text: 'partial' };
+      throw new DOMException('Provider aborted', 'AbortError');
+    })());
+    await iterator.next();
+    await assert.rejects(iterator.next(), { name: 'AbortError', message: 'Provider aborted' });
+    const closed = await f.evidence();
+    assert.equal(closed.requests[0].status, 'failed');
+    assert.equal(closed.requests[0].error, 'Provider aborted');
+    assert.equal(typeof closed.requests[0].endedAt, 'number');
+    assert.deepEqual(closed.usageMissingRequests, [1]);
+  });
+});
 
 test('observer treats idle members with a pending assignment as stalled work, not a user wait', { timeout: 5000 }, async t => {
   const f = await fixture(t, { noProgressMs: 700 });
@@ -276,8 +344,8 @@ test('operator captures native question answers without inventing user messages 
 
 test('question evidence distinguishes skips and errors and ignores question text in ordinary tool output', { timeout: 5000 }, async t => {
   const f = await fixture(t, { completion: 'operator', userPrompts: undefined });
-  f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
-  f.append('tool/result', { message: { toolCallId: 'catalogue', isError: false, content: [{ type: 'text', text: 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}' }] } });
+  const catalogue = f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
+  f.answer(catalogue, 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}');
   f.user('ask_user_question: 继续', { kind: 'flow' });
   const plain = await f.until(value => value.histories.find(history => history.sessionId === f.sessionId).events.length === f.events.length);
   assert.deepEqual(plain.questionTimeline, []);
@@ -553,4 +621,198 @@ test('default continuation permits the existing assignment to finish or cancel a
     assert.equal(settled.snapshots[0].assignments.length, 1);
     assert.equal(settled.snapshots[0].assignments[0].id, 'assignment-1');
   });
+});
+
+async function clockedFixture(t, overrides = {}, mainCount = 1) {
+  const realInterval = globalThis.setInterval;
+  let tick;
+  globalThis.setInterval = callback => { tick = callback; return realInterval(() => {}, 3_600_000); };
+  let f;
+  try { f = await fixture(t, { userPrompts: undefined, noProgressMs: 1000, maxDurationMs: 10000, ...overrides }, mainCount); }
+  finally { globalThis.setInterval = realInterval; }
+  let now = (await f.evidence()).startedAt;
+  const realNow = Date.now;
+  Date.now = () => now;
+  t.after(() => { Date.now = realNow; });
+  return { ...f, advance: ms => { now += ms; }, tick: async () => { tick(); return f.evidence(); } };
+}
+
+test('a long stream gets one bounded tool continuation; successful work starts a new progress window', async t => {
+  const f = await clockedFixture(t), stream = f.openStream([{ type: 'text-delta', text: 'working' }]);
+  await stream.next(); f.advance(1500);
+  assert.equal((await f.tick()).status, 'OBSERVING');
+  await stream.next();
+  const call = f.append('tool/call', { name: 'write', callId: 'write-after-stream', arguments: '{"path":"output.txt"}' });
+  const handoff = await f.tick();
+  assert.equal(handoff.status, 'OBSERVING'); assert.equal(handoff.observation.runningRequests, 0);
+  assert.equal(handoff.noProgressContinuation.until, handoff.updatedAt + 1000);
+  f.advance(9); f.answer(call, 'written');
+  const progressed = await f.tick();
+  assert.equal(progressed.status, 'OBSERVING'); assert.equal(progressed.lastProgressAt, progressed.updatedAt);
+  assert.equal(progressed.noProgressContinuation, undefined);
+  f.advance(1001);
+  const stopped = await f.tick();
+  assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.observation.runningRequests, 0);
+});
+
+test('errors, queries and another long generation cannot renew the same no-progress continuation', async t => {
+  const f = await clockedFixture(t), firstStream = f.openStream([{ type: 'text-delta', text: 'first' }]);
+  await firstStream.next(); f.advance(1500); await f.tick(); await firstStream.next();
+  const handoff = await f.tick(), originalProgress = handoff.lastProgressAt, until = handoff.noProgressContinuation.until;
+  f.advance(400);
+  const query = f.append('tool/call', { name: 'flow_team_get', callId: 'query', arguments: '{}' }); f.answer(query, 'same');
+  const error = f.append('tool/call', { name: 'flow_team_assign', callId: 'invalid-schema', arguments: '{}' }); f.answer(error, 'Unsupported schema keyword', 'invalid');
+  const unchanged = await f.tick(); assert.equal(unchanged.lastProgressAt, originalProgress); assert.equal(unchanged.noProgressContinuation.until, until);
+  const secondStream = f.openStream([{ type: 'text-delta', text: 'second' }]); await secondStream.next();
+  f.advance(700); assert.equal((await f.tick()).status, 'OBSERVING'); await secondStream.next();
+  const stopped = await f.tick();
+  assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.lastProgressAt, originalProgress);
+  assert.equal(stopped.noProgressContinuation.until, until); assert.equal(stopped.observation.runningRequests, 0);
+});
+
+test('finite-budget continuation cannot be opened by a failed latest request or borrow an older request from its session', async t => {
+  for (const earlier of ['none', 'completed-before-failure', 'completed-after-failure']) await t.test(earlier, async t => {
+    const f = await clockedFixture(t);
+    const old = earlier === 'none' ? undefined : f.openStream([{ type: 'text-delta', text: 'earlier' }]);
+    if (old) await old.next();
+    f.advance(1200);
+    if (earlier === 'completed-before-failure') await old.next();
+    const failed = f.openStream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    await failed.next(); f.advance(100); await failed.next();
+    if (earlier === 'completed-after-failure') { f.advance(50); await old.next(); }
+    const stopped = await f.tick();
+    assert.equal(stopped.requests.at(-1).status, 'failed');
+    assert.equal(stopped.observation.runningRequests, 0);
+    assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.noProgressContinuation, undefined);
+  });
+});
+
+test('finite-budget continuation keeps an independent session handoff without borrowing a failed session timestamp', async t => {
+  for (const successLast of [false, true]) await t.test(successLast ? 'success-finishes-last' : 'failure-finishes-last', async t => {
+    const f = await clockedFixture(t, {}, 2), successful = f.mains[1];
+    const success = f.openStream([{ type: 'text-delta', text: 'other Main' }], successful.sessionId);
+    const failed = f.openStream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    await success.next(); await failed.next(); f.advance(1200);
+    await (successLast ? failed : success).next(); f.advance(100);
+    await (successLast ? success : failed).next();
+    const handoff = await f.tick(), request = handoff.requests.find(item => item.sessionId === successful.sessionId);
+    assert.equal(handoff.status, 'OBSERVING'); assert.equal(request.status, 'completed');
+    assert.equal(handoff.noProgressContinuation.until, request.endedAt + 1000);
+    f.advance(handoff.noProgressContinuation.until - handoff.updatedAt);
+    assert.equal((await f.tick()).reason, 'no-progress');
+  });
+});
+
+test('finite-budget continuation revokes an existing session handoff after failure without restoring it on a new generation', async t => {
+  for (const recover of [false, true]) await t.test(recover ? 'failed-then-completed-before-poll' : 'failed', async t => {
+    const f = await clockedFixture(t, { maxRequests: 4 }), firstStream = f.openStream([{ type: 'text-delta', text: 'first' }]);
+    await firstStream.next(); f.advance(1200); await firstStream.next();
+    const granted = await f.tick(), originalProgress = granted.lastProgressAt;
+    assert.equal(granted.noProgressContinuation.until, granted.updatedAt + 1000);
+    f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+    if (recover) { f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'stop' } }]); }
+    const stopped = await f.tick();
+    assert.equal(stopped.lastProgressAt, originalProgress); assert.ok(stopped.updatedAt < granted.noProgressContinuation.until);
+    assert.equal(stopped.reason, 'no-progress'); assert.equal(stopped.noProgressContinuation, undefined);
+  });
+});
+
+test('finite-budget continuation preserves only the independent original deadline after another Main fails', async t => {
+  const f = await clockedFixture(t, { maxRequests: 5 }, 2), other = f.mains[1];
+  const firstStream = f.openStream([{ type: 'text-delta', text: 'later-ending Main' }]);
+  const otherStream = f.openStream([{ type: 'text-delta', text: 'independent Main' }], other.sessionId);
+  await firstStream.next(); await otherStream.next(); f.advance(1200); await otherStream.next();
+  f.advance(100); await firstStream.next();
+  const granted = await f.tick(), ownUntil = granted.requests.find(request => request.sessionId === other.sessionId).endedAt + 1000;
+  assert.equal(granted.noProgressContinuation.until, granted.updatedAt + 1000);
+  f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'error', failure: { message: 'fixture failure' } } }]);
+  const retained = await f.tick(); assert.equal(retained.status, 'OBSERVING');
+  assert.equal(retained.noProgressContinuation.until, ownUntil); assert.ok(ownUntil < granted.noProgressContinuation.until);
+  f.advance(100); await f.stream([{ type: 'finish', reason: { kind: 'stop' } }], other.sessionId);
+  const repeated = await f.tick(); assert.equal(repeated.status, 'OBSERVING');
+  assert.equal(repeated.noProgressContinuation.until, ownUntil);
+  f.advance(ownUntil - repeated.updatedAt); assert.equal((await f.tick()).reason, 'no-progress');
+});
+
+test('finite-budget continuation preserves a normal consumer-return handoff', async t => {
+  const f = await clockedFixture(t), stream = f.openStream([{ type: 'text-delta', text: 'tool handoff' }]);
+  await stream.next(); f.advance(1500); await stream.return();
+  const handoff = await f.tick();
+  assert.equal(handoff.requests[0].status, 'cancelled'); assert.equal(handoff.requests[0].error, undefined);
+  assert.equal(handoff.status, 'OBSERVING'); assert.equal(handoff.noProgressContinuation.until, handoff.updatedAt + 1000);
+});
+
+test('an active stream and continuation never extend the absolute observation deadline', async t => {
+  const f = await clockedFixture(t, { maxDurationMs: 2000 }), stream = f.openStream([{ type: 'text-delta', text: 'working' }]);
+  await stream.next(); f.advance(2100);
+  assert.equal((await f.tick()).reason, 'duration-limit'); await stream.return();
+});
+
+test('an owned cancellation receipt acknowledges that terminal while the replacement still needs actual result readback', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0];
+  old.status = 'cancelled'; old.reason = 'superseded by updated business facts';
+  const replacement = { id: 'replacement', runId: f.runId, parentAssignmentId: null, status: 'submitted', result: { summary: 'latest facts' } };
+  f.assignments.push(replacement);
+  const cancel = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'cancel-old', arguments: JSON.stringify({ runId: f.runId, assignmentId: old.id, reason: old.reason }) });
+  f.answer(cancel, [{ assignmentId: old.id, status: 'cancelled', reason: old.reason }]);
+  assert.equal((await f.tick()).observation.readback, false, 'cancellation cannot acknowledge the replacement result');
+  f.readback(replacement); f.endTurn();
+  const reviewed = await f.tick(); assert.equal(reviewed.observation.readback, true); assert.equal(reviewed.observation.taskComplete, true);
+  f.advance(3001); assert.equal((await f.tick()).status, 'SETTLED');
+});
+
+test('cancellation acknowledgements require the exact owner Run, target, returned status and successful matching tool result', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0]; old.status = 'cancelled';
+  for (const [index, input] of [
+    { runId: 'foreign-run', assignmentId: old.id, response: [{ assignmentId: old.id, status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: 'other-target', response: [{ assignmentId: old.id, status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: 'other-target', status: 'cancelled' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: old.id, status: 'pending' }] },
+    { runId: f.runId, assignmentId: old.id, response: [{ assignmentId: old.id, status: 'cancelled' }], error: 'rejected' },
+    { runId: f.runId, assignmentId: old.id, response: 'cancelled' },
+  ].entries()) {
+    const call = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: `cancel-${index}`, arguments: JSON.stringify({ runId: input.runId, assignmentId: input.assignmentId, reason: 'update' }) });
+    f.answer(call, input.response, input.error);
+    assert.equal((await f.tick()).observation.readback, false, `rejected cancellation evidence ${index}`);
+  }
+});
+
+test('rejected non-object read/cancel arguments cannot hide a later exact cancellation receipt', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), old = f.assignments[0]; old.status = 'cancelled';
+  for (const name of ['flow_team_assignment_read', 'flow_team_assignment_cancel']) for (const value of [null, [], 7, 'invalid', true]) {
+    const call = f.append('tool/call', { name, callId: `invalid-${f.events.length}`, arguments: JSON.stringify(value) });
+    f.answer(call, 'Invalid arguments', 'invalid');
+  }
+  const rejected = await f.tick(); assert.equal(rejected.status, 'OBSERVING'); assert.equal(rejected.observation.readback, false);
+  const call = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'valid-after-rejections', arguments: JSON.stringify({ runId: f.runId, assignmentId: old.id, reason: 'update' }) });
+  f.answer(call, [{ assignmentId: old.id, status: 'cancelled', reason: 'update' }]);
+  assert.equal((await f.tick()).observation.readback, true);
+});
+
+test('progress uses the causal query call and does not extend no-progress after a failed cancellation reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const cancelled = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id, reason: '' }) });
+  f.answer(cancelled, 'Cancellation reason must be nonempty', 'rejected');
+  const query = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id }) });
+  f.answer(query, f.assignments[0]);
+  const current = await f.tick();
+  assert.equal(current.lastProgressAt, baseline.lastProgressAt);
+  assert.deepEqual(current.progress, baseline.progress);
+  f.advance(baseline.lastProgressAt + 5001 - current.updatedAt);
+  assert.equal((await f.tick()).reason, 'no-progress');
+});
+
+test('progress uses the causal write call and records successful work after a failed read reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const failed = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: 'wrong-run', assignmentId: f.assignments[0].id }) });
+  f.answer(failed, 'Assignment is not bound to this run', 'rejected');
+  const written = f.append('tool/call', { name: 'fixture_write_file', callId: 'reused', arguments: '{}' });
+  f.answer(written, { written: true });
+  const current = await f.tick();
+  assert.ok(current.lastProgressAt > baseline.lastProgressAt);
+  assert.equal(current.lastProgressAt, current.updatedAt);
+  assert.equal(current.progress.length, baseline.progress.length + 1);
+  assert.equal(current.progress.at(-1).kind, 'tool-result');
 });

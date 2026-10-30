@@ -23,6 +23,8 @@ import { Agent } from '../../../packages/dsh-flow/src/core/agent.js';
 import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
 import { NativeCallAuthority } from '../../../packages/dsh-flow/src/host/native-bindings.js';
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
+import { observeCore } from '../../../packages/dsh-flow/src/core/observation.js';
+import type { HostEvent } from '../../../packages/dsh-flow/src/core/types.js';
 
 async function fixture(t: Parameters<typeof runtime>[0], getConfiguration?: () => NativeBridgeConfiguration) {
   const f = await runtime(t);
@@ -31,7 +33,8 @@ async function fixture(t: Parameters<typeof runtime>[0], getConfiguration?: () =
   const bridge = new DshNativeBridge(f.host, { stateDirectory: join(f.directory, 'bridge'), catalog, ...(getConfiguration ? { getConfiguration } : {}) });
   const service = new RunService({ store: new RunStore(join(f.directory, 'runs')), patternCatalog: catalog, patternRoleProvisioner: bridge,
     getOriginDefaults: origin => bridge.getOriginDefaults(origin), initialize: (...args) => bridge.initialize(...args),
-    validateMaterials: request => bridge.validateMaterials(request) });
+    validateMaterials: request => bridge.validateMaterials(request),
+    onTopLevelExecutionFault: (...args) => bridge.onTopLevelExecutionFault(...args) });
   t.after(() => bridge.dispose().catch(() => {}));
   const ordinary = async (name: string) => (await f.host.agents.create({ sessionId: SessionId(name), meta: { cwd: f.directory }, agentOptions: { provider: 'fixture', model: 'model', reasoningEffort: ReasoningEffortId('medium') } })).agent;
   const active = async (native: Awaited<ReturnType<typeof ordinary>>, requestId = 'run') => {
@@ -169,6 +172,49 @@ test('top-level outcomes use the original native followup while idle, busy and c
   await assert.rejects(f.bridge.onTopLevelOutcome(missingOrigin, run, snapshot), /restore|not found|not-found/i);
   await f.bridge.dispose();
   await assert.rejects(f.bridge.onTopLevelOutcome(origin, run, snapshot), /disposed/);
+});
+
+for (const busy of [false, true]) test(`a real failed native turn notifies its owning ${busy ? 'busy' : 'idle'} main without failing the pending assignment`, async t => {
+  const f = await fixture(t); await enablePluginHost(f.host, f.directory);
+  const main = await f.ordinary('fault-owner'), other = await f.ordinary('fault-other');
+  f.bridge.attachRunService(f.service);
+  const { run, root, origin } = await f.active(main), otherRun = await f.active(other, 'unrelated-run');
+  const events: HostEvent[] = [];
+  const stop = observeCore(run.context!, event => { if (event.type === 'host-event') events.push(event.event); }); t.after(stop);
+  let entered = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  f.model.script = async (_options, index) => {
+    if (busy && index === 0) { entered = true; await held; return 'MAIN DONE'; }
+    if (index === (busy ? 1 : 0)) throw new Error('Fixture recipient stream failed');
+    return 'NOTICE READ';
+  };
+  try {
+    if (busy) { main.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'other useful work' }] })); await until(() => entered); }
+    const assignment = await f.service.assign(origin, run, { name: 'pending work', type: 'test', background: '', requirements: '', acceptanceCriteria: '', resultSchema: true }, 'fault-work');
+    const hasNotice = () => main.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source.kind === 'flow-execution-fault');
+    await until(() => events.some(event => event.type === 'turn-end' && event.reason === 'failed'));
+    if (busy) {
+      await until(() => main.inbox.nextTurn.some(message => message.source.kind === 'flow-execution-fault'));
+      assert.equal(hasNotice(), false, 'busy main has not consumed its queued next-turn message');
+    } else await until(hasNotice);
+    release(); await main.whenIdle();
+    const notices = main.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source.kind === 'flow-execution-fault');
+    assert.equal(notices.length, 1);
+    const notice = notices[0]!; assert.equal(notice.type, 'user/message');
+    if (notice.type !== 'user/message') assert.fail('expected a native user message');
+    const content = notice.data.content.find(block => block.type === 'text'); assert.ok(content && content.type === 'text');
+    const fault = JSON.parse(content.text);
+    assert.deepEqual(fault.assignmentIds, [assignment.id]); assert.equal(fault.runId, run.id);
+    assert.match(fault.error, /Fixture recipient stream failed/);
+    const ended = f.native(root).session.snapshotEvents().find(event => event.type === 'turn/end' && event.data.reason.kind === 'error');
+    assert.ok(ended && ended.type === 'turn/end'); assert.equal(fault.turnId, String(ended.data.turn));
+    assert.equal(f.service.readAssignment(origin, run, run.assignments!.resolve(assignment.id)).status, 'pending');
+    assert.equal(f.service.readAssignment(origin, run, run.assignments!.resolve(assignment.id)).submissionCount, 0);
+    assert.equal(root.getStatus(), 'idle'); assert.equal(run.status, 'active');
+    assert.equal(other.session.snapshotEvents().some(event => event.type === 'user/message'), false);
+    assert.equal(otherRun.run.status, 'active');
+    await assert.rejects(f.bridge.onTopLevelExecutionFault(otherRun.origin, run, fault), /origin.*own/);
+  } finally { release(); }
 });
 
 test('the adaptor accepted turn retains assignment history and submission after SIGTERM logical termination', async t => {

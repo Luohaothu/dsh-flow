@@ -36,6 +36,11 @@ export interface AssignmentSnapshot {
 }
 export interface AssignmentQuery { parentAssignment?: Assignment | null; parentAssignmentId?: AssignmentID | null; status?: AssignmentStatus }
 export interface AssignmentOutcome { assignmentId: AssignmentID; status: AssignmentStatus; reason?: string }
+/** A failed recipient turn leaves these assignments pending for the sender to assess. */
+export interface AssignmentExecutionFault {
+  runId: string; recipientSessionID: string; recipientInstanceId: string;
+  assignmentIds: AssignmentID[]; timestamp: number; turnId?: string; error: string;
+}
 export type AssignmentArchiveReadResult =
   | { kind: 'found'; assignment: AssignmentSnapshot; interrupted: boolean }
   | { kind: 'not-found'; id: AssignmentID };

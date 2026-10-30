@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertAgentsHome, inspectGlobalSkills } from './isolation.mjs';
+import { assignmentReadBack as readBack, nativeToolCallForResult } from './readback.mjs';
 
 export const name = 'flow-natural-observer';
 export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands', 'skills'];
@@ -132,7 +133,7 @@ export function apply(ctx) {
   const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: first.prompt, userPrompts: first.userPrompts, userTimeline: [], checkpoints: [], awaitingUser: false, workspace: first.workspace, completion: operator ? 'operator' : 'auto', mains: mains.map(main => main.record), operatorRequests: [], limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
   const archived = new Map(), knownAgents = new Map(), operatorRequests = new Map();
   const seenProgress = new Set();
-  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector;
+  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector, continuationEpoch, continuationUntil, continuationHandoffs;
   const ownedRuns = runs => {
     const mainIds = new Set(mains.map(main => main.record.sessionId));
     return runs.filter(run => run.entry?.backend === 'dsh' && mainIds.has(run.entry.callerSessionId));
@@ -238,17 +239,6 @@ export function apply(ctx) {
       save();
     }
   })());
-  const readBack = (assignment, events, afterUserSeq = -1) => events.some(call => {
-    if (call.type !== 'tool/call' || call.data.name !== 'flow_team_assignment_read' || call.seq <= afterUserSeq) return false;
-    let args;
-    try { args = JSON.parse(call.data.arguments); } catch { return false; }
-    if (args.assignmentId !== assignment.id) return false;
-    return events.some(event => event.type === 'tool/result' && event.seq > call.seq && event.data.message?.toolCallId === call.data.callId && !event.data.message.isError && event.data.message.content?.some(part => {
-      if (part.type !== 'text') return false;
-      try { const value = JSON.parse(part.text); return value.id === assignment.id && value.runId === assignment.runId && value.status === assignment.status; }
-      catch { return false; }
-    }));
-  });
   const observe = () => {
     if (finished) return;
     try {
@@ -328,7 +318,7 @@ export function apply(ctx) {
       ];
       for (const history of evidence.histories) for (const event of history.events) {
         if (event.type !== 'tool/result' || event.data.message?.isError) continue;
-        const call = history.events.find(item => item.type === 'tool/call' && item.data.callId === event.data.message?.toolCallId);
+        const call = nativeToolCallForResult(history.events, event);
         if (call && !queries.test(call.data.name)) semantic.push(['tool-result', history.sessionId, call.data.name, call.data.arguments, event.data.message.content]);
       }
       for (const item of semantic) {
@@ -346,10 +336,31 @@ export function apply(ctx) {
       evidence.checkpoints = mains.flatMap(main => main.record.checkpoints.map(checkpoint => ({ sessionId: main.record.sessionId, ...checkpoint })));
       evidence.awaitingUser = mains.some(main => main.record.awaitingUser) && mains.every(main => main.record.awaitingUser || main.record.observation.qualifying);
       evidence.lastProgressAt = lastProgressAt;
-      if (!evidence.awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) return finish('ABORTED', 'no-progress');
       const qualifying = mains.every(main => main.record.observation.qualifying);
       stableSince = qualifying ? stableSince ?? now : undefined;
       evidence.observation = mains.length === 1 ? { ...first.observation, stableSince } : { idle: mains.every(main => main.record.observation.idle), ended: mains.every(main => main.record.observation.ended), runningRequests, awaitingUser: evidence.awaitingUser, stableSince };
+      if (continuationEpoch !== lastProgressAt) { continuationEpoch = undefined; continuationUntil = undefined; continuationHandoffs = undefined; }
+      if (!evidence.awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) {
+        if (continuationEpoch === undefined) {
+          continuationEpoch = lastProgressAt;
+          const latestBySession = new Map();
+          for (const request of evidence.requests) latestBySession.set(request.sessionId, request);
+          const grace = Math.min(1000, scenario.noProgressMs);
+          // Freeze the initial handoffs; later generations cannot mint another allowance.
+          continuationHandoffs = new Map([...latestBySession]
+            .filter(([, request]) => (request.status === 'completed' || request.status === 'cancelled')
+              && request.endedAt > lastProgressAt && now - request.endedAt < grace)
+            .map(([sessionId, request]) => [sessionId, { number: request.number, until: request.endedAt + grace }]));
+        }
+        for (const request of evidence.requests) {
+          const handoff = continuationHandoffs.get(request.sessionId);
+          if (handoff && request.number > handoff.number && request.status === 'failed') continuationHandoffs.delete(request.sessionId);
+        }
+        continuationUntil = continuationHandoffs.size
+          ? Math.max(...[...continuationHandoffs.values()].map(handoff => handoff.until)) : undefined;
+        evidence.noProgressContinuation = continuationUntil === undefined ? undefined : { progressAt: continuationEpoch, until: continuationUntil };
+        if (!(now < continuationUntil)) return finish('ABORTED', 'no-progress');
+      } else evidence.noProgressContinuation = undefined;
       save();
       if (stableSince !== undefined && now - stableSince >= 3000) finish('SETTLED', operator ? 'operator-finish-after-terminal-readback' : scenario.plain ? 'plain-main-ended' : 'terminal-assignments-read-back');
     } catch (error) { finish('ERROR', 'observer-error', String(error?.stack ?? error)); }

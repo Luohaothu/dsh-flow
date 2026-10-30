@@ -82,6 +82,13 @@ export class RunService {
           if (delivery) void delivery.catch(error => { state.runtimeError = errorText(error); state.notify(); });
         } catch (error) { state.runtimeError = errorText(error); state.notify(); }
       },
+      executionFault: fault => {
+        if (!state.accepting || state.record.status !== 'active' || !this.dependencies.onTopLevelExecutionFault) return;
+        try {
+          const delivery = this.dependencies.onTopLevelExecutionFault(source, run, structuredClone(fault));
+          if (delivery) void delivery.catch(error => { if (state.accepting) { state.runtimeError = errorText(error); state.notify(); } });
+        } catch (error) { state.runtimeError = errorText(error); state.notify(); }
+      },
     };
     bindRun(run, state);
     this.runs.set(run.id, run); this.createKeys.set(key, { digest, run });
