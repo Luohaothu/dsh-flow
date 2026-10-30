@@ -164,13 +164,15 @@ consumer 提前 return 会等待上游生成器真实关闭后记录 `cancelled`
 
 主会话主动取消旧作业时，所属运行与目标都匹配的成功取消调用若返回该作业的 `assignmentId` 和 `cancelled` 状态，也证明主会话取得了该取消终态。它不能代替对新提交结果的正式读回；错误响应、其他目标、其他运行或普通文字回执不计。
 
+`readback.mjs` 按同一 Main 原生历史中的调用事件关联正式读回与取消回执：成功的 `append` 结果须以 `sourceEventSeqs: [call.seq]` 指向该调用，turn、step、两处 tool call ID 和 tool 来源须一致，并保留原有 Run、作业和返回状态核对。缺失或冲突的身份不计为读回。call ID 可在后续 step 或 turn 复用，其他工具读取的相似 JSON 不能补作正式回执；surface replacement 也不能充当新的正式完成事件。需要本轮新读回的场景继续要求正式调用晚于指定用户输入边界。
+
 达到边界后，外部 launcher 应保存现场并停止自己启动的宿主进程。观察器拒绝边界后的新请求，不发送催促消息，也不直接停止成员或改变作业状态。最终评分者核对业务产物、主会话交付、真实协作过程和界面证据。
 
 语法检查如下。
 
 ```sh
 node --check tests/natural/host.mjs
-node --test tests/natural/observer.test.mjs tests/natural/runner.test.mjs
+node --test tests/natural/observer.test.mjs tests/natural/readback-sdk.test.mjs tests/natural/runner.test.mjs
 ```
 
 这些回归核验采集和进程边界，其中快照归属另通过实际 `DashboardProjector` 的投影结构验证；它们不计入真实模型的业务与自主覆盖。

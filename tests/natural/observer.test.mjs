@@ -38,21 +38,23 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     await mkdir(workspace);
     const sessionId = index ? `main-${index + 1}` : 'main', runId = index ? `run-${index + 1}` : 'run';
     const events = [], assignments = [{ id: `assignment-${index + 1}`, runId, parentAssignmentId: null, status: 'pending' }];
+    let turn = 1, step = 0;
     const append = (type, data) => {
+      if (type === 'tool/call') data = { turn, step: ++step, ...data };
       const event = { seq: events.length + 1, time: Date.now(), type, data };
       events.push(event);
       return event;
     };
     const user = (text, source = { kind: 'user' }) => append('user/message', { source, content: [{ type: 'text', text }] });
-    const endTurn = () => append('turn/end', { reason: { kind: 'completed' } });
+    const endTurn = () => { const event = append('turn/end', { turn, reason: { kind: 'completed' } }); turn++; step = 0; return event; };
     const readback = (assignment, returned = assignment) => {
       const callId = `read-${events.length}`;
-      append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ assignmentId: assignment.id }) });
-      append('tool/result', { message: { toolCallId: callId, isError: false, content: [{ type: 'text', text: JSON.stringify({ id: returned.id, runId: returned.runId, status: returned.status, result: returned.result }) }] } });
+      const call = append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ runId: assignment.runId, assignmentId: assignment.id }) });
+      return answer(call, { id: returned.id, runId: returned.runId, status: returned.status, result: returned.result });
     };
-    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { turn: 1, step: 6, name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
+    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
     const answer = (call, value, error) => {
-      const result = append('tool/result', { turn: 1, step: 6, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error }) });
+      const result = append('tool/result', { turn: call.data.turn, step: call.data.step, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error: typeof error === 'string' ? { message: error } : error }) });
       result.sourceEventSeqs = [call.seq]; result.surfaceOp = 'append';
       return result;
     };
@@ -342,8 +344,8 @@ test('operator captures native question answers without inventing user messages 
 
 test('question evidence distinguishes skips and errors and ignores question text in ordinary tool output', { timeout: 5000 }, async t => {
   const f = await fixture(t, { completion: 'operator', userPrompts: undefined });
-  f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
-  f.append('tool/result', { message: { toolCallId: 'catalogue', isError: false, content: [{ type: 'text', text: 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}' }] } });
+  const catalogue = f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
+  f.answer(catalogue, 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}');
   f.user('ask_user_question: 继续', { kind: 'flow' });
   const plain = await f.until(value => value.histories.find(history => history.sessionId === f.sessionId).events.length === f.events.length);
   assert.deepEqual(plain.questionTimeline, []);
