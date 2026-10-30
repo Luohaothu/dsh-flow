@@ -4,9 +4,10 @@ import { constants, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, 
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAgentsHome, inspectGlobalSkills } from './isolation.mjs';
 
 export const name = 'flow-natural-observer';
-export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands'];
+export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands', 'skills'];
 const copy = value => JSON.parse(JSON.stringify(value));
 const fingerprint = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const queries = /^(?:flow_(?:team_(?:list|get|read|assignment_read)|assignment_read|material_read|patterns?(?:_list|_read)?|unread|peek|query|wait)|.*(?:_list|_get|_read|_query|_status))$/;
@@ -27,9 +28,10 @@ function privateWriter(directory) {
     assert.equal(realpathSync(target), target);
   }
   verify();
-  return value => {
+  return (value, filename = 'evidence.json') => {
+    assert.ok(['evidence.json', 'shutdown-evidence.json'].includes(filename));
     verify();
-    const path = join(target, 'evidence.json');
+    const path = join(target, filename);
     try { const state = lstatSync(path); assert.ok(state.isFile() && !state.isSymbolicLink(), 'Proof file cannot be a symlink'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
@@ -56,26 +58,81 @@ export function apply(ctx) {
   if (!scenario.plain) assert.match(scenario.prompt, /^\/agent-team\s+\S/);
   const saveProof = privateWriter(process.env.NATURAL_PROOF_DIR);
   const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: scenario.prompt, workspace: realpathSync(scenario.workspace), limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
-  const archived = new Map();
+  const archived = new Map(), knownAgents = new Map();
   const seenProgress = new Set();
-  let main, timer, stableSince, lastProgressAt = evidence.startedAt, finished = false;
-  const save = () => { evidence.updatedAt = Date.now(); saveProof(evidence); };
+  let main, timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector;
+  const capture = () => {
+    const state = { capturedAt: Date.now(), histories: [], registry: null, snapshots: [], captureErrors: [] };
+    try { for (const agent of ctx.agents.list()) knownAgents.set(agent.session.id, agent); }
+    catch (error) { state.captureErrors.push({ source: 'agents', error: String(error?.message ?? error) }); }
+    for (const [id, agent] of knownAgents) {
+      try { state.histories.push({ sessionId: id, status: archived.has(id) ? 'disposed' : agent.status, header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }); }
+      catch (error) {
+        if (archived.has(id)) state.histories.push(copy(archived.get(id)));
+        state.captureErrors.push({ source: 'history', sessionId: id, error: String(error?.message ?? error) });
+      }
+    }
+    try {
+      projector ??= ctx.flow.projector;
+      state.registry = copy(projector.registry());
+      for (const run of state.registry.runs.filter(run => run.entry.callerSessionId === evidence.mainSessionId)) {
+        try { state.snapshots.push(copy(projector.snapshot(run.id))); }
+        catch (error) { state.captureErrors.push({ source: 'snapshot', runId: run.id, error: String(error?.message ?? error) }); }
+      }
+    } catch (error) { state.captureErrors.push({ source: 'registry', error: String(error?.message ?? error) }); }
+    return state;
+  };
+  const saveShutdown = phase => {
+    if (!boundary) return;
+    saveProof({ schema: 'flow-natural-shutdown/v1', phase, scoringEligible: false, observedAt: Date.now(), businessBoundary: {
+      file: 'evidence.json', sha256: createHash('sha256').update(JSON.stringify(boundary, null, 2)).digest('hex'),
+      status: boundary.status, reason: boundary.reason, endedAt: boundary.endedAt,
+    }, ...capture(), requests: copy(evidence.requests), totalReportedTokens: evidence.totalReportedTokens,
+    usageMissingRequests: copy(evidence.usageMissingRequests ?? []) }, 'shutdown-evidence.json');
+  };
+  const save = () => {
+    if (finished) { saveShutdown('post-boundary-stream'); return; }
+    evidence.updatedAt = Date.now(); saveProof(evidence);
+  };
   const finish = (status, reason, details) => {
     if (finished) return;
+    Object.assign(evidence, capture());
     finished = true;
     clearInterval(timer);
     evidence.status = status;
     evidence.reason = reason;
     evidence.endedAt = Date.now();
     if (details) evidence.error = details;
-    save();
-    console.log('[Flow natural]', status, reason);
+    if (status === 'SETTLED' && evidence.captureErrors.length) {
+      evidence.requestedBoundary = { status, reason };
+      evidence.status = 'ERROR'; evidence.reason = 'boundary-capture-error';
+    }
+    evidence.updatedAt = Date.now(); boundary = copy(evidence); saveProof(boundary);
+    console.log('[Flow natural]', evidence.status, evidence.reason);
   };
   const totalTokens = () => evidence.requests.reduce((total, request) => total + (request.usage?.totalTokens ?? 0), 0);
-  const histories = () => [...new Map([...archived, ...ctx.agents.list().map(agent => [agent.session.id, { sessionId: agent.session.id, status: agent.status, header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }])]).values()];
-  ctx.on('agent/disposed', ({ agent }) => { archived.set(agent.session.id, { sessionId: agent.session.id, status: 'disposed', header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }); });
-  ctx.on('dispose', () => { if (!finished) finish('ABORTED', 'host-disposed'); clearInterval(timer); });
+  const auditSkills = async phase => {
+    assertAgentsHome(process.env.DSH_AGENTS_HOME, process.env.DSH_HOME,
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../.artifacts'));
+    const audit = await inspectGlobalSkills(ctx.skills);
+    evidence.skillIsolation ??= { agentsHome: realpathSync(process.env.DSH_AGENTS_HOME), globalCatalogs: [] };
+    evidence.skillIsolation.globalCatalogs.push({ phase, ...audit });
+  };
+  ctx.on('agent/disposed', ({ agent }) => {
+    knownAgents.set(agent.session.id, agent);
+    archived.set(agent.session.id, { sessionId: agent.session.id, status: 'disposed', header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) });
+    if (finished) saveShutdown('agent-disposed');
+  });
+  ctx.on('dispose', () => { if (!finished) finish('ABORTED', 'host-disposed'); clearInterval(timer); saveShutdown('observer-dispose'); });
+  process.once('exit', () => {
+    try { if (finished) saveShutdown('process-exit'); }
+    catch { console.error('[Flow natural] shutdown-evidence-write-failed'); process.exitCode = 1; }
+  });
   ctx.on('llm/stream', (options, next) => (async function* () {
+    if (!finished) {
+      try { await auditSkills('request'); }
+      catch (error) { finish('ERROR', 'global-skill-isolation', String(error?.message ?? error)); throw error; }
+    }
     if (finished || evidence.requests.length >= scenario.maxRequests || totalTokens() >= scenario.maxTotalTokens) {
       finish('ABORTED', totalTokens() >= scenario.maxTotalTokens ? 'total-token-budget' : 'request-budget');
       throw new Error('Natural observation boundary reached');
@@ -97,6 +154,7 @@ export function apply(ctx) {
       request.error = String(error?.message ?? error);
       throw error;
     } finally {
+      if (request.status === 'running') request.status = 'cancelled';
       request.endedAt = Date.now();
       evidence.totalReportedTokens = totalTokens();
       evidence.usageMissingRequests = evidence.requests.filter(item => item.status !== 'running' && item.usage?.totalTokens === undefined).map(item => item.number);
@@ -107,9 +165,8 @@ export function apply(ctx) {
   const observe = () => {
     if (finished) return;
     try {
-      evidence.histories = histories();
-      evidence.registry = copy(ctx.flow.projector.registry());
-      evidence.snapshots = evidence.registry.runs.filter(run => run.entry.callerSessionId === evidence.mainSessionId).map(run => copy(ctx.flow.projector.snapshot(run.id)));
+      Object.assign(evidence, capture());
+      if (evidence.captureErrors.length) throw new Error('Observer capture failed');
       const mainEvents = evidence.histories.find(history => history.sessionId === evidence.mainSessionId)?.events ?? [];
       evidence.skillInvocations = mainEvents.filter(event => event.type === 'user/message' && event.data.source?.kind === 'skill-invocation');
       const semantic = [
@@ -161,12 +218,13 @@ export function apply(ctx) {
     evidence.installAnchor = installAnchor;
     evidence.flowPackage = realpathSync(profile.resolve('dsh-flow/package.json'));
     evidence.sdkOwners = {};
-    for (const name of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-chat', '@deepseek-ai/cordis-plugin-include', '@deepseek-ai/dsh-config-editor', '@deepseek-ai/dsh-settings', '@deepseek-ai/dsh-app-boot']) {
+    for (const name of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-chat', '@deepseek-ai/cordis-plugin-include', '@deepseek-ai/dsh-config-editor', '@deepseek-ai/dsh-settings', '@deepseek-ai/dsh-app-boot', '@deepseek-ai/dsh-skill']) {
       const owner = realpathSync(installation.resolve(name + '/package.json'));
       assert.equal(realpathSync(profile.resolve(name + '/package.json')), owner, `${name} profile SDK owner differs`);
       assert.equal(realpathSync(flowRequire.resolve(name + '/package.json')), owner, `${name} Flow SDK owner differs`);
       evidence.sdkOwners[name] = owner;
     }
+    await auditSkills('before-main');
     const created = await ctx.sessionController.create({ cwd: evidence.workspace });
     evidence.mainSessionId = created.sessionId;
     const resolved = await ctx.sessionController.resolveAgent(created.sessionId);
