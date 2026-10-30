@@ -7,7 +7,7 @@ import { Document } from 'yaml';
 import { PatternCatalog } from '../../../packages/dsh-flow/src/patterns/catalog.js';
 import { expandPattern } from '../../../packages/dsh-flow/src/patterns/expand.js';
 import { catalogControl, definitionDigest } from '../../../packages/dsh-flow/src/patterns/internal.js';
-import type { JsonObject, PatternDefinition, PatternCompileResult } from '../../../packages/dsh-flow/src/patterns/types.js';
+import type { JsonObject, PatternDefinition, PatternCompileResult, PatternDocument } from '../../../packages/dsh-flow/src/patterns/types.js';
 import type { AgentProfile } from '../../../packages/dsh-flow/src/core/types.js';
 import { sessionID } from '../../../packages/dsh-flow/src/core/message.js';
 
@@ -18,6 +18,26 @@ function value(extra: JsonObject = {}): JsonObject { return { apiVersion: 'v1', 
 function definition(result: PatternCompileResult): PatternDefinition { assert.equal(result.ok, true, JSON.stringify(result)); if (!result.ok) throw new Error('compilation failed'); return result.definition; }
 function compile(doc: JsonObject): PatternDefinition { return definition(catalog().compile({ kind: 'object', value: doc }, {})); }
 function expand(def: PatternDefinition, parameters: JsonObject = {}) { return expandPattern(def, parameters, {}, defaults, rootProfile); }
+
+test('public compilation rejects malformed document envelopes with field diagnostics', () => {
+  const invalid: [unknown, string][] = [
+    [null, 'document'], [[], 'document'], [42, 'document'], [new Date(), 'document'],
+    [{}, 'document.kind'], [{ kind: 'other', text: '' }, 'document.kind'],
+    [{ kind: 'yaml' }, 'document.text'], [{ kind: 'yaml', text: 42 }, 'document.text'],
+    [{ kind: 'object' }, 'document.value'], [{ kind: 'object', value: [] }, 'document.value'],
+    [{ kind: 'object', value: new Date() }, 'document.value'],
+    [{ kind: 'object', value: value(), path: 42 }, 'document.path'],
+    [{ kind: 'yaml', text: '', path: null }, 'document.path'],
+    [{ kind: 'object', value: value(), extra: true }, 'document.extra'],
+  ];
+  for (const [document, path] of invalid) {
+    const result = catalog().compile(document as PatternDocument);
+    assert.equal(result.ok, false, String(document));
+    if (result.ok) throw new Error('Malformed document compiled');
+    assert.equal(result.diagnostics[0]!.path, path);
+    assert.doesNotMatch(result.diagnostics[0]!.message, /Cannot read|undefined/);
+  }
+});
 
 test('count is a nonnegative integer and zero prunes descendants and their dynamic inputs', () => {
   const def = compile(value({ parameters: { count: { type: 'integer', description: 'count' } }, root: { instructions: 'root', workers: { role: 'worker', count: '{{ count }}', child: { role: 'worker', count: 999 } } } }));

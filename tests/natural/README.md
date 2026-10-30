@@ -39,11 +39,21 @@ runner 在启动前验证 `DSH_AGENTS_HOME` 为空且与专用 home 分离，显
 
 `run.mjs` 固定启动同仓锁定的官方 Web CLI，绑定 `127.0.0.1`，使用 `web` profile。`NATURAL_PORT` 指定端口，默认 `3191`；profile 的连接来源配置须与实际端口一致。runner 不安装插件，不写入模型配置或凭据，也不添加观察器。观察器须先通过上面的正式 profile patch 加载。
 
-每次使用新的证据目录。runner 拒绝已有 `evidence.json`、`shutdown-evidence.json`、日志、入口 URL、进程回执、`ui-ack` 或 `finish-request.json` 的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
+每次使用新的证据目录。runner 拒绝已有 `evidence.json`、`shutdown-evidence.json`、日志、入口 URL、进程回执、`ui-ack`、`finish-request.json` 或 `flow-drain` 收尾文件的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
 
-runner 在观察器到达 `SETTLED`、`ABORTED` 或 `ERROR` 后保存进程回执并停止自己启动的宿主。先发送 `SIGINT`，十秒内仍未退出再发送 `SIGKILL`。独立的 `process.json` 记录 observer 状态、请求数量、停止时间及实际退出状态。观察未收敛、宿主提前退出、强制终止或记录错误均返回非零退出码。`SETTLED` 的零退出码只表示观察收尾正常，仍须独立验收业务和协作。
+runner 在观察器到达 `SETTLED`、`ABORTED` 或 `ERROR` 后保存进程回执并停止自己启动的宿主。对于仍存活宿主的 `ABORTED` 或 `ERROR`，先执行下面的 Flow 技术排空，再发送 `SIGINT`；十秒内仍未退出再发送 `SIGKILL`。独立的 `process.json` 记录 observer 状态、请求数量、停止时间及实际退出状态。观察未收敛、宿主提前退出、强制终止或记录错误均返回非零退出码。`SETTLED` 的零退出码只表示观察收尾正常，仍须独立验收业务和协作。
 
-需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。整个进程仍受 `maxDurationMs + 30000` 毫秒边界约束。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
+需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。业务观察和界面等待仍受 `maxDurationMs + 19000` 毫秒边界约束；非成功终态的技术排空另有独立窗口。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
+
+观察器完成非成功判界后持续拒绝新模型调用。runner 使用证据中的真实 Dashboard 地址和当前 Web 端口的 Origin，通过公开 stop 接口排空本次专用主会话拥有的 Run。地址必须是字面 `http://127.0.0.1:<port>` authority，使用独立直连，不经过环境代理或跟随重定向。归属同时核对 `backend: dsh`、主会话 ID 和 epoch；排空期间复读 registry，纳入同一归属新登记的 Run，不操作其他主会话或 backend。公开接口采用服务既定停止策略，runner 不添加业务 prompt，也不放宽请求、token 或业务观察预算。
+
+`NATURAL_FLOW_DRAIN_MS` 设置技术排空上限，默认 `150000` 毫秒，可缩短且不能超过该值。POST 的 202 只表示受理；只有同一 operation 完成、Run 到达终态、节点 cleanup complete 且无持久化错误、作业终态和群解散后，才将该 Run 记为技术排空完成。原观察器和每次真实 GET 已见的成员、成员会话、作业归属与群 ID 会累计保全；缺失、重复或身份漂移均不能记为完成，合法新增继续纳入。所有已观测请求也须结束，已知及未知用量继续保留在原始证据中。全部已观测归属 Run 完成后，继续复读 registry 至归属集合稳定一秒；这只描述该观察窗口，独立 OS 物理验收仍须核查宿主与后代是否退出。
+
+轮询或 stop 遇到认证过期的 401 时，排空器重新获取 token，核对协议及原 epoch 后重试同一请求一次；stop 保持同一 operation ID。刷新失败、epoch 改变或再次 401 时保留 `pending`，不通过反复重试掩盖错误。`tokenRefreshes` 仅记录成功刷新次数，所有已签发 token 均只留在内存中。
+
+排空开始前，`flow-drain-boundary-evidence.json` 按字节保全当时的原始业务证据，其 SHA 和采集时间写入收尾回执。冻结业务证据的观察器将结束后的请求结算写入独立 `shutdown-evidence.json`，runner 按下面的消费契约读取；没有该文件的旧观察器继续使用原证据中的请求结算。`flow-drain.json` 单独记录 `completed`、`pending` 或 `skipped`，以及独立时间窗口、归属、operation ID、用量观测边界、请求见证文件的字节 SHA 和原始响应文件索引。`flow-drain-{registry|snapshot|operation}-NNNN.json` 保存未经删改的真实 API 响应；token 只留内存，不写 token 响应或 Authorization。Dashboard `RunInfo` 没有 Run cleanup 字段；completed operation 表示公开 stop 已等待 Context 清理和持久提交，节点清理另按真实快照核对。它不能代替持久状态与物理进程验收。
+
+超时、接口错误、epoch 变化、清理失败或中断保留 `pending` 再安全退出；外部 signal 或宿主提前退出会中断排空，不追造终态。`ABORTED`、`ERROR`、原作业状态和业务验收结果不会被技术收尾改写，runner 仍返回非零。原生退出码 130 或 `forced: false` 只描述进程退出，不证明 Flow 清理完成。无 Flow 的失败路径记为 `skipped`，普通 `SETTLED` 路径沿用原来的界面等待和停止方式。
 
 场景文件的结构如下。数量和时限由调用者按批次预算填写，不是产品限额。
 
@@ -176,7 +186,7 @@ consumer 提前 return 会等待上游生成器真实关闭后记录 `cancelled`
 
 ```sh
 node --check tests/natural/host.mjs
-node --test tests/natural/observer.test.mjs tests/natural/readback-sdk.test.mjs tests/natural/runner.test.mjs
+node --test tests/natural/observer.test.mjs tests/natural/readback-sdk.test.mjs tests/natural/evidence-view.test.mjs tests/natural/runner.test.mjs
 ```
 
 这些回归核验采集和进程边界，其中快照归属另通过实际 `DashboardProjector` 的投影结构验证；它们不计入真实模型的业务与自主覆盖。
@@ -218,8 +228,12 @@ B1 的 `mains` 自动入口可在同一宿主创建多个普通 Main。本节补
 }
 ```
 
-后续 reader 必须先校验 `businessBoundary.sha256` 与冻结文件的实际字节一致。结束后的完整请求列表与边界列表按 `number` 关联，并核对 `startedAt`、`provider`、`model`、`promptSha256` 身份不变，不能接受新增请求或重复编号。已有的 `sessionId` 等身份字段也须保持一致。只允许把原 `running` 请求的结算信息补入独立技术视图，不能改写冻结业务视图，也不能把已有终态退回 running 或改为另一个终态。usage 采用后续累计值，不与原值相加；usage 缺失继续为未知。
+`evidence-view.mjs` 只生成请求结算的技术视图。`createDrainEvidenceReader({ boundary, read, preserve })` 接收保全原件的 `{ bytes, value }`，以及经同一私有路径、`O_NOFOLLOW` 和文件身份校验的同步 `read(name)`。读取返回 `{ bytes, value }`、不存在时的 `undefined`，或文件正在写入时的 `{ pending: true }`。技术视图返回 `requests / totalReportedTokens / usageMissingRequests / requestEvidence`，不包含后到的 histories、快照、业务状态或评分。`requestEvidence` 记录实际来源文件、字节数、SHA；shutdown 来源另含 phase、`scoringEligible: false` 和业务原件 SHA。可选的 `preserve(record, source)` 返回原字节副本文件名；runner 据此去重保全 `flow-drain-request-evidence-NNNN.json`，并在 `requestEvidence.frozenFile` 中引用。原 shutdown 仍可在 dispose 和 process exit 时追加最终 native 事件，保全副本可复核排空当时实际采用的见证。
 
-后续排空读取及新 wave 的原生 reader/join 应分别验证：边界有在途请求、随后成功结算；随后 cancelled 且无 usage；无效 SHA、身份改变、新请求、重复编号和终态回退均拒绝；shutdown 的取消不能覆盖边界业务状态；观察器 dispose 后追加的最后 native 事件仍能从 process-exit 见证读取。旧 reader 只读取 `evidence.json` 时没有这些后续结算能力，不能沿用为新资格。
+shutdown 必须采用 `flow-natural-shutdown/v1`、`scoringEligible: false` 及正式 phase；`businessBoundary.file` 必须为 `evidence.json`，其 SHA、status、reason、endedAt 必须对应保全原件，当前业务文件也须逐字节保持该 SHA。`captureErrors` 非空时保留排空 `pending`。这些字段的格式通过只表明可消费，实际执行资格仍须绑定真实来源与独立验收，不能由布尔字段授予。
 
-`process-exit` 仍不是业务成功标记。缺失见证、强制退出或 `captureErrors` 表示证据不完整，不能补造最终事件或关闭结论。本次修改不改变 B0 历史预算语义、旧运行结果或已有证据哈希。后续实际运行采用 Root 另行冻结和授权的无 token 门协议。
+`mergeRequestSettlements(boundary, latest, previous = boundary)` 是可复用的纯合并函数。请求按 `number` 对齐，集合不增不缺不重复；除 `status / usage / finishReason / output / error / endedAt` 外的全部字段，包括已有的 session、事件游标、开始时间、provider、model、prompt SHA、tools 和 maxTokens，须连同字段是否存在保持一致。原 `running` 可继续运行或进入 `completed / failed / cancelled`；原终态与技术视图已接受的终态须整项保持不变。新视图复制请求，不修改任一输入。
+
+usage 使用最新请求的累计值，按请求重算已报告合计，不与边界样本相加。终态请求缺少 `totalTokens` 时列入 `usageMissingRequests`；合计为零且存在未知项不表示零消耗。shutdown 的聚合字段不能覆盖逐请求读回结果。没有 shutdown 时，旧观察器仍受同一请求身份、终态及业务 status/reason/endedAt 校验；冻结原件中的在途请求没有见证就继续在途。
+
+读取到半份 JSON 或读取期间仍在写入时，本次视图为 pending，后续轮询重读；已解析但 schema、SHA、身份或状态不合法的见证直接令排空 pending，不能忽略后转用旧结果。曾出现的 shutdown 不得消失后退回旧读取路径。业务原件和完整 shutdown 原件都保留，技术排空完成仍不能把 `ABORTED`、`ERROR` 或结束后新增 native 事件补为业务成功。
