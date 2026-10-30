@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,17 +85,42 @@ function privateWriter(directory) {
     assert.ok(['evidence.json', 'shutdown-evidence.json'].includes(filename));
     verify();
     const path = join(target, filename);
-    try { const state = lstatSync(path); assert.ok(state.isFile() && !state.isSymbolicLink(), 'Proof file cannot be a symlink'); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+    let previous;
+    try {
+      const state = lstatSync(path);
+      assert.ok(state.isFile() && !state.isSymbolicLink(), 'Proof file cannot be a symlink');
+      const current = openSync(path, constants.O_WRONLY | constants.O_NOFOLLOW);
+      try {
+        previous = fstatSync(current);
+        assert.ok(previous.isFile() && previous.ino === state.ino && previous.dev === state.dev);
+        fchmodSync(current, 0o600);
+      } finally { closeSync(current); }
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const raw = JSON.stringify(value, null, 2);
+    const temporary = join(target, `.${filename}.${randomUUID()}.tmp`);
+    const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    let published = false;
     try {
       verify();
-      const opened = fstatSync(fd), current = lstatSync(path);
-      assert.ok(opened.isFile() && opened.ino === current.ino && opened.dev === current.dev);
+      const opened = fstatSync(fd), current = lstatSync(temporary);
+      assert.ok(opened.isFile() && opened.nlink === 1 && opened.ino === current.ino && opened.dev === current.dev);
       fchmodSync(fd, 0o600);
-      ftruncateSync(fd, 0);
-      writeFileSync(fd, JSON.stringify(value, null, 2));
-    } finally { closeSync(fd); }
+      writeFileSync(fd, raw);
+      verify();
+      try {
+        const state = lstatSync(path);
+        assert.ok(state.isFile() && !state.isSymbolicLink(), 'Proof file cannot be a symlink');
+        assert.ok(previous && previous.ino === state.ino && previous.dev === state.dev, 'Proof file changed before publication');
+      } catch (error) { if (error.code !== 'ENOENT') throw error; assert.equal(previous, undefined, 'Proof file disappeared before publication'); }
+      renameSync(temporary, path);
+      published = true;
+    } finally {
+      closeSync(fd);
+      if (!published) {
+        try { unlinkSync(temporary); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+    }
   };
   const readFinishRequest = () => {
     verify();
