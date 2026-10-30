@@ -280,3 +280,6 @@ Refs #43。`physical-container.mjs` 将创建前可固定的 case/namespace toke
 Refs #45。`root-scope-environment.mjs` 为实际 SDK 启动和固定 overlay 入口共用同一验证流程。启动在 SDK import 前拒绝已有 `ROOT_NATIVE_EXPORT_SCOPE_REF`，以必需的 pinned JSON reader 核 Root0/GID0/0444 引用、原始字节 SHA、读取回执和八字段身份，再发布唯一环境引用；入口重新验证后加载同一 scope。overlay 固定环境名与身份，完整 overlay 摘要先算出，再生成 scope 摘要，避免 overlay 与 scope 的互相摘要依赖。调用方仍须以安全文件读取核父链、文件所有者和实际字节，不能用恒真验证器替代。
 
 新装配中的 physical、bootstrap、SDK boot 和 env-entry 实际消费这三个公开模块的同字节副本，并固定完整依赖闭包。运行 `node --test tests/natural/physical-container.test.mjs tests/natural/staged-model-socket.test.mjs tests/natural/root-scope-environment.test.mjs`。29 项纯回归使用合成 Docker 原件和本机技术 Unix HTTP，覆盖未启动状态、跨身份/卷错误、异步拒绝、socket/Host mutation、环境继承、错 scope 和原字节替换；不运行 Docker、SDK、浏览器或模型，不授予实际准入或业务信用。
+
+
+Refs #47。SDK boot 使用同模块的 `deriveRootScopeIdentity(outerBoot)`，从外层已冻结的物理 case/namespace/container/image/generation/accounting 字段、显式 `candidateId` 与 observer entry/closure 推导八字段期望身份。entry 必须与 closure 唯一入口的 Root0/GID0/0444 路径和 SHA 一致。启动先比完整 `fullNativeScopeIdentity`、再核入口原字节，最后才写 env 或调用 SDK loader；内层 scope 与内层身份彼此自洽不能替换外层身份。新增 6 项公开与 9 项真实 boot 接线负控，分别覆盖候选缺失、entry/closure 漂移和八字段单项越界；35 项公开回归及 30 项 boot/lifecycle 控制均为零 SDK、零模型控制。
