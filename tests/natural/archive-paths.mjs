@@ -27,8 +27,8 @@ export function readCanonicalUstar(bytes) {
     const field=header.subarray(start,start+size),zero=field.indexOf(0),prefix=zero<0?field:field.subarray(0,zero);
     assert.ok(prefix.every(byte=>byte===32||(byte>=48&&byte<=55)),'Unsupported tar number');
     if(zero>=0)assert.ok(field.subarray(zero).every(byte=>byte===0||byte===32),'Tar number has data after NUL');
-    const value=prefix.toString('ascii').trim();assert.match(value,/^[0-7]*$/u,'Unsupported tar number');
-    const number=Number.parseInt(value || '0',8);assert.ok(Number.isSafeInteger(number));return number;
+    const value=prefix.toString('ascii').trim();assert.match(value,/^[0-7]+$/u,'Unsupported tar number');
+    const number=Number.parseInt(value,8);assert.ok(Number.isSafeInteger(number));return number;
   };
   for(let offset=0;offset<bytes.length;) {
     const header=bytes.subarray(offset,offset+512);
