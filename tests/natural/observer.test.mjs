@@ -74,10 +74,10 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     agents: { list: () => mains.flatMap(main => [main.main, main.member]) },
     skills: { async snapshot(options) { assert.equal(options, undefined); return { complete: true, skills: [{ name: 'agent-team', source: 'runtime', provider: 'fixture' }] }; } },
     flow: { dashboardAddress: 'http://127.0.0.1:1', projector: projector ?? {
-      registry: () => ({ runs: mains.filter(main => main.runEnabled).map(main => ({ id: main.runId, entry: { callerSessionId: main.sessionId } })) }),
+      registry: () => ({ runs: mains.filter(main => main.runEnabled).map(main => ({ id: main.runId, entry: { backend: 'dsh', callerSessionId: main.sessionId } })) }),
       snapshot: id => {
         const main = mains.find(main => main.runId === id);
-        return { version: { major: 1, minor: 1 }, seq: 1, run: { id, entry: { callerSessionId: main.sessionId } }, prices: [], operations: [], nodes: [{ id: `node-${main.sessionId}`, sessionID: main.member.session.id, parentId: null }], groups: [], assignments: main.assignments };
+        return { version: { major: 1, minor: 1 }, seq: 1, run: { id, entry: { backend: 'dsh', callerSessionId: main.sessionId } }, prices: [], operations: [], nodes: [{ id: `node-${main.sessionId}`, sessionID: main.member.session.id, parentId: null }], groups: [], assignments: main.assignments };
       },
     } },
     sessionController: {
@@ -479,14 +479,19 @@ test('observer consumes a real DashboardProjector snapshot with nested run ident
   const domain = await runFixture(t);
   const projector = new DashboardProjector(domain.service, { directory: join(domain.directory, 'dashboard') });
   t.after(() => projector.dispose());
-  const run = await domain.createActive(), root = domain.binding(run).root;
+  const run = await domain.createActive({}, 'observer-projector', domain.origin('main', 'dsh')), root = domain.binding(run).root;
+  const foreign = await domain.createActive({}, 'foreign-projector', domain.origin('main', 'other-backend'));
   const assignment = await run.assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec: domain.spec() }, 'projected-assignment');
   assert.equal((await domain.submit(run, root, assignment, { answer: 'checked' })).kind, 'accepted');
   const actual = projector.snapshot(run.id);
   assert.equal(Object.hasOwn(actual, 'id'), false);
   assert.equal(Object.hasOwn(actual, 'runId'), false);
   assert.equal(actual.run.id, run.id);
-  const f = await fixture(t, { userPrompts: undefined }, 1, projector);
+  assert.equal(projector.registry().runs.some(item => item.id === foreign.id && item.entry.callerSessionId === 'main'), true);
+  const f = await fixture(t, { userPrompts: undefined }, 1, { registry: () => projector.registry(), snapshot: id => {
+    assert.notEqual(id, foreign.id, 'the actual foreign-backend Run must never be read by the DSH observer');
+    return projector.snapshot(id);
+  } });
   f.readback(actual.assignments[0]); f.endTurn();
   const settled = await f.until(value => value.status === 'SETTLED');
   assert.deepEqual(settled.mains[0].runIds, [run.id]);

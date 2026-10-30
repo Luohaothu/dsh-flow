@@ -29,7 +29,7 @@ async function fixture(t, overrides = {}, catalog = { complete: true, skills: [{
   const savedEnv = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   Object.assign(process.env, { DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof });
   const handlers = new Map(), events = [], trace = [], exits = [];
-  const state = { active: [], created: 0, invoked: 0, next: 0, catalog, registrySeq: 1, assignments: [{ id: 'assignment', parentAssignmentId: null, status: 'pending' }] };
+  const state = { active: [], created: 0, invoked: 0, next: 0, catalog, registrySeq: 1, snapshotReads: [], assignments: [{ id: 'assignment', parentAssignmentId: null, status: 'pending' }] };
   const main = { status: 'idle', session: { id: 'main', header: { cwd: workspace }, snapshotEvents() { trace.push('history'); return events; } } };
   const owners = [{ main, events, assignments: state.assignments, runId: 'run', workspace }];
   for (let index = 1; index < mainCount; index++) {
@@ -39,8 +39,10 @@ async function fixture(t, overrides = {}, catalog = { complete: true, skills: [{
   }
   state.active.push(...owners.map(owner => owner.main));
   const projector = {
-    registry() { trace.push('registry'); return { seq: state.registrySeq, runs: [...owners.map(owner => ({ id: owner.runId, entry: { callerSessionId: owner.main.session.id } })), ...(state.foreignRun ? [{ id: 'foreign-run', entry: { callerSessionId: 'foreign-main' } }] : [])] }; },
-    snapshot(id) { trace.push('snapshot'); const owner = owners.find(owner => owner.runId === id); assert.ok(owner, 'capture must exclude foreign Main runs'); return { run: { id, entry: { callerSessionId: owner.main.session.id } }, nodes: [], groups: [], assignments: owner.assignments }; },
+    registry() { trace.push('registry'); return { seq: state.registrySeq, runs: [...owners.map(owner => ({ id: owner.runId, entry: { backend: 'dsh', callerSessionId: owner.main.session.id } })),
+      ...(state.foreignRun ? [{ id: 'foreign-run', entry: { backend: 'dsh', callerSessionId: 'foreign-main' } }] : []),
+      ...(state.foreignBackendRun ? owners.map(owner => ({ id: `foreign-backend-${owner.runId}`, entry: { backend: 'other-backend', callerSessionId: owner.main.session.id } })) : [])] }; },
+    snapshot(id) { trace.push('snapshot'); state.snapshotReads.push(id); const owner = owners.find(owner => owner.runId === id); assert.ok(owner, 'capture must exclude foreign owner runs'); return { run: { id, entry: { backend: 'dsh', callerSessionId: owner.main.session.id } }, nodes: [], groups: [], assignments: owner.assignments }; },
   };
   const ctx = { on: (name, handler) => handlers.set(name, handler),
     get: name => name === 'profileContext' ? { installAnchor: profile } : undefined,
@@ -49,8 +51,8 @@ async function fixture(t, overrides = {}, catalog = { complete: true, skills: [{
     sessionController: { async create({ cwd }) { state.created++; return { sessionId: owners.find(owner => owner.workspace === cwd).main.session.id }; }, async resolveAgent(id) { return { agent: owners.find(owner => owner.main.session.id === id).main }; } },
     commands: { async execute(agent, prompt) { state.invoked++; owners.find(owner => owner.main === agent).events.push({ seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: prompt }] } }); return { result: { kind: 'success' } }; } },
   };
-  let cleared = false; const timer = { unref() {} }; const realClear = globalThis.clearInterval;
-  t.mock.method(globalThis, 'setInterval', () => timer);
+  let cleared = false, poll; const timer = { unref() {} }; const realClear = globalThis.clearInterval;
+  t.mock.method(globalThis, 'setInterval', callback => { poll = callback; return timer; });
   t.mock.method(globalThis, 'clearInterval', value => { if (value === timer) { cleared = true; trace.push('clear-timer'); } else realClear(value); });
   const realOnce = process.once.bind(process);
   const once = t.mock.method(process, 'once', (name, handler) => { if (name === 'exit') { exits.push(handler); return process; } return realOnce(name, handler); });
@@ -72,7 +74,7 @@ async function fixture(t, overrides = {}, catalog = { complete: true, skills: [{
   await until(value => value.mainSessionId || value.status === 'ERROR');
   const iterator = (source, sessionId = 'main') => handlers.get('llm/stream')({ provider: 'fixture', model: 'fixture', sessionId, messages: [] }, () => { state.next++; return source; });
   const stream = async chunks => { for await (const _ of iterator((async function* () { yield* chunks; })())) {} };
-  return { ctx, state, main, events, owners, trace, handlers, agentsHome, evidence, bytes, iterator, stream, cleared: () => cleared, exit: () => exits[0]?.() };
+  return { ctx, state, main, events, owners, trace, handlers, agentsHome, evidence, bytes, iterator, stream, poll: () => poll(), cleared: () => cleared, exit: () => exits[0]?.() };
 }
 
 test('token boundary captures native events and projections before clearing the timer, then freezes business evidence', async t => {
@@ -192,3 +194,26 @@ test('a shared budget boundary captures both Main owners, excludes foreign runs 
   assert.equal(shutdown.businessBoundary.sha256, createHash('sha256').update(frozen).digest('hex'));
   assert.deepEqual(await f.bytes(), frozen);
 });
+
+for (const phase of ['poll', 'finish', 'shutdown']) {
+  test(`${phase} excludes another backend with the same caller session for both Main owners`, async t => {
+    const f = await fixture(t, { maxTotalTokens: 10 }, undefined, 2);
+    if (phase === 'shutdown') await f.stream([{ type: 'usage', usage: { totalTokens: 11 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    const frozen = phase === 'shutdown' ? await f.bytes() : undefined;
+    f.state.foreignBackendRun = true; f.state.snapshotReads.length = 0;
+    if (phase === 'poll') f.poll();
+    else if (phase === 'finish') await f.stream([{ type: 'usage', usage: { totalTokens: 11 } }, { type: 'finish', reason: { kind: 'stop' } }]);
+    else { f.handlers.get('dispose')(); f.exit(); }
+    const captured = await f.evidence(phase === 'shutdown' ? 'shutdown-evidence.json' : 'evidence.json');
+    assert.deepEqual(captured.captureErrors, []);
+    assert.deepEqual(captured.snapshots.map(snapshot => [snapshot.run.id, snapshot.run.entry]), f.owners.map(owner => [owner.runId, { backend: 'dsh', callerSessionId: owner.main.session.id }]));
+    assert.equal(captured.registry.runs.filter(run => run.entry.backend === 'other-backend').length, 2);
+    assert.equal(f.state.snapshotReads.some(id => id.startsWith('foreign-backend-')), false, 'foreign snapshot lookup is a tripwire, not merely filtered after reading');
+    if (phase === 'poll') {
+      assert.equal(captured.status, 'OBSERVING');
+      assert.deepEqual(captured.mains.map(main => main.runIds), [['run'], ['run-2']]);
+      assert.deepEqual(captured.mains.map(main => main.observation.terminalAssignments), [[], []]);
+    } else if (phase === 'finish') { assert.equal(captured.status, 'ABORTED'); assert.equal(captured.reason, 'total-token-budget'); }
+    else { assert.equal(captured.phase, 'process-exit'); assert.deepEqual(await f.bytes(), frozen); }
+  });
+}

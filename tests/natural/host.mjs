@@ -133,6 +133,10 @@ export function apply(ctx) {
   const archived = new Map(), knownAgents = new Map(), operatorRequests = new Map();
   const seenProgress = new Set();
   let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector;
+  const ownedRuns = runs => {
+    const mainIds = new Set(mains.map(main => main.record.sessionId));
+    return runs.filter(run => run.entry?.backend === 'dsh' && mainIds.has(run.entry.callerSessionId));
+  };
   const capture = () => {
     const state = { capturedAt: Date.now(), histories: [], registry: null, snapshots: [], captureErrors: [] };
     try { for (const agent of ctx.agents.list()) knownAgents.set(agent.session.id, agent); }
@@ -147,8 +151,7 @@ export function apply(ctx) {
     try {
       projector ??= ctx.flow.projector;
       state.registry = copy(projector.registry());
-      const mainIds = new Set(mains.map(main => main.record.sessionId));
-      for (const run of state.registry.runs.filter(run => mainIds.has(run.entry.callerSessionId))) {
+      for (const run of ownedRuns(state.registry.runs)) {
         try { state.snapshots.push(copy(projector.snapshot(run.id))); }
         catch (error) { state.captureErrors.push({ source: 'snapshot', runId: run.id, error: String(error?.message ?? error) }); }
       }
@@ -252,8 +255,7 @@ export function apply(ctx) {
       Object.assign(evidence, capture());
       if (evidence.captureErrors.length) throw new Error('Observer capture failed');
       const snapshots = new Map(evidence.snapshots.map(snapshot => [snapshot.run.id, snapshot]));
-      const mainIds = new Set(mains.map(main => main.record.sessionId));
-      const projections = evidence.registry.runs.filter(run => mainIds.has(run.entry.callerSessionId))
+      const projections = ownedRuns(evidence.registry.runs)
         .map(run => ({ owner: run.entry.callerSessionId, id: run.id, snapshot: snapshots.get(run.id) }));
       const now = Date.now();
       if (now - evidence.startedAt >= scenario.maxDurationMs) return finish('ABORTED', 'duration-limit');
