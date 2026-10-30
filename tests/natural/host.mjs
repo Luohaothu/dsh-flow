@@ -147,7 +147,7 @@ export function apply(ctx) {
   const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: first.prompt, userPrompts: first.userPrompts, userTimeline: [], checkpoints: [], awaitingUser: false, workspace: first.workspace, completion: operator ? 'operator' : 'auto', mains: mains.map(main => main.record), operatorRequests: [], limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
   const archived = new Map(), knownAgents = new Map(), operatorRequests = new Map();
   const seenProgress = new Set();
-  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector, continuationEpoch, continuationUntil;
+  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector, continuationEpoch, continuationUntil, continuationHandoffs;
   const ownedRuns = runs => {
     const mainIds = new Set(mains.map(main => main.record.sessionId));
     return runs.filter(run => run.entry?.backend === 'dsh' && mainIds.has(run.entry.callerSessionId));
@@ -355,14 +355,25 @@ export function apply(ctx) {
       const qualifying = mains.every(main => main.record.observation.qualifying);
       stableSince = qualifying ? stableSince ?? now : undefined;
       evidence.observation = mains.length === 1 ? { ...first.observation, stableSince } : { idle: mains.every(main => main.record.observation.idle), ended: mains.every(main => main.record.observation.ended), runningRequests, awaitingUser: evidence.awaitingUser, stableSince };
-      if (continuationEpoch !== lastProgressAt) { continuationEpoch = undefined; continuationUntil = undefined; }
+      if (continuationEpoch !== lastProgressAt) { continuationEpoch = undefined; continuationUntil = undefined; continuationHandoffs = undefined; }
       if (!evidence.awaitingUser && !runningRequests && now - lastProgressAt >= scenario.noProgressMs) {
         if (continuationEpoch === undefined) {
           continuationEpoch = lastProgressAt;
-          const endedAt = Math.max(0, ...evidence.requests.map(request => request.endedAt ?? 0));
+          const latestBySession = new Map();
+          for (const request of evidence.requests) latestBySession.set(request.sessionId, request);
           const grace = Math.min(1000, scenario.noProgressMs);
-          if (endedAt > lastProgressAt && now - endedAt < grace) continuationUntil = endedAt + grace;
+          // Freeze the initial handoffs; later generations cannot mint another allowance.
+          continuationHandoffs = new Map([...latestBySession]
+            .filter(([, request]) => (request.status === 'completed' || request.status === 'cancelled')
+              && request.endedAt > lastProgressAt && now - request.endedAt < grace)
+            .map(([sessionId, request]) => [sessionId, { number: request.number, until: request.endedAt + grace }]));
         }
+        for (const request of evidence.requests) {
+          const handoff = continuationHandoffs.get(request.sessionId);
+          if (handoff && request.number > handoff.number && request.status === 'failed') continuationHandoffs.delete(request.sessionId);
+        }
+        continuationUntil = continuationHandoffs.size
+          ? Math.max(...[...continuationHandoffs.values()].map(handoff => handoff.until)) : undefined;
         evidence.noProgressContinuation = continuationUntil === undefined ? undefined : { progressAt: continuationEpoch, until: continuationUntil };
         if (!(now < continuationUntil)) return finish('ABORTED', 'no-progress');
       } else evidence.noProgressContinuation = undefined;
