@@ -237,3 +237,23 @@ shutdown 必须采用 `flow-natural-shutdown/v1`、`scoringEligible: false` 及�
 usage 使用最新请求的累计值，按请求重算已报告合计，不与边界样本相加。终态请求缺少 `totalTokens` 时列入 `usageMissingRequests`；合计为零且存在未知项不表示零消耗。shutdown 的聚合字段不能覆盖逐请求读回结果。没有 shutdown 时，旧观察器仍受同一请求身份、终态及业务 status/reason/endedAt 校验；冻结原件中的在途请求没有见证就继续在途。
 
 读取到半份 JSON 或读取期间仍在写入时，本次视图为 pending，后续轮询重读；已解析但 schema、SHA、身份或状态不合法的见证直接令排空 pending，不能忽略后转用旧结果。曾出现的 shutdown 不得消失后退回旧读取路径。业务原件和完整 shutdown 原件都保留，技术排空完成仍不能把 `ABORTED`、`ERROR` 或结束后新增 native 事件补为业务成功。
+
+## 容器身份与卷映射
+
+容器测试用 `container-identity.mjs` 校验三项独立身份：`caseId`、创建前为每个 case 分配的 `namespaceId`、以及 create/inspect 原件返回的 64 字符十六进制 `containerId`。Root 执行命名空间另存。物理命令使用 `containerId`，创建标签使用逻辑身份；读回同时核验镜像、非 root 用户、`network=none`、权限和标签。多 case 还须分别拒绝逻辑 token 与物理 ID 复用。
+
+`container-mounts.mjs` 接受冻结的角色映射及 Docker 的 volume/容器原始读回，绑定卷名、daemon `Source`、Root 路径与 guest `Destination`。候选挂载须与冻结集合完全一致；Root 可另外拥有自己的代码、daemon 和私有挂载，其 Destination 须与映射的 Root 路径完全不相交，Source 也不得与映射卷物理源形成相同或父子路径别名。跨 case 的卷名、物理源和 Root 路径不得复用或重叠；敏感源与其父目录、额外挂载及 bind-backed volume 均被拒绝。候选原生输出与 Root 的决策、核账、评分和冻结证据目录分开。
+
+这些 helper 只校验调用方提供的原件形状与绑定，不创建容器或授予实际运行资格。纯对象回归为 `node --test tests/natural/container-identity.test.mjs tests/natural/container-mounts.test.mjs`。
+
+## 镜像包元数据
+
+`image-package-owners.mjs` 通过包元数据检查相同物理 owner、精确版本与可选的冻结 SHA，不执行包入口。SDK 内部依赖从声明它的消费者解析；调用方仍须核验消费者的版本、原字节和目标依赖声明，不能把工作区根不可见直接判为缺包。对应回归使用临时文件树和真实 Node 包解析：`node --test tests/natural/image-package-owners.test.mjs`。
+
+外部环境装配与镜像校验器消费这些 helper 的原字节副本并固定 SHA。公开回归与副本绑定只证明上述检查行为；容器、SDK 加载、界面和业务执行仍需各自实际验证。
+
+## Root 只读文件的复制协议
+
+`root-owned-copy.mjs` 为回执、控制文件、pointer 与停止 marker 生成指定物理容器的默认 stdin 写入及默认 raw-tar 读回参数。tar 输入声明 UID/GID 为 0 不能替代实际读回；调用方解析原始 tar 后，仍须核验唯一普通文件、名称、Root UID/GID、0444 模式和冻结原字节 SHA。pointer 的临时文件须先读回通过，再交原有 Root 发布器原子替换，最终 pointer 也须读回。普通业务目录沿用各自复制契约。
+
+纯回归通过保留真实所有者差异的后端语义控制验证：相同 Root tar 输入经旧 archive 写入后读回非 Root，必须被拒绝；默认写入通过相同守卫。运行 `node --test tests/natural/root-owned-copy.test.mjs`。这不授予任何 Docker CLI/镜像实际资格，目标环境仍须重新执行写入与读回探针。

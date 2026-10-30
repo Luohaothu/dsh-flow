@@ -37,6 +37,7 @@ jobs:
           node --check tests/live/host.mjs
       - run: node --test tests/live/path-guard.test.mjs
       - run: node --test tests/live/endpoint-policy.test.mjs
+      - run: node --test tests/natural/*.test.mjs
       - run: pnpm test
       - run: pnpm test:schema
       - run: pnpm test:patterns-package
