@@ -3,13 +3,13 @@
   "status": "in-progress-draft",
   "completed": false,
   "phase": "exploration",
-  "cutoff": "closed-through-first-original-packet-reuse-attempt; next-root-configuration-control-preparation-only",
+  "cutoff": "closed-through-second-reuse-attempt-interface-interrupted; new-runtime-creator-preparation-only",
   "scenarioIds": [
     "N17",
     "N18",
     "N19"
   ],
-  "logicalBusinessRuns": 11,
+  "logicalBusinessRuns": 12,
   "technicalZeroCallAttempts": [
     {
       "id": "n17-v15-bd-01",
@@ -1503,20 +1503,289 @@
         "boundedPhysicalReceiptSha256": "4e99b457caad3042fe4db88707fef91f4d822afd443872e557face8f42644670"
       },
       "stage": "reuse"
+    },
+    {
+      "id": "n19-reuse-v19-dc-01",
+      "publicLabel": "N19 v19-reuse-02 (interface interrupted)",
+      "phase": "exploration",
+      "scenario": "N19",
+      "stage": "reuse",
+      "version": "v19",
+      "initialBusinessInput": "ordinary-ui-skill-plus-natural-request",
+      "acceptedInitialBusinessInputs": 1,
+      "monitoredAttempts": 22,
+      "conservativeAttempts": 22,
+      "reportedTokens": 488511,
+      "unknownUsageNetworkRequests": 2,
+      "unknownUsageRequestNumbers": [
+        8,
+        18
+      ],
+      "lateLocalBoundaryRejects": 0,
+      "afterBoundaryNetworkRequests": 0,
+      "attemptClassification": "natural-entrypoint-attempt-with-upstream-interface-interruption",
+      "validFlowNaturalEvaluationCredit": false,
+      "flowModeCapability": "NOT_EVALUATED",
+      "mainFinalDelivered": true,
+      "mainDeliveryActor": "Main fallback",
+      "successfulCreator": false,
+      "creatorQualificationFromSourceCaseUnchanged": true,
+      "sourceCreatorCandidateId": "n19-create-v19-da-01",
+      "sourceCreatorSuccessfulAndR1Qualified": true,
+      "qualifyingRuntimeReuse": false,
+      "originalDeliveryReuseCredit": false,
+      "frozenThreeIndependentRunsCredit": false,
+      "holdoutCredit": false,
+      "interfaceInterruption": {
+        "status": "INTERFACE_INTERRUPTED",
+        "upstreamRejectedRequests": 2,
+        "httpStatus": 400,
+        "classification": "upstream-interface-compatibility-configuration-error",
+        "flowExecutionBeforeToolsInterrupted": true,
+        "fullExistingStrategyAndToolsPresentInBothRequests": true,
+        "modelModeCapabilityFailureEstablished": false,
+        "usageForRejectedRequests": "unknown",
+        "sdkZeroPlaceholdersAreActualZeroUsage": false,
+        "configurationDetailsPrivate": true
+      },
+      "business": {
+        "status": "Main-fallback-independent-business-acceptance-failed-with-valid-partial-results",
+        "independentAcceptancePassed": false,
+        "regularWorkspaceFiles": 19,
+        "sealedEvidenceCopies": 9,
+        "ordinaryOriginalCopies": 17,
+        "originalOrdinaryMaterialsUnchanged": true,
+        "importedOriginalFiles": 6,
+        "importedOriginalFilesUnchanged": true,
+        "releaseVerdictCorrect": true,
+        "netFenCorrect": 58878,
+        "summaryNetFen": 59196,
+        "summaryDifferenceFen": 318,
+        "settledOrderFen": 99791,
+        "settledRefundFen": 40913,
+        "uniqueEvents": 40,
+        "settledEvents": 35,
+        "pendingEvents": 5,
+        "legalZeroEvents": 3,
+        "pendingApprovalDomainsCount": 2,
+        "performanceExceededByMs": 54,
+        "notRunTestPreservedAsNotRun": true,
+        "missingRollbackActualExecutionPreservedUnknown": true,
+        "requiredBlockers": [
+          "Policy-confirmed repeated business effects were weakened to a possibility and not reconciled with the idempotency claim.",
+          "The JSON file actually delivered by Main is invalid at line 65, column 106; no universal JSON-format requirement is added."
+        ],
+        "secondaryIssue": "42 source transaction rows were reported as 41; the correct deduplicated counts and net amount remain valid.",
+        "failureBasedOnNoMembersOrNoApplyAlone": false,
+        "upstreamRejectionIsSeparateFromMainBusinessVerdict": true
+      },
+      "ordinaryImportAndReuse": {
+        "normalUiSourceSaved": true,
+        "exactOriginalImportedFiles": 6,
+        "targetVisible": true,
+        "customCandidates": 1,
+        "builtinCandidates": 14,
+        "ordinaryFileDiagnostics": 2,
+        "diagnosticsInvalidateTarget": false,
+        "freshMainNaturalAttemptCompleted": true,
+        "actualImportedPatternApplication": false,
+        "membersCreated": 0,
+        "rolePermissionExecutionCredit": false,
+        "qualifyingRuntimeReuse": false,
+        "sourceCreatorQualificationReevaluated": false
+      },
+      "formalDelivery": {
+        "acceptedTopLevelDispatches": 1,
+        "acceptedDispatchPair": {
+          "callSeq": 79,
+          "resultSeq": 80
+        },
+        "submittedTopLevelAssignments": 0,
+        "preCancelPendingReadbackPairs": [
+          {
+            "callSeq": 105,
+            "resultSeq": 106
+          },
+          {
+            "callSeq": 117,
+            "resultSeq": 118
+          }
+        ],
+        "cancelPair": {
+          "callSeq": 122,
+          "resultSeq": 123
+        },
+        "cancelAcknowledgedStatus": "cancelled",
+        "cancelReasonMentionedRedispatch": true,
+        "actualRedispatches": 0,
+        "separateTerminalAssignmentReadAfterCancel": false,
+        "observerReadbackTrueFromCancelAcknowledgement": true,
+        "observerTaskCompleteIsSubmittedDelivery": false,
+        "lastMainAssistantSeq": 147,
+        "lastMainStepEndSeq": 148,
+        "lastMainCompletedTurnEndSeq": 150,
+        "genuineMainFallbackFinalDelivered": true,
+        "qualifyingFormalFlowDelivery": false
+      },
+      "autonomousWorkflow": {
+        "flowRootCount": 1,
+        "nativeHistories": 2,
+        "formalAssignments": 1,
+        "flowHttpRequestsRejected": 2,
+        "flowToolCalls": 0,
+        "flowCatalogQueries": 0,
+        "flowDefines": 0,
+        "flowApplies": 0,
+        "newMembers": 0,
+        "nativeFlowErrorAttempts": 2,
+        "mainIndependentArithmeticReviewObserved": true,
+        "templateRoleExecutionCredit": false,
+        "modeCapability": "NOT_EVALUATED"
+      },
+      "acceptanceCostObservation": {
+        "scopeCosts": {
+          "Main": {
+            "requests": 20,
+            "completedRequests": 20,
+            "reportedTokens": 488511,
+            "knownCacheReadTokens": 401536,
+            "cacheReadFieldAbsentRequests": 2
+          },
+          "Flow": {
+            "requests": 2,
+            "rejectedRequests": 2,
+            "reportedTokens": null,
+            "wireUsageUnknownRequests": 2,
+            "knownCacheReadTokens": null,
+            "cacheReadFieldAbsentRequests": 2,
+            "sdkZeroPlaceholdersDoNotEstablishZeroUsage": true
+          }
+        },
+        "MainPhases": {
+          "throughFirstAcceptedFormalDispatch": {
+            "requests": 7,
+            "reportedTokens": 90673,
+            "knownCacheReadTokens": 68864,
+            "cacheReadFieldAbsentRequests": 1
+          },
+          "afterAcceptedDispatchBeforeFirstReadbackResult": {
+            "requests": 5,
+            "reportedTokens": 120509,
+            "knownCacheReadTokens": 107392,
+            "cacheReadFieldAbsentRequests": 0
+          },
+          "afterFirstReadbackResult": {
+            "requests": 8,
+            "reportedTokens": 277329,
+            "knownCacheReadTokens": 225280,
+            "cacheReadFieldAbsentRequests": 1
+          }
+        },
+        "causalEfficiencyImprovementEstablished": false,
+        "scope": "Two rejected requests have unknown wire usage. Missing cache fields stay unknown; no cost-saving or billing inference."
+      },
+      "preNativeExitCleanupEvidence": {
+        "cleanupActor": "Root normal UI disband",
+        "rootUiDisbandPerformed": true,
+        "runStatus": "stopped",
+        "runStoreStatus": "stopped",
+        "runStoreCleanup": "complete",
+        "flowNodes": 1,
+        "allFlowNodesTerminatedAndCleanupComplete": true,
+        "allFlowNativeHistoriesDisposed": true,
+        "mainNativeHistoryStatus": "idle",
+        "operationCompleted": true,
+        "pendingAssignments": 0,
+        "groups": 0,
+        "actualOwnersStillPresentCount": 2,
+        "strictF6Established": false
+      },
+      "ordinaryUiTabExit": {
+        "explicitCloseSucceeded": true,
+        "ownedTemporaryTabsClosed": 1
+      },
+      "archive": {
+        "status": "root-fresh-process-exact-byte-readback-passed",
+        "sourceFiles": 383,
+        "members": 384,
+        "freshProcessExactByteReadback": true,
+        "selfContained": false,
+        "businessAccepted": false,
+        "qualifyingRuntimeReuse": false,
+        "sourceCreatorQualificationUnchanged": true
+      },
+      "fingerprints": {
+        "resourceSha256": "f58f4e0e4f42c8218a4c4c372c7d3dd21d14b9577f86db310d1047b17509d0ff",
+        "pureResourceAuditSha256": "b20b62b20ea6c4f265450aca6c825d50e3afa487a21ccfd265d273dc9bc07808",
+        "businessSealManifestSha256": "6dc209ace4f8a0bb1deaf6cd764816e9c76f64af270a5d3b61b17f1dcad6ea03",
+        "independentBusinessAcceptanceSha256": "50d75f1aeb4c8b462c0b472b9e6e689792b66449c312d3b64b46927279f68d5d",
+        "independentBusinessAcceptanceJsonSha256": "2a06ce8341a0ee06184c8250bcb4114cbd1e3254b1886a833605d7fc51c06ecd",
+        "acceptanceCostCensusSha256": "fd2e02c98bb07cab16b168c21612c345c5f99373e4670a8b68c0c412bfcfadb4",
+        "preNativeExitCleanupReceiptSha256": "b7aa583364432601f57eec03c16003d7950fd7f9e1251287a4361ddbd1d81309",
+        "rootPostExitAuditSha256": "ca65db3d0557f077c902a39af492a0630cd64a9735df63622fac79028a0d0b02",
+        "privateManifestSha256": "411c4d9d8e5ca18b1b699ca33326a7eff1c9c94a9538d5c3ff3fe9e622711ac3",
+        "privateArchiveSha256": "0365963f9339282180dbbab3dca75d1fd8def59d454ddf4ad12f094eeb50d94b",
+        "privateArchiveReadbackSha256": "ef0360cbedce4b8290028b6bc0ff6dd314046c62c007afb6bf1cfce5626b6042",
+        "boundedPhysicalReceiptSha256": "83d67f5a4eabd66d08b1ae9e7781c41e14ec93563b8433051e6c9336b4f40dde"
+      },
+      "technicalClosure": {
+        "normalTermination": "SETTLED",
+        "realMainFallbackFinalQualifier": true,
+        "rootUiDisbandPerformed": true,
+        "durableRun": "stopped",
+        "flowCleanup": "complete",
+        "terminalFlowNodes": 1,
+        "observedPidStartPairs": 6,
+        "commandFingerprintedPairs": 4,
+        "metadataOnlyPairs": 2,
+        "journalFrames": 4763,
+        "historicalIncompleteFrames": 1,
+        "partialCommandObservations": 2,
+        "lastBeforeStopPeriodicGapMs": 8,
+        "samplerStatus": "pending",
+        "samplerErrorsRetained": 2,
+        "rootObservedScopeMatchesAfterExit": 0,
+        "rootObservationErrors": 0,
+        "registeredPortsAbsent": 2,
+        "registeredCwdScopesAbsent": 3,
+        "instantaneousCompleteTreeEstablished": false,
+        "allArbitraryDetachedResourcesEstablished": false,
+        "physicalIdentityCountIsFlowTeamSize": false,
+        "nativeOwnerExitCode": 130,
+        "nativeOwnerExitSignal": null,
+        "forcedNativeStop": false,
+        "runnerCommandExitCode": 0,
+        "externalSamplerCommandExitCode": 1,
+        "runnerFinalToolOutputEmpty": true,
+        "samplerFinalToolOutputEmpty": true,
+        "initialSamplerCellPrintedComparisonFailureAndBaseline": true,
+        "wholeSamplerCellOutputWasAlwaysEmpty": false,
+        "controllerLogIsToolStdout": false,
+        "nativeSdkLogicalDisposal": "not-established",
+        "nativeMainLogicalDisposal": "not-established",
+        "observerLogicalDisposal": "not-established",
+        "observerDisposeHookCompleted": "not-established",
+        "strictF6Established": false
+      }
     }
   ],
   "resourceSummary": {
-    "monitoredAttempts": 766,
-    "conservativeAttempts": 766,
-    "reportedTokens": 29820618,
-    "unknownUsageNetworkRequests": 1,
+    "monitoredAttempts": 788,
+    "conservativeAttempts": 788,
+    "reportedTokens": 30309129,
+    "unknownUsageNetworkRequests": 3,
     "lateLocalBoundaryRejects": 0
   },
   "globalAtCutoff": {
-    "conservativeAttempts": 2445,
-    "reportedTokens": 82871478,
-    "unknownUsageNetworkRequestsIncludingBaseline": 13,
-    "includesB4": true
+    "conservativeAttempts": 2467,
+    "reportedTokens": 83359989,
+    "unknownUsageNetworkRequestsIncludingBaseline": 15,
+    "postBaselineApiUnknownUsageRequests": 13,
+    "baselineUnknownUsageRequests": 2,
+    "includesB4": true,
+    "reconciledFinalSnapshot": true,
+    "priorPrepublicationSnapshotRetained": true,
+    "priorSnapshotOmittedTwoHttpUnknownRequests": true
   },
   "packages": [
     {
@@ -1567,13 +1836,14 @@
       "productTree": "4545de2922d236a5667ae4159345055744a6c095",
       "tarSha256": "50a5f12943b604dd838d7c0b367fd3138d19cf0d5c0d0a735cbc15c8c4b263b4",
       "packageFiles": 165,
-      "naturalRunsAtCutoff": 3,
+      "naturalRunsAtCutoff": 4,
       "phase": "exploration",
       "buildExitCode": 0,
       "packExitCode": 0,
       "buildReceiptSha256": "450dbe71f01c4300ac45f93e65624c5d2238a5ce99994a071dec84614bf8d2be",
       "naturalRetestPerformed": true,
-      "closedNaturalRunsAtCutoff": 3
+      "closedNaturalRunsAtCutoff": 4,
+      "interfaceInterruptedAttemptsAtCutoff": 1
     }
   ],
   "engineeringOnly": {
@@ -1667,7 +1937,7 @@
   "coverage": {
     "N17CustomPatternAdoption": "uncovered",
     "N18ExplicitComparisonAndRejection": "not-established",
-    "N19SuccessfulCreatorAndNewConversationReuse": "first-creator-root-r1-qualified-ui-source-saved-first-fresh-session-attempt-closed-business-failed-runtime-reuse-unqualified",
+    "N19SuccessfulCreatorAndNewConversationReuse": "one-source-creator-qualified; two-fresh-session-natural-entrypoint-attempts-closed; latest-Flow-interface-interrupted-and-mode-not-evaluated; Main-fallback-business-failed; runtime-reuse-unqualified",
     "configurationSnapshotGoals": "partial",
     "X01FullBoundaryMatrix": "unfinished",
     "wholeUiMatrix": "unfinished",
@@ -1677,36 +1947,26 @@
   },
   "followup": {
     "version": "v19",
-    "status": "same-version-root-configuration-control-in-progress-not-graded",
+    "status": "same-product-compatible-runtime-preparation-only; fresh-creator-required-before-same-runtime-reuse",
     "sourceRevision": "794b4b163e7e84f76ab6b12effb9aaa7fdb0d13a",
     "productTree": "4545de2922d236a5667ae4159345055744a6c095",
     "tarSha256": "50a5f12943b604dd838d7c0b367fd3138d19cf0d5c0d0a735cbc15c8c4b263b4",
-    "creatorCandidateId": "n19-create-v19-da-01",
-    "previousReuseCandidateId": "n19-reuse-v19-da-02",
-    "candidateId": "n19-reuse-v19-dc-01",
-    "lastReuseBusinessOutcome": "fail",
+    "previousReuseCandidateId": "n19-reuse-v19-dc-01",
+    "candidateId": null,
+    "lastReuseExecutionOutcome": "INTERFACE_INTERRUPTED",
+    "lastFlowModeCapability": "NOT_EVALUATED",
+    "lastMainFallbackBusinessOutcome": "fail-with-valid-partial-results",
     "lastQualifyingRuntimeReuse": false,
-    "ordinaryImportAndFreshConversationReuse": {
-      "firstActualOrdinaryUiSourceSaveAndFreshMainNaturalAttempt": true,
-      "normalUiSourceSaved": true,
-      "exactOriginalImportedFiles": 6,
-      "targetVisible": true,
-      "customCandidates": 1,
-      "builtinCandidates": 14,
-      "ordinaryFileDiagnostics": 2,
-      "diagnosticsInvalidateTarget": false,
-      "freshMainNaturalAttemptCompleted": true,
-      "actualImportedPatternApplication": false,
-      "membersCreated": 0,
-      "rolePermissionExecutionCredit": false,
-      "qualifyingRuntimeReuse": false,
-      "sourceCreatorQualificationReevaluated": false
-    },
-    "nextFormalCaseCreated": true,
-    "nextRuntimeLaunched": true,
-    "nextBusinessInputSent": true,
-    "newModelCallsForPlannedNextCase": null,
-    "scope": "Eleven closed cases remain the reporting cutoff. A twelfth natural configuration contrast has been sent once through ordinary UI with the same v19 product, Main, original materials and packet. It is active and ungraded; ongoing usage is not settled or filled with zero and no twelfth closed record is added."
+    "nextFormalCaseCreated": false,
+    "nextRuntimeLaunched": false,
+    "nextBusinessInputSent": false,
+    "newModelCallsForPlannedNextCase": 0,
+    "newRuntimePureControlsPassed": 16,
+    "newRuntimeSourceChecksPassed": 65,
+    "strictSameBuildCreatorReuseEqualityRetained": true,
+    "freshCreatorIndependentAcceptanceAndFullR1Required": true,
+    "oldSourceCreatorCreditTransferredToNewRuntime": false,
+    "scope": "Preparation only at this cutoff. No thirteenth closed record, new creator launch or business input. Existing source creator success remains historical and is not transferred across runtime identity."
   },
   "publicDisclosure": "Anonymous scenario/version identifiers, public product symbols, actual aggregate usage and fingerprints only. Original raw evidence remains private.",
   "failedCreatorRuns": 7,
@@ -1820,7 +2080,7 @@
     "creatorOrR1Credit": false,
     "hypothesizedCostReductionVerified": false
   },
-  "naturalReuseAttempts": 1,
+  "naturalReuseAttempts": 2,
   "qualifyingRuntimeReuseRuns": 0,
   "rootStrategyActivationDiagnosis": {
     "flowHttpRequestsWithFullExistingStrategy": 9,
@@ -1847,7 +2107,43 @@
       "modelRequestsByOwnerProbe": 0,
       "ownerProbeInterceptionDisposed": true,
       "naturalOrHoldoutOrFrozenCredit": false,
-      "ownerProbeReceiptSha256": "69b281f727638796e233a518d78fa83d100d0f35c693b8e36586c7feafdb947a"
+      "ownerProbeReceiptSha256": "69b281f727638796e233a518d78fa83d100d0f35c693b8e36586c7feafdb947a",
+      "zeroModelSdkAppAndToolsProbe": {
+        "actuallyExecutedByRoot": true,
+        "passed": true,
+        "exitCode": 0,
+        "actualModelCalls": 0,
+        "ordinaryStandardSessionCreated": true,
+        "actualFlowMainToolsBound": 7,
+        "actualSdkBashAndPtcExecuted": true,
+        "permissionMode": "workspace-write",
+        "permissionScopeActuallyPreserved": true,
+        "fiveRouteCheckpointsAllZero": true,
+        "routeViolations": 0,
+        "shutdownComplete": true,
+        "guestProcObservedLiveDescendantsAfterShutdown": 0,
+        "canonicalSdkOwners": 10,
+        "naturalBusinessOrUiOrHoldoutCredit": false,
+        "fullSdkRuntimeOrStrictF6OrContinuousUniversalTreeCredit": false,
+        "receiptSha256": "2d296fb99952fb8348944e5cb7093f1ea60abdce4d721b45c762a8114b4b85bb",
+        "scope": "Platform prerequisites only. Observed guest/proc descendants are bounded snapshots, not arbitrary continuous complete-tree evidence; next three-channel exercise is preparation only."
+      }
     }
+  },
+  "naturalEntrypointAttemptsClosed": 12,
+  "logicalBusinessRunsCountingScope": "Accepted natural-entrypoint attempts, including one interface-interrupted attempt; not twelve valid Flow business evaluations.",
+  "interfaceInterruptedReuseAttempts": 1,
+  "flowCapabilityNotEvaluatedAttempts": 1,
+  "runtimeCompatibilityPreparation": {
+    "productSourceAndTarUnchanged": true,
+    "privateRuntimeCompatibilityPreparationOnly": true,
+    "rootPureFinalizationPassed": true,
+    "pureControlsPassed": 16,
+    "protectedSourceChecksPassed": 65,
+    "actualNewEndpointAcceptanceEstablished": false,
+    "newBusinessOrModelCalls": 0,
+    "strictSameBuildCreatorReuseEqualityRetained": true,
+    "freshCreatorThenSameRuntimeReuseRequired": true,
+    "creatorOrReuseCreditAdded": false
   }
 }
