@@ -200,9 +200,11 @@ test('real rc.2 Node PTC subcalls retain the enclosing SDK token and distinct ow
   await f.host.plugin(SubprocessLocal); await f.host.plugin(SandboxLocal); await f.host.plugin(NodePtcRuntime, { timeoutMs: 5000 });
   const { run, root } = await f.active(main), native = f.native(root);
   native.ctx.tools.presentAs('ptc');
-  const spec = { name: 'ptc task', type: 'test', background: '', requirements: '', acceptanceCriteria: '', resultSchema: true };
+  const spec = { name: 'ptc task', type: 'test', background: '', requirements: '', acceptanceCriteria: '', resultSchema: { type: 'string' } };
   const one = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null, spec }, 'one');
   const two = await run.assignments!.prepare({ sender: run, recipient: root, parentAssignment: null, spec }, 'two');
+  const submit = f.host.tools.schemas(scopeOf(native.ctx)).find(tool => tool.name === 'flow_submit'); assert.ok(submit);
+  assert.equal((submit.parameters as { properties: { result: { type?: string } } }).properties.result.type, 'string');
   let called = false;
   f.model.script = () => {
     if (called) return 'DONE'; called = true;

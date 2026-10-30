@@ -138,7 +138,10 @@ function matchesType(value: JsonValue, type: string): boolean {
 function validateNode(node: SchemaNode, value: JsonValue, path: string, errors: SchemaError[]): void {
   if (node === true) return;
   if (node === false) { errors.push({ path, message: 'Boolean schema forbids this value' }); return; }
-  if (node.types && !Array.from(node.types).some(type => matchesType(value, type))) errors.push({ path, message: `Expected type ${Array.from(node.types).join(' or ')}` });
+  if (node.types && !Array.from(node.types).some(type => matchesType(value, type))) {
+    const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    errors.push({ path, message: `Expected type ${Array.from(node.types).join(' or ')}; received ${actual}` });
+  }
   if (node.constValue !== undefined && canonicalJson(value) !== node.constValue) errors.push({ path, message: 'Value must equal const' });
   if (node.enumValues && !node.enumValues.has(canonicalJson(value))) errors.push({ path, message: 'Value must equal one of enum' });
   if (node.oneOf) {

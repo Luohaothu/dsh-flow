@@ -28,6 +28,7 @@ async function fixture(t, body, options = {}) {
   await writeFile(join(home, 'profiles/web/cordis.patch.yml'), '[]\n');
   await writeFile(scenario, JSON.stringify({ maxDurationMs: 1000 }));
   await writeFile(cli, `const fs = require('node:fs');\nconst { join } = require('node:path');\nconst proof = process.env.NATURAL_PROOF_DIR;\nfs.writeFileSync(join(proof, 'host.json'), JSON.stringify({ pid: process.pid }));\n${body}\n`);
+  for (const [name, content] of Object.entries(options.preexisting ?? {})) await writeFile(join(proof, name), content);
   await options.prepare?.({ home, agentsHome, proof });
   const child = spawn(process.execPath, [runner], { cwd: root, env: { ...process.env, DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_SCENARIO_FILE: scenario, NATURAL_PROOF_DIR: proof, NATURAL_PROFILE_NAME: 'web', NATURAL_UI_HOLD_MS: '0', ...options.env } });
   let output = '';
@@ -46,7 +47,7 @@ async function fixture(t, body, options = {}) {
     await ended;
     await rm(root, { recursive: true, force: true });
   });
-  return { child, ended, proof, agentsHome, output: () => output };
+  return { child, ended, proof, output: () => output };
 }
 
 async function completed(fixture) {
@@ -83,19 +84,26 @@ const ready = setInterval(() => { if (fs.existsSync(join(proof, 'descendant.json
 test('runner settles and stops its live CLI without forcing termination', { timeout: 7000 }, async t => {
   const f = await fixture(t, `
 process.on('SIGINT', () => process.exit(0));
-fs.writeFileSync(join(proof, 'agents-env.json'), JSON.stringify({ path: process.env.DSH_AGENTS_HOME }));
 fs.writeFileSync(join(proof, 'evidence.json'), JSON.stringify({ status: 'SETTLED', reason: 'plain-main-ended', requests: [] }));
 setInterval(() => {}, 1000);
 `);
   const code = await completed(f);
   assert.equal(code, 0, f.output());
   const receipt = JSON.parse(await readFile(join(f.proof, 'process.json'), 'utf8'));
-  assert.equal(JSON.parse(await readFile(join(f.proof, 'agents-env.json'), 'utf8')).path, f.agentsHome);
   assert.equal(receipt.observerStatus, 'SETTLED');
   assert.equal(receipt.runnerReason, 'observer-settled');
   assert.equal(receipt.runnerOwnedStop, true);
   assert.equal(receipt.forced, false);
   await stopped(receipt.pid);
+});
+
+
+test('runner rejects a stale operator finish request before launching the host', { timeout: 7000 }, async t => {
+  const f = await fixture(t, 'setInterval(() => {}, 1000);', { preexisting: { 'finish-request.json': JSON.stringify({ sessionId: 'old-main', afterUserSeq: 1 }) } });
+  assert.equal(await completed(f), 1, f.output());
+  assert.equal(JSON.parse(f.output().trim()).errorCode, 'ERR_ASSERTION');
+  await assert.rejects(readFile(join(f.proof, 'host.json')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(f.proof, 'process.json')), { code: 'ENOENT' });
 });
 
 for (const mode of ['missing', 'nonempty']) test(`runner rejects a ${mode} agents home before spawning the fake CLI`, { timeout: 7000 }, async t => {

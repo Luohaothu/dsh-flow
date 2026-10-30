@@ -21,9 +21,14 @@ export function rollbackTools(disposers: (() => void)[], error: unknown): never 
   throw error;
 }
 export function registerJsonTool(host: DshContext, name: string, description: string, parameters: JsonSchemaNode,
-  run: (args: Record<string, unknown>, execution: ToolRunContext) => unknown | Promise<unknown>): () => void {
+  run: (args: Record<string, unknown>, execution: ToolRunContext) => unknown | Promise<unknown>, modelParameters?: () => JsonSchemaNode): () => void {
   assertObjectJsonSchema(parameters);
-  return host.tools.register({ name, description, parameters: { ...parameters },
+  return host.tools.register({ name, description,
+    get parameters() {
+      const presented = modelParameters?.() ?? parameters;
+      assertObjectJsonSchema(presented);
+      return { ...presented };
+    },
     output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, execution) {
       execution.signal.throwIfAborted();

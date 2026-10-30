@@ -62,6 +62,18 @@ test('C041-01 prepare request keys are scoped by the actual sender', async t => 
   assert.equal(assignments.read(root, childJob).parentAssignmentId, assignments.read(root, parentJob).id);
 });
 
+test('prepare identifies an invalid resultSchema and permits a corrected request with the same identity', async t => {
+  const { f, run, root, assignments } = await setup(t);
+  const { resultSchema: _omitted, ...missingSchema } = f.spec();
+  for (const invalid of [missingSchema, { ...f.spec(), resultSchema: null }, { ...f.spec(), resultSchema: [] }, { ...f.spec(), resultSchema: { unsupportedKeyword: true } }]) {
+    await assert.rejects(assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec: invalid as Parameters<typeof assignments.prepare>[0]['spec'] }, 'corrected-schema'), /resultSchema/);
+    assert.equal(assignments.list(run).length, 1);
+  }
+  const corrected = await assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec: f.spec({ resultSchema: true }) }, 'corrected-schema');
+  assert.equal(assignments.read(run, corrected).status, 'pending');
+  assert.equal(assignments.read(run, corrected).spec.resultSchema, true);
+});
+
 test('C041-01 C041-02 materials finish validation before save and complete trusted delivery bypasses recipient filters once', async t => {
   const validation = deferred();
   const observed: unknown[] = [];

@@ -84,7 +84,7 @@ async function run() {
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   assert.ok(profile.dependencies?.['dsh-flow'] && profile.dsh?.profile?.bundles?.includes('dsh-flow'), 'Install Flow through the official plugin manager first');
   const proof = privatePath(process.env.NATURAL_PROOF_DIR, 'directory', true);
-  for (const name of ['evidence.json', 'shutdown-evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
+  for (const name of ['evidence.json', 'shutdown-evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
   chmodSync(proof, 0o700);
   const write = writer(proof);
   const startedAt = Date.now(), stopDeadline = startedAt + scenario.maxDurationMs + 19_000;

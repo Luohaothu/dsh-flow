@@ -1,0 +1,1189 @@
+{
+  "schemaVersion": 1,
+  "batch": "B1",
+  "status": "archived-targets-unmet",
+  "snapshotAt": "2026-10-29T00:18:20.571Z",
+  "scope": "基础业务、连续任务、澄清与多主会话隔离的探索归档；执行已停止，目标未达标。",
+  "plan": "../../plans/real-user-e2e-plan.md",
+  "dependencyPullRequest": "https://github.com/Luohaothu/dsh-flow/pull/18",
+  "baseline": "0a92333faf3ba7afd74769b5909ce7deaef98848",
+  "currentProductRevision": "accb11699bf2e1c9731c10622a4f422ef7931f95",
+  "materialVersion": "exploration-1.1",
+  "finalFrozenAcceptance": false,
+  "cases": [
+    {
+      "id": "N01",
+      "status": "exploration-recorded",
+      "latestVersion": "v6",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "partial-observed",
+      "finding": "五类异常和合法边界正确，重复20元影响与未知影响说明仍遗漏。"
+    },
+    {
+      "id": "N02",
+      "status": "exploration-recorded",
+      "latestVersion": "v7",
+      "business": "pass",
+      "autonomy": "pass",
+      "ui": "pass-with-limited-scope",
+      "finding": "一次完整探索通过；未进入冻结留出验收。"
+    },
+    {
+      "id": "N03",
+      "status": "exploration-recorded",
+      "latestVersion": "v7",
+      "business": "pass",
+      "autonomy": "pass",
+      "ui": "pass-with-limited-scope",
+      "finding": "一次探索通过；根实现并自行修正测试，首次对象提交被接受，主会话读回并独立复验，隐藏退款检查通过。"
+    },
+    {
+      "id": "N04",
+      "status": "exploration-recorded",
+      "latestVersion": "v7",
+      "business": "fail",
+      "autonomy": "partial",
+      "ui": "pass-with-limited-scope",
+      "finding": "暂不上线建议及金额正确；最终报告混淆清理周期与确定保留期、失败证据与缺证，主会话验收未纠正。团队策略已由宿主完整注入。"
+    },
+    {
+      "id": "N05",
+      "status": "archived-target-unmet",
+      "latestAttempt": "n05-v7d",
+      "business": "pass-registered-artifact-checks",
+      "autonomy": "partial-no-final-handoff",
+      "ui": "partial-not-fully-reviewed",
+      "finding": "普通文本问答澄清范围及字段，按提问提供正常文档和数据，隐藏退款检查通过。晚期补证确认停止前真实提交获接受；完成通知入队后关闭取消，无终态读回、独立验收或最终交付。",
+      "clarification": "pass-scope-and-field-questions",
+      "testModelAlias": "D",
+      "formalDelivery": "submitted-main-readback-incomplete",
+      "overall": "incomplete"
+    },
+    {
+      "id": "N06",
+      "status": "exploration-recorded",
+      "latestVersion": "v6",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "partial-observed",
+      "continuity": "pass",
+      "historyReadableInSameMainUI": "pass",
+      "newRunAfterRelease": "reasonable",
+      "actualMemberReuse": "not-covered",
+      "finding": "五类问题已识别，但报告把六个不同退款编号汇总成五个；重建路线不抵扣成员复用目标。"
+    },
+    {
+      "id": "N08",
+      "status": "archived-target-unmet",
+      "latestAttempt": "n08-v7b",
+      "business": "incomplete",
+      "businessByMain": {
+        "main-1": "initial-result-error-rework-incomplete",
+        "main-2": "core-result-correct-final-handoff-incomplete"
+      },
+      "autonomy": "partial-incomplete-final-delivery",
+      "isolation": "observed-correct-material-owner-result-and-queue-routing; full-acceptance-incomplete",
+      "ui": "partial-global-return-unverified",
+      "finding": "两根首份作业submitted；主会话1读回并识别188.20应为201.20后正式重派但未完成。主会话2核心结果正确，读报告核验但无正式终态读回及最终交付。已观察归属正确，无串用证据，完整验收未闭环。",
+      "testModelAlias": "B",
+      "overall": "incomplete"
+    },
+    {
+      "id": "N10",
+      "status": "archived-target-unmet",
+      "latestAttempt": "n10-v7b",
+      "business": "pass",
+      "businessFactualAccuracy": "pass-with-noncritical-scope-notes",
+      "autonomy": "fail-bypassed-team",
+      "ui": "unverified-delivery-ui",
+      "finding": "实际仅普通主会话A的三次已完成请求，正确No-Go报告的核心事实通过，保留非关键措辞与范围注记；无正式团队和作业，自主协作失败，与v7空响应分开记录。",
+      "overall": "fail",
+      "testModelAlias": "A"
+    },
+    {
+      "id": "N11",
+      "status": "exploration-recorded",
+      "latestAttempt": "n11-v7",
+      "testModelAlias": "B",
+      "business": "pass-artifact-only",
+      "autonomy": "fail-incomplete-formal-delivery",
+      "formalDelivery": "fail-no-submitted-result",
+      "ui": "partial-not-fully-verified",
+      "overall": "fail",
+      "finding": "实际代码及独立CLI/API检查通过。根TIMEOUT后主会话自行读日志、验收并重派；停止时两份正式作业pending、零提交，正式结果及用户交付未闭环。G06只有部分恢复证据。"
+    }
+  ],
+  "aggregate": {
+    "scope": "全部停止的B1自然运行、辅助诊断及晚期本地边界拒绝；N01/N06同一观察过程仅计一次。",
+    "accountingStatus": "final-counts-with-two-unresolved-network-usages",
+    "countingUnit": "监视记录中的SDK请求尝试另加有持久化证据的晚期本地边界拒绝；本地拒绝不计网络请求。",
+    "naturalObservationRuns": 20,
+    "naturalRecordedRequests": 398,
+    "auxiliaryRecordedRequests": 18,
+    "monitoredRecordedRequests": 416,
+    "lateLocalBoundaryRejections": 3,
+    "totalRecordedRequests": 419,
+    "totalConservativeAttempts": 419,
+    "networkTargetedAttempts": 407,
+    "localPreflightRejections": 9,
+    "knownSdkReportedTokens": 6588609,
+    "unknownNetworkUsageRequests": 2,
+    "sdkMonitoredRequestsWithoutUsage": 11,
+    "sdkReportedTokensTotal": null,
+    "actualCompleteConsumptionKnown": false,
+    "b0CalibrationRecordedRequests": 23,
+    "b0KnownSdkReportedTokens": 326248,
+    "globalMonitoredRecordedRequestsIncludingB0": 439,
+    "globalRecordedRequestsIncludingB0": 442,
+    "globalConservativeAttemptsIncludingB0": 442,
+    "globalNetworkTargetedAttemptsIncludingB0": 430,
+    "globalKnownSdkReportedTokensIncludingB0": 6914857,
+    "globalUnknownNetworkUsageRequests": 2,
+    "tokenAccountingStatus": "known-SDK-reports-finalized-with-two-unresolved-network-usages",
+    "tokenAccountingNote": "计数已闭合。3次晚期本地边界拒绝及9次本地前置检查均未发起网络请求。仅N11两次网络尝试缺失usage且原始响应无法补齐，保留未知，不补零；已知token为SDK报告小计，不等同精确完整消耗。",
+    "resourceLedgerSnapshot": {
+      "id": "resource-ledger-current",
+      "sha256": "bd474d7b23a539ba52b5617f918c06129804ba9a1a48a802ac022158403a040e",
+      "generatedAt": "2026-10-29T00:15:52.645Z",
+      "publicSummaryUsed": true
+    },
+    "successRateAcrossVersions": null
+  },
+  "packages": [
+    {
+      "version": "v5",
+      "sourceRevision": "f84dfac11c209904b9da3eb2d66feb2bf4aee64f",
+      "tarSha256": "a7b32d9d7a607a85d0282cd939aaf933269d686f6eb328655a6b0aa2925e385e",
+      "verifiedFiles": 164
+    },
+    {
+      "version": "v6",
+      "sourceRevision": "269e413b9b53870154bf4f65c8f29d402236ea0b",
+      "tarSha256": "e526603a49570b927d7fdda0ddc5cd5fa1fbbd733f93a7c91fbe3d4d728fcd62",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "ca6257a3998507b1fc68815dc0307b4645df6da0613a7ae5386f9e15277508c1",
+        "team-strategy": "7feede00946b8c4563efed06e3be7abbe792a06c8325f1a8eb740817d1d9a713"
+      }
+    },
+    {
+      "version": "v7",
+      "sourceRevision": "accb11699bf2e1c9731c10622a4f422ef7931f95",
+      "tarSha256": "12f9279e32fca3b01bfd71612dc4ed823fecda82a5c9cded492c88fa5906fbb3",
+      "verifiedFiles": 164,
+      "skills": {
+        "agent-team": "66a934157ea75fdc410b31ecfaecbd6df919bb40bfe2b1e6d7e7f01641120f67",
+        "team-strategy": "7feede00946b8c4563efed06e3be7abbe792a06c8325f1a8eb740817d1d9a713"
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "id": "n01-baseline-A",
+      "phase": "baseline",
+      "version": "baseline",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 22,
+      "sdkReportedTokens": 342079,
+      "missingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": null,
+      "formalAssignments": [],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "cac9f4559dacdf506196de188270cfbfbd541b6fbf6f63c8ceb3153670d6cc20",
+      "evidenceSha256": "05dc7905ad14e62cd6121b8b02c331ce4fa01d88035bfe53726d4ae781d75f05",
+      "business": "pass",
+      "autonomy": "fail",
+      "ui": "partial",
+      "finding": "派发参数连续失败，普通主会话绕过团队交付，未形成正式作业。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v1",
+      "phase": "exploration",
+      "version": "v1",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 9,
+      "sdkReportedTokens": 89568,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "formalAssignments": [
+        {
+          "status": "pending",
+          "submissionCount": 0,
+          "schemaFailures": 0,
+          "acceptedResultPresent": false
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "c4efd3d2d69d4322255afbeabe55d21b0073cf7ad37988e2a9d9c8f6575a6cb9",
+      "evidenceSha256": "d9c793755fbd8cb80e4aa89d279306908dfe9ba3ee0f4480de5e0a2a2535479b",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "作业已保存但根未处理正文，停在pending且未交付。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v2",
+      "phase": "exploration",
+      "version": "v2",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 17,
+      "sdkReportedTokens": 238697,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "formalAssignments": [
+        {
+          "status": "failed",
+          "submissionCount": 4,
+          "schemaFailures": 3,
+          "acceptedResultPresent": false
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "ef51acc8bb1156e50727b233ae0db3b1284fcf8d2be4147910b2b3153b5c09c7",
+      "evidenceSha256": "7170d2eae8c96c060bd0991751f3f0d0802fd8335553f1fc3d6325025c380ced",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "结果连续以字符串提交并失败；影响额与未知事项说明不可靠。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v3",
+      "phase": "exploration",
+      "version": "v3",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 18,
+      "sdkReportedTokens": 252502,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "formalAssignments": [
+        {
+          "status": "failed",
+          "submissionCount": 3,
+          "schemaFailures": 3,
+          "acceptedResultPresent": false
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "ef51acc8bb1156e50727b233ae0db3b1284fcf8d2be4147910b2b3153b5c09c7",
+      "evidenceSha256": "7b0fa8d315e0db86e3bdbc1ebadf85f3aaca3f348870ce71036f459d5341b781",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "正式提交失败；合法零元误报并重复计数，小数记录实际被判合法。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v4",
+      "phase": "exploration",
+      "version": "v4",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 27,
+      "sdkReportedTokens": 526679,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "formalAssignments": [
+        {
+          "status": "failed",
+          "submissionCount": 3,
+          "schemaFailures": 3,
+          "acceptedResultPresent": false
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "ef51acc8bb1156e50727b233ae0db3b1284fcf8d2be4147910b2b3153b5c09c7",
+      "evidenceSha256": "67b3e8c23369cbd725cd104e20b790697b3edd54f5f73c31cf5d5b723453d616",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "显式六类声明仍得到三次字符串提交；五类异常正确，影响额与待核对说明遗漏。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v5",
+      "phase": "exploration",
+      "version": "v5",
+      "scenarios": [
+        "N01"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 16,
+      "sdkReportedTokens": 215885,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "formalAssignments": [
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "schemaFailures": 0,
+          "acceptedResultPresent": true
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "ef51acc8bb1156e50727b233ae0db3b1284fcf8d2be4147910b2b3153b5c09c7",
+      "evidenceSha256": "27604e6f90d3cd6d40f2c0fb5e4687a8581182efcc31e8cc894fb8ff7488488d",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "首次原生对象被接受并读回，但漏读业务口径，误报三条合法记录。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n01-n06-v6",
+      "phase": "exploration",
+      "version": "v6",
+      "scenarios": [
+        "N01",
+        "N06"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 31,
+      "sdkReportedTokens": 630941,
+      "missingUsageRequests": 0,
+      "observerStatus": "SETTLED",
+      "observerReason": "terminal-assignments-read-back",
+      "runnerReason": "observer-settled-ui-ack",
+      "formalAssignments": [
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "schemaFailures": 0,
+          "acceptedResultPresent": true
+        },
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "schemaFailures": 0,
+          "acceptedResultPresent": true
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "ef51acc8bb1156e50727b233ae0db3b1284fcf8d2be4147910b2b3153b5c09c7",
+      "evidenceSha256": "0a3fbe324ce817963d1e1c651b738e6aa9fcfd9c49336ac18a653849d295969d",
+      "business": "fail",
+      "autonomy": "fail",
+      "ui": "partial-observed",
+      "finding": "两份正式对象均首次接受并读回；N01遗漏重复金额及未知影响说明，N06编号计数错误。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n02-v6",
+      "phase": "exploration",
+      "version": "v6",
+      "scenarios": [
+        "N02"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 10,
+      "sdkReportedTokens": 110740,
+      "missingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": "observer-ended-without-settling",
+      "formalAssignments": [],
+      "maximumObservedRunNodes": 0,
+      "observerSha256": "b77d9e123b6051840f875dc614633a6d2c1b0d82ad3d8ff1163738e290c2f826",
+      "evidenceSha256": "4765ccf54fa6f44f78c0b7c82438a54fcfe5a6627df7a44faa8828b32fbd6a9c",
+      "business": "pass",
+      "autonomy": "fail",
+      "ui": "insufficient-evidence",
+      "finding": "隐藏行为检查通过，但普通主会话独自修改和验证，无正式团队作业，另有验收表述缺陷。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n02-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N02"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 22,
+      "sdkReportedTokens": 318666,
+      "missingUsageRequests": 0,
+      "observerStatus": "SETTLED",
+      "observerReason": "terminal-assignments-read-back",
+      "runnerReason": "observer-settled-ui-ack",
+      "formalAssignments": [
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "schemaFailures": 0,
+          "acceptedResultPresent": true
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "observerSha256": "b77d9e123b6051840f875dc614633a6d2c1b0d82ad3d8ff1163738e290c2f826",
+      "evidenceSha256": "4ef92f55bf956312bad1352941779042d691d57044fa76c1249683b4a1f20699",
+      "business": "pass",
+      "autonomy": "pass",
+      "ui": "pass-with-limited-scope",
+      "finding": "根实际修改和验证，首次原生对象被接受；主会话读回及独立复验，隐藏行为检查通过。",
+      "validatedSDKOwners": 9
+    },
+    {
+      "id": "n03-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N03"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 27,
+      "sdkReportedTokens": 465095,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerStatus": "SETTLED",
+      "observerReason": "terminal-assignments-read-back",
+      "runnerReason": "observer-settled-ui-ack",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "8b435192964f4a30b2711d684ed63df8164474fca76cdc91122d20c9e07b2423",
+      "evidenceSha256": "d53a630527a224007152f24b98830cd7151d719bc423dbd7eac70acba88185cc",
+      "validatedSDKOwners": 9,
+      "business": "pass",
+      "autonomy": "pass",
+      "ui": "pass-with-limited-scope",
+      "formalAssignments": [
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "schemaFailures": 0,
+          "acceptedResultPresent": true
+        }
+      ],
+      "maximumObservedRunNodes": 1,
+      "mainReadbackMatchesSavedResult": true,
+      "hiddenBusinessCheck": "pass",
+      "finding": "根实现退款汇总并在测试失败后自行修正，首次原生对象被接受；主会话读回并独立复验，已观测Web交付。"
+    },
+    {
+      "id": "n04-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N04"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 14,
+      "sdkReportedTokens": 243784,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerStatus": "SETTLED",
+      "observerReason": "terminal-assignments-read-back",
+      "runnerReason": "observer-settled-ui-ack",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "8b435192964f4a30b2711d684ed63df8164474fca76cdc91122d20c9e07b2423",
+      "evidenceSha256": "9188d543cff17d54d0b78d9e993471688651ddd6c9d570763888494b11aa60f5",
+      "validatedSDKOwners": 9,
+      "business": "fail",
+      "autonomy": "partial",
+      "ui": "pass-with-limited-scope",
+      "formalAssignmentCount": 1,
+      "formalRouteAndReadbackObserved": true,
+      "maximumObservedRunNodes": 1,
+      "teamStrategyInjection": "confirmed",
+      "finding": "上线判断及金额正确，正式路线成立；最终报告把清理周期视为确定保留期、混写失败记录与证据缺口，主会话未纠正。"
+    },
+    {
+      "id": "n05-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N05"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 7,
+      "sdkReportedTokens": 71288,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "8b435192964f4a30b2711d684ed63df8164474fca76cdc91122d20c9e07b2423",
+      "evidenceSha256": "f9aa4eb32f43c47d0da8f471adcc4eb6c9d2fb2aae9cc8e3fb931550e0c22e04",
+      "validatedSDKOwners": 9,
+      "business": "not-scored",
+      "autonomy": "not-scored",
+      "ui": "insufficient-evidence",
+      "classification": "observer-wait-detection-failure",
+      "finding": "原生ask_user_question正在等待业务澄清，观察器未识别该等待并按no-progress中止；不能记业务失败。"
+    },
+    {
+      "id": "n05-v7b",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N05"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 5,
+      "sdkReportedTokens": 46261,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "892587047d59bd88016f10687e310095dcd01d8d63b7d370b91a1bfc1bd051c7",
+      "evidenceSha256": "f25639c60364e54b9b3a5b5da3162ca311cb01829aeb46083034eb2b97a1c25e",
+      "validatedSDKOwners": 9,
+      "business": "not-scored",
+      "autonomy": "not-scored",
+      "ui": "insufficient-evidence",
+      "classification": "incomplete-infrastructure",
+      "processCompletion": "INCOMPLETE",
+      "finding": "外层嵌套沙箱阻止原生执行，出现sandbox_apply权限错误；回答问题前主动停止，未强制终止，证据仍为OBSERVING。"
+    },
+    {
+      "id": "n05-v7c",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N05"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 19,
+      "sdkReportedTokens": 238597,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "observerReason": null,
+      "runnerReason": "runner-interrupted",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "892587047d59bd88016f10687e310095dcd01d8d63b7d370b91a1bfc1bd051c7",
+      "evidenceSha256": "65dfcdd07375e07c1218cc5e0e9d0d8709a130eaeff53c3f53f7cf567e299464",
+      "validatedSDKOwners": 9,
+      "business": "incomplete-not-graded",
+      "autonomy": "fail-incomplete-delivery",
+      "ui": "not-fully-reviewed",
+      "clarification": "pass-scope-only",
+      "formalAssignments": [
+        {
+          "status": "pending",
+          "submissionCount": 0,
+          "schemaFailures": 0,
+          "acceptedResultPresent": false
+        }
+      ],
+      "nativeError": "EMPTY_RESPONSE",
+      "nativeErrorMapped": true,
+      "pendingStateMatchesContract": true,
+      "autonomousRecovery": "not-observed",
+      "userRetry": {
+        "sameRun": true,
+        "classification": "human-retry-diagnosis",
+        "autonomousCredit": false
+      },
+      "finding": "真实业务范围澄清通过；根原生执行错误后未交付，业务逻辑不评分。缺口为待办接收者失败轮次的主动提示出口，不认定漏写failed或终态通知丢失。"
+    },
+    {
+      "id": "n08-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N08"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 11,
+      "sdkReportedTokens": 120292,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "892587047d59bd88016f10687e310095dcd01d8d63b7d370b91a1bfc1bd051c7",
+      "evidenceSha256": "981d273b9cf676ce62b2e8216825de17fc411b351f5dfe4f4153d31210dbeab9",
+      "validatedSDKOwners": 9,
+      "business": "incomplete",
+      "autonomy": "incomplete",
+      "ui": "insufficient-evidence",
+      "isolation": "partially-observed-insufficient-for-full-pass",
+      "mainResults": [
+        {
+          "label": "main-1",
+          "status": "incomplete",
+          "cause": "root-stalled-after-garbled-reply"
+        },
+        {
+          "label": "main-2",
+          "status": "not-scored",
+          "cause": "unanswered-native-question-and-auto-observer-wait-detection-gap"
+        }
+      ],
+      "reviewBasis": "independent-review-retaining-both-v7-and-v7b",
+      "finding": "两个主会话原因分别记录；无进展中止不能证明隔离泄漏，也不能认定第二项业务错误。",
+      "overall": "fail",
+      "businessByMain": {
+        "main-1": "failed-no-usable-final-delivery",
+        "main-2": "incomplete-unanswered-question-at-stop"
+      }
+    },
+    {
+      "id": "n10-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N10"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 7,
+      "sdkReportedTokens": 75188,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "892587047d59bd88016f10687e310095dcd01d8d63b7d370b91a1bfc1bd051c7",
+      "evidenceSha256": "17be7ff6ee32793249f0489de82f264fa9777ab62ba87160fbedb54b6a7e9a53",
+      "validatedSDKOwners": 9,
+      "business": "incomplete",
+      "businessFactualAccuracy": "ungraded-no-final-delivery",
+      "autonomy": "started-not-completed",
+      "ui": "not-fully-scored",
+      "formalAssignments": [
+        {
+          "status": "pending",
+          "submissionCount": 0,
+          "schemaFailures": 0,
+          "acceptedResultPresent": false
+        }
+      ],
+      "nativeError": "EMPTY_RESPONSE",
+      "pendingStateMatchesContract": true,
+      "finding": "团队根首轮原生执行错误后未形成最终业务交付；不将执行错误当作业务材料中的测试失败或业务事实错误。"
+    },
+    {
+      "id": "n11-v7",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N11"
+      ],
+      "testModelAlias": "B",
+      "recordedRequests": 48,
+      "sdkReportedTokens": 1025577,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 2,
+      "observerDeclaredMissingUsageRequests": 1,
+      "observerStatus": "ABORTED",
+      "observerReason": "resource-boundary",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "892587047d59bd88016f10687e310095dcd01d8d63b7d370b91a1bfc1bd051c7",
+      "evidenceSha256": "3e923202767baa31c932b812cc8902b709f7880b5924e7b84873fe0551b947f4",
+      "validatedSDKOwners": 9,
+      "business": "pass-artifact-only",
+      "autonomy": "fail-incomplete-formal-delivery",
+      "formalDelivery": "fail-no-submitted-result",
+      "overall": "fail",
+      "ui": "partial-not-fully-verified",
+      "formalAssignments": [
+        {
+          "status": "pending",
+          "submissionCount": 0,
+          "schemaFailures": 0,
+          "acceptedResultPresent": false
+        },
+        {
+          "status": "pending",
+          "submissionCount": 0,
+          "schemaFailures": 0,
+          "acceptedResultPresent": false
+        }
+      ],
+      "nativeError": "TIMEOUT",
+      "independentCliApiChecks": "pass",
+      "taskComplete": false,
+      "formalCompletionReadback": "not-completed",
+      "recovery": {
+        "codeExecutionFailure": "pass",
+        "toolArgumentCorrection": "pass",
+        "nativeTimeout": "partial",
+        "formalFailedNotification": "not-observed",
+        "G06": "partial-no-full-credit"
+      },
+      "unsettledNetworkRequestAtEvidenceSnapshot": true,
+      "finding": "真实启动失败修复及独立代码/CLI/API检查通过；主会话在根超时后自行读日志、验收并重派，但正式结果和最终用户交付未闭环。",
+      "observerReasonPubliclyNormalized": true
+    },
+    {
+      "id": "n05-v7d",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N05"
+      ],
+      "testModelAlias": "D",
+      "recordedRequests": 27,
+      "sdkReportedTokens": 515769,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "resource-boundary",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "c13fe185f2bc9b76fb3c3621b0e7aa7286abb948ddb99d34bd0f7e46038635d4",
+      "evidenceSha256": "a69e64715627c8e9b089d84fad70b7bcf6802b8d10450387bd756a78f15327ec",
+      "validatedSDKOwners": 9,
+      "observerReasonPubliclyNormalized": true,
+      "business": "pass-registered-artifact-checks",
+      "autonomy": "partial-no-final-handoff",
+      "overall": "incomplete-resource-boundary",
+      "ui": "partial-not-fully-reviewed",
+      "clarification": {
+        "status": "pass",
+        "mechanism": "ordinary-text-business-question-and-answer",
+        "scopeAndFieldsClarified": true,
+        "businessDocumentsAndDataProvidedOnlyWhenAsked": true
+      },
+      "capturedFormalAssignments": [
+        {
+          "status": "pending",
+          "submissionCount": 0
+        }
+      ],
+      "formalAssignments": [
+        {
+          "status": "submitted",
+          "submissionCount": 1,
+          "acceptedResultPresent": true,
+          "evidencePhase": "persisted-before-process-exit"
+        }
+      ],
+      "hiddenRefundCheck": "pass",
+      "lateEvidence": {
+        "id": "n05-v7d-late-evidence",
+        "sha256": "74e9a8c48cc185fc3b7c60bfc26653429993f823d78b040255502f2ff2360790",
+        "capturedPrefixMatchesPersisted": true,
+        "actualSubmissionAfterCaptureBeforeExit": true
+      },
+      "mainClosure": {
+        "completionNotificationQueued": true,
+        "completionNotificationCanceledOnClose": true,
+        "completionNotificationConsumed": false,
+        "terminalReadback": false,
+        "independentAcceptance": false,
+        "finalAnswer": false
+      },
+      "finding": "快照显示pending，但持久化晚期增量证明停止前真实提交被接受。主会话通知入队后随关闭取消，未消费、终态读回或最终交付；不继续断言最终pending。"
+    },
+    {
+      "id": "n08-v7b",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N08"
+      ],
+      "testModelAlias": "B",
+      "recordedRequests": 58,
+      "sdkReportedTokens": 1029927,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "resource-boundary",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "c13fe185f2bc9b76fb3c3621b0e7aa7286abb948ddb99d34bd0f7e46038635d4",
+      "evidenceSha256": "0122fa061f5d5220f29fea66686d89de2aeee316d207431781730fa6a25bfccd",
+      "validatedSDKOwners": 9,
+      "observerReasonPubliclyNormalized": true,
+      "business": "incomplete",
+      "autonomy": "partial-incomplete-final-delivery",
+      "overall": "incomplete-resource-boundary",
+      "ui": "partial-global-return-unverified",
+      "initialFormalAssignments": [
+        {
+          "mainLabel": "main-1",
+          "status": "submitted",
+          "acceptedResultPresent": true
+        },
+        {
+          "mainLabel": "main-2",
+          "status": "submitted",
+          "acceptedResultPresent": true
+        }
+      ],
+      "mainResults": [
+        {
+          "label": "main-1",
+          "initialBusinessResult": "amount-error",
+          "reportedAmount": 188.2,
+          "correctAmount": 201.2,
+          "terminalReadback": true,
+          "errorIdentifiedByMain": true,
+          "formalReworkAssigned": true,
+          "reworkCompletedBeforeStop": false,
+          "finalHandoff": false
+        },
+        {
+          "label": "main-2",
+          "rootCoreResult": "correct",
+          "reportReadAndCheckedByMain": true,
+          "terminalReadback": false,
+          "completionNotificationConsumed": false,
+          "finalHandoff": false
+        }
+      ],
+      "isolation": {
+        "mainAndRootMaterials": "observed-correct",
+        "runAndFormalResultOwnership": "observed-correct",
+        "notificationQueueOwnership": "observed-correct",
+        "crossDatasetLeakageProven": false,
+        "notificationConsumptionAndFinalHandoff": "not-completed",
+        "fullGlobalViewAndReturn": "not-verified"
+      },
+      "finding": "两根首份作业已提交且归属正确；主会话1识别金额错误并正式重派但未修正完成，主会话2核心结果正确但正式读回和最终交付未闭环。局部隔离正确不替代N08完整通过。"
+    },
+    {
+      "id": "n10-v7b",
+      "phase": "exploration",
+      "version": "v7",
+      "scenarios": [
+        "N10"
+      ],
+      "testModelAlias": "A",
+      "recordedRequests": 3,
+      "sdkReportedTokens": 26582,
+      "tokenValueStatus": "SDK-reported-known",
+      "missingUsageRequests": 0,
+      "observerDeclaredMissingUsageRequests": 0,
+      "observerStatus": "ABORTED",
+      "observerReason": "no-progress",
+      "runnerReason": "observer-ended-without-settling",
+      "runnerOwnedStop": true,
+      "forcedTermination": false,
+      "processExitCode": 130,
+      "observerSha256": "c13fe185f2bc9b76fb3c3621b0e7aa7286abb948ddb99d34bd0f7e46038635d4",
+      "evidenceSha256": "5126254603c83150a5fb27c7189cc7450212f4da73f93397393ad026f87cab7c",
+      "validatedSDKOwners": 9,
+      "business": "pass",
+      "businessFactualAccuracy": "pass-with-noncritical-scope-notes",
+      "autonomy": "fail-bypassed-team",
+      "overall": "fail",
+      "ui": "unverified-delivery-ui",
+      "actualExecution": "main-A-only",
+      "observedMainRequests": 3,
+      "observedTeamRequests": 0,
+      "allObservedRequestsCompleted": true,
+      "nativeError": null,
+      "formalAssignments": [],
+      "maximumObservedRunNodes": 0,
+      "noncriticalScopeNotes": [
+        "待定批准不宜表述为已确立的法定或正式硬性前置。",
+        "证据缺口清单存在重叠，统计时不算独立缺口。",
+        "跨平台支持范围仍需决定，不把后续方案当成现存事实。"
+      ],
+      "finding": "普通主会话A直接正确给出No-Go报告，三次请求均完成；无团队根或正式作业，按绕过团队记自主失败，不归因EMPTY_RESPONSE，也不将准备时默认团队身份当作实际参与。"
+    }
+  ],
+  "diagnostics": [
+    {
+      "id": "wire-probe",
+      "phase": "auxiliary",
+      "recordedRequests": 0,
+      "sdkReportedTokens": 0,
+      "missingUsageRequests": 0,
+      "observerStatus": "OBSERVING",
+      "evidenceSha256": "11cfaa415ae91833ed0328dc6721022521964ad24b48c2faa4af6b14fc715cdd",
+      "autonomousCredit": false,
+      "classification": "startup-incomplete",
+      "finding": "初始化钩子未启动诊断，没有模型请求。"
+    },
+    {
+      "id": "wire-probe-v2",
+      "phase": "auxiliary",
+      "recordedRequests": 9,
+      "sdkReportedTokens": 0,
+      "missingUsageRequests": 9,
+      "observerStatus": "SETTLED",
+      "evidenceSha256": "cd72a7d879b390599e4d1f0d5c52e24c393390583da903e69333af3718ff4dbe",
+      "autonomousCredit": false,
+      "classification": "local-preflight-failure",
+      "observedExternalRequests": 0,
+      "finding": "九次SDK调用尝试在本地前置检查失败，未观察到服务请求；缺失用量保持未知。"
+    },
+    {
+      "id": "wire-probe-v3",
+      "phase": "auxiliary",
+      "recordedRequests": 9,
+      "sdkReportedTokens": 4492,
+      "missingUsageRequests": 0,
+      "observerStatus": "SETTLED",
+      "evidenceSha256": "3ae3eafe54520169c9d38fdbdd0eed1dc68bb47ae9139ac91dc7f21f2bbaa054",
+      "autonomousCredit": false,
+      "classification": "controlled-schema-diagnosis",
+      "observedExternalRequests": 9,
+      "finding": "通用JSON声明三次返回字符串；开放object与完整object声明各两次原生对象、一次空白。"
+    }
+  ],
+  "independentReviews": [
+    {
+      "id": "n01-baseline-grade.json",
+      "sha256": "de91447203d1ac794af161236d178a9404226c9d2c883083bd827584d8f87b95"
+    },
+    {
+      "id": "n01-iterations-grade.json",
+      "sha256": "6d3778cee1bf47c8aa6f98daa0078ac6aa341117a5509d4055103b6b7f1c50ff"
+    },
+    {
+      "id": "n02-grades.json",
+      "sha256": "7957c6acb11f71d95ba10ec928119b6f5c524598c8c4e14460d7d167c5648c9c"
+    },
+    {
+      "id": "n03-grade.json",
+      "sha256": "8518ac5f1ae68068e0f5092db18b5296ba1531f04c51ea73e6a4adf8fda20336"
+    },
+    {
+      "id": "n04-grade.json",
+      "sha256": "897d60c3da47e7355eaef362f11c7742d7ca6395b565098ec09b89f9f86199ea"
+    },
+    {
+      "id": "n05-v7b-infrastructure.json",
+      "sha256": "5a2d91b7068995173d576b091a2c485e7bc2a63cc4d052ffdc3955d7f4167b8e"
+    },
+    {
+      "id": "n05-grade.json",
+      "sha256": "81e80a57781489a5edd9056d1508e6ea3d85838f2e4dc2a586d0c3fec65e7e14"
+    },
+    {
+      "id": "n11-grade.json",
+      "sha256": "4486267b8f3fd6688a03ea10ef4d7fd4601d18f2b4a9ca5dbeb1c301ecdaeae8"
+    },
+    {
+      "id": "n05-v7d-late-evidence.json",
+      "sha256": "74e9a8c48cc185fc3b7c60bfc26653429993f823d78b040255502f2ff2360790",
+      "status": "persisted-late-events-validated-against-captured-prefix"
+    },
+    {
+      "id": "n05-v7d-grade.json",
+      "sha256": "75c4fbbfd0a553b5c8b9b8b625acd1259c117114dd2d9bf74f7757d56879242c"
+    },
+    {
+      "id": "n08-grade.json",
+      "sha256": "56007967fc11df1a4a803228ee1bab5489def4c4d4e3dca139d752d4cb38aa33",
+      "status": "both-v7-and-v7b-reviewed"
+    },
+    {
+      "id": "n10-grade.json",
+      "sha256": "f46e64729c50798fc4e92352d732df5dfd97b7865f8e74868429929e29bde1d2"
+    },
+    {
+      "id": "n05-v7c-grade-original.json",
+      "sha256": "c7f685a8c08e92f6e2f9fb2077628ef79f102bb9dd71ad7f30e187da2a816d57",
+      "status": "preserved-original-v7c-review"
+    }
+  ],
+  "validation": {
+    "fullContracts": {
+      "scope": "归档时完整契约回归",
+      "tests": 716,
+      "passed": 716,
+      "failed": 0,
+      "skipped": 0
+    },
+    "submissionMetadataContracts": {
+      "tests": 23,
+      "passed": 23,
+      "failed": 0,
+      "logSha256": "eb01509e79ed82a83fc31e3dac2a724d77caeaa9214987b6cbe6b331e8e7d183"
+    },
+    "skillLoading": {
+      "versions": [
+        "v6",
+        "v7"
+      ],
+      "testsPerVersion": 8,
+      "passedPerVersion": 8
+    },
+    "lastCompletedInfrastructure": {
+      "revision": "c1000283e551f17b022ad5b57d50c57d16cfbae4",
+      "workingTreeState": "committed",
+      "scope": "自动及人工观察模式均识别原生待答",
+      "tests": 33,
+      "passed": 33,
+      "failed": 0
+    },
+    "operatorAtomicReplacement": "fixed-at-dfb785189584aca3b28bb48ce4c86214dcd10194",
+    "latestWholeBatchVerification": {
+      "scope": "归档时工作树工程检查；不替代业务与自主验收",
+      "typecheck": "pass",
+      "build": "pass",
+      "docsBuild": "pass",
+      "nativeApi": "pass",
+      "inventory": {
+        "tests": 8,
+        "passed": 8,
+        "failed": 0
+      },
+      "fullContracts": {
+        "tests": 716,
+        "passed": 716,
+        "failed": 0,
+        "skipped": 0
+      },
+      "naturalInfrastructure": {
+        "tests": 33,
+        "passed": 33,
+        "failed": 0
+      }
+    },
+    "atomicReplacementInfrastructure": {
+      "revision": "dfb785189584aca3b28bb48ce4c86214dcd10194",
+      "tests": 19,
+      "passed": 19,
+      "failed": 0
+    },
+    "operatorNativeQuestionInfrastructure": {
+      "revision": "1ca196bebb7bcd29d67c43207fe5061d96b4a5dd",
+      "scope": "仅人工观察模式的原生待答识别",
+      "tests": 24,
+      "passed": 24,
+      "failed": 0
+    },
+    "historicalFullContracts": {
+      "productVersion": "v5",
+      "tests": 716,
+      "passed": 716,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "d26691915ca58afa30d8a35d3f2f642062267d507a0870630deca83f2616f06a"
+    }
+  },
+  "corrections": [
+    {
+      "id": "v3-decimal-finding",
+      "finding": "v3实际将小数记录判为合法。此前小数误报判断已纠正；该轮真实错误为合法零元误报和重复计数。"
+    },
+    {
+      "id": "n04-team-strategy-loading",
+      "finding": "撤回仅凭没有显式skill工具调用认定未加载team-strategy的判断。宿主注入源码与实际请求完整正文确认已加载；剩余缺陷为业务证据表述与主会话验收质量。"
+    },
+    {
+      "id": "n05-v7d-final-submission-state",
+      "finding": "原快照pending、零提交仅描述采集截点；晚期持久化增量确认停止前submitted、一次accepted，主会话未消费完成通知、终态读回或最终交付。原快照不改写，最终状态以补证更正。"
+    }
+  ],
+  "coverage": {
+    "creditedTemplates": [],
+    "creditedGTargets": [],
+    "effectiveScaleAcceptance": "not-covered-in-this-batch",
+    "fullUIMatrix": "pending",
+    "standaloneWeb": "pending",
+    "desktop": "pending",
+    "frozenThreeConsecutiveTrials": "pending",
+    "G06Observation": "partial-recovery-only; no-full-credit"
+  },
+  "publicationBoundary": "仅公开匿名编号、归纳结论和证据摘要。原始配置、输出、截图及逐请求记录留在私有执行目录。",
+  "accountingCutoff": "全部B1候选停止后最终核账；监视记录与晚期本地边界拒绝分列，计数已闭合。",
+  "blindingBoundary": {
+    "batchInterpretation": "archived-exploration-not-final-blind-acceptance",
+    "protocolComplete": false,
+    "finalHoldoutRun": false,
+    "auditId": "blinding-boundary-audit",
+    "auditSha256": "f274b6b4cf6cf1ea0eb823d38a5ff94df70b9cc4a8ecd63342fc0f8ba84ab19b",
+    "nativeWorkspaceWriteProvidesReadIsolation": false,
+    "finding": "当前锁定SDK的workspace-write限制写入，不阻止同一身份读取工作目录外原本可读的文件；专用home、目录命名和移出cwd均不能单独证明参考答案不可读。",
+    "actualAnswerExposureInExistingTrials": "not-determined",
+    "requiredFinalHoldoutEvidence": [
+      "冻结任务、技能、运行器与评分规则，并使用新材料；已揭盲探索材料不得复用为独立最终留出。",
+      "候选运行期间参考答案及评分材料仅以密文存在；明文副本、历史记录与解密密钥均不可由候选访问。",
+      "停止全部候选及其后代进程后固定输出和轨迹、记录封存摘要。",
+      "仅在停止及封存之后于独立评估上下文解密评分，保留时间顺序证据。"
+    ],
+    "implementationStatus": "protocol-and-evidence-incomplete",
+    "planRequirementExplicit": true
+  },
+  "executionErrorAssessment": {
+    "nativeErrorMapping": "confirmed",
+    "pendingState": "matches-current-state-machine",
+    "confirmedGap": "Flow正式作业交接缺少向实际派发者主动提示仍pending接收者失败轮次的出口。",
+    "terminalNotificationLost": "not-established-no-formal-terminal-event",
+    "notClaimed": "未穷尽全部原生旁路恢复能力，不判断空响应在服务内部或模型内部的责任归属。",
+    "appliesToAttempts": [
+      "n05-v7c",
+      "n10-v7"
+    ]
+  },
+  "excludedActiveOrPreparedAttempts": [],
+  "closure": {
+    "allB1CandidatesStopped": true,
+    "executionRecordsArchived": true,
+    "batchTargetsMet": false,
+    "overallPlanCompleted": false,
+    "remainingBatches": [
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7"
+    ],
+    "B2MaterialPreparationCountsAsExecution": false,
+    "resourceAccountingFinalized": true
+  },
+  "lateLocalBoundaryRejections": {
+    "recordedAttempts": 3,
+    "classification": "local-after-observation-boundary",
+    "networkRequests": 0,
+    "modelUsage": "not-applicable-no-network-request",
+    "evidenceId": "resource-ledger-current"
+  }
+}
