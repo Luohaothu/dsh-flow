@@ -272,9 +272,9 @@ SDK loader/profile 检查由锁定环境的 `verifySdkEvidence` 必需注入，�
 
 ## 分阶段物理创建与模型通道
 
-Refs #43、#48、#50。`physical-container.mjs` 固定本地镜像、非 Root 身份、network none、nonce labels 和五个独立卷，以递归冻结的计划共享 create 参数与 bind 预期。绑定核原始 create/inspect 回执，并要求容器仍是 created、Pid 0、未启动的零时间状态。原调用输入后改、嵌套身份、argv 或卷映射修改都不能改变计划。
+Refs #43、#48、#50、#53、#54。`physical-container.mjs` 固定本地镜像、非 Root 身份、network none、nonce labels 和五个独立卷，以递归冻结的计划共享 create 参数与 bind 预期。绑定核原始 create/inspect 回执，并要求容器仍是 created、Pid 0、未启动的零时间状态。原调用输入后改、嵌套身份、argv 或卷映射修改都不能改变计划。
 
-`staged-model-socket.mjs` 只监听一次 Unix socket：bootstrap 仅提供本 case 的认证 health，拒绝 reserve/map/model；Root 验证完成后等待同步或异步准入回调，再提升同一 handler/inode。关闭时有效响应继续排空；未进入有效响应的遗留连接在有限 grace 后技术终止。发生该终止会记录计数、明确拒绝 normal closure，不作为业务或 F6 证据。实际安装仍须核无候选写权限的父链、跨 UID 的 socket owner/mode，局部同 UID 控制不能代替这些读回。
+`staged-model-socket.mjs` 只监听一次 Unix socket：bootstrap 及异步准入等待期间均提供本 case 的认证 health，以 409 拒绝 reserve/map/model；Root 验证完成后提升同一 handler/inode。请求 body 有独立有限期限，完整请求后的有效长响应继续排空；未进入有效响应的遗留连接在有限 grace 后技术终止。发生请求 body 或遗留连接终止会记录计数、明确拒绝 normal closure，不作为业务或 F6 证据。实际安装仍须核无候选写权限的父链、跨 UID 的 socket owner/mode，局部同 UID 控制不能代替这些读回。
 
 ## Root scope 的环境引用
 
@@ -285,5 +285,7 @@ Refs #45、#47、#49。`root-scope-environment.mjs` 使 overlay 固定环境名�
 Refs #51。`root-stop-reader.mjs` 被真实停止适配消费，固定 source/binding/stopTar 三份输入及分角色的 Root 边界策略。源码允许 Root0 的只读父链，binding/tar 保持 owner-only；文件 UID/GID、模式、nlink、不可替换 fd、读前后稳定、原 SHA 和显式 forbidden 边界均保留，根目录与尾斜杠不能绕过排除策略。合成 FS 控制不授予 Linux Root0 读取或实际停止资格。
 
 Refs #52。`browser-log-reader.mjs` 仅允许非空 pinned browser-close DTO 指定的 stdout/stderr leaf 为空，按真实零字节及 SHA 返回。JSON 与其他角色继续拒空，父链、所有者、模式、链接、fd 稳定和边界检查不放宽。生产默认 Root0；实际自 UID 文件控制只证明文件读取行为，不充当 Root0、浏览器或正常关闭证明。
+
+Refs #55。`sdk-close-binding.mjs` 由最终关闭重放直接消费，以初始 Root 进程来源的 PID/birth 为期望，同时核 native-peer、peer-exit 的唯一 SDK 行和 bridge-closed 的 SDK PID、UID/GID 及出生标识；缺失或矛盾均拒绝。它不返回资格布尔值，合成字段控制不代替实际 OS 原件。
 
 上述模块由实际装配、启动、准入和关闭消费者使用同字节副本。运行 `node --test tests/natural/*.test.mjs`；新回归包含合成物理原件、技术 Unix HTTP 和实际自 UID 文件读回。纯控制和 source 清单不授予真实 SDK、UI、模型、业务或 F6 资格；实际安装、加载、普通 UI 操作、全流程关闭与物理回执继续作为下一波准入条件。
