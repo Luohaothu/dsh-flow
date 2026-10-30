@@ -303,7 +303,7 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 
 ## 历史计账与新测试域
 
-历史 current 指针作为归档保留，累计用量沿用原始 epoch。新 Root 域有独立 current 索引，绑定本次 namespace、generation、镜像、实际进程和源码采集；域内既有写入者仍由原 StrictV3 校验。历史进程范围、未观察到的工具写入者、模型加载路径、未知用量与 F6 均保留 unknown。
+历史 current 指针作为归档保留，累计用量沿用原始 epoch。新 Root 域有独立 current 索引，绑定本次 namespace、generation、镜像、实际进程和源码采集；域内既有写入者仍由原 StrictV3 校验。历史进程范围、未观察到的工具写入者、模型加载路径、未知用量与 F6 均保留 unknown。 历史核查只观察来源中已知 PID 和直接 PPID；观察到的 PGID 不等于独占归属，也不以 PID 推断 PGID，不据此还原所有组或后代的关闭。
 
 这些中性来源校验器只建立角色策略，不启动 SDK、创建 authority、发送模型 HTTP，也不授予业务资格。实际 Root 调用方还须绑定当前 Linux Root 进程与 source manifest，并保留逐 case 隔离、唯一 TLS 出口和 HTTP 前持久化记账。元数据核查保留完整原文，支持 BSD 的有符号 UID。
 

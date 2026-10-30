@@ -3,7 +3,8 @@ import path from 'node:path';
 import {appendObservedOwner, createSourceReader, deriveHistoricalOrigins} from './historical-owner-scope.mjs';
 import {readCurrentCensus} from './historical-census.mjs';
 
-/** A bounded current observation, intentionally not a reconstructed historical writer inventory. */
+/** Bounded original PID/direct-PPID observation. Observed groups do not prove exclusive ownership;
+ * never infer PGID from PID or turn this into a reconstructed historical descendant inventory. */
 export function observeKnownHistoricalOwners({foundations, currentPointers, census, expectedCensus}, {read}) {
   const scope = deriveHistoricalOrigins(foundations, {read}), io = createSourceReader(read), matrix = io.load(foundations.matrix);
   for (const origin of scope.origins) {

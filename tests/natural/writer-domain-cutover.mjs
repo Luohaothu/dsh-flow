@@ -70,10 +70,12 @@ export function validateWriterDomainCutover(plan, {readHistorical, readActive, r
   assert.deepEqual(epoch.value.referenceIndex, plan.legacyReferenceIndex, 'Epoch and archival reference index differ');
   assert.equal(epoch.value.originalSnapshotSha256, snapshot.source.sha256, 'Historical source differs from the actual original epoch');
   assert.equal(refSha(epoch.value.originalSnapshot), snapshot.source.sha256);
+  assert.equal(active.raw(rootRef(epoch.value.originalSnapshot)).source.sha256, snapshot.source.sha256, 'Preserved original snapshot bytes differ');
   assert.equal(epoch.value.usage.usedAttempts, snapshot.value.usedAttempts); assert.equal(epoch.value.usage.usedTokens, snapshot.value.usedTokens);
   const baselineFile = plan.historical.foundations.baseline.file ?? plan.historical.foundations.baseline.path;
   const baselineRow = referenceIndex.value.files.find(x => x.originalPath === baselineFile);
   assert.ok(baselineRow && baselineRow.sha256 === ledger.source.sha256, 'Baseline source is not the bound historical raw baseline');
+  assert.equal(active.raw(rootRef(baselineRow.reference)).source.sha256, ledger.source.sha256, 'Preserved baseline bytes differ');
   const archived = historical.currentPointerBindings.map(binding => {
     const row = referenceIndex.value.files.find(x => x.originalPath === binding.source.file);
     assert.ok(row && row.sha256 === binding.source.sha256 && row.bytes === binding.source.bytes, 'An original current pointer was omitted or rewritten in the archive');

@@ -16,6 +16,7 @@ export function readCurrentCensus(reference, recomputed, expected, io) {
   assert.equal(review.value.schema, 'root-historical-passive-source-review/v1');
   assert.equal(review.value.executionAuthorized, true);
   assert.equal(review.value.action, 'metadata-only-historical-passive-census');
+  assert.ok(typeof expected.hostScopeId === 'string' && expected.hostScopeId.trim().length > 0, 'Root frozen census host scope is required');
   assert.equal(review.value.hostScopeId, expected.hostScopeId);
   assert.equal(c.hostScopeId, expected.hostScopeId);
   assert.equal(c.sourceSetSha256, review.value.sourceSetSha256);

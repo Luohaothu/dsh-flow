@@ -94,3 +94,38 @@ test('a StrictV3 failure remains a cutover failure instead of being replaced by 
   const f=domainFixture(); f.ports.validateStrict=()=>{throw Error('Strict original rejected source');};
   assert.throws(()=>validateWriterDomainCutover(f.plan,f.ports),/Strict original rejected/);
 });
+
+
+test('a missing or empty host scope cannot bind a census by vacuous equality', () => {
+  for (const hostScopeId of [undefined, null, '', '   ', 42]) {
+    const f=domainFixture(), review=JSON.parse(f.read(f.censusValue.sourceReviewedRef));
+    review.hostScopeId=hostScopeId; f.censusValue.hostScopeId=hostScopeId; f.plan.historical.expectedCensus.hostScopeId=hostScopeId;
+    const ref=f.put(f.censusValue.sourceReviewedRef.file,review); f.censusValue.sourceReviewedRef=ref; f.plan.historical.expectedCensus.sourceReviewSha256=ref.sha256;
+    f.plan.historical.census=f.put(f.plan.historical.census.file,f.censusValue);
+    assert.throws(()=>validateWriterDomainCutover(f.plan,f.ports),/host scope is required/); assert.equal(f.strictCalls,0);
+  }
+});
+for(const kind of ['snapshot','baseline'])test('missing or changed archived '+kind+' bytes cannot pass on an index digest alone',()=>{
+  for(const change of ['missing','changed']){
+    const f=domainFixture(), ref=kind==='snapshot'?JSON.parse(f.read(f.plan.legacyEpochSnapshot)).originalSnapshot:f.index.files.find(row=>row.originalPath===f.foundations.baseline.file).reference;
+    if(change==='missing')f.files.delete(ref.file);else f.files.set(ref.file,Buffer.from('changed original bytes\n'));
+    assert.throws(()=>validateWriterDomainCutover(f.plan,f.ports));assert.equal(f.strictCalls,0);
+  }
+});
+test('a recorded shared group remains an observation with unknown ownership, not a complete retirement proof',()=>{
+  const f=domainFixture(), matrix=JSON.parse(f.read(f.foundations.matrix));matrix.resourceCases[0].observedIdentities=[{pid:41,pgid:999}];
+  f.foundations.matrix=f.put(f.foundations.matrix.file,matrix);f.censusValue.matrix=f.foundations.matrix;
+  f.censusValue.commands[3].stdout=f.putRaw('/history/processes.stdout','7 1 999 501 Sat Oct 31 00:00:00 2026\n');
+  f.censusValue.processes=[{pid:7,ppid:1,pgid:999,uid:501,osBirth:{normalized:'Sat Oct 31 00:00:00 2026'}}];f.plan.historical.census=f.put(f.plan.historical.census.file,f.censusValue);
+  const value=validateWriterDomainCutover(f.plan,f.ports), origin=value.legacyObservation.observations.find(row=>row.originKey==='natural-b2/scenario');
+  assert.ok(origin.sourceBoundOwnerStages.some(row=>row.actualObservedPgids?.includes(999)));assert.deepEqual(origin.currentMatches,[]);
+  assert.equal(value.rolePolicyValidated,true);assert.equal(value.legacyPhysicalCompleteness,'unknown');assert.equal(value.unobservedLegacyToolWriters,'unknown');assert.equal(value.legacyStrictF6,'unknown');
+});
+test('a native PID is not an inferred owned PGID, while an actual recorded parent match still blocks',()=>{
+  for(const ppid of [1,41]){
+    const f=domainFixture();f.censusValue.commands[3].stdout=f.putRaw('/history/processes.stdout',`7 ${ppid} 41 501 Sat Oct 31 00:00:00 2026\n`);
+    f.censusValue.processes=[{pid:7,ppid,pgid:41,uid:501,osBirth:{normalized:'Sat Oct 31 00:00:00 2026'}}];f.plan.historical.census=f.put(f.plan.historical.census.file,f.censusValue);
+    if(ppid===41)assert.throws(()=>validateWriterDomainCutover(f.plan,f.ports),/recorded legacy owner is present/);
+    else assert.equal(validateWriterDomainCutover(f.plan,f.ports).legacyPhysicalCompleteness,'unknown');
+  }
+});
