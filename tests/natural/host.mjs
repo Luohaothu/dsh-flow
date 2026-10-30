@@ -4,9 +4,11 @@ import { constants, closeSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, 
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertAgentsHome, inspectGlobalSkills } from './isolation.mjs';
+import { assignmentReadBack as readBack, nativeToolCallForResult } from './readback.mjs';
 
 export const name = 'flow-natural-observer';
-export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands'];
+export const inject = ['flow', 'agents', 'llm', 'sessionController', 'commands', 'skills'];
 const copy = value => JSON.parse(JSON.stringify(value));
 const fingerprint = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const queries = /^(?:flow_(?:team_(?:list|get|read|assignment_read)|assignment_read|material_read|patterns?(?:_list|_read)?|unread|peek|query|wait)|.*(?:_list|_get|_read|_query|_status))$/;
@@ -79,9 +81,10 @@ function privateWriter(directory) {
     assert.equal(realpathSync(target), target);
   }
   verify();
-  const write = value => {
+  const write = (value, filename = 'evidence.json') => {
+    assert.ok(['evidence.json', 'shutdown-evidence.json'].includes(filename));
     verify();
-    const path = join(target, 'evidence.json');
+    const path = join(target, filename);
     try { const state = lstatSync(path); assert.ok(state.isFile() && !state.isSymbolicLink(), 'Proof file cannot be a symlink'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
@@ -142,25 +145,85 @@ export function apply(ctx) {
   const proof = privateWriter(process.env.NATURAL_PROOF_DIR);
   const first = mains[0].record;
   const evidence = { status: 'OBSERVING', observerSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'), startedAt: Date.now(), prompt: first.prompt, userPrompts: first.userPrompts, userTimeline: [], checkpoints: [], awaitingUser: false, workspace: first.workspace, completion: operator ? 'operator' : 'auto', mains: mains.map(main => main.record), operatorRequests: [], limits: { maxRequests: scenario.maxRequests, maxTotalTokens: scenario.maxTotalTokens, maxDurationMs: scenario.maxDurationMs, noProgressMs: scenario.noProgressMs }, requests: [], histories: [], snapshots: [], progress: [] };
-  const archived = new Map(), operatorRequests = new Map(), seenProgress = new Set();
-  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, continuationEpoch, continuationUntil;
-  const save = () => { evidence.updatedAt = Date.now(); proof.write(evidence); };
+  const archived = new Map(), knownAgents = new Map(), operatorRequests = new Map();
+  const seenProgress = new Set();
+  let timer, stableSince, lastProgressAt = evidence.startedAt, finished = false, boundary, projector, continuationEpoch, continuationUntil;
+  const ownedRuns = runs => {
+    const mainIds = new Set(mains.map(main => main.record.sessionId));
+    return runs.filter(run => run.entry?.backend === 'dsh' && mainIds.has(run.entry.callerSessionId));
+  };
+  const capture = () => {
+    const state = { capturedAt: Date.now(), histories: [], registry: null, snapshots: [], captureErrors: [] };
+    try { for (const agent of ctx.agents.list()) knownAgents.set(agent.session.id, agent); }
+    catch (error) { state.captureErrors.push({ source: 'agents', error: String(error?.message ?? error) }); }
+    for (const [id, agent] of knownAgents) {
+      try { state.histories.push({ sessionId: id, status: archived.has(id) ? 'disposed' : agent.status, header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }); }
+      catch (error) {
+        if (archived.has(id)) state.histories.push(copy(archived.get(id)));
+        state.captureErrors.push({ source: 'history', sessionId: id, error: String(error?.message ?? error) });
+      }
+    }
+    try {
+      projector ??= ctx.flow.projector;
+      state.registry = copy(projector.registry());
+      for (const run of ownedRuns(state.registry.runs)) {
+        try { state.snapshots.push(copy(projector.snapshot(run.id))); }
+        catch (error) { state.captureErrors.push({ source: 'snapshot', runId: run.id, error: String(error?.message ?? error) }); }
+      }
+    } catch (error) { state.captureErrors.push({ source: 'registry', error: String(error?.message ?? error) }); }
+    return state;
+  };
+  const saveShutdown = phase => {
+    if (!boundary) return;
+    proof.write({ schema: 'flow-natural-shutdown/v1', phase, scoringEligible: false, observedAt: Date.now(), businessBoundary: {
+      file: 'evidence.json', sha256: createHash('sha256').update(JSON.stringify(boundary, null, 2)).digest('hex'),
+      status: boundary.status, reason: boundary.reason, endedAt: boundary.endedAt,
+    }, ...capture(), requests: copy(evidence.requests), totalReportedTokens: evidence.totalReportedTokens,
+    usageMissingRequests: copy(evidence.usageMissingRequests ?? []) }, 'shutdown-evidence.json');
+  };
+  const save = () => {
+    if (finished) { saveShutdown('post-boundary-stream'); return; }
+    evidence.updatedAt = Date.now(); proof.write(evidence);
+  };
   const finish = (status, reason, details) => {
     if (finished) return;
+    Object.assign(evidence, capture());
     finished = true;
     clearInterval(timer);
     evidence.status = status;
     evidence.reason = reason;
     evidence.endedAt = Date.now();
     if (details) evidence.error = details;
-    save();
-    console.log('[Flow natural]', status, reason);
+    if (status === 'SETTLED' && evidence.captureErrors.length) {
+      evidence.requestedBoundary = { status, reason };
+      evidence.status = 'ERROR'; evidence.reason = 'boundary-capture-error';
+    }
+    evidence.updatedAt = Date.now(); boundary = copy(evidence); proof.write(boundary);
+    console.log('[Flow natural]', evidence.status, evidence.reason);
   };
   const totalTokens = () => evidence.requests.reduce((total, request) => total + (request.usage?.totalTokens ?? 0), 0);
-  const histories = () => [...new Map([...archived, ...ctx.agents.list().map(agent => [agent.session.id, { sessionId: agent.session.id, status: agent.status, header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }])]).values()];
-  ctx.on('agent/disposed', ({ agent }) => { archived.set(agent.session.id, { sessionId: agent.session.id, status: 'disposed', header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) }); });
-  ctx.on('dispose', () => { if (!finished) finish('ABORTED', 'host-disposed'); clearInterval(timer); });
+  const auditSkills = async phase => {
+    assertAgentsHome(process.env.DSH_AGENTS_HOME, process.env.DSH_HOME,
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../.artifacts'));
+    const audit = await inspectGlobalSkills(ctx.skills);
+    evidence.skillIsolation ??= { agentsHome: realpathSync(process.env.DSH_AGENTS_HOME), globalCatalogs: [] };
+    evidence.skillIsolation.globalCatalogs.push({ phase, ...audit });
+  };
+  ctx.on('agent/disposed', ({ agent }) => {
+    knownAgents.set(agent.session.id, agent);
+    archived.set(agent.session.id, { sessionId: agent.session.id, status: 'disposed', header: copy(agent.session.header), events: copy(agent.session.snapshotEvents()) });
+    if (finished) saveShutdown('agent-disposed');
+  });
+  ctx.on('dispose', () => { if (!finished) finish('ABORTED', 'host-disposed'); clearInterval(timer); saveShutdown('observer-dispose'); });
+  process.once('exit', () => {
+    try { if (finished) saveShutdown('process-exit'); }
+    catch { console.error('[Flow natural] shutdown-evidence-write-failed'); process.exitCode = 1; }
+  });
   ctx.on('llm/stream', (options, next) => (async function* () {
+    if (!finished) {
+      try { await auditSkills('request'); }
+      catch (error) { finish('ERROR', 'global-skill-isolation', String(error?.message ?? error)); throw error; }
+    }
     if (finished || evidence.requests.length >= scenario.maxRequests || totalTokens() >= scenario.maxTotalTokens) {
       finish('ABORTED', totalTokens() >= scenario.maxTotalTokens ? 'total-token-budget' : 'request-budget');
       throw new Error('Natural observation boundary reached');
@@ -191,33 +254,14 @@ export function apply(ctx) {
       save();
     }
   })());
-  const readBack = (assignment, events, afterUserSeq = -1) => events.some(call => {
-    if (call.type !== 'tool/call' || call.seq <= afterUserSeq) return false;
-    const cancellation = call.data.name === 'flow_team_assignment_cancel' && assignment.status === 'cancelled';
-    if (!cancellation && call.data.name !== 'flow_team_assignment_read') return false;
-    let args;
-    try { args = JSON.parse(call.data.arguments); } catch { return false; }
-    if (args === null || typeof args !== 'object' || Array.isArray(args)) return false;
-    if (args.assignmentId !== assignment.id || cancellation && args.runId !== assignment.runId) return false;
-    return events.some(event => event.type === 'tool/result' && event.seq > call.seq && event.data.message?.toolCallId === call.data.callId && !event.data.message.isError && event.data.message.content?.some(part => {
-      if (part.type !== 'text') return false;
-      try {
-        const value = JSON.parse(part.text);
-        if (cancellation) return Array.isArray(value) && value.some(item => item?.assignmentId === assignment.id && item.status === 'cancelled');
-        return value.id === assignment.id && value.runId === assignment.runId && value.status === assignment.status;
-      }
-      catch { return false; }
-    }));
-  });
   const observe = () => {
     if (finished) return;
     try {
-      evidence.histories = histories();
-      evidence.registry = copy(ctx.flow.projector.registry());
-      const mainIds = new Set(mains.map(main => main.record.sessionId));
-      const ownedRuns = evidence.registry.runs.filter(run => mainIds.has(run.entry.callerSessionId));
-      const projections = ownedRuns.map(run => ({ owner: run.entry.callerSessionId, id: run.id, snapshot: copy(ctx.flow.projector.snapshot(run.id)) }));
-      evidence.snapshots = projections.map(projection => projection.snapshot);
+      Object.assign(evidence, capture());
+      if (evidence.captureErrors.length) throw new Error('Observer capture failed');
+      const snapshots = new Map(evidence.snapshots.map(snapshot => [snapshot.run.id, snapshot]));
+      const projections = ownedRuns(evidence.registry.runs)
+        .map(run => ({ owner: run.entry.callerSessionId, id: run.id, snapshot: snapshots.get(run.id) }));
       const now = Date.now();
       if (now - evidence.startedAt >= scenario.maxDurationMs) return finish('ABORTED', 'duration-limit');
       const runningRequests = evidence.requests.filter(request => request.status === 'running').length;
@@ -290,7 +334,7 @@ export function apply(ctx) {
       ];
       for (const history of evidence.histories) for (const event of history.events) {
         if (event.type !== 'tool/result' || event.data.message?.isError) continue;
-        const call = history.events.find(item => item.type === 'tool/call' && item.data.callId === event.data.message?.toolCallId);
+        const call = nativeToolCallForResult(history.events, event);
         if (call && !queries.test(call.data.name)) semantic.push(['tool-result', history.sessionId, call.data.name, call.data.arguments, event.data.message.content]);
       }
       for (const item of semantic) {
@@ -335,12 +379,13 @@ export function apply(ctx) {
     evidence.installAnchor = installAnchor;
     evidence.flowPackage = realpathSync(profile.resolve('dsh-flow/package.json'));
     evidence.sdkOwners = {};
-    for (const name of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-chat', '@deepseek-ai/cordis-plugin-include', '@deepseek-ai/dsh-config-editor', '@deepseek-ai/dsh-settings', '@deepseek-ai/dsh-app-boot']) {
+    for (const name of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-client-ui-session', '@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-chat', '@deepseek-ai/cordis-plugin-include', '@deepseek-ai/dsh-config-editor', '@deepseek-ai/dsh-settings', '@deepseek-ai/dsh-app-boot', '@deepseek-ai/dsh-skill', '@deepseek-ai/dsh-tool-skill']) {
       const owner = realpathSync(installation.resolve(name + '/package.json'));
       assert.equal(realpathSync(profile.resolve(name + '/package.json')), owner, `${name} profile SDK owner differs`);
       assert.equal(realpathSync(flowRequire.resolve(name + '/package.json')), owner, `${name} Flow SDK owner differs`);
       evidence.sdkOwners[name] = owner;
     }
+    await auditSkills('before-main');
     for (const main of mains) {
       const created = await ctx.sessionController.create({ cwd: main.record.workspace });
       const resolved = await ctx.sessionController.resolveAgent(created.sessionId);
