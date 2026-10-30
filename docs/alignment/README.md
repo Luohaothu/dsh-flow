@@ -148,3 +148,11 @@ PR 复评进一步补齐四处边界：菜单共享列表订阅并串行读取�
 输出路径审计还复现了夹具跟随预置 symlink 改写外部自建哨兵的问题。host 现对所有固定输出统一预检及 no-follow 写入，直接 Desktop 注入与自含快照同样受保护；[永久路径回归](../../tests/live/path-guard.test.mjs)在 Node24 的 18 项真实文件系统反例均保持哨兵不变，且不启动 Context 或调用模型。新 writer 另经 8 次真实请求的 CLI 单作业回归。回执分别记录六场景/原 Desktop 已执行的 c77 快照与新039 writer 摘要，没有把未重跑的 117 次请求改称新夹具结果，生产包与模型流程保持不变。
 
 [phases.json](phases.json)记录各阶段 PR 提交前的检查点。当前 PR 的最终评审提交、检查结果与合并状态以 [PR15 页面](https://github.com/Luohaothu/dsh-flow/pull/15)为准；P7 回执不预写其自身最终提交或 merge SHA，后续文档提交也不把已记录的功能源码摘要改称新的运行版本。
+
+## 后续设计修订
+
+P7 之后的已批准设计修订继续同步 `baseline.design.mainSha256`、`contracts.designSha256` 和覆盖索引的当前设计指纹，同时修改对应合同的可观察预期。P0 私有归档的文件摘要、恢复记录、本地设计摘要及各阶段验证回执保留原值。
+
+[第一轮修订验证](wave-one-verification.json)记录新增回归及其范围。覆盖索引保留原检查 ID，并为修订场景指向本轮记录及原历史回执；旧 P6/P7 结果不作为新增预期已经验证的证据。
+
+- [PR27](https://github.com/Luohaothu/dsh-flow/pull/27) 对应 `W1-24`：整体群框能保留成员留白与非成员间距时，同一群优先显示一个框；受阻时继续分段。
