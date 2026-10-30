@@ -22,29 +22,36 @@
 | `NATURAL_PROOF_DIR` | 当前仓库 `.artifacts/` 内的独立证据目录。目录链不能是符号链接。 |
 | `NATURAL_PROFILE_NAME` | 专用 profile 名称，默认 `web`。 |
 | `DSH_HOME` | 官方 CLI 使用的专用 home。 |
+| `DSH_AGENTS_HOME` | 本次新建、独立于 `DSH_HOME` 的空目录。必须位于当前仓库 `.artifacts/`，不能含符号链接。 |
 
 安装与私有模型配置完成后，可使用进程 runner 启动。上述 home、场景文件和证据目录都须位于当前仓库 `.artifacts/` 内，路径链不能是符号链接。
 
 ```sh
+mkdir -m 700 "$PWD/.artifacts/natural/agents-home-run-001"
+DSH_AGENTS_HOME="$PWD/.artifacts/natural/agents-home-run-001" \
 DSH_HOME="$PWD/.artifacts/natural/home" \
 NATURAL_SCENARIO_FILE="$PWD/.artifacts/natural/private/scenario.json" \
 NATURAL_PROOF_DIR="$PWD/.artifacts/natural/private/run-001" \
 node tests/natural/run.mjs
 ```
 
+runner 在启动前验证 `DSH_AGENTS_HOME` 为空且与专用 home 分离，显式传给子进程。观察器在创建 Main 前及每次模型请求进入 provider 前重新验证。已锁定 SDK 的 `SkillRegistry.snapshot()` 在不传 `cwd`、`scope` 时读取全局注册层；观察器要求 `complete=true`，按公开 `SkillSummary.source` 仅接纳 `runtime`、`bundled`，拒绝 `user-dsh`、`user-agents`、`custom` 等意外全局来源。技能名称不参与判定。这样也能拒绝 profile 把 filesystem provider 指向环境变量以外用户目录的配置。依据为 `@deepseek-ai/dsh-skill@0.2.0-rc.2` 的公开类型和 `@deepseek-ai/dsh-skill-filesystem@0.2.0-rc.2` 的来源注册实现。该门不禁用正常 Flow 与 SDK 内置技能。
+
 `run.mjs` 固定启动同仓锁定的官方 Web CLI，绑定 `127.0.0.1`，使用 `web` profile。`NATURAL_PORT` 指定端口，默认 `3191`；profile 的连接来源配置须与实际端口一致。runner 不安装插件，不写入模型配置或凭据，也不添加观察器。观察器须先通过上面的正式 profile patch 加载。
 
-每次使用新的证据目录。runner 拒绝已有 `evidence.json`、日志、入口 URL、进程回执、`ui-ack`、`finish-request.json` 或 `flow-drain` 收尾文件的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
+每次使用新的证据目录。runner 拒绝已有 `evidence.json`、`shutdown-evidence.json`、日志、入口 URL、进程回执、`ui-ack`、`finish-request.json` 或 `flow-drain` 收尾文件的目录，避免把旧运行的终态算作新结果。私有输出文件权限为 `0600`，证据目录权限为 `0700`。
 
 runner 在观察器到达 `SETTLED`、`ABORTED` 或 `ERROR` 后保存进程回执并停止自己启动的宿主。对于仍存活宿主的 `ABORTED` 或 `ERROR`，先执行下面的 Flow 技术排空，再发送 `SIGINT`；十秒内仍未退出再发送 `SIGKILL`。独立的 `process.json` 记录 observer 状态、请求数量、停止时间及实际退出状态。观察未收敛、宿主提前退出、强制终止或记录错误均返回非零退出码。`SETTLED` 的零退出码只表示观察收尾正常，仍须独立验收业务和协作。
 
-需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。业务观察和界面等待仍受 `maxDurationMs + 30000` 毫秒边界约束；非成功终态的技术排空另有独立窗口。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
+需要保留界面检查窗口时，设置 `NATURAL_UI_HOLD_MS`。观察收敛后，runner 最多等待指定时长；在同一证据目录创建普通文件 `ui-ack` 可以提前结束等待。业务观察和界面等待仍受 `maxDurationMs + 19000` 毫秒边界约束；非成功终态的技术排空另有独立窗口。`cli.log` 与 `launch-url.txt` 只保存在私有目录，终端摘要不打印实际模型、服务或临时访问 token。
 
 观察器完成非成功判界后持续拒绝新模型调用。runner 使用证据中的真实 Dashboard 地址和当前 Web 端口的 Origin，通过公开 stop 接口排空本次专用主会话拥有的 Run。地址必须是字面 `http://127.0.0.1:<port>` authority，使用独立直连，不经过环境代理或跟随重定向。归属同时核对 `backend: dsh`、主会话 ID 和 epoch；排空期间复读 registry，纳入同一归属新登记的 Run，不操作其他主会话或 backend。公开接口采用服务既定停止策略，runner 不添加业务 prompt，也不放宽请求、token 或业务观察预算。
 
 `NATURAL_FLOW_DRAIN_MS` 设置技术排空上限，默认 `150000` 毫秒，可缩短且不能超过该值。POST 的 202 只表示受理；只有同一 operation 完成、Run 到达终态、节点 cleanup complete 且无持久化错误、作业终态和群解散后，才将该 Run 记为技术排空完成。原观察器和每次真实 GET 已见的成员、成员会话、作业归属与群 ID 会累计保全；缺失、重复或身份漂移均不能记为完成，合法新增继续纳入。所有已观测请求也须结束，已知及未知用量继续保留在原始证据中。全部已观测归属 Run 完成后，继续复读 registry 至归属集合稳定一秒；这只描述该观察窗口，独立 OS 物理验收仍须核查宿主与后代是否退出。
 
-排空开始前，`flow-drain-boundary-evidence.json` 按字节保全当时的原始业务证据，其 SHA 和采集时间写入收尾回执；之后原观察器仍可记录在途请求的最终用量。`flow-drain.json` 单独记录 `completed`、`pending` 或 `skipped`，以及独立时间窗口、归属、operation ID、用量观测边界和原始响应文件索引。`flow-drain-{registry|snapshot|operation}-NNNN.json` 保存未经删改的真实 API 响应；token 只留内存，不写 token 响应或 Authorization。Dashboard `RunInfo` 没有 Run cleanup 字段；completed operation 表示公开 stop 已等待 Context 清理和持久提交，节点清理另按真实快照核对。它不能代替持久状态与物理进程验收。
+轮询或 stop 遇到认证过期的 401 时，排空器重新获取 token，核对协议及原 epoch 后重试同一请求一次；stop 保持同一 operation ID。刷新失败、epoch 改变或再次 401 时保留 `pending`，不通过反复重试掩盖错误。`tokenRefreshes` 仅记录成功刷新次数，所有已签发 token 均只留在内存中。
+
+排空开始前，`flow-drain-boundary-evidence.json` 按字节保全当时的原始业务证据，其 SHA 和采集时间写入收尾回执。冻结业务证据的观察器将结束后的请求结算写入独立 `shutdown-evidence.json`，runner 按下面的消费契约读取；没有该文件的旧观察器继续使用原证据中的请求结算。`flow-drain.json` 单独记录 `completed`、`pending` 或 `skipped`，以及独立时间窗口、归属、operation ID、用量观测边界、请求见证文件的字节 SHA 和原始响应文件索引。`flow-drain-{registry|snapshot|operation}-NNNN.json` 保存未经删改的真实 API 响应；token 只留内存，不写 token 响应或 Authorization。Dashboard `RunInfo` 没有 Run cleanup 字段；completed operation 表示公开 stop 已等待 Context 清理和持久提交，节点清理另按真实快照核对。它不能代替持久状态与物理进程验收。
 
 超时、接口错误、epoch 变化、清理失败或中断保留 `pending` 再安全退出；外部 signal 或宿主提前退出会中断排空，不追造终态。`ABORTED`、`ERROR`、原作业状态和业务验收结果不会被技术收尾改写，runner 仍返回非零。原生退出码 130 或 `forced: false` 只描述进程退出，不证明 Flow 清理完成。无 Flow 的失败路径记为 `skipped`，普通 `SETTLED` 路径沿用原来的界面等待和停止方式。
 
@@ -115,6 +122,8 @@ N06 一类“前项完成后再做另一项”的场景可增加 `requireNewTerm
 
 先写临时文件再重命名，避免观察器读取半份 JSON。结束请求必须指向本主会话已观察到的输入边界；字段名 `afterUserSeq` 沿用原格式，原生问答即时回答时绑定的是对应 `tool/result` 的事件序号。后续又出现普通用户消息、问答结果或补答时，旧请求失效，需要新的结束请求。尚有未答问题时，结束请求不生效。文件及读取时间保存在 `operatorRequests` 中。
 
+多主会话应从 `mains[]` 中同一条记录取得 `sessionId` 与 `inputBoundaryTimeline`，不能混用不同会话或把顶层首会话摘要当作任意会话的边界。结束请求只允许上述两个字段。未知会话、未观察到的序号、无效 JSON、错误类型或额外字段会使观察以 `ERROR / observer-error` 结束并冻结证据，runner 非零退出；重新运行须使用新的证据目录。这与合法但尚有待答问题、或已被后续输入替代的请求不同，后两者仅暂不满足结束条件。
+
 观察器仍等待最新输入边界之后的 `turn/end`、正式作业终态及正确读回、相关会话连续空闲三秒，再记为 `SETTLED`。人工控制不会直接改写状态、关闭业务作业或把结果判为通过。`awaitingUser` 可来自原生待答问题或预先选择的轮次澄清边界，业务问题是否必要仍由评分者核对；它不能用于证明自动无进展检测能力。`ui-ack` 继续用于 `SETTLED` 后的界面检查收尾。
 
 ### 多主会话
@@ -138,7 +147,7 @@ N06 一类“前项完成后再做另一项”的场景可增加 `requireNewTerm
 
 `mains` 存在时以数组项为会话输入；旧的顶层 `workspace`、`prompt` 格式仍适用于单主会话。每项可配置自己的 `userPrompts`、`userTurnBoundary` 和 `requireNewTerminalAfterUserWait`；数量与时间预算由整次观察共享。
 
-观察器先创建并解析全部普通主会话，核对 `session.header.cwd`，再分别提交各自预登记的首条自然需求。它使用创建返回的会话 ID 归属运行，不从工作目录或显示名称猜测身份。`mains` 记录各主会话的输入、ID、运行、用户时间线、技能调用、检查点和观察条件；原有顶层字段继续指向第一个主会话。
+观察器先创建并解析全部普通主会话，核对 `session.header.cwd`，再分别提交各自预登记的首条自然需求。快照采集与业务观测共同核对 `Run.entry.backend === 'dsh'`，并要求 `Run.entry.callerSessionId` 属于本次创建返回的 Main 会话 ID 集合，不从工作目录或显示名称猜测身份。其他 backend 即使 caller 字符串相同也不纳入；原始 registry 保留完整来源记录。`mains` 记录各主会话的输入、ID、运行、用户时间线、技能调用、检查点和观察条件；原有顶层字段继续指向第一个主会话。
 
 每个主会话都须有自己的顶层终态、正确读回及最新用户输入后的结束轮次，全部满足后才收敛。另一主会话的工具调用不能抵扣读回；返回记录的作业 ID、运行 ID 和状态均须匹配。界面仍由测试者交错查看对话及团队页签，验证材料、通知、结果和选择状态的归属。
 
@@ -157,11 +166,19 @@ N06 一类“前项完成后再做另一项”的场景可增加 `requireNewTerm
 | `ABORTED` | 到达请求、已报告 token、时间或无进展边界，或宿主在观察结束前退出。 |
 | `ERROR` | 正式入口或观察器初始化失败，或记录过程发生错误。 |
 
+`finish` 在清除轮询 timer 前同步重新读取 native histories、registry 和全部 Main 所属快照，然后冻结 `evidence.json`。结束后的流结算、`agent/disposed`、观察器 dispose 与进程 exit 读取写入独立的 `shutdown-evidence.json`，其中 `businessBoundary` 指向冻结原件 SHA，`scoringEligible=false`。进程 exit 通过已经持有的 native 会话对象保留观察器卸载后追加的最终事件。无法读取的组件写入 `captureErrors`，不能据此声称完整关闭。shutdown 的取消、快照和用量只用于技术收尾，不改写结束时的业务事实或评分。各 Main 的时间线、检查点和完成判断保留最后一次正常轮询的结果；结束采集的原始 histories 是该边界的原生事实，不在 shutdown 重新接纳结束请求、推演检查点或回填业务字段。后续排空消费者若需要最新请求结算，应读 shutdown 见证，不能再依赖被冻结的 `evidence.json` 持续变化。
+
+consumer 提前 return 会等待上游生成器真实关闭后记录 `cancelled` 和 `endedAt`，缺失用量继续列为未知。正常 return 不捏造 `error`；真实抛出异常记录 `failed` 和错误原因。
+
 同一请求中的用量采用最后一次累计值，避免流式重复相加。缺失 `totalTokens` 的请求单独记录，不能计成已知的零消耗。已开始请求可能在返回用量时才越过总量边界，观察器会保留该请求并阻止后续请求。
 
 无进展判断忽略聊天文字和重复查询，依据新成员、群、作业结果及新的成功工具结果更新。相同工具参数和结果不重复计作进展。模型请求在途时不触发无进展中止。若无进展窗口在生成期间过期，刚结束的生成可获得一次最多一秒的接续宽限，让工具处理和反馈完成；同一无进展窗口内的失败、查询或再次生成不能续期，只有实际推进才开启新窗口。中止前的顶层观测与该次判界使用同一快照。整体时间、请求及 token 边界继续生效。所有阈值都只是本次观察的控制条件，不能作为产品故障结论。
 
 主会话主动取消旧作业时，所属运行与目标都匹配的成功取消调用若返回该作业的 `assignmentId` 和 `cancelled` 状态，也证明主会话取得了该取消终态。它不能代替对新提交结果的正式读回；错误响应、其他目标、其他运行或普通文字回执不计。
+
+`readback.mjs` 按同一 Main 原生历史中的调用事件关联正式读回与取消回执：成功的 `append` 结果须以 `sourceEventSeqs: [call.seq]` 指向该调用，turn、step、两处 tool call ID 和 tool 来源须一致，并保留原有 Run、作业和返回状态核对。缺失或冲突的身份不计为读回。call ID 可在后续 step 或 turn 复用，其他工具读取的相似 JSON 不能补作正式回执；surface replacement 也不能充当新的正式完成事件。需要本轮新读回的场景继续要求正式调用晚于指定用户输入边界。
+
+语义进展使用同一原生因果关联取得每份成功回执的实际调用，再判断是否属于查询。复用 ID 后的查询不能沿用较早取消等操作的分类来延长无进展窗口，实际完成的写入等操作也不能被较早查询的分类漏掉；重复结果仍沿用原有去重规则。
 
 达到边界后，外部 launcher 应保存现场并停止自己启动的宿主进程。观察器拒绝边界后的新请求，不发送催促消息，也不直接停止成员或改变作业状态。最终评分者核对业务产物、主会话交付、真实协作过程和界面证据。
 
@@ -169,9 +186,54 @@ N06 一类“前项完成后再做另一项”的场景可增加 `requireNewTerm
 
 ```sh
 node --check tests/natural/host.mjs
-node --test tests/natural/observer.test.mjs tests/natural/runner.test.mjs
+node --test tests/natural/observer.test.mjs tests/natural/readback-sdk.test.mjs tests/natural/evidence-view.test.mjs tests/natural/runner.test.mjs
 ```
 
 这些回归核验采集和进程边界，其中快照归属另通过实际 `DashboardProjector` 的投影结构验证；它们不计入真实模型的业务与自主覆盖。
 
 多轮团队场景默认在前一任务终态、读回且相关会话空闲后记录等待用户的检查点。`userTurnBoundary: "main-idle"` 用于事先登记的业务澄清，允许在主会话结束一轮后等待回答。检查点只记录用户操作时机，评分者仍需核对实际问题和任务结果。尚未结束的团队作业不会默认暂停无进展计时。
+
+## N08 的普通 UI 手动隔离流程
+
+B1 的 `mains` 自动入口可在同一宿主创建多个普通 Main。本节补充 N08 的普通 UI 手动取证；入口和本地回归不代表 N08 业务已执行或通过，业务覆盖仍待实际取证。
+
+1. 准备两个独立业务目录。两边使用相同文件名和字段结构，但内容不同，并在模型不可访问的证据目录分别保存材料 SHA 和预期归属。
+2. 在正常 DSH UI 创建两个普通 Main，各自选择对应目录。两边输入完全相同的自然需求，例如 `/agent-team 帮我核对这批订单。`，不添加角色、工具或内部 ID。
+3. 记录 UI 会话与原生 session ID 的对应关系。交错查看两边，分别记录各自 `Run.entry.callerSessionId`、根与成员 session、作业、材料引用、通知和完整结果。检查 Main 到所属 Run 的正向关联，也检查每份结果、材料与通知回到原 Main 的反向关联。
+4. 核对两个 Main 各自实际读取的作业 ID、返回的 Run/作业身份及业务结果与本侧数据一致，另一侧身份或结果不能抵扣本侧完成。分别取得最终用户交付与返回原会话的 UI 证据。
+
+单侧提交、不同 workspace 路径或后端快照不能替代同 prompt 不同数据的双向取证。两侧任一正式读回、业务交付或 UI 未完成，整例仍未闭环。
+
+本地纯 stub 边界回归可运行 `node --test tests/natural/boundary-observer.test.mjs tests/natural/isolation.test.mjs tests/natural/runner.test.mjs`。它们不加载 SDK、不调用模型或外部 API。原有 `observer.test.mjs` 保留多 Main、原生澄清、人工结束及真实 `DashboardProjector` 结构验证；这些本地回归均不代表实际业务新一轮。
+
+## 结束后见证的消费契约
+
+`shutdown-evidence.json` 的结构如下。它只描述结束后的技术收尾。
+
+```json
+{
+  "schema": "flow-natural-shutdown/v1",
+  "phase": "post-boundary-stream | agent-disposed | observer-dispose | process-exit",
+  "scoringEligible": false,
+  "observedAt": 0,
+  "businessBoundary": { "file": "evidence.json", "sha256": "...", "status": "ABORTED", "reason": "...", "endedAt": 0 },
+  "capturedAt": 0,
+  "histories": [],
+  "registry": null,
+  "snapshots": [],
+  "captureErrors": [],
+  "requests": [],
+  "totalReportedTokens": 0,
+  "usageMissingRequests": []
+}
+```
+
+`evidence-view.mjs` 只生成请求结算的技术视图。`createDrainEvidenceReader({ boundary, read, preserve })` 接收保全原件的 `{ bytes, value }`，以及经同一私有路径、`O_NOFOLLOW` 和文件身份校验的同步 `read(name)`。读取返回 `{ bytes, value }`、不存在时的 `undefined`，或文件正在写入时的 `{ pending: true }`。技术视图返回 `requests / totalReportedTokens / usageMissingRequests / requestEvidence`，不包含后到的 histories、快照、业务状态或评分。`requestEvidence` 记录实际来源文件、字节数、SHA；shutdown 来源另含 phase、`scoringEligible: false` 和业务原件 SHA。可选的 `preserve(record, source)` 返回原字节副本文件名；runner 据此去重保全 `flow-drain-request-evidence-NNNN.json`，并在 `requestEvidence.frozenFile` 中引用。原 shutdown 仍可在 dispose 和 process exit 时追加最终 native 事件，保全副本可复核排空当时实际采用的见证。
+
+shutdown 必须采用 `flow-natural-shutdown/v1`、`scoringEligible: false` 及正式 phase；`businessBoundary.file` 必须为 `evidence.json`，其 SHA、status、reason、endedAt 必须对应保全原件，当前业务文件也须逐字节保持该 SHA。`captureErrors` 非空时保留排空 `pending`。这些字段的格式通过只表明可消费，实际执行资格仍须绑定真实来源与独立验收，不能由布尔字段授予。
+
+`mergeRequestSettlements(boundary, latest, previous = boundary)` 是可复用的纯合并函数。请求按 `number` 对齐，集合不增不缺不重复；除 `status / usage / finishReason / output / error / endedAt` 外的全部字段，包括已有的 session、事件游标、开始时间、provider、model、prompt SHA、tools 和 maxTokens，须连同字段是否存在保持一致。原 `running` 可继续运行或进入 `completed / failed / cancelled`；原终态与技术视图已接受的终态须整项保持不变。新视图复制请求，不修改任一输入。
+
+usage 使用最新请求的累计值，按请求重算已报告合计，不与边界样本相加。终态请求缺少 `totalTokens` 时列入 `usageMissingRequests`；合计为零且存在未知项不表示零消耗。shutdown 的聚合字段不能覆盖逐请求读回结果。没有 shutdown 时，旧观察器仍受同一请求身份、终态及业务 status/reason/endedAt 校验；冻结原件中的在途请求没有见证就继续在途。
+
+读取到半份 JSON 或读取期间仍在写入时，本次视图为 pending，后续轮询重读；已解析但 schema、SHA、身份或状态不合法的见证直接令排空 pending，不能忽略后转用旧结果。曾出现的 shutdown 不得消失后退回旧读取路径。业务原件和完整 shutdown 原件都保留，技术排空完成仍不能把 `ABORTED`、`ERROR` 或结束后新增 native 事件补为业务成功。
