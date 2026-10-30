@@ -182,7 +182,8 @@ export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 1
       const current = refreshEvidence();
       const requestsSettled = Array.isArray(current?.requests) && current.requests.every(request => ['completed', 'failed', 'cancelled'].includes(request.status));
       receipt.runningRequests = Array.isArray(current?.requests) ? current.requests.filter(request => request.status === 'running').length : null;
-      receipt.requestBoundary = { requests: current?.requests?.length ?? null, totalReportedTokens: current?.totalReportedTokens ?? null, usageMissingRequests: current?.usageMissingRequests ?? null };
+      receipt.requestBoundary = { requests: current?.requests?.length ?? null, totalReportedTokens: current?.totalReportedTokens ?? null, usageMissingRequests: current?.usageMissingRequests ?? null,
+        ...(current?.requestEvidence ? { source: current.requestEvidence } : {}) };
       const currentIds = JSON.stringify([...targets.keys()].sort());
       const complete = requestsSettled && [...targets.values()].every(target => target.status === 'completed');
       if (complete && previousIds === currentIds) stableSince ??= Date.now();
@@ -196,7 +197,7 @@ export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 1
     }
   } catch (error) {
     for (const target of receipt.targets) target.status = 'pending';
-    receipt.reason = timedOut ? 'drain-timeout' : controller.signal.aborted ? 'drain-interrupted' : typeof error.code === 'string' && /^(dashboard-|owned-|observed-|registry-|snapshot-|stop-)/.test(error.code) ? error.code : 'drain-request-or-output-error';
+    receipt.reason = timedOut ? 'drain-timeout' : controller.signal.aborted ? 'drain-interrupted' : typeof error.code === 'string' && /^(dashboard-|owned-|observed-|registry-|snapshot-|stop-|evidence-)/.test(error.code) ? error.code : 'drain-request-or-output-error';
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', interrupted);

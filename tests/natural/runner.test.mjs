@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { drainFlow } from './flow-drain.mjs';
+import { createDrainEvidenceReader } from './evidence-view.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,7 @@ async function fixture(t, body, preexisting = {}, environment = {}) {
   for (const path of [dirname(runner), dirname(cli), join(home, 'profiles/web'), proof]) await mkdir(path, { recursive: true });
   await copyFile(source, runner);
   await copyFile(fileURLToPath(new URL('./flow-drain.mjs', import.meta.url)), join(dirname(runner), 'flow-drain.mjs'));
+  await copyFile(fileURLToPath(new URL('./evidence-view.mjs', import.meta.url)), join(dirname(runner), 'evidence-view.mjs'));
   await writeFile(join(home, 'profiles/web/package.json'), JSON.stringify({ dependencies: { 'dsh-flow': '0.1.0' }, dsh: { profile: { bundles: ['dsh-flow'] } } }));
   await writeFile(join(home, 'profiles/web/cordis.patch.yml'), '[]\n');
   await writeFile(scenario, JSON.stringify({ maxDurationMs: 1000 }));
@@ -114,6 +116,10 @@ const runSnapshot = run => ({ version: { major: 1, minor: 1 }, seq: 1, run,
   groups: [{ id: `${run.id}-group`, members: [`${run.id}-root`], dissolved: false, blackboard: [] }],
   assignments: [{ id: `${run.id}-job`, runId: run.id, spec: { name: 'fixture', type: 'fixture', background: 'fixture', requirements: 'fixture', acceptanceCriteria: 'fixture', resultSchema: true }, sender: { kind: 'run', runId: run.id }, recipientSessionID: `${run.id}-session`, recipientInstanceId: `${run.id}-root`, parentAssignmentId: null, status: 'pending', submissions: [], submissionCount: 0, schemaFailures: 0, schemaDialect: 'https://json-schema.org/draft/2020-12/schema', schemaDigest: 'fixture-digest', continuingChildren: [] }], prices: [], operations: [] });
 const boundary = (address, runs = [runInfo('owned')], status = 'ABORTED', reason = 'total-token-budget') => ({ status, reason, endedAt: 10, dashboardAddress: address, mains: [{ sessionId: 'main-1' }], requests: [{ number: 1, status: 'completed', usage: { totalTokens: 20 } }], totalReportedTokens: 20, usageMissingRequests: [], snapshots: runs.map(runSnapshot) });
+const evidenceRecord = value => ({ value, bytes: Buffer.from(JSON.stringify(value, null, 2)) });
+const shutdownFor = (record, requests) => ({ schema: 'flow-natural-shutdown/v1', phase: 'post-boundary-stream', scoringEligible: false, observedAt: 30, capturedAt: 30,
+  businessBoundary: { file: 'evidence.json', sha256: createHash('sha256').update(record.bytes).digest('hex'), status: record.value.status, reason: record.value.reason, endedAt: record.value.endedAt },
+  requests, histories: [{ sessionId: 'main-1', events: [{ seq: 99, type: 'turn/end', data: { reason: { kind: 'completed' } } }] }], registry: null, snapshots: [], captureErrors: [] });
 
 async function dashboard(t, mode = 'complete', extra = []) {
   const state = { reads: 0, paths: [], stops: [], rejectedStops: [], tokenRequests: 0, token: fixtureToken, authFailures: 0, snapshots: new Map([runInfo('owned'), ...extra].map(run => [run.id, runSnapshot(run)])), terminalReads: [], lateAdded: false };
@@ -244,6 +250,89 @@ setInterval(() => {}, 1000);
   }
   const allFiles = await Promise.all((await readdir(f.proof)).map(name => readFile(join(f.proof, name), 'utf8')));
   assert.equal(allFiles.join('').includes(fixtureToken), false); assert.equal(f.output().includes(fixtureToken), false);
+});
+
+for (const status of ['completed', 'cancelled']) {
+  test(`runner drains a frozen business boundary after shutdown request becomes ${status}`, { timeout: 7000 }, async t => {
+    const server = await dashboard(t), evidence = boundary(server.address);
+    const original = { number: 1, sessionId: 'main-1', afterEventSeq: 5, startedAt: 1, provider: 'fixture', model: 'fixture', promptSha256: 'fixture-digest', tools: ['fixture-tool'], status: 'running', usage: { totalTokens: 4 } };
+    evidence.requests = [original]; evidence.totalReportedTokens = 4;
+    const record = evidenceRecord(evidence), raw = record.bytes.toString();
+    const terminal = { ...original, status, endedAt: 30 };
+    if (status === 'completed') terminal.usage = { totalTokens: 9 }; else delete terminal.usage;
+    const shutdown = JSON.stringify(shutdownFor(record, [terminal]));
+    const finalShutdown = JSON.stringify({ ...shutdownFor(record, [terminal]), phase: 'process-exit', observedAt: 31, histories: [{ sessionId: 'main-1', events: [{ seq: 100, type: 'agent/disposed' }] }] });
+    const f = await fixture(t, `
+process.on('SIGINT', () => {
+  fs.writeFileSync(join(proof, 'shutdown-evidence.json'), ${JSON.stringify(finalShutdown)});
+  process.exit(130);
+});
+fs.writeFileSync(join(proof, 'evidence.json'), ${JSON.stringify(raw)});
+setTimeout(() => fs.writeFileSync(join(proof, 'shutdown-evidence.json'), '{'), 150);
+setTimeout(() => fs.writeFileSync(join(proof, 'shutdown-evidence.json'), ${JSON.stringify(shutdown)}), 450);
+setInterval(() => {}, 1000);
+`);
+    assert.equal(await completed(f), 1, f.output());
+    assert.equal(await readFile(join(f.proof, 'evidence.json'), 'utf8'), raw);
+    assert.equal(await readFile(join(f.proof, 'flow-drain-boundary-evidence.json'), 'utf8'), raw);
+    const drain = JSON.parse(await readFile(join(f.proof, 'flow-drain.json'), 'utf8'));
+    const processReceipt = JSON.parse(await readFile(join(f.proof, 'process.json'), 'utf8'));
+    assert.equal(drain.status, 'completed'); assert.equal(drain.runningRequests, 0);
+    assert.equal(drain.requestBoundary.source.file, 'shutdown-evidence.json');
+    assert.equal(drain.requestBoundary.source.sha256, createHash('sha256').update(shutdown).digest('hex'));
+    assert.equal(await readFile(join(f.proof, drain.requestBoundary.source.frozenFile), 'utf8'), shutdown);
+    assert.equal(await readFile(join(f.proof, 'shutdown-evidence.json'), 'utf8'), finalShutdown);
+    assert.equal(drain.requestBoundary.totalReportedTokens, status === 'completed' ? 9 : 0);
+    assert.deepEqual(drain.requestBoundary.usageMissingRequests, status === 'completed' ? [] : [1]);
+    assert.equal(processReceipt.observerStatus, 'ABORTED'); assert.equal(processReceipt.runnerReason, 'observer-ended-without-settling');
+    assert.equal(JSON.parse(f.output().trim()).status, 'INCOMPLETE');
+  });
+}
+
+test('runner keeps frozen requests running without a shutdown witness', { timeout: 7000 }, async t => {
+  const server = await dashboard(t), evidence = boundary(server.address);
+  evidence.requests = [{ number: 1, status: 'running' }];
+  const raw = JSON.stringify(evidence);
+  const f = await fixture(t, `
+process.on('SIGINT', () => process.exit(130));
+fs.writeFileSync(join(proof, 'evidence.json'), ${JSON.stringify(raw)});
+setInterval(() => {}, 1000);
+`, {}, { NATURAL_FLOW_DRAIN_MS: '350' });
+  assert.equal(await completed(f), 1, f.output());
+  const drain = JSON.parse(await readFile(join(f.proof, 'flow-drain.json'), 'utf8'));
+  assert.equal(drain.status, 'pending'); assert.equal(drain.reason, 'drain-timeout'); assert.equal(drain.runningRequests, 1);
+  assert.equal(drain.requestBoundary.source.mode, 'legacy-observer');
+  assert.equal(await readFile(join(f.proof, 'evidence.json'), 'utf8'), raw);
+});
+
+test('drain rejects an invalid bound shutdown instead of completing already terminal business requests', async t => {
+  const server = await dashboard(t), record = evidenceRecord(boundary(server.address));
+  const shutdown = shutdownFor(record, record.value.requests); shutdown.businessBoundary.sha256 = '0'.repeat(64);
+  const files = new Map([['evidence.json', record], ['shutdown-evidence.json', evidenceRecord(shutdown)]]);
+  const refreshEvidence = createDrainEvidenceReader({ boundary: record, read: name => files.get(name) });
+  const receipt = await drainFlow({ evidence: record.value, origin: 'http://127.0.0.1:3191', write: () => {}, timeoutMs: 450, stableMs: 10, refreshEvidence });
+  assert.equal(receipt.status, 'pending'); assert.equal(receipt.reason, 'evidence-shutdown-boundary-mismatch');
+  assert.equal(receipt.targets.every(target => target.status === 'pending'), true);
+});
+
+test('runner refuses a shutdown symlink through the same no-follow evidence reader', { timeout: 7000 }, async t => {
+  const server = await dashboard(t), record = evidenceRecord(boundary(server.address));
+  const f = await fixture(t, `
+process.on('SIGINT', () => process.exit(130));
+fs.writeFileSync(join(proof, 'other.json'), ${JSON.stringify(JSON.stringify(shutdownFor(record, record.value.requests)))});
+fs.symlinkSync(join(proof, 'other.json'), join(proof, 'shutdown-evidence.json'));
+fs.writeFileSync(join(proof, 'evidence.json'), ${JSON.stringify(record.bytes.toString())});
+setInterval(() => {}, 1000);
+`);
+  assert.equal(await completed(f), 1, f.output());
+  const drain = JSON.parse(await readFile(join(f.proof, 'flow-drain.json'), 'utf8'));
+  assert.equal(drain.status, 'pending'); assert.equal(drain.reason, 'drain-request-or-output-error');
+});
+
+test('runner rejects preexisting shutdown evidence before starting its owned CLI', { timeout: 7000 }, async t => {
+  const f = await fixture(t, 'setInterval(() => {}, 1000);', { 'shutdown-evidence.json': '{}' });
+  assert.equal(await completed(f), 1, f.output());
+  await assert.rejects(readFile(join(f.proof, 'host.json')), { code: 'ENOENT' });
 });
 
 test('drain rejects noncanonical or nonloopback endpoints before any request', async () => {

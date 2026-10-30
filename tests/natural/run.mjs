@@ -5,6 +5,7 @@ import { constants, chmodSync, closeSync, fchmodSync, fstatSync, ftruncateSync, 
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { drainFlow } from './flow-drain.mjs';
+import { createDrainEvidenceReader } from './evidence-view.mjs';
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const artifacts = join(root, '.artifacts');
@@ -40,7 +41,7 @@ function exists(path) {
 function writer(directory) {
   const allowed = new Set(['cli.log', 'launch-url.txt', 'process.json']);
   return (name, content, append = false) => {
-    assert.ok(allowed.has(name) || ['flow-drain.json', 'flow-drain-boundary-evidence.json'].includes(name) || /^flow-drain-(registry|snapshot|operation)-[0-9]{4,}\.json$/.test(name), 'Unknown runner output');
+    assert.ok(allowed.has(name) || ['flow-drain.json', 'flow-drain-boundary-evidence.json'].includes(name) || /^flow-drain-(registry|snapshot|operation|request-evidence)-[0-9]{4,}\.json$/.test(name), 'Unknown runner output');
     privatePath(directory, 'directory');
     const path = join(directory, name);
     if (exists(path)) privatePath(path, 'file');
@@ -56,8 +57,9 @@ function writer(directory) {
   };
 }
 
-function readEvidence(directory, raw = false) {
-  const path = join(directory, 'evidence.json');
+function readEvidence(directory, raw = false, name = 'evidence.json') {
+  assert.ok(['evidence.json', 'shutdown-evidence.json'].includes(name), 'Unknown observer evidence');
+  const path = join(directory, name);
   if (!exists(path)) return;
   privatePath(path, 'file');
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -65,10 +67,14 @@ function readEvidence(directory, raw = false) {
     const opened = fstatSync(fd), current = lstatSync(path);
     assert.ok(opened.isFile() && opened.dev === current.dev && opened.ino === current.ino, 'Observer evidence identity changed');
     try {
-      const bytes = readFileSync(fd), value = JSON.parse(bytes.toString('utf8'));
+      const bytes = readFileSync(fd), after = fstatSync(fd), present = lstatSync(path);
+      privatePath(path, 'file');
+      assert.ok(after.dev === present.dev && after.ino === present.ino, 'Observer evidence identity changed during read');
+      if (opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || opened.ctimeMs !== after.ctimeMs) return raw ? { pending: true } : undefined;
+      const value = JSON.parse(bytes.toString('utf8'));
       return raw ? { bytes, value } : value;
     }
-    catch (error) { if (error instanceof SyntaxError) return; throw error; }
+    catch (error) { if (error instanceof SyntaxError) return raw ? { pending: true } : undefined; throw error; }
   } finally { closeSync(fd); }
 }
 
@@ -89,7 +95,7 @@ async function run() {
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   assert.ok(profile.dependencies?.['dsh-flow'] && profile.dsh?.profile?.bundles?.includes('dsh-flow'), 'Install Flow through the official plugin manager first');
   const proof = privatePath(process.env.NATURAL_PROOF_DIR, 'directory', true);
-  for (const name of ['evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json', 'flow-drain.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
+  for (const name of ['evidence.json', 'shutdown-evidence.json', 'cli.log', 'launch-url.txt', 'process.json', 'ui-ack', 'finish-request.json', 'flow-drain.json']) assert.ok(!exists(join(proof, name)), 'Use a fresh proof directory for every run');
   assert.ok(!readdirSync(proof).some(name => name.startsWith('flow-drain')), 'Use a fresh proof directory for every drain');
   chmodSync(proof, 0o700);
   const write = writer(proof);
@@ -167,15 +173,24 @@ async function run() {
     try {
       if (!exitState && !interrupted && !ioError && ['ABORTED', 'ERROR'].includes(evidence?.status)) {
         let boundary;
-        for (let attempt = 0; attempt < 5 && !boundary; attempt++) {
+        for (let attempt = 0; attempt < 5 && !boundary?.value; attempt++) {
           boundary = readEvidence(proof, true);
-          if (!boundary) await pause(20);
+          if (!boundary?.value) await pause(20);
         }
-        assert.ok(boundary && boundary.value.status === evidence.status && boundary.value.reason === evidence.reason, 'Business boundary changed before drain');
+        assert.ok(boundary?.value && boundary.value.status === evidence.status && boundary.value.reason === evidence.reason, 'Business boundary changed before drain');
         const boundaryFile = 'flow-drain-boundary-evidence.json';
         write(boundaryFile, boundary.bytes);
         const boundaryEvidence = { file: boundaryFile, sha256: createHash('sha256').update(boundary.bytes).digest('hex'), bytes: boundary.bytes.length, observedAt: Date.now() };
-        const result = await drainFlow({ evidence: boundary.value, boundaryEvidence, origin: `http://127.0.0.1:${port}`, write, signal: drainAbort.signal, timeoutMs: drainMs, refreshEvidence: () => readEvidence(proof) });
+        const savedRequests = new Map();
+        const refreshEvidence = createDrainEvidenceReader({ boundary, read: name => readEvidence(proof, true, name), preserve: (record, source) => {
+          const key = source.file + ':' + source.sha256;
+          if (!savedRequests.has(key)) {
+            const file = `flow-drain-request-evidence-${String(savedRequests.size + 1).padStart(4, '0')}.json`;
+            write(file, record.bytes); savedRequests.set(key, file);
+          }
+          return savedRequests.get(key);
+        } });
+        const result = await drainFlow({ evidence: boundary.value, boundaryEvidence, origin: `http://127.0.0.1:${port}`, write, signal: drainAbort.signal, timeoutMs: drainMs, refreshEvidence });
         receipt.flowDrain = { status: result.status, reason: result.reason, receiptFile: 'flow-drain.json', startedAt: result.startedAt, endedAt: result.endedAt };
       }
     } catch { receipt.flowDrain = { status: 'pending', reason: 'drain-record-error' }; }
