@@ -269,17 +269,21 @@ usage 使用最新请求的累计值，按请求重算已报告合计，不与�
 SDK loader/profile 检查由锁定环境的 `verifySdkEvidence` 必需注入，采集和组装分别调用。它须先核验实际 owner 原件与独立冻结 pins，再返回 `natural-sdk-source-verification/v1`：同一 scope、SDK JSON 子记录 SHA、observer entry/closure SHA 和初始化原件 SHA。缺失、返回布尔值、错 scope 或错原件 SHA 均不能形成 complete 证据；无验证器默认值。调用方还须以安全文件读取固定外层原件的原始字节与来源，并独立核验物理请求账和实际执行资格；子记录 SHA 不替代这些检查。组合回归为 `node --test tests/natural/raw-session-evidence.test.mjs tests/natural/raw-session-native.test.mjs`，使用一致的合成 source/pin 记录覆盖实际 producer → assembler → gate，不启动 SDK、界面或模型。
 
 
+
 ## 分阶段物理创建与模型通道
 
-Refs #43。`physical-container.mjs` 将创建前可固定的 case/namespace token、nonce、本地镜像、非 Root 身份、network none 和五个独立卷编译为精确创建参数，使用 `--pull never`。绑定读取实际 create/inspect 原件，验证完整物理 ID、labels/image/UID、五卷与 Root 同 Source 映射，并要求容器仍是 created、Pid 0、未启动的零时间状态；绑定不提供 SDK 或业务资格。
+Refs #43、#48、#50。`physical-container.mjs` 固定本地镜像、非 Root 身份、network none、nonce labels 和五个独立卷，以递归冻结的计划共享 create 参数与 bind 预期。绑定核原始 create/inspect 回执，并要求容器仍是 created、Pid 0、未启动的零时间状态。原调用输入后改、嵌套身份、argv 或卷映射修改都不能改变计划。
 
-`staged-model-socket.mjs` 让同一个 Unix server 先处于 bootstrap：仅正确 case bearer 的技术 health 可用，reserve/map/model 全部拒绝，未创建预算 authority 或上游 transport。Root 的实际来源验证通过后，`promote` 等待同步或异步验证器完成，以当前能力提升同一 socket/inode。异步拒绝不准入；Host 集合和 socket 基线均防止外部 mutation。安装须确保无候选写权限的父链及 socket 实际 UID/GID/mode；同 UID 的本地 socket 控制不能代替 Linux Root→非 Root 的实际读回。
+`staged-model-socket.mjs` 只监听一次 Unix socket：bootstrap 仅提供本 case 的认证 health，拒绝 reserve/map/model；Root 验证完成后等待同步或异步准入回调，再提升同一 handler/inode。关闭时有效响应继续排空；未进入有效响应的遗留连接在有限 grace 后技术终止。发生该终止会记录计数、明确拒绝 normal closure，不作为业务或 F6 证据。实际安装仍须核无候选写权限的父链、跨 UID 的 socket owner/mode，局部同 UID 控制不能代替这些读回。
 
 ## Root scope 的环境引用
 
-Refs #45。`root-scope-environment.mjs` 为实际 SDK 启动和固定 overlay 入口共用同一验证流程。启动在 SDK import 前拒绝已有 `ROOT_NATIVE_EXPORT_SCOPE_REF`，以必需的 pinned JSON reader 核 Root0/GID0/0444 引用、原始字节 SHA、读取回执和八字段身份，再发布唯一环境引用；入口重新验证后加载同一 scope。overlay 固定环境名与身份，完整 overlay 摘要先算出，再生成 scope 摘要，避免 overlay 与 scope 的互相摘要依赖。调用方仍须以安全文件读取核父链、文件所有者和实际字节，不能用恒真验证器替代。
+Refs #45、#47、#49。`root-scope-environment.mjs` 使 overlay 固定环境名，按 overlay → scope → Root boot reference 顺序冻结。SDK import 前从外层物理字段、显式 candidateId 和冻结 observer entry/closure 推导八字段期望，拒绝只在内部自洽的另一 case 引用。必需的 pinned JSON reader 核原始字节与来源，模块保留首次成功初始化的完整 reference 和身份；入口必须由同一 canonical 模块实例重读同一原件。相同八字段但另一文件、同 SHA 异路径、删除环境后重绑、克隆环境或修改返回的 reference 均不能替换首次绑定。实际安装与 Node loader 的同实例原件仍须验证，不能把摘要放回 overlay。
 
-新装配中的 physical、bootstrap、SDK boot 和 env-entry 实际消费这三个公开模块的同字节副本，并固定完整依赖闭包。运行 `node --test tests/natural/physical-container.test.mjs tests/natural/staged-model-socket.test.mjs tests/natural/root-scope-environment.test.mjs`。29 项纯回归使用合成 Docker 原件和本机技术 Unix HTTP，覆盖未启动状态、跨身份/卷错误、异步拒绝、socket/Host mutation、环境继承、错 scope 和原字节替换；不运行 Docker、SDK、浏览器或模型，不授予实际准入或业务信用。
+## 停止输入与浏览器日志
 
+Refs #51。`root-stop-reader.mjs` 被真实停止适配消费，固定 source/binding/stopTar 三份输入及分角色的 Root 边界策略。源码允许 Root0 的只读父链，binding/tar 保持 owner-only；文件 UID/GID、模式、nlink、不可替换 fd、读前后稳定、原 SHA 和显式 forbidden 边界均保留，根目录与尾斜杠不能绕过排除策略。合成 FS 控制不授予 Linux Root0 读取或实际停止资格。
 
-Refs #47。SDK boot 使用同模块的 `deriveRootScopeIdentity(outerBoot)`，从外层已冻结的物理 case/namespace/container/image/generation/accounting 字段、显式 `candidateId` 与 observer entry/closure 推导八字段期望身份。entry 必须与 closure 唯一入口的 Root0/GID0/0444 路径和 SHA 一致。启动先比完整 `fullNativeScopeIdentity`、再核入口原字节，最后才写 env 或调用 SDK loader；内层 scope 与内层身份彼此自洽不能替换外层身份。新增 6 项公开与 9 项真实 boot 接线负控，分别覆盖候选缺失、entry/closure 漂移和八字段单项越界；35 项公开回归及 30 项 boot/lifecycle 控制均为零 SDK、零模型控制。
+Refs #52。`browser-log-reader.mjs` 仅允许非空 pinned browser-close DTO 指定的 stdout/stderr leaf 为空，按真实零字节及 SHA 返回。JSON 与其他角色继续拒空，父链、所有者、模式、链接、fd 稳定和边界检查不放宽。生产默认 Root0；实际自 UID 文件控制只证明文件读取行为，不充当 Root0、浏览器或正常关闭证明。
+
+上述模块由实际装配、启动、准入和关闭消费者使用同字节副本。运行 `node --test tests/natural/*.test.mjs`；新回归包含合成物理原件、技术 Unix HTTP 和实际自 UID 文件读回。纯控制和 source 清单不授予真实 SDK、UI、模型、业务或 F6 资格；实际安装、加载、普通 UI 操作、全流程关闭与物理回执继续作为下一波准入条件。

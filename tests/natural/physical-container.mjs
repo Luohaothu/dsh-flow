@@ -8,6 +8,7 @@ const canonical=value=>typeof value==='string'&&value.startsWith('/')&&value!=='
 const token=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(value);
 const overlap=(a,b)=>a===b||a.startsWith(b+'/')||b.startsWith(a+'/');
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/u.test(value);
+const deepFreeze=value=>{if(value&&typeof value==='object'&&!Object.isFrozen(value)){Object.freeze(value);Object.values(value).forEach(deepFreeze);}return value;};
 export function compilePhysicalCase(input){
  assertContainerAllocation(input);assert.equal(input.containerId,null);assert.match(input.imageId,/^sha256:[a-f0-9]{64}$/u);
  assert.ok(token(input.containerName));assert.ok(token(input.rootExecutionNamespace));assert.ok(digest(input.nonce));
@@ -22,7 +23,7 @@ export function compilePhysicalCase(input){
  for(const [key,value]of Object.entries(labels))args.push('--label',key+'='+value);
  for(const row of input.mappings)args.push('--mount','type=volume,src='+row.volumeName+',dst='+row.guestPath);
  args.push('--entrypoint','node',input.imageId,input.runtimeGuestEntry,...input.runtimeArgs);
- return Object.freeze({...structuredClone(input),schema:'root-physical-container-plan/v1',labels,commands:[{kind:'require-exact-name-absent',args:['container','inspect',input.containerName,'--format','{{json .}}']},{kind:'create-physical-container',args}],runtimeQualification:false,businessAdmission:false});
+ return deepFreeze({...structuredClone(input),schema:'root-physical-container-plan/v1',labels,commands:[{kind:'require-exact-name-absent',args:['container','inspect',input.containerName,'--format','{{json .}}']},{kind:'create-physical-container',args}],runtimeQualification:false,businessAdmission:false});
 }
 function rawReceipt(row,args,namespace){assert.equal(row.executionNamespace,namespace);assert.deepEqual(row.args,args);assert.ok(Buffer.isBuffer(row.stdout)&&Buffer.isBuffer(row.stderr));return row;}
 function jsonReceipt(row,args,namespace){rawReceipt(row,args,namespace);assert.equal(row.code,0);const value=JSON.parse(row.stdout);if(Array.isArray(value)){assert.equal(value.length,1);return value[0];}return value;}
