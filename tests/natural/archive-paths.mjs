@@ -39,6 +39,8 @@ export function readCanonicalUstar(bytes) {
     assert.equal(text(header,257,6),'ustar','Only USTAR is supported');assert.equal(text(header,263,2),'00','Only USTAR version 00 is supported');
     const checksum=header.reduce((sum,byte,index)=>sum+(index>=148&&index<156?32:byte),0);
     assert.equal(octal(header,148,8),checksum,'Tar checksum differs');
+    octal(header,136,12);
+    for(const start of[329,337])if(header.subarray(start,start+8).some(byte=>byte!==0))octal(header,start,8);
     const prefix=text(header,345,155),rawName=(prefix?prefix+'/':'')+text(header,0,100);
     const name=rawName.endsWith('/')?rawName.slice(0,-1):rawName;
     assert.ok(isCanonicalArchivePath(name) && !names.has(name),'Unsafe or duplicate tar member');names.add(name);

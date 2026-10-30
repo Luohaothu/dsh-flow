@@ -290,7 +290,7 @@ Refs #52。`browser-log-reader.mjs` 仅允许非空 pinned browser-close DTO 指
 
 Refs #55。`sdk-close-binding.mjs` 提供最终关闭重放所需的断言，以初始 Root 进程来源的 PID/birth 为期望，同时核 native-peer、peer-exit 的唯一 SDK 行和 bridge-closed 的 SDK PID、UID/GID 及出生标识；缺失或矛盾均拒绝。它不返回资格布尔值，合成字段控制不代替实际 OS 原件。
 
-Refs #57、#61。`archive-paths.mjs` 区分规范 POSIX 绝对路径与相对归档名，保留合法的 `.artifacts` 隐藏组件，拒绝点路径、父目录、空组件、反斜杠和控制字符。USTAR 读取要求精确 magic/version、checksum、UTF-8、完整 ASCII 八进制字段及其 NUL 后 padding、数据 padding 和 terminator，只接受普通文件与无正文目录，拒绝链接、特殊类型和重复路径。源码安装包与实际停止消费者共用同字节 parser，所有者、模式与原字节 SHA 继续由各自角色校验。实际编译布局的回归控制与既有 file-only tar 的只读兼容检查，不授予新环境的 SDK 或正常关闭资格。
+Refs #57、#61。`archive-paths.mjs` 区分规范 POSIX 绝对路径与相对归档名，保留合法的 `.artifacts` 隐藏组件，拒绝点路径、父目录、空组件、反斜杠和控制字符。USTAR 读取要求精确 magic/version、checksum、UTF-8、完整 ASCII 八进制字段（含 mtime 和非空设备号；file-only 的设备号允许全 NUL 缺省）及其 NUL 后 padding、数据 padding 和 terminator，只接受普通文件与无正文目录，拒绝链接、特殊类型和重复路径。源码安装包与实际停止消费者共用同字节 parser，所有者、模式与原字节 SHA 继续由各自角色校验。实际编译布局的回归控制与既有 file-only tar 的只读兼容检查，不授予新环境的 SDK 或正常关闭资格。
 
 Refs #59。`case-shutdown.mjs` 将自然停止与通道关闭按顺序执行：等待 owning driver 的明确完成回执后，再调用模型通道关闭；pending、未知或拒绝不触发后一步。通道结果还须为明确 closed 且 normal 的 staged socket 回执。显式 never-started 路径不授予 SDK 关闭资格，不能把尚未创建 driver 当作准备阶段没有资源。Promise barrier 控制验证先后关系，实际浏览器、SDK、peer/ACK 和请求结算仍须独立读回。
 
