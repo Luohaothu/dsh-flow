@@ -3032,7 +3032,11 @@
     "newSutTestsAllowed": false,
     "sharedBugIssues": [
       "https://github.com/Luohaothu/dsh-flow/issues/24",
-      "https://github.com/Luohaothu/dsh-flow/issues/25"
+      "https://github.com/Luohaothu/dsh-flow/issues/25",
+      "https://github.com/Luohaothu/dsh-flow/issues/29",
+      "https://github.com/Luohaothu/dsh-flow/issues/30",
+      "https://github.com/Luohaothu/dsh-flow/issues/31",
+      "https://github.com/Luohaothu/dsh-flow/issues/33"
     ],
     "featureBacklogIssues": [
       "https://github.com/Luohaothu/dsh-flow/issues/26"
@@ -3050,5 +3054,48 @@
     "modelPreference": "an already configured lightweight model; heterogeneous-model requirements remain separate",
     "tokenLimit": null,
     "historicalResultsReclassified": false
+  },
+  "postWaveReviewFindings": {
+    "status": "fixes-prepared-not-all-merged",
+    "commonBugIssues": [
+      29,
+      30,
+      31,
+      33
+    ],
+    "ciInvestigationIssue": 32,
+    "newBusinessModelRequests": 0,
+    "historicalResultsReclassified": false,
+    "authenticationDrainRegression": {
+      "issue": 33,
+      "originalImplementation": {
+        "passed": 0,
+        "tests": 6
+      },
+      "fixedImplementation": {
+        "passed": 6,
+        "tests": 6
+      },
+      "fullNaturalInfrastructureSuite": {
+        "passed": 93,
+        "tests": 93
+      },
+      "scope": "Local fixtures only; no new business wave, no token budget restored, original business evidence unchanged."
+    },
+    "remoteChecksBeforeStackIntegration": [
+      {
+        "pullRequest": 27,
+        "head": "96e8a8e8a3aea78df11a848181f8e889d682699c",
+        "inventory": "SUCCESS",
+        "contracts": "SUCCESS"
+      },
+      {
+        "pullRequest": 28,
+        "head": "ae6b99c6aa15209ec1fb2c86666a5be2561beff0",
+        "inventory": "SUCCESS",
+        "contracts": "SUCCESS"
+      }
+    ],
+    "ciFailureCause": "Issue 32 remains a test diagnosis and stability finding; neither a product race nor a pure timeout cause was established."
   }
 }

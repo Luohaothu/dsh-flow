@@ -116,7 +116,7 @@ const runSnapshot = run => ({ version: { major: 1, minor: 1 }, seq: 1, run,
 const boundary = (address, runs = [runInfo('owned')], status = 'ABORTED', reason = 'total-token-budget') => ({ status, reason, endedAt: 10, dashboardAddress: address, mains: [{ sessionId: 'main-1' }], requests: [{ number: 1, status: 'completed', usage: { totalTokens: 20 } }], totalReportedTokens: 20, usageMissingRequests: [], snapshots: runs.map(runSnapshot) });
 
 async function dashboard(t, mode = 'complete', extra = []) {
-  const state = { reads: 0, paths: [], stops: [], snapshots: new Map([runInfo('owned'), ...extra].map(run => [run.id, runSnapshot(run)])), terminalReads: [], lateAdded: false };
+  const state = { reads: 0, paths: [], stops: [], rejectedStops: [], tokenRequests: 0, token: fixtureToken, authFailures: 0, snapshots: new Map([runInfo('owned'), ...extra].map(run => [run.id, runSnapshot(run)])), terminalReads: [], lateAdded: false };
   const server = createServer(async (request, response) => {
     const send = (code, value) => { response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
     state.paths.push(request.url);
@@ -126,9 +126,20 @@ async function dashboard(t, mode = 'complete', extra = []) {
       if (request.url === '/api/token') {
         if (mode === 'hang') return;
         if (mode === 'redirect') { response.writeHead(302, { Location: state.address + '/redirect-target' }); response.end(); return; }
-        send(200, { token: fixtureToken, epoch: mode === 'epoch' ? 'epoch-2' : 'epoch-1', version: { major: 1, minor: 1 } }); return;
+        state.tokenRequests++;
+        state.token = state.tokenRequests === 1 ? fixtureToken : `${fixtureToken}-${state.tokenRequests}`;
+        send(200, { token: mode === 'auth-invalid' && state.tokenRequests > 1 ? undefined : state.token, epoch: mode === 'epoch' || mode === 'auth-epoch' && state.tokenRequests > 1 ? 'epoch-2' : 'epoch-1', version: { major: 1, minor: 1 } }); return;
       }
-      assert.equal(request.headers.authorization, `Bearer ${fixtureToken}`);
+      assert.equal(request.headers.authorization, `Bearer ${state.token}`);
+      const expiryPath = mode === 'auth-stop' ? request.url.endsWith('/stop') : mode === 'auth-snapshot' ? request.url === '/api/runs/owned' : request.url === '/api/runs';
+      if (mode.startsWith('auth-') && expiryPath && (state.authFailures === 0 || mode === 'auth-repeat')) {
+        state.authFailures++;
+        if (request.url.endsWith('/stop')) {
+          let raw = ''; for await (const chunk of request) raw += chunk;
+          state.rejectedStops.push(JSON.parse(raw));
+        }
+        send(401, { error: 'expired fixture authentication' }); return;
+      }
       if (request.url === '/api/runs') { send(200, { version: { major: 1, minor: 1 }, epoch: 'epoch-1', seq: state.stops.length + 1, runs: [...state.snapshots.values()].map(snapshot => snapshot.run) }); return; }
       const match = request.url.match(/^\/api\/runs\/([^/]+)(\/stop)?$/);
       if (!match || !state.snapshots.has(decodeURIComponent(match[1]))) { send(404, {}); return; }
@@ -175,6 +186,27 @@ async function drainFixture(t, mode = 'complete', evidencePatch = {}) {
   assert.equal(JSON.stringify(evidence), original);
   assert.equal([...files.values()].join('').includes(fixtureToken), false);
   return { server, receipt, files };
+}
+
+for (const mode of ['auth-registry', 'auth-snapshot', 'auth-stop']) {
+  test(`drain renews expired authentication for ${mode.slice(5)} and preserves the operation identity`, async t => {
+    const server = await dashboard(t, mode), evidence = boundary(server.address), original = JSON.stringify(evidence), files = new Map();
+    const receipt = await drainFlow({ evidence, origin: 'http://127.0.0.1:3191', write: (name, value) => files.set(name, value), timeoutMs: 2000, stableMs: 10 });
+    assert.equal(receipt.status, 'completed'); assert.equal(server.tokenRequests, 2); assert.equal(receipt.tokenRefreshes, 1);
+    assert.equal(server.stops.length, 1); assert.equal(JSON.stringify(evidence), original);
+    assert.equal([...files.values()].join('').includes(fixtureToken), false);
+    if (mode === 'auth-stop') assert.deepEqual(server.rejectedStops, [server.stops[0].body]);
+  });
+}
+
+for (const [mode, reason] of [['auth-epoch', 'dashboard-token-epoch-changed'], ['auth-invalid', 'dashboard-token-protocol-invalid'], ['auth-repeat', 'dashboard-http-401']]) {
+  test(`drain keeps failed authentication renewal ${mode.slice(5)} pending without looping or stopping another epoch`, async t => {
+    const server = await dashboard(t, mode), evidence = boundary(server.address), original = JSON.stringify(evidence), files = new Map();
+    const receipt = await drainFlow({ evidence, origin: 'http://127.0.0.1:3191', write: (name, value) => files.set(name, value), timeoutMs: 2000, stableMs: 10 });
+    assert.equal(receipt.status, 'pending'); assert.equal(receipt.reason, reason); assert.equal(server.tokenRequests, 2);
+    assert.equal(server.stops.length, 0); assert.equal(JSON.stringify(evidence), original);
+    assert.equal([...files.values()].join('').includes(fixtureToken), false);
+  });
 }
 
 test('budget abort drains exact owned runs and late registry additions before SIGINT while retaining ABORTED', { timeout: 7000 }, async t => {

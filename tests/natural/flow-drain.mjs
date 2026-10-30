@@ -69,13 +69,14 @@ function clean(snapshot, operationId) {
 
 export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 150_000, stableMs = 1000, refreshEvidence = () => evidence, boundaryEvidence }) {
   const receipt = { schema: 'flow-natural-technical-drain/v1', status: 'pending', startedAt: Date.now(), timeoutMs, stableWindowMs: stableMs,
-    scope: 'observed-and-registry-owned-runs', ...(boundaryEvidence ? { boundaryEvidence } : {}), businessBoundary: { status: evidence.status, reason: evidence.reason, endedAt: evidence.endedAt }, targets: [], responses: [] };
+    scope: 'observed-and-registry-owned-runs', ...(boundaryEvidence ? { boundaryEvidence } : {}), businessBoundary: { status: evidence.status, reason: evidence.reason, endedAt: evidence.endedAt }, targets: [], responses: [], tokenRefreshes: 0 };
   const controller = new AbortController();
   const interrupted = () => controller.abort();
   signal?.addEventListener('abort', interrupted, { once: true });
   if (signal?.aborted) controller.abort();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const issuedTokens = new Set();
   let token;
   try {
     const snapshots = evidence.snapshots ?? [];
@@ -96,13 +97,20 @@ export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 1
     }
     const saved = new Map();
     let sequence = 0;
-    const request = async (path, { method = 'GET', body, kind, target } = {}) => {
-      const headers = { Origin: origin, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) };
-      const { status, raw } = await readResponse(base + path, method, headers, body, controller.signal);
+    const request = async (path, { method = 'GET', body, kind, target } = {}, retryAuthentication = true) => {
+      const headers = { Origin: origin, ...(token && path !== '/api/token' ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) };
+      let response;
+      try { response = await readResponse(base + path, method, headers, body, controller.signal); }
+      catch (error) {
+        if (error.code !== 'dashboard-http-401' || !token || path === '/api/token' || !retryAuthentication) throw error;
+        await renewAuthentication();
+        return request(path, { method, body, kind, target }, false);
+      }
+      const { status, raw } = response;
       let value;
       try { value = JSON.parse(raw); } catch { throw fault('dashboard-json-invalid'); }
       if (kind) {
-        if (token && raw.includes(token)) throw fault('dashboard-credential-in-response');
+        if ([...issuedTokens].some(issued => raw.includes(issued))) throw fault('dashboard-credential-in-response');
         const sha256 = createHash('sha256').update(raw).digest('hex');
         const key = JSON.stringify([kind, target, sha256]);
         let record = saved.get(key);
@@ -116,10 +124,15 @@ export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 1
       }
       return { value };
     };
-    const bootstrap = (await request('/api/token')).value;
-    if (!text(bootstrap?.token) || !text(bootstrap.epoch) || bootstrap.version?.major !== 1 || !Number.isInteger(bootstrap.version.minor) || bootstrap.version.minor < 1) throw fault('dashboard-token-protocol-invalid');
-    token = bootstrap.token;
-    receipt.epoch = bootstrap.epoch;
+    const renewAuthentication = async () => {
+      const bootstrap = (await request('/api/token')).value;
+      if (!text(bootstrap?.token) || !text(bootstrap.epoch) || bootstrap.version?.major !== 1 || !Number.isInteger(bootstrap.version.minor) || bootstrap.version.minor < 1) throw fault('dashboard-token-protocol-invalid');
+      if (receipt.epoch !== undefined && bootstrap.epoch !== receipt.epoch) throw fault('dashboard-token-epoch-changed');
+      if (token) receipt.tokenRefreshes++;
+      token = bootstrap.token; issuedTokens.add(token);
+      receipt.epoch = bootstrap.epoch;
+    };
+    await renewAuthentication();
     if ([...observed.values()].some(run => run.epoch !== receipt.epoch)) throw fault('observed-epoch-mismatch');
     const targets = new Map();
     let stableSince, previousIds;
@@ -188,6 +201,7 @@ export async function drainFlow({ evidence, origin, write, signal, timeoutMs = 1
     clearTimeout(timer);
     signal?.removeEventListener('abort', interrupted);
     token = undefined;
+    issuedTokens.clear();
     receipt.endedAt = Date.now();
     write('flow-drain.json', JSON.stringify(receipt, null, 2));
   }
