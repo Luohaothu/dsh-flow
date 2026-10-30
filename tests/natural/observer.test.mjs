@@ -16,39 +16,45 @@ const clarification = [{ id: 'scope', question: '这次需要怎样的退款汇�
 async function fixture(t, overrides = {}, mainCount = 1, projector) {
   await mkdir(join(root, '.artifacts'), { recursive: true });
   const directory = await mkdtemp(join(root, '.artifacts/observer-unit-'));
-  const home = join(directory, 'home'), proof = join(directory, 'proof');
+  const home = join(directory, 'home'), agentsHome = join(directory, 'agents-home'), proof = join(directory, 'proof');
   const scenarioFile = join(directory, 'scenario.json');
-  const savedEnv = Object.fromEntries(['DSH_HOME', 'NATURAL_PROFILE_NAME', 'NATURAL_SCENARIO_FILE', 'NATURAL_PROOF_DIR'].map(key => [key, process.env[key]]));
+  const savedEnv = Object.fromEntries(['DSH_HOME', 'DSH_AGENTS_HOME', 'NATURAL_PROFILE_NAME', 'NATURAL_SCENARIO_FILE', 'NATURAL_PROOF_DIR'].map(key => [key, process.env[key]]));
   const handlers = new Map(), calls = [], creates = [], resolves = [], mains = [];
+  const previousExits = new Set(process.listeners('exit'));
+  let observerExits = [];
   t.after(async () => {
     handlers.get('dispose')?.();
+    for (const listener of observerExits) process.removeListener('exit', listener);
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     await rm(directory, { recursive: true, force: true });
   });
   await mkdir(join(home, 'profiles/web'), { recursive: true });
+  await mkdir(agentsHome);
   await writeFile(join(home, 'profiles/web/package.json'), '{"name":"observer-unit-profile"}');
   for (let index = 0; index < mainCount; index++) {
     const workspace = join(directory, index ? `workspace-${index + 1}` : 'workspace');
     await mkdir(workspace);
     const sessionId = index ? `main-${index + 1}` : 'main', runId = index ? `run-${index + 1}` : 'run';
     const events = [], assignments = [{ id: `assignment-${index + 1}`, runId, parentAssignmentId: null, status: 'pending' }];
+    let turn = 1, step = 0;
     const append = (type, data) => {
+      if (type === 'tool/call') data = { turn, step: ++step, ...data };
       const event = { seq: events.length + 1, time: Date.now(), type, data };
       events.push(event);
       return event;
     };
     const user = (text, source = { kind: 'user' }) => append('user/message', { source, content: [{ type: 'text', text }] });
-    const endTurn = () => append('turn/end', { reason: { kind: 'completed' } });
+    const endTurn = () => { const event = append('turn/end', { turn, reason: { kind: 'completed' } }); turn++; step = 0; return event; };
     const readback = (assignment, returned = assignment) => {
       const callId = `read-${events.length}`;
-      append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ assignmentId: assignment.id }) });
-      append('tool/result', { message: { toolCallId: callId, isError: false, content: [{ type: 'text', text: JSON.stringify({ id: returned.id, runId: returned.runId, status: returned.status, result: returned.result }) }] } });
+      const call = append('tool/call', { name: 'flow_team_assignment_read', callId, arguments: JSON.stringify({ runId: assignment.runId, assignmentId: assignment.id }) });
+      return answer(call, { id: returned.id, runId: returned.runId, status: returned.status, result: returned.result });
     };
-    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { turn: 1, step: 6, name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
+    const ask = (callId = `question-${events.length}`, extra = {}) => append('tool/call', { name: 'ask_user_question', callId, arguments: JSON.stringify({ questions: clarification, ...extra }) });
     const answer = (call, value, error) => {
-      const result = append('tool/result', { turn: 1, step: 6, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error }) });
+      const result = append('tool/result', { turn: call.data.turn, step: call.data.step, message: { role: 'tool', source: { kind: 'tool', callId: call.data.callId }, toolCallId: call.data.callId, content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: error !== undefined, id: `result-${events.length}` }, ...(error === undefined ? {} : { error: typeof error === 'string' ? { message: error } : error }) });
       result.sourceEventSeqs = [call.seq]; result.surfaceOp = 'append';
       return result;
     };
@@ -68,11 +74,12 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     on: (name, handler) => handlers.set(name, handler),
     get: name => name === 'profileContext' ? { installAnchor: join(root, 'package.json') } : undefined,
     agents: { list: () => mains.flatMap(main => [main.main, main.member]) },
+    skills: { async snapshot(options) { assert.equal(options, undefined); return { complete: true, skills: [{ name: 'agent-team', source: 'runtime', provider: 'fixture' }] }; } },
     flow: { dashboardAddress: 'http://127.0.0.1:1', projector: projector ?? {
-      registry: () => ({ runs: mains.filter(main => main.runEnabled).map(main => ({ id: main.runId, entry: { callerSessionId: main.sessionId } })) }),
+      registry: () => ({ runs: mains.filter(main => main.runEnabled).map(main => ({ id: main.runId, entry: { backend: 'dsh', callerSessionId: main.sessionId } })) }),
       snapshot: id => {
         const main = mains.find(main => main.runId === id);
-        return { version: { major: 1, minor: 1 }, seq: 1, run: { id, entry: { callerSessionId: main.sessionId } }, prices: [], operations: [], nodes: [{ id: `node-${main.sessionId}`, sessionID: main.member.session.id, parentId: null }], groups: [], assignments: main.assignments };
+        return { version: { major: 1, minor: 1 }, seq: 1, run: { id, entry: { backend: 'dsh', callerSessionId: main.sessionId } }, prices: [], operations: [], nodes: [{ id: `node-${main.sessionId}`, sessionID: main.member.session.id, parentId: null }], groups: [], assignments: main.assignments };
       },
     } },
     sessionController: {
@@ -85,8 +92,9 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
       main.user(prompt); main.endTurn(); return { result: { kind: 'success' } };
     } },
   };
-  Object.assign(process.env, { DSH_HOME: home, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof });
+  Object.assign(process.env, { DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof });
   apply(ctx);
+  observerExits = process.listeners('exit').filter(listener => !previousExits.has(listener));
   const evidence = async () => {
     try { return JSON.parse(await readFile(join(proof, 'evidence.json'), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return; throw error; }
@@ -336,8 +344,8 @@ test('operator captures native question answers without inventing user messages 
 
 test('question evidence distinguishes skips and errors and ignores question text in ordinary tool output', { timeout: 5000 }, async t => {
   const f = await fixture(t, { completion: 'operator', userPrompts: undefined });
-  f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
-  f.append('tool/result', { message: { toolCallId: 'catalogue', isError: false, content: [{ type: 'text', text: 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}' }] } });
+  const catalogue = f.append('tool/call', { name: 'read_file', callId: 'catalogue', arguments: '{"path":"questions.md"}' });
+  f.answer(catalogue, 'ask_user_question catalogue: {"answers":[{"id":"scope","selected":["继续"]}]}');
   f.user('ask_user_question: 继续', { kind: 'flow' });
   const plain = await f.until(value => value.histories.find(history => history.sessionId === f.sessionId).events.length === f.events.length);
   assert.deepEqual(plain.questionTimeline, []);
@@ -539,14 +547,19 @@ test('observer consumes a real DashboardProjector snapshot with nested run ident
   const domain = await runFixture(t);
   const projector = new DashboardProjector(domain.service, { directory: join(domain.directory, 'dashboard') });
   t.after(() => projector.dispose());
-  const run = await domain.createActive(), root = domain.binding(run).root;
+  const run = await domain.createActive({}, 'observer-projector', domain.origin('main', 'dsh')), root = domain.binding(run).root;
+  const foreign = await domain.createActive({}, 'foreign-projector', domain.origin('main', 'other-backend'));
   const assignment = await run.assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec: domain.spec() }, 'projected-assignment');
   assert.equal((await domain.submit(run, root, assignment, { answer: 'checked' })).kind, 'accepted');
   const actual = projector.snapshot(run.id);
   assert.equal(Object.hasOwn(actual, 'id'), false);
   assert.equal(Object.hasOwn(actual, 'runId'), false);
   assert.equal(actual.run.id, run.id);
-  const f = await fixture(t, { userPrompts: undefined }, 1, projector);
+  assert.equal(projector.registry().runs.some(item => item.id === foreign.id && item.entry.callerSessionId === 'main'), true);
+  const f = await fixture(t, { userPrompts: undefined }, 1, { registry: () => projector.registry(), snapshot: id => {
+    assert.notEqual(id, foreign.id, 'the actual foreign-backend Run must never be read by the DSH observer');
+    return projector.snapshot(id);
+  } });
   f.readback(actual.assignments[0]); f.endTurn();
   const settled = await f.until(value => value.status === 'SETTLED');
   assert.deepEqual(settled.mains[0].runIds, [run.id]);
@@ -796,4 +809,32 @@ test('rejected non-object read/cancel arguments cannot hide a later exact cancel
   const call = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'valid-after-rejections', arguments: JSON.stringify({ runId: f.runId, assignmentId: old.id, reason: 'update' }) });
   f.answer(call, [{ assignmentId: old.id, status: 'cancelled', reason: 'update' }]);
   assert.equal((await f.tick()).observation.readback, true);
+});
+
+test('progress uses the causal query call and does not extend no-progress after a failed cancellation reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const cancelled = f.append('tool/call', { name: 'flow_team_assignment_cancel', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id, reason: '' }) });
+  f.answer(cancelled, 'Cancellation reason must be nonempty', 'rejected');
+  const query = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: f.runId, assignmentId: f.assignments[0].id }) });
+  f.answer(query, f.assignments[0]);
+  const current = await f.tick();
+  assert.equal(current.lastProgressAt, baseline.lastProgressAt);
+  assert.deepEqual(current.progress, baseline.progress);
+  f.advance(baseline.lastProgressAt + 5001 - current.updatedAt);
+  assert.equal((await f.tick()).reason, 'no-progress');
+});
+
+test('progress uses the causal write call and records successful work after a failed read reuses its ID', async t => {
+  const f = await clockedFixture(t, { noProgressMs: 5000 }), baseline = await f.tick();
+  f.advance(100);
+  const failed = f.append('tool/call', { name: 'flow_team_assignment_read', callId: 'reused', arguments: JSON.stringify({ runId: 'wrong-run', assignmentId: f.assignments[0].id }) });
+  f.answer(failed, 'Assignment is not bound to this run', 'rejected');
+  const written = f.append('tool/call', { name: 'fixture_write_file', callId: 'reused', arguments: '{}' });
+  f.answer(written, { written: true });
+  const current = await f.tick();
+  assert.ok(current.lastProgressAt > baseline.lastProgressAt);
+  assert.equal(current.lastProgressAt, current.updatedAt);
+  assert.equal(current.progress.length, baseline.progress.length + 1);
+  assert.equal(current.progress.at(-1).kind, 'tool-result');
 });

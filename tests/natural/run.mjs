@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { drainFlow } from './flow-drain.mjs';
 import { createDrainEvidenceReader } from './evidence-view.mjs';
+import { assertAgentsHome } from './isolation.mjs';
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 const artifacts = join(root, '.artifacts');
@@ -80,6 +81,7 @@ function readEvidence(directory, raw = false, name = 'evidence.json') {
 
 async function run() {
   const home = privatePath(process.env.DSH_HOME, 'directory');
+  const agentsHome = assertAgentsHome(process.env.DSH_AGENTS_HOME, home, artifacts);
   const scenarioFile = privatePath(process.env.NATURAL_SCENARIO_FILE, 'file');
   const scenario = JSON.parse(readFileSync(scenarioFile, 'utf8'));
   assert.ok(Number.isSafeInteger(scenario.maxDurationMs) && scenario.maxDurationMs > 0 && scenario.maxDurationMs <= 2_147_453_647, 'Scenario duration must be a positive bounded integer');
@@ -105,7 +107,7 @@ async function run() {
   const child = spawn(process.execPath, [cli, 'web', '--host', '127.0.0.1', '--port', String(port), '--no-open'], {
     cwd: root,
     detached: process.platform !== 'win32',
-    env: { ...process.env, DSH_HOME: home, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof },
+    env: { ...process.env, DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof },
   });
   receipt.pid = child.pid;
   let exitState, closed = false, ioError, interrupted, evidence, holdUntil, launchTail = '', launchSaved = false;
