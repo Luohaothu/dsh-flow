@@ -16,18 +16,22 @@ const clarification = [{ id: 'scope', question: '这次需要怎样的退款汇�
 async function fixture(t, overrides = {}, mainCount = 1, projector) {
   await mkdir(join(root, '.artifacts'), { recursive: true });
   const directory = await mkdtemp(join(root, '.artifacts/observer-unit-'));
-  const home = join(directory, 'home'), proof = join(directory, 'proof');
+  const home = join(directory, 'home'), agentsHome = join(directory, 'agents-home'), proof = join(directory, 'proof');
   const scenarioFile = join(directory, 'scenario.json');
-  const savedEnv = Object.fromEntries(['DSH_HOME', 'NATURAL_PROFILE_NAME', 'NATURAL_SCENARIO_FILE', 'NATURAL_PROOF_DIR'].map(key => [key, process.env[key]]));
+  const savedEnv = Object.fromEntries(['DSH_HOME', 'DSH_AGENTS_HOME', 'NATURAL_PROFILE_NAME', 'NATURAL_SCENARIO_FILE', 'NATURAL_PROOF_DIR'].map(key => [key, process.env[key]]));
   const handlers = new Map(), calls = [], creates = [], resolves = [], mains = [];
+  const previousExits = new Set(process.listeners('exit'));
+  let observerExits = [];
   t.after(async () => {
     handlers.get('dispose')?.();
+    for (const listener of observerExits) process.removeListener('exit', listener);
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     await rm(directory, { recursive: true, force: true });
   });
   await mkdir(join(home, 'profiles/web'), { recursive: true });
+  await mkdir(agentsHome);
   await writeFile(join(home, 'profiles/web/package.json'), '{"name":"observer-unit-profile"}');
   for (let index = 0; index < mainCount; index++) {
     const workspace = join(directory, index ? `workspace-${index + 1}` : 'workspace');
@@ -68,6 +72,7 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
     on: (name, handler) => handlers.set(name, handler),
     get: name => name === 'profileContext' ? { installAnchor: join(root, 'package.json') } : undefined,
     agents: { list: () => mains.flatMap(main => [main.main, main.member]) },
+    skills: { async snapshot(options) { assert.equal(options, undefined); return { complete: true, skills: [{ name: 'agent-team', source: 'runtime', provider: 'fixture' }] }; } },
     flow: { dashboardAddress: 'http://127.0.0.1:1', projector: projector ?? {
       registry: () => ({ runs: mains.filter(main => main.runEnabled).map(main => ({ id: main.runId, entry: { callerSessionId: main.sessionId } })) }),
       snapshot: id => {
@@ -85,8 +90,9 @@ async function fixture(t, overrides = {}, mainCount = 1, projector) {
       main.user(prompt); main.endTurn(); return { result: { kind: 'success' } };
     } },
   };
-  Object.assign(process.env, { DSH_HOME: home, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof });
+  Object.assign(process.env, { DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, NATURAL_PROFILE_NAME: 'web', NATURAL_SCENARIO_FILE: scenarioFile, NATURAL_PROOF_DIR: proof });
   apply(ctx);
+  observerExits = process.listeners('exit').filter(listener => !previousExits.has(listener));
   const evidence = async () => {
     try { return JSON.parse(await readFile(join(proof, 'evidence.json'), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return; throw error; }
