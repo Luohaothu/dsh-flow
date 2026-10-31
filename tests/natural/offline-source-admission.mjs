@@ -13,9 +13,10 @@ export async function readOfflineSourceAdmissions(config,{inspect,command,save})
   const readbacks=[];
   for(let index=0;index<issues.length;index++){
     const issue=issues[index],loaded=await readCreatedContainerControlReference({scope,identity,controlDirectory,reference:references[index]},{inspect,command,parseTar:readCanonicalUstar});
-    const source=await save('offline-source-admission-'+issue+'.json',Buffer.from(loaded.raw));
-    assert.ok(source&&typeof source==='object','Saved original reference required');assert.equal(source.expectedSha256,loaded.reference.expectedSha256,'Saved admission bytes differ');
-    readbacks.push({issue,reference:loaded.reference,source,inspectionSources:loaded.inspectionSources,rawSources:loaded.rawSources});
+    const metadata=structuredClone({reference:loaded.reference,inspectionSources:loaded.inspectionSources,rawSources:loaded.rawSources});
+    const source=structuredClone(await save('offline-source-admission-'+issue+'.json',Buffer.from(loaded.raw)));
+    assert.ok(source&&typeof source==='object','Saved original reference required');assert.equal(source.expectedSha256,metadata.reference.expectedSha256,'Saved admission bytes differ');
+    readbacks.push({issue,reference:metadata.reference,source,inspectionSources:metadata.inspectionSources,rawSources:metadata.rawSources});
   }
   return readbacks;
 }
