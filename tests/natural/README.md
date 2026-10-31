@@ -308,3 +308,11 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 这些中性来源校验器只建立角色策略，不启动 SDK、创建 authority、发送模型 HTTP，也不授予业务资格。实际 Root 调用方还须绑定当前 Linux Root 进程与 source manifest，并保留逐 case 隔离、唯一 TLS 出口和 HTTP 前持久化记账。元数据核查保留完整原文，支持 BSD 的有符号 UID。
 
 专项控制：`node --test tests/natural/writer-domain-cutover.test.mjs`。
+
+### 资源关闭与资格结果分开
+
+`resource-close-binding.mjs` 为测试控制器保留当前拥有的 Root/case 集合及精确关闭引用。关闭必须重读该来源及每个 case 的原件；同内容的其他路径、跨 Root/case 来源、缺失或重复项都不能代替。SDK 未启动须核实际 created/PID0 状态；实际 exited 与 wait 一致可以允许资源清理，非零退出仍保留失败语义。UI 资格失败不妨碍已有完整原件证明普通清理，缺失或矛盾来源保持 pending。该合同不授 UI、业务、F6 或 Host 容器/卷删除信用。
+
+物理身份由独立 Root 输入提供，再与 case/ns/CID/image/nonce 绑定；qualification scope 无须嵌入 `containerIdentity`。最终实际 inspect 的用户、网络、标签和 nonce 检查继续执行。
+
+观察器的 `evidence.json` 和 `shutdown-evidence.json` 先写入同目录的独立私有文件，再原子替换最终路径。已打开的读者继续读取旧的完整快照，新读者读取新的完整快照；覆盖发布不再清空已公开的 inode。

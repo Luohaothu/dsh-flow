@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -74,7 +74,7 @@ async function fixture(t, overrides = {}, catalog = { complete: true, skills: [{
   await until(value => value.mainSessionId || value.status === 'ERROR');
   const iterator = (source, sessionId = 'main') => handlers.get('llm/stream')({ provider: 'fixture', model: 'fixture', sessionId, messages: [] }, () => { state.next++; return source; });
   const stream = async chunks => { for await (const _ of iterator((async function* () { yield* chunks; })())) {} };
-  return { ctx, state, main, events, owners, trace, handlers, agentsHome, evidence, bytes, iterator, stream, poll: () => poll(), cleared: () => cleared, exit: () => exits[0]?.() };
+  return { ctx, state, main, events, owners, trace, handlers, agentsHome, proof, evidence, bytes, iterator, stream, poll: () => poll(), cleared: () => cleared, exit: () => exits[0]?.() };
 }
 
 test('token boundary captures native events and projections before clearing the timer, then freezes business evidence', async t => {
@@ -95,6 +95,35 @@ test('token boundary captures native events and projections before clearing the 
   assert.equal(shutdown.histories[0].events.at(-1).seq, 4); assert.equal(shutdown.histories[0].status, 'disposed');
   assert.equal(shutdown.businessBoundary.sha256, createHash('sha256').update(frozen).digest('hex'));
   assert.deepEqual(await f.bytes(), frozen); assert.equal((await f.evidence()).snapshots[0].assignments[0].status, 'submitted');
+});
+
+test('publishing a new snapshot preserves a reader already holding the previous evidence inode', async t => {
+  const f = await fixture(t);
+  const held = await open(join(f.proof, 'evidence.json'), 'r');
+  try {
+    const readHeld = async () => {
+      const buffer = Buffer.alloc((await held.stat()).size);
+      const { bytesRead } = await held.read(buffer, 0, buffer.length, 0);
+      return buffer.subarray(0, bytesRead);
+    };
+    const previous = await readHeld();
+    f.state.registrySeq += 1;
+    f.events.push({ seq: 2, type: 'tool/result', data: { published: 'new observation' } });
+    f.poll();
+    const current = await f.bytes();
+    assert.notDeepEqual(current, previous);
+    assert.equal(JSON.parse(current).registry.seq, f.state.registrySeq);
+    assert.deepEqual(await readHeld(), previous, 'An open reader must retain the previous complete snapshot');
+  } finally { await held.close(); }
+});
+
+test('staging a snapshot does not bypass the existing proof file write permission', { skip: process.getuid?.() === 0 }, async t => {
+  const f = await fixture(t), path = join(f.proof, 'evidence.json'), previous = await f.bytes();
+  await chmod(path, 0o400);
+  try {
+    assert.throws(() => f.poll(), { code: 'EACCES' });
+    assert.deepEqual(await f.bytes(), previous);
+  } finally { await chmod(path, 0o600); }
 });
 
 test('request admission boundary refreshes a native event added after the last observation', async t => {
