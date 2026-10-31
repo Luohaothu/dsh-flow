@@ -316,3 +316,9 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 物理身份由独立 Root 输入提供，再与 case/ns/CID/image/nonce 绑定；qualification scope 无须嵌入 `containerIdentity`。最终实际 inspect 的用户、网络、标签和 nonce 检查继续执行。
 
 观察器的 `evidence.json` 和 `shutdown-evidence.json` 先写入同目录的独立私有文件，再原子替换最终路径。已打开的读者继续读取旧的完整快照，新读者读取新的完整快照；覆盖发布不再清空已公开的 inode。
+
+### 容器私有控制文件的命名空间读取
+
+`container-root-reference.mjs` 在创建状态的精确 SUT 中读取 Root 所有的控制文件。读取前后分别核对 case、namespace、容器、镜像、nonce、运行用户及隔离状态，经默认 `docker cp` 取得原始 tar，再沿用 Root 文件读回校验核对名称、0:0、0444 和 SHA。引用保留 guest 路径，原始检查和 copy 来源随结果保全，供准入链继续核验。
+
+`offline-source-admission.mjs` 是默认的五份准入来源读取阶段：从真实配置取独立身份、控制目录和五个 guest 引用，直接调用容器读取器与正式 USTAR parser，逐份保全原始字节并核对保存引用的 SHA，再把检查、copy 和保存来源交回准入入口。实际 Root 控制器使用同一阶段；配置及执行材料保存在本地。
