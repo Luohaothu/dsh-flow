@@ -15,7 +15,7 @@ import { installFlowTools } from '../../../packages/dsh-flow/src/host/tools.js';
 import { installMemberTools } from '../../../packages/dsh-flow/src/host/member-tools.js';
 import PersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl';
 import { mkdir, readdir, rm } from 'node:fs/promises';
-import { runtime, until } from '../../helpers/contract-runtime.js';
+import { runtime, until, validSummary } from '../../helpers/contract-runtime.js';
 import { enablePluginHost } from '../../helpers/contract-plugin.js';
 import NodePtcRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
 import SubprocessLocal from '@deepseek-ai/dsh-subprocess-local';
@@ -135,6 +135,70 @@ test('member template definitions validate documents and register only in their 
   assert.deepEqual(await readdir(workspace, { recursive: true }), []);
   assert.equal(first.root.getChildren().length, 0);
   assert.equal(f.model.requests.length, 0);
+});
+
+test('native fork and herb tools bind independent members that require their own formal assignments', async t => {
+  const f = await fixture(t), main = await f.ordinary('derived-member-main');
+  f.bridge.attachRunService(f.service);
+  const { run, root } = await f.active(main), native = f.native(root), assignments = run.assignments!;
+  const spec = { name: 'evidence', type: 'analysis', background: 'Inspect the supplied evidence.', requirements: 'Return an answer.',
+    acceptanceCriteria: 'The answer identifies the evidence.', resultSchema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false } };
+  const top = await assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec }, 'source-task');
+  const other = await Agent.create(run.context!, { ...root.getProfile(), sessionID: newSessionID(), name: 'other-context' }, root);
+  const invoke = async (caller: Agent, name: string, args: Record<string, unknown>, isError = false) => {
+    const target = f.native(caller), start = target.session.snapshotEvents().length;
+    let called = false;
+    f.model.script = options => {
+      if (options.sessionId === undefined) return validSummary;
+      if (options.sessionId !== target.session.id || called) return 'DONE';
+      called = true; return { tool: name, args };
+    };
+    target.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Invoke ${name}` }] }));
+    await target.whenIdle();
+    const events = target.session.snapshotEvents().slice(start);
+    const call = events.find(event => event.type === 'tool/call' && event.data.name === name);
+    assert.ok(call?.type === 'tool/call', `Missing native ${name} call`);
+    const result = events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === call.data.callId);
+    assert.ok(result?.type === 'tool/result', `Missing native ${name} result`);
+    assert.equal(result.data.message.isError, isError, JSON.stringify(result.data.message));
+    const text = result.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('');
+    return isError ? text : JSON.parse(text);
+  };
+
+  const forkReceipt = await invoke(root, 'flow_fork', {});
+  const fork = root.getChildren()[1]!;
+  assert.deepEqual(forkReceipt.profile, fork.getProfile());
+  assert.equal(forkReceipt.parent, root.getProfile().sessionID);
+  assert.equal(fork.getParent(), root);
+  assert.notEqual(fork.getProfile().sessionID, root.getProfile().sessionID);
+  const herbReceipt = await invoke(root, 'flow_herb', { sessionID: other.getProfile().sessionID });
+  const merged = root.getChildren()[2]!;
+  await f.native(merged).whenIdle();
+  assert.deepEqual(herbReceipt.profile, merged.getProfile());
+  assert.equal(herbReceipt.parent, root.getProfile().sessionID);
+  assert.equal(merged.getParent(), root);
+  assert.notEqual(merged.getProfile().sessionID, fork.getProfile().sessionID);
+
+  for (const [index, child] of [fork, merged].entries()) {
+    assert.equal(assignments.list(run).filter(job => job.recipientSessionID === child.getProfile().sessionID).length, 0);
+    assert.match(await invoke(child, 'flow_submit', { assignmentId: top.id, result: { answer: 'not my assignment' }, continuingChildren: [] }, true), /Only the recipient may submit an assignment/);
+    assert.equal(assignments.read(run, top).status, 'pending');
+    assert.equal(assignments.read(run, top).submissionCount, 0);
+    const job = await invoke(root, 'flow_assign', { recipientSessionID: child.getProfile().sessionID, parentAssignmentId: top.id,
+      spec, requestId: `derived-work-${index}` });
+    await f.native(child).whenIdle();
+    assert.equal(job.parentAssignmentId, top.id);
+    assert.equal(job.recipientSessionID, child.getProfile().sessionID);
+    const receipt = await invoke(child, 'flow_submit', { assignmentId: job.id, result: { answer: `evidence-${index}` }, continuingChildren: [] });
+    await native.whenIdle();
+    assert.equal(receipt.kind, 'accepted');
+    const saved = assignments.read(run, assignments.resolve(job.id));
+    assert.equal(saved.status, 'submitted');
+    assert.deepEqual(saved.result, { answer: `evidence-${index}` });
+  }
+  assert.equal((await invoke(root, 'flow_submit', { assignmentId: top.id, result: { answer: 'combined evidence' }, continuingChildren: [] })).kind, 'accepted');
+  assert.deepEqual(assignments.read(run, top).result, { answer: 'combined evidence' });
+  assert.equal(run.status, 'active');
 });
 
 test('real rc.2 calls create idle runs, rejects forged contexts and model caller fields, then revoke all main definitions on dispose', async t => {
