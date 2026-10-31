@@ -125,6 +125,40 @@ test('failed initial handover records failure while explicit parent cancellation
   assert.equal(cancelled.outcome, 'stopped'); assert.equal(cancelled.termination!.initiator, 'parent'); assert.equal(cancelled.errors.length, 1);
 });
 
+test('completed turns preserve normal status, output and host events without warning markers', async t => {
+  const f = await setup(t); let completed = 0;
+  const unsubscribe = observeCore(f.context, event => {
+    if (event.type === 'host-event' && event.event.type === 'turn-end' && event.event.reason === 'completed') completed++;
+  }); t.after(unsubscribe);
+  f.host.status(f.root, 'running');
+  f.host.emit({ type: 'output', agent: f.host.native(f.root), timestamp: Date.now(), text: '正常结果' });
+  f.host.status(f.root, 'idle'); f.host.turnEnd(f.root); await flush();
+  let node = f.p.snapshot(f.run.id).nodes[0]!;
+  assert.equal(node.status, 'idle'); assert.equal(node.outcome, null);
+  assert.deepEqual(node.markers, []); assert.equal(node.outputs[0]!.text, '正常结果'); assert.equal(completed, 1);
+  await f.root.recvSignal('SIGTERM');
+  node = f.p.snapshot(f.run.id).nodes[0]!;
+  assert.equal(node.outcome, 'stopped'); assert.equal(node.termination!.initiator, 'user'); assert.deepEqual(node.markers, []);
+});
+
+test('abnormal turns and existing error, rejection and cleanup warnings survive later completed turns', async t => {
+  const f = await setup(t), native = f.host.native(f.root), timestamp = Date.now();
+  const { emitCore } = await import('../../../packages/dsh-flow/src/core/observation.js');
+  f.host.emit({ type: 'turn-end', agent: native, timestamp, reason: 'cancelled' });
+  f.host.emit({ type: 'turn-end', agent: native, timestamp: timestamp + 1, reason: 'failed' });
+  f.host.emit({ type: 'error', agent: native, timestamp: timestamp + 2, message: '实际错误' });
+  f.host.emit({ type: 'auto-reject', agent: native, timestamp: timestamp + 3, message: '策略拒绝' });
+  emitCore(f.context, { type: 'host-cleanup', agent: f.root, timestamp: timestamp + 4, phase: 'abandoned', reason: '未能完成清理' });
+  emitCore(f.context, { type: 'host-cleanup', agent: f.root, timestamp: timestamp + 5, phase: 'failed', persistenceError: '持久化失败' });
+  const before = f.p.snapshot(f.run.id).nodes[0]!;
+  assert.deepEqual(before.markers.map(marker => marker.kind), ['turn-cancelled', 'turn-failed', 'error', 'auto-reject', 'cleanup-abandoned', 'persistence-error']);
+  f.host.emit({ type: 'turn-end', agent: native, timestamp: timestamp + 6, reason: 'completed' });
+  const after = f.p.snapshot(f.run.id).nodes[0]!;
+  assert.deepEqual(after.markers, before.markers);
+  assert.deepEqual(after.errors, [{ timestamp: timestamp + 2, message: '实际错误' }]);
+  assert.equal(after.cleanup!.phase, 'failed'); assert.equal(after.cleanup!.persistenceError, '持久化失败');
+});
+
 test('cleanup retains abandonment and persistence markers after subsequent facts; typed auto-reject is independent of errors', async t => {
   const f = await setup(t); const { emitCore } = await import('../../../packages/dsh-flow/src/core/observation.js');
   const timestamp = Date.now();

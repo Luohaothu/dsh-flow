@@ -163,7 +163,7 @@ export class DashboardProjector {
         if (host.type === 'output') node.outputs.push({ timestamp: host.timestamp, text: host.text });
         if (host.type === 'error') { node.errors.push({ timestamp: host.timestamp, message: host.message }); this.marker(node, `error:${host.timestamp}:${node.errors.length}`, 'error', host.timestamp, host.message); }
         if (host.type === 'auto-reject') this.marker(node, `auto-reject:${host.timestamp}:${node.markers.length}`, 'auto-reject', host.timestamp, host.message);
-        if (host.type === 'turn-end') this.marker(node, `turn:${host.timestamp}`, `turn-${host.reason}`, host.timestamp, host.reason);
+        if (host.type === 'turn-end' && host.reason !== 'completed') this.marker(node, `turn:${host.timestamp}`, `turn-${host.reason}`, host.timestamp, host.reason);
         if (host.type === 'usage') { const usage = this.usage(host.usage); const at = node.usage.findIndex(item => item.callId === usage.callId); if (at < 0) node.usage.push(usage); else node.usage[at] = usage; kind = 'node-usage'; }
         break;
       }

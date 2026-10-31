@@ -21,6 +21,8 @@ import NodePtcRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
 import SubprocessLocal from '@deepseek-ai/dsh-subprocess-local';
 import SandboxLocal from '@deepseek-ai/dsh-sandbox-local';
 import { Agent } from '../../../packages/dsh-flow/src/core/agent.js';
+import { Group } from '../../../packages/dsh-flow/src/core/group.js';
+import { DashboardProjector } from '../../../packages/dsh-flow/src/dashboard/projector.js';
 import { newSessionID } from '../../../packages/dsh-flow/src/core/message.js';
 import { NativeCallAuthority } from '../../../packages/dsh-flow/src/host/native-bindings.js';
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
@@ -221,6 +223,43 @@ test('native member submission has a durable transport key and histories remain 
   const fake = await f.host.tools.execute({ agent: f.native(root), callId: ToolCallId(key[2]), name: 'flow_submit', arguments: { assignmentId, result: { answer: 'ok' }, continuingChildren: [] }, signal: new AbortController().signal });
   assert.equal(fake.isError, true);
   await f.bridge.dispose();
+});
+
+test('flow_wait projects readable source and summary labels through its installed native tool', async t => {
+  for (const kind of ['system', 'user', 'member', 'group', 'empty', 'omitted'] as const) await t.test(kind, async t => {
+    const f = await fixture(t), main = await f.ordinary(`wait-label-${kind}`); f.bridge.attachRunService(f.service);
+    const projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events') }); t.after(() => projector.dispose());
+    const { run, root } = await f.active(main), native = f.native(root);
+    const peer = await Agent.create(run.context!, { ...root.getProfile(), sessionID: newSessionID(), name: '验证者' }, root);
+    const group = new Group(run.context!, [root, peer]);
+    const source = kind === 'system' || kind === 'user' ? { kind } : kind === 'member' || kind === 'group'
+      ? { sessionID: peer.getProfile().sessionID, ...(kind === 'group' ? { groupID: group.getID() } : {}) } : undefined;
+    const query = kind === 'empty' || kind === 'omitted' ? {} : { source, after: 1000, before: 10000, read: false, priority: 'normal', summaryIncludes: '作业状态更新' };
+    const target = kind === 'system' ? '系统消息' : kind === 'user' ? '用户消息' : kind === 'member' ? '验证者的消息'
+      : kind === 'group' ? `验证者在群 ${group.getID()} 的消息` : '消息';
+    const expected = `等待${target}${kind === 'empty' || kind === 'omitted' ? '' : ' · 摘要包含“作业状态更新”'}`;
+    let invoked = false;
+    f.model.script = () => { if (invoked) return 'AFTER-WAIT'; invoked = true;
+      return { tool: 'flow_wait', args: { ...(kind === 'omitted' ? {} : { query }), timeout: 60000 } }; };
+    native.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'WAIT' }] }));
+    await native.whenIdle();
+    assert.equal(root.hasPendingWait(), true);
+    const waiting = projector.snapshot(run.id).nodes.find(node => node.sessionID === root.getProfile().sessionID)!.waiting!;
+    assert.equal(waiting.target, expected);
+    assert.doesNotMatch(waiting.target, /[{}]|summaryIncludes|after|before|sessionID/);
+    assert.equal(waiting.deadline - waiting.startedAt, 60000);
+    if (kind === 'system') {
+      for (const [kind, timestamp, summary] of [['user', 5000, '作业状态更新'], ['system', 1000, '作业状态更新'],
+        ['system', 10000, '作业状态更新'], ['system', 5000, '无关系统消息']] as const) {
+        root.recvMessage({ source: { kind }, timestamp, summary, payload: null, read: false, read_timestamp: null });
+        assert.equal(root.hasPendingWait(), true);
+      }
+      root.recvMessage({ source: { kind: 'system' }, timestamp: 5000, summary: '作业状态更新', payload: null, read: false, read_timestamp: null });
+      await native.whenIdle(); assert.equal(root.hasPendingWait(), false);
+      assert.equal(projector.snapshot(run.id).nodes.find(node => node.sessionID === root.getProfile().sessionID)!.waiting, null);
+    }
+    await f.bridge.dispose();
+  });
 });
 
 for (const timing of ['existing', 'later'] as const) {
