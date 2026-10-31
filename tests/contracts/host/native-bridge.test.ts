@@ -258,6 +258,18 @@ test('flow_wait projects readable source and summary labels through its installe
       await native.whenIdle(); assert.equal(root.hasPendingWait(), false);
       assert.equal(projector.snapshot(run.id).nodes.find(node => node.sessionID === root.getProfile().sessionID)!.waiting, null);
     }
+    if (kind === 'member' || kind === 'group') {
+      const matching = kind === 'member' ? peer : { agent: peer, g: group };
+      const otherChannel = kind === 'member' ? { agent: peer, g: group } : peer;
+      for (const from of [{ kind: 'system' } as const, otherChannel]) {
+        root.recvMessage({ source: from, timestamp: 5000, summary: '作业状态更新', payload: null, read: false, read_timestamp: null });
+        assert.equal(root.hasPendingWait(), true);
+      }
+      root.recvMessage({ source: matching, timestamp: 5000, summary: '作业状态更新', payload: null, read: false, read_timestamp: null });
+      await native.whenIdle();
+      assert.equal(root.hasPendingWait(), false);
+      assert.equal(projector.snapshot(run.id).nodes.find(node => node.sessionID === root.getProfile().sessionID)!.waiting, null);
+    }
     await f.bridge.dispose();
   });
 });
