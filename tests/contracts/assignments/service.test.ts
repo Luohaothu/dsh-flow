@@ -1,10 +1,10 @@
 import { getAgentInstanceId } from '../../../packages/dsh-flow/src/core/observation.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { Agent } from '../../../packages/dsh-flow/src/core/index.js';
+import { Agent, Group } from '../../../packages/dsh-flow/src/core/index.js';
 import { withTrustedCall } from '../../../packages/dsh-flow/src/assignments/internal.js';
 import { compileSchema } from '../../../packages/dsh-flow/src/assignments/schema.js';
-import { deferred, flush } from '../../helpers/contract-host.js';
+import { deferred, flush, message } from '../../helpers/contract-host.js';
 import { runFixture } from '../../helpers/contract-run.js';
 
 async function setup(t: TestContext, options?: Parameters<typeof runFixture>[1]) {
@@ -213,6 +213,42 @@ test('C040-02 transfer preserves old assignment edges, checks new edges and fork
   assert.equal(assignments.list(root).filter(item => item.recipientSessionID === fork.getProfile().sessionID).length, 0);
   assert.deepEqual(assignments.read(root, old), saved);
   assert.equal(assignments.list(root).filter(item => item.recipientSessionID === child.getProfile().sessionID).length, 2);
+});
+
+test('cancelling the former assignment tree after transfer preserves current work and fixed group membership', async t => {
+  const { f, run, root, context, host, assignments, top } = await setup(t);
+  const previous = await f.child(run), current = await f.child(run), worker = await f.child(run, previous);
+  const oldBranch = await assignments.prepare({ sender: root, recipient: previous, parentAssignment: top, spec: f.spec() }, 'old-branch');
+  const oldWork = await assignments.prepare({ sender: previous, recipient: worker, parentAssignment: oldBranch, spec: f.spec() }, 'old-work');
+  const later = await assignments.prepare({ sender: run, recipient: root, parentAssignment: null, spec: f.spec() }, 'later');
+  const newBranch = await assignments.prepare({ sender: root, recipient: current, parentAssignment: later, spec: f.spec() }, 'new-branch');
+  const group = new Group(context, [previous, worker]);
+  group.postToBlackboard(worker, message('original evidence'));
+  previous.transfer(worker, current);
+  const newWork = await assignments.prepare({ sender: current, recipient: worker, parentAssignment: newBranch, spec: f.spec() }, 'new-work');
+  const releases = host.releases.length;
+
+  await assignments.cancel(run, top, 'Stop the former task');
+  for (const job of [top, oldBranch, oldWork]) assert.equal(assignments.read(root, job).status, 'cancelled');
+  for (const job of [later, newBranch, newWork]) assert.equal(assignments.read(root, job).status, 'pending');
+  assert.equal(worker.getParent(), current);
+  assert.equal(context.has(worker), true);
+  assert.equal(host.releases.length, releases);
+  assert.equal(context.has(group), true);
+  group.postMessage(worker, message('evidence remains available'));
+  assert.equal(previous.getMailbox().query().filter(row => row.summary === 'evidence remains available').length, 1);
+  assert.equal(current.getMailbox().query().filter(row => row.summary === 'evidence remains available').length, 0);
+  assert.throws(() => group.postMessage(current, message('not an original group member')));
+  group.postToBlackboard(worker, message('continued evidence'));
+  assert.deepEqual(group.readBlackboard().map(row => row.summary), ['original evidence', 'continued evidence']);
+
+  assert.equal((await f.submit(run, worker, oldWork, { answer: 'too late' })).status, 'cancelled');
+  assert.equal((await f.submit(run, worker, newWork, { answer: 'current evidence' })).kind, 'accepted');
+  assert.equal((await f.submit(run, current, newBranch, { answer: 'current branch' })).kind, 'accepted');
+  assert.equal((await f.submit(run, root, later, { answer: 'current task complete' })).kind, 'accepted');
+  assert.deepEqual(assignments.read(root, newWork).result, { answer: 'current evidence' });
+  assert.equal(assignments.read(root, oldWork).result, undefined);
+  assert.equal(run.status, 'active');
 });
 
 test('C042-01 missing pending direct child reasons returns all IDs before format checking and accepted reasons persist', async t => {
