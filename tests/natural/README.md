@@ -326,3 +326,5 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 `root-command-contract.mjs` 是 Root 命令发布器与运行时共享的动作契约，包含 writer-domain 准备及显式关闭收据冻结。发布器验证身份、序号及输入来源；运行时继续按所选执行阶段限制可用动作。该纯契约及其回归不代表 SDK、UI 或业务验收通过。
 
 `root-command-entry.mjs` 提供默认 Host 发布流程与运行时接收入口。发布入口依次检查实际 Root 身份、保留输入、预留命令槽、安装原件并发布；接收入口在读取业务输入或调用 handler 前检查序号、身份及阶段权限。回归通过两个入口覆盖新增动作及拒绝路径，摘要格式也必须有效后才比较相等。
+
+`role-process-probe.mjs` 与 `role-filemeta-stage.mjs` 将文件系统/桥接采样和 SDK 进程采样分配给各自 UID。默认双角色入口保留实际执行 argv、scope、原 stdout/stderr 与 PID/出生标识，消费时重读并核验来源；只有本次已固定 joined 记录中的两个 stderr 原件允许为空，通用读取器继续拒绝空输入。权限错误及不可观测状态不会转换为通过。
