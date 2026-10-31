@@ -324,3 +324,5 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 `offline-source-admission.mjs` 是默认的五份准入来源读取阶段：从真实配置取独立身份、控制目录和五个 guest 引用，直接调用容器读取器与正式 USTAR parser，逐份保全原始字节并核对保存引用的 SHA，再把检查、copy 和保存来源交回准入入口。实际 Root 控制器使用同一阶段；配置及执行材料保存在本地。
 
 `root-command-contract.mjs` 是 Root 命令发布器与运行时共享的动作契约，包含 writer-domain 准备及显式关闭收据冻结。发布器验证身份、序号及输入来源；运行时继续按所选执行阶段限制可用动作。该纯契约及其回归不代表 SDK、UI 或业务验收通过。
+
+`root-command-entry.mjs` 提供默认 Host 发布流程与运行时接收入口。发布入口依次检查实际 Root 身份、保留输入、预留命令槽、安装原件并发布；接收入口在读取业务输入或调用 handler 前检查序号、身份及阶段权限。回归通过两个入口覆盖新增动作及拒绝路径，摘要格式也必须有效后才比较相等。

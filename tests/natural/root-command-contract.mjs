@@ -41,6 +41,8 @@ export function makeRootCommand(job, control, inputRecord) {
   assert.deepEqual(job.input.allowedModes, [0o444]);
   assert.deepEqual(job.input.forbiddenRoots, []);
   assert.deepEqual(job.input.forbiddenFiles, []);
+  assert.match(job.input.expectedSha256, /^[a-f0-9]{64}$/u);
+  assert.match(inputRecord.receipt.sha256, /^[a-f0-9]{64}$/u);
   assert.equal(inputRecord.receipt.sha256, job.input.expectedSha256);
   return {
     schema: 'root-wave02-root-command/v1',

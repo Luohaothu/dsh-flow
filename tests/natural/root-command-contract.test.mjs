@@ -100,3 +100,17 @@ test('input exclusions and SHA binding are retained', () => {
   for (const key of ['forbiddenRoots', 'forbiddenFiles']) {const f = fixture();f.job.input[key] = ['/excluded'];assert.throws(() => build(f));}
   const f = fixture();f.record.receipt.sha256 = 'c'.repeat(64);assert.throws(() => build(f));
 });
+
+test('matching absent or malformed SHA values cannot satisfy the input pin', () => {
+  for (const value of [undefined, null, '', 'a'.repeat(63), 'g'.repeat(64), 7]) {
+    const f = fixture();f.job.input.expectedSha256 = value;f.record.receipt.sha256 = value;
+    assert.throws(() => build(f));
+  }
+});
+test('both sides of the SHA equality independently require a valid digest', () => {
+  for (const key of ['input', 'receipt']) {
+    const f = fixture();if (key === 'input') f.job.input.expectedSha256 = undefined;
+    else f.record.receipt.sha256 = undefined;
+    assert.throws(() => build(f));
+  }
+});
