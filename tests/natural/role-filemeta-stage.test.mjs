@@ -20,12 +20,12 @@ test('Root0 native sampler cannot smuggle the SDK role into its own process inve
 test('later replay rejects source-byte drift or a joined FD substitution',async()=>{const f=fixture(),out=await captureRoleFilemeta(f.input,f.ports);const altered=structuredClone(out.value);altered.sdkProcessSource.fds=[];assert.throws(()=>verifyRoleFilemeta(altered,{scope:f.input.scope,mode:'pre-sdk',expected:f.input,joinedSource:out.source,readStderr:f.readStderr,readSource:f.readSource}));f.values.set(out.value.roleSources.sdkSample.file,Buffer.from('{}'));assert.throws(()=>verifyRoleFilemeta(out.value,{scope:f.input.scope,mode:'pre-sdk',expected:f.input,joinedSource:out.source,readStderr:f.readStderr,readSource:f.readSource}));});
 
 test('role provenance replays exact executor argv, fixed entries and raw stderr',async()=>{
- for(const edit of [
+ for(const [index,edit] of [
   f=>{const ref=f.out.value.roleSources.sdkInvocation,value=JSON.parse(f.values.get(ref.file));value.actualInvocation.args[5]='0:0';f.values.set(ref.file,Buffer.from(JSON.stringify(value)+'\n'));ref.expectedSha256=sha(f.values.get(ref.file));},
   f=>{const ref=f.out.value.roleSources.rootInvocation,value=JSON.parse(f.values.get(ref.file));value.actualInvocation.executable='/foreign/docker';f.values.set(ref.file,Buffer.from(JSON.stringify(value)+'\n'));ref.expectedSha256=sha(f.values.get(ref.file));},
   f=>{f.out.value.roleSources.sdkEntry='/foreign/probe.mjs';},
   f=>{f.values.set(f.out.value.roleSources.sdkStderr.file,Buffer.from('unrecorded stderr'));}
- ]){const f=fixture();f.out=await captureRoleFilemeta(f.input,f.ports);edit(f);assert.throws(()=>verifyRoleFilemeta(f.out.value,{scope:f.input.scope,mode:'pre-sdk',expected:f.input,joinedSource:f.out.source,readStderr:f.readStderr,readSource:f.readSource}));}
+ ].entries()){const f=fixture();f.out=await captureRoleFilemeta(f.input,f.ports);edit(f);if(index<2)f.out.source=f.save('repinned-joined.json',Buffer.from(JSON.stringify(f.out.value)+'\n'));assert.throws(()=>verifyRoleFilemeta(f.out.value,{scope:f.input.scope,mode:'pre-sdk',expected:f.input,joinedSource:f.out.source,readStderr:f.readStderr,readSource:f.readSource}),index===0?/Actual invocation argv differs/:index===1?/Actual invocation executable differs/:undefined);}
 });
 
 test('default filesystem stderr reader permits only the two exact empty raw logs',()=>{
@@ -42,4 +42,10 @@ test('another valid joined record cannot substitute a different stderr path with
  other.roleSources.sdkStderr=f.save('another-sdk.stderr',Buffer.alloc(0));assert.equal(other.roleSources.sdkStderr.expectedSha256,out.value.roleSources.sdkStderr.expectedSha256);
  const joinedSource=f.save('another-joined.json',Buffer.from(JSON.stringify(other)+'\n'));
  assert.throws(()=>verifyRoleFilemeta(out.value,{scope:f.input.scope,mode:'pre-sdk',expected:f.input,joinedSource,readStderr:f.readStderr,readSource:f.readSource}),/Joined record differs/);
+});
+
+test('a self-consistent probe birth cannot replace the caller-retained SDK target',async()=>{
+ for(const mode of['pre-sdk','native-peers']){const f=fixture(mode),expected=structuredClone(f.input);f.input.sdkTarget.expectedStartTimeTicks='43';f.root.sdkStartTimeTicks='43';const process=f.sdk.processes[0];process.startTimeTicks='43';process.stat=process.stat.replace('42','43');process.afterStat=process.afterStat.replace('42','43');const out=await captureRoleFilemeta(f.input,f.ports);
+ assert.throws(()=>verifyRoleFilemeta(out.value,{scope:f.input.scope,mode,expected,joinedSource:out.source,readStderr:f.readStderr,readSource:f.readSource}),/SDK probe target differs from retained target/);
+ }
 });

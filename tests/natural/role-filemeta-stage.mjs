@@ -63,7 +63,7 @@ export function readRoleStderr({joinedSource, role}, {filesystem = fs, expectedO
   return original(reference, {filesystem, expectedOwner, allowEmpty: true});
 }
 
-function invocation(actual, expected, args) {assert.ok(expected && typeof expected.executable === 'string' && path.posix.isAbsolute(expected.executable));assert.ok(Array.isArray(expected.argsPrefix) && expected.argsPrefix.every(value => typeof value === 'string'));assert.equal(actual.executable, expected.executable);assert.deepEqual(actual.args, [...expected.argsPrefix, ...args]);}
+function invocation(actual, expected, args) {assert.ok(expected && typeof expected.executable === 'string' && path.posix.isAbsolute(expected.executable));assert.ok(Array.isArray(expected.argsPrefix) && expected.argsPrefix.every(value => typeof value === 'string'));assert.equal(actual.executable, expected.executable, 'Actual invocation executable differs');assert.deepEqual(actual.args, [...expected.argsPrefix, ...args], 'Actual invocation argv differs');}
 function sdkProcess(value, target) {
   assert.equal(value.pid, 1);assert.equal(value.pid, target.pid);assert.equal(value.role, target.role);
   assert.equal(value.observedState, 'present');assert.equal(value.startTimeTicks, target.expectedStartTimeTicks);
@@ -144,7 +144,7 @@ export function verifyRoleFilemeta(value, {scope, mode, expected, joinedSource, 
   assert.equal(rootRun.code, 0);assert.equal(sdkRun.code, 0);invocation(rootRun.actualInvocation, expected.executor, rootCommand.args);invocation(sdkRun.actualInvocation, expected.executor, sdkCommand.args);
   for (const role of ['root', 'sdk']) {const source = refs[role + 'Stderr'];const result = readStderr({joinedSource, role}, {filesystem});assert.ok(Buffer.isBuffer(result.raw));assert.equal(result.receipt.path, source.file);assert.equal(digest(result.raw), source.expectedSha256);}
 
-  assert.equal(sdkScope.schema, 'root-sdk-process-probe-scope/v1');assert.equal(sdkScope.processes.length, 1);
-  const rebuilt = join(load(refs.rootSample), load(refs.sdkSample), {scope, mode, rootScope, sdkTarget: sdkScope.processes[0]});
+  assert.equal(sdkScope.schema, 'root-sdk-process-probe-scope/v1');assert.equal(sdkScope.processes.length, 1);assert.ok(expected.sdkTarget, 'Caller-retained SDK target required');assert.deepEqual(sdkScope.processes, [expected.sdkTarget], 'SDK probe target differs from retained target');
+  const rebuilt = join(load(refs.rootSample), load(refs.sdkSample), {scope, mode, rootScope, sdkTarget: expected.sdkTarget});
   const {roleSources, ...actual} = value;assert.deepEqual(actual, rebuilt);return rebuilt;
 }
