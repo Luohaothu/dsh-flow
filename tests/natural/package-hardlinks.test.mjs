@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {createRequire} from 'node:module';
-import {materializePackageHardlinks} from './package-hardlinks.mjs';
+import {materializePackageHardlinks, materializePackageHardlinksToReceipt} from './package-hardlinks.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'package-hardlinks-'));
@@ -64,4 +64,48 @@ test('a late protected-tree failure retains an incomplete receipt without claimi
 test('a second successful pass makes no further inode replacements', t => {
   const f = fixture(t), file = f.file('a', 'repeatable');fs.linkSync(file, path.join(f.directory, 'external'));assert.equal(f.run().materialized.length, 1);
   const before = metadata(file), out = f.run();assert.equal(out.complete, true);assert.equal(out.materialized.length, 0);assert.deepEqual(metadata(file), before);
+});
+
+
+test('exact high inode identities survive real replacement and receipt JSON serialization', t => {
+  const f = fixture(t), file = f.file('a', 'precise identity');fs.linkSync(file, path.join(f.directory, 'external'));
+  const realLstat = fs.lstatSync.bind(fs), realFstat = fs.fstatSync.bind(fs), oldInode = realLstat(file, {bigint: true}).ino;
+  const beforeIdentity = 9007199254740992n, afterIdentity = 9007199254740993n, device = 9007199254740995n;
+  assert.equal(Number(beforeIdentity), Number(afterIdentity));
+  function project(stat, options) {
+    const bigint = options?.bigint === true, projected = Object.create(stat);
+    const inode = stat.isFile() ? ((bigint ? stat.ino === oldInode : stat.ino === Number(oldInode)) ? beforeIdentity : afterIdentity) : (bigint ? stat.ino : BigInt(stat.ino));
+    Object.defineProperty(projected, 'dev', {value: bigint ? device : Number(device)});
+    Object.defineProperty(projected, 'ino', {value: bigint ? inode : Number(inode)});
+    for (const name of ['isFile', 'isDirectory', 'isSymbolicLink']) Object.defineProperty(projected, name, {value: stat[name].bind(stat)});
+    return projected;
+  }
+  t.mock.method(fs, 'lstatSync', (name, options) => project(realLstat(name, options), options));
+  t.mock.method(fs, 'fstatSync', (fd, options) => project(realFstat(fd, options), options));
+  const result = f.run();assert.equal(result.complete, true);const row = result.materialized[0];
+  assert.equal(row.before.ino, beforeIdentity.toString());assert.equal(row.after.ino, afterIdentity.toString());assert.equal(row.before.dev, device.toString());
+  assert.doesNotThrow(() => JSON.stringify(result));assert.equal(fs.readFileSync(file, 'utf8'), 'precise identity');
+  t.mock.restoreAll();
+  const receiptFile = path.join(f.directory, 'success.json');
+  const written = materializePackageHardlinksToReceipt({root: f.root, receiptFile, expectedOwner: f.owner});
+  assert.equal(written.complete, true);assert.equal(written.materialized.length, 0);assert.deepEqual(JSON.parse(fs.readFileSync(receiptFile)), written);
+});
+
+test('an existing receipt is refused before any package inode or hardlink mutation', t => {
+  const f = fixture(t), file = f.file('a', 'untouched');fs.linkSync(file, path.join(f.directory, 'external'));
+  const receiptFile = path.join(f.directory, 'receipt.json');fs.writeFileSync(receiptFile, 'original receipt');
+  const before = metadata(file), bytes = fs.readFileSync(file);
+  assert.throws(() => materializePackageHardlinksToReceipt({root: f.root, receiptFile, expectedOwner: f.owner}), {code: 'EEXIST'});
+  assert.deepEqual(metadata(file), before);assert.deepEqual(fs.readFileSync(file), bytes);assert.equal(fs.readFileSync(receiptFile, 'utf8'), 'original receipt');
+});
+
+test('a partial materialization failure reaches the pre-reserved receipt and preserves the original failure', t => {
+  const f = fixture(t), file = f.file('a', 'partial');fs.linkSync(file, path.join(f.directory, 'external'));
+  const bad = path.join(f.root, 'z-unprotected');fs.mkdirSync(bad);fs.chmodSync(bad, 0o777);
+  const receiptFile = path.join(f.directory, 'partial.json');let failure;
+  try {materializePackageHardlinksToReceipt({root: f.root, receiptFile, expectedOwner: f.owner});} catch (error) {failure = error;}
+  assert.ok(failure);assert.equal(failure.materializationReceipt.complete, false);assert.equal(failure.materializationReceipt.materialized.length, 1);
+  const saved = JSON.parse(fs.readFileSync(receiptFile));assert.equal(saved.complete, false);assert.equal(saved.error.name, failure.name);assert.equal(saved.error.message, failure.message);
+  assert.equal(typeof saved.materialized[0].before.ino, 'string');assert.equal(saved.materialized[0].status, 'verified');assert.equal(metadata(file).nlink, 1);
+  assert.equal(fs.statSync(receiptFile).mode & 0o777, 0o444);
 });
