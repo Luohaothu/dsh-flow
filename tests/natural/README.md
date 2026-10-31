@@ -334,3 +334,7 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 Refs #80。`guest-startup-wait.mjs` 是默认初始化等待阶段：ready 与 error 均须绑定同一九字段身份和独立保留的 pre-SDK PID、UID/GID、出生标识。阶段核对原始 JSON、解析值及来源 SHA；实际 inspect 也须与原文一致。明确错误、冲突、退出或取消在保留原件后结束等待，半写错误文件不能当作不存在并放行 ready。取消可以打断当前轮询暂停，终态后不继续读取。
 
 私有错误原件记录实际阶段、message/stack 及 loader/profile 请求和返回状态；原生错误没有 stack 时须显式为 null，缺字段或状态类型错误均不能形成完整失败证据。应用 handle 未返回时保留 recovery required、SDK 状态未知及 F6 unknown，不伪造 native ACK 或正常关闭。实际装配通过既有同 UID 私有文件读取器调用该阶段；公开回归运行 `node --test tests/natural/guest-startup-wait.test.mjs`。回归与源码接线不授予实际 SDK 初始化、UI、业务或关闭资格。
+
+`package-hardlinks.mjs` 在受保护包树中物化实际多链接普通文件：保留原字节、所有者、模式和符号链接解析路径，以独占临时文件经核验后原子替换，最终重扫单链接状态。符号链接不跟随，单链接 inode 不替换，原外部 alias 的内容不写入；失败记录保持 incomplete，已完成的局部替换不冒充回滚。实际文件系统回归运行 `node --test tests/natural/package-hardlinks.test.mjs`。镜像构建、安装元数据和 SDK 初始化继续分别验证，读取器的单链接与来源守卫不放宽。
+
+包文件的 device/inode 身份使用 BigInt 精确比较，回执将标识写成十进制字符串。CLI 在物化前独占预留回执文件，再通过同一 fd 保存最终或 incomplete 记录；已有回执会在树修改前拒绝。
