@@ -322,3 +322,5 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 `container-root-reference.mjs` 在创建状态的精确 SUT 中读取 Root 所有的控制文件。读取前后分别核对 case、namespace、容器、镜像、nonce、运行用户及隔离状态，经默认 `docker cp` 取得原始 tar，再沿用 Root 文件读回校验核对名称、0:0、0444 和 SHA。引用保留 guest 路径，原始检查和 copy 来源随结果保全，供准入链继续核验。
 
 `offline-source-admission.mjs` 是默认的五份准入来源读取阶段：从真实配置取独立身份、控制目录和五个 guest 引用，直接调用容器读取器与正式 USTAR parser，逐份保全原始字节并核对保存引用的 SHA，再把检查、copy 和保存来源交回准入入口。实际 Root 控制器使用同一阶段；配置及执行材料保存在本地。
+
+`root-command-contract.mjs` 是 Root 命令发布器与运行时共享的动作契约，包含 writer-domain 准备及显式关闭收据冻结。发布器验证身份、序号及输入来源；运行时继续按所选执行阶段限制可用动作。该纯契约及其回归不代表 SDK、UI 或业务验收通过。
