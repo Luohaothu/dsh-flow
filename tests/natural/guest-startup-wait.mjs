@@ -19,7 +19,14 @@ function captured(record,scope,kind,expected){
  for(const key of keys)assert.equal(value[key],scope[key],'Startup record '+key+' differs');
  assert.equal(value.schema,kind==='ready'?'root-wave02-assembly-setup/v1':'root-wave02-assembly-runtime-error/v2');
  runtimeIdentity(value,expected);
- if(kind==='error'){assert.ok(stages.includes(value.failureStage),'Unknown startup failure stage');assert.equal(value.recoveryRequired,true);assert.equal(value.applicationClosed,false);assert.equal(value.F6,'unknown');}
+ if(kind==='error'){
+  for(const key of['name','message'])assert.equal(typeof value[key],'string','Missing startup error '+key);
+  assert.ok(Object.hasOwn(value,'stack')&&(typeof value.stack==='string'||value.stack===null),'Missing startup error stack');
+  assert.ok(value.startup&&typeof value.startup==='object'&&!Array.isArray(value.startup),'Missing startup state');
+  for(const key of['sdkLoadRequested','sdkLoadReturned','runProfileRequested','runProfileReturned','applicationHandleReturned'])assert.equal(typeof value.startup[key],'boolean','Invalid startup state '+key);
+  assert.ok(['unknown','loader-returned'].includes(value.startup.SDKImportState),'Unknown SDK import state');
+  assert.ok(stages.includes(value.failureStage),'Unknown startup failure stage');assert.equal(value.recoveryRequired,true);assert.equal(value.applicationClosed,false);assert.equal(value.F6,'unknown');
+ }
  return{...clone(record),raw,value,source:pinned(record.source,raw)};
 }
 function abortError(){return Object.assign(Error('Startup polling aborted'),{code:'STARTUP_POLL_ABORTED'});}

@@ -333,4 +333,4 @@ Refs #63。`root-authority-layout.mjs` 分别绑定实际 Root 身份、已安�
 
 Refs #80。`guest-startup-wait.mjs` 是默认初始化等待阶段：ready 与 error 均须绑定同一九字段身份和独立保留的 pre-SDK PID、UID/GID、出生标识。阶段核对原始 JSON、解析值及来源 SHA；实际 inspect 也须与原文一致。明确错误、冲突、退出或取消在保留原件后结束等待，半写错误文件不能当作不存在并放行 ready。取消可以打断当前轮询暂停，终态后不继续读取。
 
-私有错误原件记录实际阶段、message/stack 及 loader/profile 请求和返回状态。应用 handle 未返回时保留 recovery required、SDK 状态未知及 F6 unknown，不伪造 native ACK 或正常关闭。实际装配通过既有同 UID 私有文件读取器调用该阶段；公开回归运行 `node --test tests/natural/guest-startup-wait.test.mjs`。回归与源码接线不授予实际 SDK 初始化、UI、业务或关闭资格。
+私有错误原件记录实际阶段、message/stack 及 loader/profile 请求和返回状态；原生错误没有 stack 时须显式为 null，缺字段或状态类型错误均不能形成完整失败证据。应用 handle 未返回时保留 recovery required、SDK 状态未知及 F6 unknown，不伪造 native ACK 或正常关闭。实际装配通过既有同 UID 私有文件读取器调用该阶段；公开回归运行 `node --test tests/natural/guest-startup-wait.test.mjs`。回归与源码接线不授予实际 SDK 初始化、UI、业务或关闭资格。
