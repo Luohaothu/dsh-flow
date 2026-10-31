@@ -109,3 +109,12 @@ test('independent exit batches retain their own timing and an old timer cannot r
   assert.equal(await firstGhost.count(), 0);
   assert.deepEqual(errors, []);
 });
+
+test('a readable wait target retains its remaining seconds and accessible tooltip', { timeout: 15_000 }, async t => {
+  const target = '等待系统消息 · 摘要包含“作业状态更新”';
+  const { page, errors } = await harness(t, `card('root',null,{name:'根',waiting:{target:${JSON.stringify(target)},startedAt:1000,deadline:43000}})`);
+  const waiting = page.locator('.flow-wait');
+  assert.equal(await waiting.innerText(), `${target} · 42s`);
+  assert.equal(await waiting.getAttribute('title'), `等待目标：${target}`);
+  assert.deepEqual(errors, []);
+});

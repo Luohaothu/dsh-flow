@@ -78,12 +78,16 @@ export function installFlowTools(host: DshContext, context: Context, caller: Age
   function query(value: unknown): MailboxQuery {
     const spec = (value ?? {}) as Record<string, unknown>;
     const from = spec.source ? source(spec.source) : undefined;
+    const target = from instanceof Agent ? `${from.getProfile().name}的消息`
+      : from && 'agent' in from ? `${from.agent.getProfile().name}在群 ${from.g.getID()} 的消息`
+      : from?.kind === 'system' ? '系统消息' : from?.kind === 'user' ? '用户消息' : '消息';
+    const description = `等待${target}${spec.summaryIncludes ? ` · 摘要包含“${spec.summaryIncludes}”` : ''}`;
     return describeWait(message => (!from || sameSource(message.source, from))
       && (spec.after === undefined || message.timestamp > (spec.after as number))
       && (spec.before === undefined || message.timestamp < (spec.before as number))
       && (spec.read === undefined || message.read === spec.read)
       && (spec.priority === undefined || message.priority === spec.priority)
-      && (spec.summaryIncludes === undefined || message.summary.includes(spec.summaryIncludes as string)), JSON.stringify(spec));
+      && (spec.summaryIncludes === undefined || message.summary.includes(spec.summaryIncludes as string)), description);
   }
   const outgoing = (args: Record<string, unknown>): Message => ({ source: caller, timestamp: Date.now(), read: false,
     read_timestamp: null, summary: args.summary as string, payload: args.payload });
