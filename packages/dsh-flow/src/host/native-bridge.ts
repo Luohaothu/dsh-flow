@@ -181,7 +181,16 @@ export class DshNativeBridge {
   }
   async onTopLevelOutcome(origin: HostOrigin, run: Run, assignment: AssignmentSnapshot): Promise<void> {
     const main = await this.originatingMain(origin);
-    main.followup(createUserMessage({ source: { kind: 'flow-outcome', runId: run.id, assignmentId: assignment.id }, content: [{ type: 'text', text: JSON.stringify({ runId: run.id, assignmentId: assignment.id, status: assignment.status, query: 'flow_team_assignment_read' }) }] }));
+    main.followup(createUserMessage({
+      source: { kind: 'flow-outcome', runId: run.id, assignmentId: assignment.id },
+      content: [{ type: 'text', text: JSON.stringify({
+        runId: run.id,
+        assignmentId: assignment.id,
+        status: assignment.status,
+        query: 'flow_team_assignment_read',
+        instruction: '读取保存的作业状态与结果，并在原会话中向用户汇报。',
+      }) }],
+    }));
   }
   async onTopLevelExecutionFault(origin: HostOrigin, run: Run, fault: AssignmentExecutionFault): Promise<void> {
     const owner = this.runOrigins.get(run);

@@ -66,6 +66,72 @@ test('P4 actual command injects skill and task without creating any Run; Flow me
   assert.equal(f.native(member).ctx.tools.get('flow_team_release', f.native(member)), undefined);
 });
 
+test('a submitted top-level assignment wakes the originating session to read and report the saved result', async t => {
+  const f = await pluginRuntime(t);
+  const { agent: main } = await f.host.agents.create({ sessionId: SessionId(randomUUID()),
+    agentOptions: { provider: 'fixture', model: 'model' }, meta: { cwd: f.directory } });
+  main.followup(request('Report the result when the team finishes.'));
+  await main.whenIdle();
+  assert.equal(main.status, 'idle');
+
+  const origin = f.plugin.bridge.createOrigin(main);
+  const run = f.plugin.runs.create(origin, {}, 'report-run');
+  f.plugin.bridge.rememberRun(run, origin);
+  await until(() => run.status !== 'starting');
+  assert.equal(run.status, 'active');
+  assert.ok(run.root && run.assignments);
+  const rootSessionId = run.root.getProfile().sessionID;
+  const assignments = run.assignments;
+  let submitted = false;
+  f.model.script = options => {
+    if (String(options.sessionId) === rootSessionId && !submitted) {
+      const [current] = assignments.list(run, { status: 'pending' });
+      assert.ok(current);
+      submitted = true;
+      return { tool: 'flow_submit', args: { assignmentId: current.id, result: 'verified result', continuingChildren: [] } };
+    }
+    if (options.sessionId !== main.session.id) return 'DONE';
+    const read = options.messages.findLast(message => message.role === 'tool');
+    if (read?.role === 'tool') {
+      const text = read.content.find(block => block.type === 'text');
+      assert.ok(text?.type === 'text' && !read.isError);
+      return `Team report: ${JSON.parse(text.text).result}`;
+    }
+    const notice = options.messages.find(message => message.role === 'user' && message.source?.kind === 'flow-outcome');
+    const text = notice?.content.find(block => block.type === 'text');
+    assert.ok(text?.type === 'text');
+    const { runId, assignmentId, query } = JSON.parse(text.text);
+    return { tool: query, args: { runId, assignmentId } };
+  };
+
+  try {
+    const assignment = await f.plugin.runs.assign(origin, run, { name: 'report', type: 'test', background: '',
+      requirements: 'Return a verified result.', acceptanceCriteria: 'The result is a string.', resultSchema: { type: 'string' } }, 'report-assignment');
+    await until(() => main.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source.kind === 'flow-outcome'),
+      'the originating session consumed the outcome without another user request');
+    await main.whenIdle();
+
+    const events = main.session.snapshotEvents();
+    assert.equal(events.filter(event => event.type === 'turn/start').length, 2);
+    assert.equal(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'user').length, 1);
+    const notice = events.find(event => event.type === 'user/message' && event.data.source.kind === 'flow-outcome');
+    assert.ok(notice?.type === 'user/message');
+    const query = events.find(event => event.type === 'tool/call' && event.data.name === 'flow_team_assignment_read');
+    assert.ok(query?.type === 'tool/call' && query.seq > notice.seq);
+    const read = events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === query.data.callId);
+    assert.ok(read?.type === 'tool/result' && !read.data.message.isError);
+    const reply = events.find(event => event.type === 'assistant/message' && event.seq > read.seq
+      && event.data.message.content.some(block => block.type === 'text' && block.text === 'Team report: verified result'));
+    assert.ok(reply, 'the originating session reported the actual result returned by the read tool');
+    const text = notice.data.content.find(block => block.type === 'text');
+    assert.ok(text?.type === 'text');
+    assert.deepEqual(JSON.parse(text.text), { runId: run.id, assignmentId: assignment.id, status: 'submitted',
+      query: 'flow_team_assignment_read', instruction: '读取保存的作业状态与结果，并在原会话中向用户汇报。' });
+  } finally {
+    await f.plugin.dispose();
+  }
+});
+
 test('P4 ordinary existing, later-created and resumed sessions get local tools; unload cleans live sessions', async t => {
   const f = await runtime(t);
   await enablePluginHost(f.host, f.directory);
