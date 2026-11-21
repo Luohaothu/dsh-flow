@@ -8,6 +8,7 @@ import type { MessageSource, Usage } from '../core/types.js';
 import { runServiceControl, type RunReadView } from '../run/internal.js';
 import type { RunService } from '../run/run.js';
 import { EventJournal } from './events.js';
+import type { PricingCatalog } from './pricing.js';
 import { PROTOCOL_VERSION, type AgentCard, type GroupView, type MessageSourceView, type OperationView, type PriceTable, type RegistryEvent, type RegistrySnapshot, type RunEvent, type RunInfo, type RunSnapshot, type UsageView } from './protocol.js';
 
 type Projection = { navigation: Map<string, string>; view: RunReadView; info: RunInfo; nodes: Map<string, AgentCard>; agents: Map<string, Agent>; groups: Map<string, GroupView>; operations: Map<string, OperationView>; journal: EventJournal<RunEvent>; unsubscribe: () => void; assignments: Map<string, RunReadView['assignments'][number]> };
@@ -17,15 +18,17 @@ export class DashboardProjector {
   private readonly journal: EventJournal<RegistryEvent>;
   private readonly unsubscribe: () => void;
   private readonly prices: PriceTable;
+  private readonly pricing: Pick<PricingCatalog, 'refresh' | 'estimate'> | undefined;
   private readonly unkeyedUsageIds = new WeakMap<Usage, string>();
   private readonly directory: string;
   private disposed = false;
   private readonly epoch: string;
   private readonly resetDisposers: (() => void)[] = [];
   private readonly resetListeners = new Set<(runId?: string) => void>();
-  constructor(service: RunService, options: { directory: string; prices?: PriceTable }) {
+  constructor(service: RunService, options: { directory: string; prices?: PriceTable; pricing?: Pick<PricingCatalog, 'refresh' | 'estimate'> }) {
     this.epoch = service.epoch;
     this.directory = options.directory; this.prices = copy(options.prices ?? []);
+    this.pricing = options.pricing;
     this.journal = new EventJournal({ directory: options.directory, name: 'registry', epoch: service.epoch });
     this.resetDisposers.push(this.journal.observeReset(() => { for (const listener of this.resetListeners) listener(); }));
     this.unsubscribe = service[runServiceControl].observe(view => this.update(view));
@@ -42,10 +45,21 @@ export class DashboardProjector {
     this.assertOpen(); const p = this.require(runId);
     const snapshot: RunSnapshot = copy({ version: PROTOCOL_VERSION, seq: p.journal.seq, run: p.info, nodes: [...p.nodes.values()], groups: [...p.groups.values()], assignments: [...p.assignments.values()], prices: this.prices, operations: [...p.operations.values()] });
     this.rebaseline(p.journal, snapshot);
-    return { ...snapshot, seq: p.journal.seq, ...(p.journal.degraded ? { degraded: true } : {}) };
+    return { ...snapshot, nodes: snapshot.nodes.map(node => this.withEstimates(node)), seq: p.journal.seq, ...(p.journal.degraded ? { degraded: true } : {}) };
+  }
+  async refreshPricing(runId: string): Promise<void> {
+    this.assertOpen();
+    this.require(runId);
+    await this.pricing?.refresh();
   }
   subscribeRegistry(after: number, epoch: string, listener: (event: RegistryEvent) => void): () => void { this.assertOpen(); return this.journal.subscribe(after, epoch, event => listener(copy(event))); }
-  subscribeRun(runId: string, after: number, epoch: string, listener: (event: RunEvent) => void): () => void { this.assertOpen(); return this.require(runId).journal.subscribe(after, epoch, event => listener(copy(event))); }
+  subscribeRun(runId: string, after: number, epoch: string, listener: (event: RunEvent) => void): () => void {
+    this.assertOpen();
+    return this.require(runId).journal.subscribe(after, epoch, event => {
+      const view = copy(event);
+      listener('node' in view ? { ...view, node: this.withEstimates(view.node) } : view);
+    });
+  }
   operation(runId: string, operation: OperationView): void { const p = this.require(runId); p.operations.set(operation.id, copy(operation)); this.publish(p, { type: 'operation-result', operation: copy(operation) }); }
   observeReset(listener: (runId?: string) => void): () => void { this.resetListeners.add(listener); return () => { this.resetListeners.delete(listener); }; }
   lookupAgent(runId: string, instanceId: string): Agent { const agent = this.require(runId).agents.get(instanceId); if (!agent) throw new Error('Unknown Agent instance'); return agent; }
@@ -171,7 +185,7 @@ export class DashboardProjector {
     this.node(p, node, kind);
   }
   private usage(usage: Usage): UsageView {
-    const price = this.prices.find(item => item.model.provider === usage.model.provider && item.model.id === usage.model.id);
+    const price = this.configuredPrice(usage.model);
     let amount: number | null = null;
     if (price && usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
       const cached = usage.cacheReadTokens ?? 0; const written = usage.cacheWriteTokens ?? 0;
@@ -180,6 +194,15 @@ export class DashboardProjector {
     let callId = usage.callId ?? this.unkeyedUsageIds.get(usage);
     if (!callId) { callId = `unkeyed:${randomUUID()}`; this.unkeyedUsageIds.set(usage, callId); }
     return { ...copy(usage), callId, amount, currency: amount === null ? null : price!.currency };
+  }
+  private configuredPrice(model: Usage['model']): PriceTable[number] | undefined {
+    return this.prices.find(item => item.model.provider === model.provider && item.model.id === model.id);
+  }
+  private withEstimates(node: AgentCard): AgentCard {
+    const pricing = this.pricing;
+    if (!pricing || node.usage.length === 0) return node;
+    const usage = node.usage.map(call => this.configuredPrice(call.model) ? call : { ...call, ...pricing.estimate(call) });
+    return { ...node, usage };
   }
   private marker(node: AgentCard, id: string, kind: string, timestamp: number, message: string): void { if (!node.markers.some(marker => marker.id === id)) node.markers.push({ id, kind, timestamp, message }); }
   private node(p: Projection, node: AgentCard, type: Extract<RunEvent, { node: AgentCard }>['type'] = 'node-changed'): void {

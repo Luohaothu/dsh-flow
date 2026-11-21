@@ -190,6 +190,7 @@ export function normalizeUsage(usage: TokenUsage, model: { provider: string; id:
   return { timestamp, model: { ...model }, inputTokens: usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
     outputTokens: usage.outputTokens, ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
     ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+    ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
     ...(usage.totalTokens === undefined ? {} : { totalTokens: usage.totalTokens }) };
 }
 function parseHistory(text: string): History {
@@ -455,7 +456,8 @@ export class DshHostAdaptor implements HostAdaptor {
   private sameUsage(a: Usage, b: Usage): boolean {
     return a.model.provider === b.model.provider && a.model.id === b.model.id
       && a.inputTokens === b.inputTokens && a.outputTokens === b.outputTokens && a.totalTokens === b.totalTokens
-      && a.cacheReadTokens === b.cacheReadTokens && a.cacheWriteTokens === b.cacheWriteTokens;
+      && a.cacheReadTokens === b.cacheReadTokens && a.cacheWriteTokens === b.cacheWriteTokens
+      && a.reasoningTokens === b.reasoningTokens;
   }
   private observeStream(owned: OwnedAgent, frame: AssistantStreamFrame): void {
     if (frame.type === 'start') {

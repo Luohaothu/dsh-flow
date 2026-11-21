@@ -10,6 +10,7 @@ import { RunService } from './run/run.js';
 import { RunStore } from './run/store.js';
 import type { RunServiceDependencies } from './run/types.js';
 import { loadAgentTeamSource } from './skills.js';
+import { PricingCatalog } from './dashboard/pricing.js';
 import { DashboardProjector } from './dashboard/projector.js';
 import { DashboardServer } from './dashboard/server.js';
 import { NativeHistory } from './native/history.js';
@@ -65,6 +66,7 @@ export class FlowPlugin {
     const runtime = new FlowPlugin(host, configuration, agentTeamSkill);
     try {
       runtime.projection = new DashboardProjector(runtime.runs, { directory: join(configuration.stateDirectory, 'events'),
+        pricing: new PricingCatalog(),
         ...(configuration.connection.prices === undefined ? {} : { prices: configuration.connection.prices }) });
       runtime.dashboard = await DashboardServer.create({ projector: runtime.projector, service: runtime.runs,
         ...configuration.connection,

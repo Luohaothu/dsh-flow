@@ -55,6 +55,7 @@ export interface Usage {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  reasoningTokens?: number;
   totalTokens?: number;
 }
 export interface ContextSummary { summary: string; usage: Usage[] }

@@ -94,8 +94,18 @@ export class DashboardServer {
         try { id = decodeURIComponent(runMatch[1]!); } catch { throw new HttpError(400, 'invalid-request', 'Invalid Run ID'); }
         if (!id || id.includes('/')) throw new HttpError(400, 'invalid-request', 'Invalid Run ID');
         const action = runMatch[2];
-        if (!action && request.method === 'GET') { this.json(response, 200, this.options.projector.snapshot(id)); return; }
-        if (action === 'events' && request.method === 'GET') { const after = this.cursor(url); this.sse(request, response, after, listener => this.options.projector.subscribeRun(id, after, this.epoch(url), listener), id); return; }
+        if (!action && request.method === 'GET') {
+          await this.options.projector.refreshPricing(id);
+          if (!response.destroyed) this.json(response, 200, this.options.projector.snapshot(id));
+          return;
+        }
+        if (action === 'events' && request.method === 'GET') {
+          const after = this.cursor(url);
+          const epoch = this.epoch(url);
+          await this.options.projector.refreshPricing(id);
+          if (!response.destroyed) this.sse(request, response, after, listener => this.options.projector.subscribeRun(id, after, epoch, listener), id);
+          return;
+        }
         if (action === 'stop' && request.method === 'POST') {
           if (!origin) throw new HttpError(403, 'forbidden-origin', 'Origin is required for stop');
           if (header(request, 'content-type')?.split(';')[0]?.trim() !== 'application/json') throw new HttpError(415, 'invalid-request', 'Expected application/json');
