@@ -21,6 +21,7 @@ export class DashboardServer {
   private readonly streams = new Set<ServerResponse>();
   private readonly streamRuns = new Map<ServerResponse, string | undefined>();
   private readonly unsubscribeReset: () => void;
+  private readonly lifetime = new AbortController();
   private host = '';
   private closing = false;
   private disposal?: Promise<void>;
@@ -54,6 +55,7 @@ export class DashboardServer {
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.closing = true;
+    this.lifetime.abort();
     this.unsubscribeReset();
     this.disposal = new Promise<void>((yes, no) => { this.server.close(error => error ? no(error) : yes()); this.server.closeIdleConnections(); });
     for (const response of this.streams) response.destroy();
@@ -95,14 +97,14 @@ export class DashboardServer {
         if (!id || id.includes('/')) throw new HttpError(400, 'invalid-request', 'Invalid Run ID');
         const action = runMatch[2];
         if (!action && request.method === 'GET') {
-          await this.options.projector.refreshPricing(id);
+          await this.options.projector.refreshPricing(id, this.lifetime.signal);
           if (!response.destroyed) this.json(response, 200, this.options.projector.snapshot(id));
           return;
         }
         if (action === 'events' && request.method === 'GET') {
           const after = this.cursor(url);
           const epoch = this.epoch(url);
-          await this.options.projector.refreshPricing(id);
+          await this.options.projector.refreshPricing(id, this.lifetime.signal);
           if (!response.destroyed) this.sse(request, response, after, listener => this.options.projector.subscribeRun(id, after, epoch, listener), id);
           return;
         }
@@ -142,7 +144,12 @@ export class DashboardServer {
     response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no',
       'X-Flow-Replay-Through': String(replayThrough), 'Access-Control-Expose-Headers': 'X-Flow-Replay-Through' });
     this.streams.add(response); this.streamRuns.set(response, runId); ready = true; send(': connected\n\n'); for (const payload of pending) send(payload); pending = [];
-    const timer = setInterval(() => send(': heartbeat\n\n'), 15_000); timer.unref();
+    const timer = setInterval(() => {
+      send(': heartbeat\n\n');
+      if (runId !== undefined && !response.destroyed && !this.closing) {
+        void this.options.projector.refreshPricing(runId, this.lifetime.signal).catch(error => this.fail(response, error));
+      }
+    }, 15_000); timer.unref();
     response.on('close', () => { closed = true; clearInterval(timer); unsubscribe(); this.streams.delete(response); this.streamRuns.delete(response); });
     request.on('aborted', () => response.destroy());
   }

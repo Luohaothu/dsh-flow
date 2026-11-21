@@ -110,17 +110,21 @@ function parseExchangeRate(value: unknown): number | undefined {
 
 function refreshable<T>(load: () => Promise<T | undefined>) {
   let value: T | undefined;
+  let revision = 0;
   let refreshAfter = 0;
-  let inFlight: Promise<void> | undefined;
+  let inFlight: Promise<number> | undefined;
   return {
     get value() { return value; },
-    refresh(): Promise<void> {
-      if (Date.now() < refreshAfter) return Promise.resolve();
-      const pending = inFlight ??= load().catch(() => undefined).then(next => {
-        if (next !== undefined) value = next;
+    refresh(): Promise<number> {
+      if (Date.now() < refreshAfter) return Promise.resolve(revision);
+      return inFlight ??= load().catch(() => undefined).then(next => {
+        if (next !== undefined && next !== value) {
+          value = next;
+          revision++;
+        }
         refreshAfter = Date.now() + (next === undefined ? RETRY_INTERVAL : REFRESH_INTERVAL);
+        return revision;
       }).finally(() => { inFlight = undefined; });
-      return value === undefined ? pending : Promise.resolve();
     },
   };
 }
@@ -138,8 +142,9 @@ export class PricingCatalog {
     this.exchange = refreshable(async () => parseExchangeRate(await get(EXCHANGE_URL)));
   }
 
-  async refresh(): Promise<void> {
-    await Promise.all([this.models.refresh(), this.exchange.refresh()]);
+  async refresh(): Promise<number> {
+    const [models, exchange] = await Promise.all([this.models.refresh(), this.exchange.refresh()]);
+    return models + exchange;
   }
 
   estimate(usage: Usage): Estimate {

@@ -5,11 +5,12 @@ import { mkdir, writeFile, symlink, rename, rm } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { consumeSse } from '../../../packages/dsh-flow/src/dashboard/client.js';
 import { decodeRunEvent, decodeSnapshot } from '../../../packages/dsh-flow/src/dashboard/decoder.js';
 import { PricingCatalog } from '../../../packages/dsh-flow/src/dashboard/pricing.js';
 import { DashboardServer } from '../../../packages/dsh-flow/src/dashboard/server.js';
 import { DashboardProjector } from '../../../packages/dsh-flow/src/dashboard/projector.js';
-import type { TokenResponse, RunSnapshot } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
+import type { TokenResponse, RunSnapshot, RunEvent } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
 import { runFixture, waitFor } from '../../helpers/contract-run.js';
 
 async function raw(base: string, path: string, headers: Record<string, string> = {}, localAddress?: string): Promise<number> {
@@ -140,6 +141,57 @@ test('authenticated snapshots and event streams estimate observed calls without 
     assert.equal(requested.length, 2);
   } finally {
     abort.abort();
+  }
+});
+
+test('an idle Run stream refreshes unavailable prices and streams the settled estimate without reopening', async t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+  let reachable = false;
+  let requests = 0;
+  const pricing = new PricingCatalog(async input => {
+    requests++;
+    if (!reachable) return new Response(null, { status: 503 });
+    return input === 'https://models.dev/api.json'
+      ? Response.json({ deepseek: { models: { 'deepseek-flash': { cost: { input: 2, output: 4 } } } } })
+      : Response.json({ base: 'USD', quote: 'CNY', rate: 8 });
+  });
+  const f = await setup(t, { tokenLifetimeMs: 300_000 }, { pricing });
+  const run = await f.createActive();
+  const { host, root } = f.binding(run);
+  const timestamp = Date.now();
+  host.emit({ type: 'usage', agent: host.native(root), timestamp, usage: {
+    timestamp, callId: 'finished-call', model: { provider: 'deepseek-official', id: 'deepseek-flash' },
+    inputTokens: 1_000_000, outputTokens: 500_000,
+  } });
+  const url = `${f.server.address}/api/runs/${run.id}`;
+  const snapshot = decodeSnapshot(await fetch(url, { headers: f.auth }).then(response => response.json()), run.id);
+  assert.equal(snapshot.nodes[0]!.usage[0]!.amount, null);
+  assert.equal(requests, 2);
+
+  const connection = new AbortController();
+  const signal = AbortSignal.any([connection.signal, AbortSignal.timeout(3_000)]);
+  try {
+    const stream = await fetch(`${url}/events?after=${snapshot.seq}&epoch=${snapshot.run.epoch}`, { headers: f.auth, signal });
+    assert.equal(stream.status, 200);
+    reachable = true;
+    t.mock.timers.tick(60_000);
+
+    const updates: Array<Extract<RunEvent, { node: unknown }>> = [];
+    await consumeSse(stream, signal, raw => {
+      const event = decodeRunEvent(raw);
+      if (event.type !== 'node-usage') return;
+      updates.push(event);
+      connection.abort();
+    }).catch(error => { if (!updates.length) throw error; });
+    assert.equal(updates[0]?.seq, snapshot.seq + 1);
+    assert.deepEqual(updates[0]?.node.usage.map(call => [call.callId, call.amount, call.currency]), [['finished-call', 32, 'CNY']]);
+
+    const settled = decodeSnapshot(await fetch(url, { headers: f.auth }).then(response => response.json()), run.id);
+    assert.equal(settled.seq, updates[0]?.seq);
+    assert.deepEqual(settled.nodes[0]?.usage, updates[0]?.node.usage);
+    assert.equal(requests, 4);
+  } finally {
+    connection.abort();
   }
 });
 
