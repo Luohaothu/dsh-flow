@@ -159,8 +159,11 @@ export class PricingCatalog {
     const fresh = inputTokens - cacheReadTokens - cacheWriteTokens;
     if (fresh < 0) return { amount: null, currency: null };
     const rates = price.tiers.find(tier => inputTokens > tier.aboveInputTokens) ?? price.rates;
-    const usd = (fresh * rates.input + cacheReadTokens * (rates.cacheRead ?? rates.input)
-      + cacheWriteTokens * (rates.cacheWrite ?? rates.input) + (outputTokens - reasoningTokens) * rates.output
+    if ((cacheReadTokens > 0 && rates.cacheRead === undefined) || (cacheWriteTokens > 0 && rates.cacheWrite === undefined)) {
+      return { amount: null, currency: null };
+    }
+    const usd = (fresh * rates.input + cacheReadTokens * (rates.cacheRead ?? 0)
+      + cacheWriteTokens * (rates.cacheWrite ?? 0) + (outputTokens - reasoningTokens) * rates.output
       + reasoningTokens * (rates.reasoning ?? rates.output)) / 1_000_000;
     const exchange = this.exchange.value;
     if (price.currency === 'CNY' && usd > 0 && exchange === undefined) return { amount: null, currency: null };

@@ -58,6 +58,21 @@ test('long-context price tiers charge uncached input, cache reads and writes, ou
   assert.deepEqual(pricing.estimate(usage('openai', 'chat', { reasoningTokens: 1_000_001 })), unavailable);
 });
 
+test('a used cache rate must be present in the selected tariff, and explicit zero is valid', async () => {
+  const pricing = catalog({ openai: { models: { chat: { cost: {
+    input: 1, output: 2, cache_write: 0.5,
+    tiers: [{ tier: { type: 'context', size: 1_000_000 }, input: 3, output: 4, cache_read: 0 }],
+  } } } } });
+
+  await pricing.refresh();
+  assert.deepEqual(pricing.estimate(usage('openai', 'chat', { cacheReadTokens: 1_000_000 })), unavailable);
+  assert.deepEqual(pricing.estimate(usage('openai', 'chat', { inputTokens: 2_000_000, cacheWriteTokens: 250_000 })), unavailable);
+  assert.deepEqual(pricing.estimate(usage('openai', 'chat', {
+    inputTokens: 2_000_000, outputTokens: 0, cacheReadTokens: 2_000_000,
+  })), { amount: 0, currency: 'USD' });
+  assert.deepEqual(pricing.estimate(usage('openai', 'chat')), { amount: 3, currency: 'USD' });
+});
+
 test('unavailable exchange leaves dollar and zero-priced yuan calls usable', async () => {
   const pricing = catalog({
     deepseek: { models: {
