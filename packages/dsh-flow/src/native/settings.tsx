@@ -96,7 +96,7 @@ const fields: readonly Field[] = [
   { path: 'connection.port', label: '服务端口', kind: 'number', group: 3, effect: 'restart' },
   { path: 'stateDirectory', label: '状态目录', group: 3, effect: 'restart' }, { path: 'connection.staticDirectory', label: '静态目录', group: 3, effect: 'restart' },
   { path: 'connection.allowedOrigins', label: '允许来源（每行一项）', kind: 'lines', group: 3, effect: 'restart' },
-  { path: 'connection.prices', label: '价格表', kind: 'json', group: 3, effect: 'restart' },
+  { path: 'connection.prices', label: '模型价格覆盖', kind: 'json', group: 3, effect: 'restart' },
 ];
 function display(value: unknown, field: Field): string { return value === undefined ? '' : field.kind === 'lines' && Array.isArray(value) ? value.join('\n') : field.kind === 'json' ? JSON.stringify(value, null, 2) : String(value); }
 function SettingsField({ field, state, editor, texts }: { field: Field; state: DraftState; editor: SettingsDraft; texts: Map<string, string> }) {

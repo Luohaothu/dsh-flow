@@ -14,6 +14,7 @@ test('real rc.2 SDK cumulative stream samples and durable-before-end settlement 
     yield { type: 'text-delta', index: 0, text: 'DONE' };
     yield { type: 'usage', usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } };
     yield { type: 'usage', usage: { inputTokens: 3, outputTokens: 7, totalTokens: 10 } };
+    yield { type: 'usage', usage: { inputTokens: 3, outputTokens: 7, reasoningTokens: 2, totalTokens: 10 } };
     yield { type: 'block-end', index: 0, block: { type: 'text', text: 'DONE' } };
     yield { type: 'finish', reason: { kind: 'stop' } };
   });
@@ -21,12 +22,13 @@ test('real rc.2 SDK cumulative stream samples and durable-before-end settlement 
   native.ctx.on('session/event', (_session, event) => { if (event.type === 'assistant/message') order.push('durable'); });
   native.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'end') order.push('end'); });
   await f.adaptor.send(f.hostAgent(agent), input('RUN')); await native.whenIdle();
-  assert.deepEqual(order, ['durable', 'end']); assert.equal(usage.length, 2);
-  assert.equal(usage[0]!.callId, usage[1]!.callId); assert.equal(usage[0]!.kind, 'main');
-  assert.deepEqual(usage.map(item => item.outputTokens), [1, 7]);
-  assert.deepEqual(usage[1]!.model, { provider: 'fixture', id: 'model' });
+  assert.deepEqual(order, ['durable', 'end']); assert.equal(usage.length, 3);
+  assert.ok(usage.every(item => item.callId === usage[0]!.callId && item.kind === 'main'));
+  assert.deepEqual(usage.map(item => item.outputTokens), [1, 7, 7]);
+  assert.deepEqual(usage.map(item => item.reasoningTokens), [undefined, undefined, 2]);
+  assert.deepEqual(usage[2]!.model, { provider: 'fixture', id: 'model' });
   await f.adaptor.send(f.hostAgent(agent), input('AGAIN')); await native.whenIdle();
-  assert.notEqual(usage[1]!.callId, usage[2]!.callId);
+  assert.notEqual(usage[2]!.callId, usage[3]!.callId);
 });
 
 test('SDK missing usage emits none; failed provider attempt retains exactly one stable usage call', async t => {

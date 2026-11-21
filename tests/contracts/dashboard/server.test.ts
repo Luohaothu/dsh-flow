@@ -5,16 +5,20 @@ import { mkdir, writeFile, symlink, rename, rm } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { consumeSse } from '../../../packages/dsh-flow/src/dashboard/client.js';
+import { decodeRunEvent, decodeSnapshot } from '../../../packages/dsh-flow/src/dashboard/decoder.js';
+import { PricingCatalog } from '../../../packages/dsh-flow/src/dashboard/pricing.js';
 import { DashboardServer } from '../../../packages/dsh-flow/src/dashboard/server.js';
 import { DashboardProjector } from '../../../packages/dsh-flow/src/dashboard/projector.js';
-import type { TokenResponse, RunSnapshot } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
+import type { TokenResponse, RunSnapshot, RunEvent } from '../../../packages/dsh-flow/src/dashboard/protocol.js';
 import { runFixture, waitFor } from '../../helpers/contract-run.js';
 
 async function raw(base: string, path: string, headers: Record<string, string> = {}, localAddress?: string): Promise<number> {
   return new Promise((yes, no) => { const request = httpRequest({ hostname: new URL(base).hostname, port: new URL(base).port, path, headers, ...(localAddress ? { localAddress } : {}) }, response => { response.resume(); response.on('end', () => yes(response.statusCode!)); }); request.on('error', no); request.end(); });
 }
-async function setup(t: Parameters<typeof runFixture>[0], options: Partial<Parameters<typeof DashboardServer.create>[0]> = {}) {
-  const f = await runFixture(t); const projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events') });
+async function setup(t: Parameters<typeof runFixture>[0], options: Partial<Parameters<typeof DashboardServer.create>[0]> = {},
+  projection: Omit<ConstructorParameters<typeof DashboardProjector>[1], 'directory'> = {}) {
+  const f = await runFixture(t); const projector = new DashboardProjector(f.service, { directory: join(f.directory, 'events'), ...projection });
   const server = await DashboardServer.create({ projector, service: f.service, ...options });
   t.after(async () => { await server.dispose(); projector.dispose(); });
   const credentials = await fetch(server.address + '/api/token', { headers: { Origin: 'dsh-app://app' } }).then(response => response.json()) as TokenResponse;
@@ -62,6 +66,133 @@ test('real HTTP snapshot and fetch SSE continue cursor, reject stale epoch, and 
   assert.match(text, /operation-result/); await waitFor(() => run.status === 'stopped');
   assert.equal(f.projector.snapshot(run.id).operations[0]?.status, 'completed'); abort.abort();
   for (const suffix of [`after=${snapshot.seq}&epoch=wrong`, `after=999999&epoch=${f.credentials.epoch}`, `after=-1&epoch=${f.credentials.epoch}`]) assert.equal((await fetch(f.server.address + `/api/runs/${run.id}/events?${suffix}`, { headers: f.auth })).status, 409);
+});
+
+test('authenticated snapshots and event streams estimate observed calls without changing configured prices', async t => {
+  const requested: string[] = [];
+  const pricedModel = { provider: 'deepseek-official', id: 'deepseek-flash' };
+  const overriddenModel = { provider: 'openrouter', id: 'qwen/custom' };
+  const otherModel = { provider: 'openrouter', id: 'openai/example' };
+  const pricing = new PricingCatalog(async input => {
+    const url = String(input);
+    requested.push(url);
+    if (url === 'https://models.dev/api.json') return Response.json({
+      deepseek: { models: { 'deepseek-flash': { canonical_model_id: 'deepseek/deepseek-flash', cost: { input: 2, output: 4, reasoning: 8 } } } },
+      openrouter: { models: {
+        'openai/example': { canonical_model_id: 'openai/example', cost: { input: 1, output: 2 } },
+        'qwen/custom': { canonical_model_id: 'alibaba/example', cost: { input: 10, output: 20 } },
+      } },
+    });
+    assert.equal(url, 'https://api.frankfurter.dev/v2/rate/USD/CNY');
+    return Response.json({ base: 'USD', quote: 'CNY', rate: 8 });
+  });
+  const f = await setup(t, {}, { pricing, prices: [{ model: overriddenModel, currency: 'USD', input: 4, output: 2 }] });
+  const run = await f.createActive();
+  const { host, root } = f.binding(run);
+  const emit = (callId: string, model: typeof pricedModel, reasoningTokens?: number) => {
+    const timestamp = Date.now();
+    host.emit({ type: 'usage', agent: host.native(root), timestamp, usage: {
+      timestamp, callId, model, inputTokens: 1_000_000, outputTokens: 500_000, totalTokens: 1_500_000,
+      ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+    } });
+  };
+  emit('catalog', pricedModel, 250_000);
+  emit('override', overriddenModel);
+  const url = f.server.address + `/api/runs/${run.id}`;
+  assert.equal((await fetch(url)).status, 401);
+  assert.deepEqual(requested, []);
+
+  const snapshot = decodeSnapshot(await fetch(url, { headers: f.auth }).then(response => response.json()), run.id);
+  assert.deepEqual(snapshot.nodes[0]!.usage.map(call => [call.callId, call.amount, call.currency, call.reasoningTokens]), [
+    ['catalog', 40, 'CNY', 250_000], ['override', 5, 'USD', undefined],
+  ]);
+  assert.equal(requested.length, 2);
+  emit('before-subscribe', otherModel);
+  const abort = new AbortController();
+  try {
+    const stream = await fetch(`${url}/events?after=${snapshot.seq}&epoch=${snapshot.run.epoch}`, {
+      headers: f.auth, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5_000)]),
+    });
+    assert.equal(stream.status, 200);
+    const reader = stream.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let buffered = '';
+    const nextUsage = async () => {
+      for (;;) {
+        const separator = buffered.indexOf('\n\n');
+        if (separator < 0) {
+          const chunk = await reader.read();
+          assert.ok(!chunk.done, 'expected a usage event from the open stream');
+          buffered += chunk.value;
+          continue;
+        }
+        const block = buffered.slice(0, separator);
+        buffered = buffered.slice(separator + 2);
+        const data = block.split('\n').find(line => line.startsWith('data: '));
+        if (!data) continue;
+        const event = decodeRunEvent(JSON.parse(data.slice(6)));
+        if (event.type === 'node-usage') return event.node.usage.at(-1)!;
+      }
+    };
+    const replayed = await nextUsage();
+    assert.deepEqual([replayed.callId, replayed.amount, replayed.currency], ['before-subscribe', 2, 'USD']);
+    emit('after-subscribe', pricedModel);
+    const live = await nextUsage();
+    assert.deepEqual([live.callId, live.amount, live.currency], ['after-subscribe', 32, 'CNY']);
+    assert.equal(requested.length, 2);
+  } finally {
+    abort.abort();
+  }
+});
+
+test('an idle Run stream refreshes unavailable prices and streams the settled estimate without reopening', async t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+  let reachable = false;
+  let requests = 0;
+  const pricing = new PricingCatalog(async input => {
+    requests++;
+    if (!reachable) return new Response(null, { status: 503 });
+    return input === 'https://models.dev/api.json'
+      ? Response.json({ deepseek: { models: { 'deepseek-flash': { cost: { input: 2, output: 4 } } } } })
+      : Response.json({ base: 'USD', quote: 'CNY', rate: 8 });
+  });
+  const f = await setup(t, { tokenLifetimeMs: 300_000 }, { pricing });
+  const run = await f.createActive();
+  const { host, root } = f.binding(run);
+  const timestamp = Date.now();
+  host.emit({ type: 'usage', agent: host.native(root), timestamp, usage: {
+    timestamp, callId: 'finished-call', model: { provider: 'deepseek-official', id: 'deepseek-flash' },
+    inputTokens: 1_000_000, outputTokens: 500_000,
+  } });
+  const url = `${f.server.address}/api/runs/${run.id}`;
+  const snapshot = decodeSnapshot(await fetch(url, { headers: f.auth }).then(response => response.json()), run.id);
+  assert.equal(snapshot.nodes[0]!.usage[0]!.amount, null);
+  assert.equal(requests, 2);
+
+  const connection = new AbortController();
+  const signal = AbortSignal.any([connection.signal, AbortSignal.timeout(3_000)]);
+  try {
+    const stream = await fetch(`${url}/events?after=${snapshot.seq}&epoch=${snapshot.run.epoch}`, { headers: f.auth, signal });
+    assert.equal(stream.status, 200);
+    reachable = true;
+    t.mock.timers.tick(60_000);
+
+    const updates: Array<Extract<RunEvent, { node: unknown }>> = [];
+    await consumeSse(stream, signal, raw => {
+      const event = decodeRunEvent(raw);
+      if (event.type !== 'node-usage') return;
+      updates.push(event);
+      connection.abort();
+    }).catch(error => { if (!updates.length) throw error; });
+    assert.equal(updates[0]?.seq, snapshot.seq + 1);
+    assert.deepEqual(updates[0]?.node.usage.map(call => [call.callId, call.amount, call.currency]), [['finished-call', 32, 'CNY']]);
+
+    const settled = decodeSnapshot(await fetch(url, { headers: f.auth }).then(response => response.json()), run.id);
+    assert.equal(settled.seq, updates[0]?.seq);
+    assert.deepEqual(settled.nodes[0]?.usage, updates[0]?.node.usage);
+    assert.equal(requests, 4);
+  } finally {
+    connection.abort();
+  }
 });
 
 test('static realpath confines traversal and external symlinks while serving the independent page', async t => {

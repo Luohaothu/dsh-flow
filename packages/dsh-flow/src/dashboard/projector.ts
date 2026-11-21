@@ -8,24 +8,27 @@ import type { MessageSource, Usage } from '../core/types.js';
 import { runServiceControl, type RunReadView } from '../run/internal.js';
 import type { RunService } from '../run/run.js';
 import { EventJournal } from './events.js';
+import type { PricingCatalog } from './pricing.js';
 import { PROTOCOL_VERSION, type AgentCard, type GroupView, type MessageSourceView, type OperationView, type PriceTable, type RegistryEvent, type RegistrySnapshot, type RunEvent, type RunInfo, type RunSnapshot, type UsageView } from './protocol.js';
 
-type Projection = { navigation: Map<string, string>; view: RunReadView; info: RunInfo; nodes: Map<string, AgentCard>; agents: Map<string, Agent>; groups: Map<string, GroupView>; operations: Map<string, OperationView>; journal: EventJournal<RunEvent>; unsubscribe: () => void; assignments: Map<string, RunReadView['assignments'][number]> };
+type Projection = { navigation: Map<string, string>; view: RunReadView; info: RunInfo; nodes: Map<string, AgentCard>; agents: Map<string, Agent>; groups: Map<string, GroupView>; operations: Map<string, OperationView>; journal: EventJournal<RunEvent>; unsubscribe: () => void; assignments: Map<string, RunReadView['assignments'][number]>; pricingRevision: number };
 const copy = <T>(value: T): T => structuredClone(value);
 export class DashboardProjector {
   private readonly projections = new Map<string, Projection>();
   private readonly journal: EventJournal<RegistryEvent>;
   private readonly unsubscribe: () => void;
   private readonly prices: PriceTable;
+  private readonly pricing: Pick<PricingCatalog, 'refresh' | 'estimate'> | undefined;
   private readonly unkeyedUsageIds = new WeakMap<Usage, string>();
   private readonly directory: string;
   private disposed = false;
   private readonly epoch: string;
   private readonly resetDisposers: (() => void)[] = [];
   private readonly resetListeners = new Set<(runId?: string) => void>();
-  constructor(service: RunService, options: { directory: string; prices?: PriceTable }) {
+  constructor(service: RunService, options: { directory: string; prices?: PriceTable; pricing?: Pick<PricingCatalog, 'refresh' | 'estimate'> }) {
     this.epoch = service.epoch;
     this.directory = options.directory; this.prices = copy(options.prices ?? []);
+    this.pricing = options.pricing;
     this.journal = new EventJournal({ directory: options.directory, name: 'registry', epoch: service.epoch });
     this.resetDisposers.push(this.journal.observeReset(() => { for (const listener of this.resetListeners) listener(); }));
     this.unsubscribe = service[runServiceControl].observe(view => this.update(view));
@@ -43,6 +46,27 @@ export class DashboardProjector {
     const snapshot: RunSnapshot = copy({ version: PROTOCOL_VERSION, seq: p.journal.seq, run: p.info, nodes: [...p.nodes.values()], groups: [...p.groups.values()], assignments: [...p.assignments.values()], prices: this.prices, operations: [...p.operations.values()] });
     this.rebaseline(p.journal, snapshot);
     return { ...snapshot, seq: p.journal.seq, ...(p.journal.degraded ? { degraded: true } : {}) };
+  }
+  async refreshPricing(runId: string, signal?: AbortSignal): Promise<void> {
+    this.assertOpen();
+    const projection = this.require(runId);
+    const pricing = this.pricing;
+    if (!pricing || signal?.aborted) return;
+    const revision = await pricing.refresh();
+    if (this.disposed || signal?.aborted || revision <= projection.pricingRevision) return;
+    projection.pricingRevision = revision;
+
+    for (const node of projection.nodes.values()) {
+      let changed = false;
+      for (const call of node.usage) {
+        if (this.configuredPrice(call.model)) continue;
+        const estimate = pricing.estimate(call);
+        if (estimate.amount === call.amount && estimate.currency === call.currency) continue;
+        Object.assign(call, estimate);
+        changed = true;
+      }
+      if (changed) this.publish(projection, { type: 'node-usage', node: copy(node) });
+    }
   }
   subscribeRegistry(after: number, epoch: string, listener: (event: RegistryEvent) => void): () => void { this.assertOpen(); return this.journal.subscribe(after, epoch, event => listener(copy(event))); }
   subscribeRun(runId: string, after: number, epoch: string, listener: (event: RunEvent) => void): () => void { this.assertOpen(); return this.require(runId).journal.subscribe(after, epoch, event => listener(copy(event))); }
@@ -66,7 +90,7 @@ export class DashboardProjector {
     const appeared = !p;
     if (!p) {
       if (hasCoreObservations(view.context)) throw new Error('Dashboard projector must attach before Context initialization');
-      p = { navigation: new Map(), view, info: this.info(view), nodes: new Map(), agents: new Map(), groups: new Map(), operations: new Map(), assignments: new Map(), journal: new EventJournal({ directory: join(this.directory, 'runs'), name: view.run.id, epoch: view.run.epoch, tolerateInitializationFailure: true }), unsubscribe: () => {} };
+      p = { navigation: new Map(), view, info: this.info(view), nodes: new Map(), agents: new Map(), groups: new Map(), operations: new Map(), assignments: new Map(), journal: new EventJournal({ directory: join(this.directory, 'runs'), name: view.run.id, epoch: view.run.epoch, tolerateInitializationFailure: true }), unsubscribe: () => {}, pricingRevision: 0 };
       this.projections.set(view.run.id, p);
       this.resetDisposers.push(p.journal.observeReset(() => { for (const listener of this.resetListeners) listener(view.run.id); }));
       const projection = p;
@@ -171,15 +195,22 @@ export class DashboardProjector {
     this.node(p, node, kind);
   }
   private usage(usage: Usage): UsageView {
-    const price = this.prices.find(item => item.model.provider === usage.model.provider && item.model.id === usage.model.id);
+    let callId = usage.callId ?? this.unkeyedUsageIds.get(usage);
+    if (!callId) { callId = `unkeyed:${randomUUID()}`; this.unkeyedUsageIds.set(usage, callId); }
+    const price = this.configuredPrice(usage.model);
+    if (!price) {
+      const estimate = this.pricing?.estimate(usage) ?? { amount: null, currency: null };
+      return { ...copy(usage), callId, ...estimate };
+    }
     let amount: number | null = null;
-    if (price && usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
+    if (usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
       const cached = usage.cacheReadTokens ?? 0; const written = usage.cacheWriteTokens ?? 0;
       if ((!cached || price.cacheRead !== undefined) && (!written || price.cacheWrite !== undefined)) amount = ((usage.inputTokens - cached - written) * price.input + usage.outputTokens * price.output + cached * (price.cacheRead ?? 0) + written * (price.cacheWrite ?? 0)) / 1_000_000;
     }
-    let callId = usage.callId ?? this.unkeyedUsageIds.get(usage);
-    if (!callId) { callId = `unkeyed:${randomUUID()}`; this.unkeyedUsageIds.set(usage, callId); }
-    return { ...copy(usage), callId, amount, currency: amount === null ? null : price!.currency };
+    return { ...copy(usage), callId, amount, currency: amount === null ? null : price.currency };
+  }
+  private configuredPrice(model: Usage['model']): PriceTable[number] | undefined {
+    return this.prices.find(item => item.model.provider === model.provider && item.model.id === model.id);
   }
   private marker(node: AgentCard, id: string, kind: string, timestamp: number, message: string): void { if (!node.markers.some(marker => marker.id === id)) node.markers.push({ id, kind, timestamp, message }); }
   private node(p: Projection, node: AgentCard, type: Extract<RunEvent, { node: AgentCard }>['type'] = 'node-changed'): void {

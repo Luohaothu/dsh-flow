@@ -71,6 +71,7 @@ function usage(value: unknown): UsageView {
     ...(v.kind === undefined ? {} : { kind: tag(v.kind, ['main', 'auxiliary', 'compaction']) }),
     ...(v.inputTokens === undefined ? {} : { inputTokens: count(v.inputTokens) }), ...(v.outputTokens === undefined ? {} : { outputTokens: count(v.outputTokens) }),
     ...(v.cacheReadTokens === undefined ? {} : { cacheReadTokens: count(v.cacheReadTokens) }), ...(v.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: count(v.cacheWriteTokens) }),
+    ...(v.reasoningTokens === undefined ? {} : { reasoningTokens: count(v.reasoningTokens) }),
     ...(v.totalTokens === undefined ? {} : { totalTokens: count(v.totalTokens) }), amount: nullable(v.amount, number), currency: nullable(v.currency, text) };
 }
 export function decodeNode(value: unknown): AgentCard {
